@@ -1,0 +1,187 @@
+name: Deploy uartdebug
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      rollback:
+        description: "Откатиться на предыдущий релиз (без загрузки новых файлов)"
+        required: false
+        type: boolean
+        default: false
+      to_release:
+        description: "Откат к релизу с меткой (например, 20240810-153000). Пусто — к предыдущему"
+        required: false
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN || '' }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload public/ if exists and not rollback
+        if: ${{ (hashFiles('public/**') != '') && (!inputs.rollback) }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          source: "public"
+          target: "/tmp/deploy/${{ github.sha }}/public"
+          strip_components: 1
+          rm: true
+
+      - name: Upload backend/ if exists and not rollback
+        if: ${{ (hashFiles('backend/**') != '') && (!inputs.rollback) }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          source: "backend"
+          target: "/tmp/deploy/${{ github.sha }}/backend"
+          strip_components: 1
+          rm: true
+
+      - name: Run remote deploy / rollback
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          script: |
+            set -euo pipefail
+
+            # Параметры
+            SHA="${{ github.sha }}"
+            ROOT="/var/www/uartdebug"
+            PUB_DIR="${ROOT}/public"            # стабильные симлинки
+            BE_DIR="${ROOT}/backend"
+            RLS="${ROOT}/releases"
+            PUB_RLS="${RLS}/public"
+            BE_RLS="${RLS}/backend"
+            PM2_NAME="${{ secrets.PM2_NAME }}"
+            [ -z "${PM2_NAME:-}" ] && PM2_NAME="uartdebug-backend"
+            HC_URL="${{ secrets.HC_URL || '' }}"
+            [ -z "${HC_URL:-}" ] && HC_URL="http://68.183.170.241/health"
+            ROLLBACK="${{ inputs.rollback && '1' || '' }}"
+            TO_RELEASE="${{ inputs.to_release || '' }}"
+
+            # Создаём структуру директорий релизов
+            sudo mkdir -p "${PUB_RLS}" "${BE_RLS}"
+            sudo chown -R "$USER":"$USER" "${ROOT}" "${RLS}" "${PUB_RLS}" "${BE_RLS}"
+
+            # Бутстрап: перенести текущие папки в первый релиз и создать симлинки
+            ts_bootstrap="$(date +%Y%m%d-%H%M%S)-bootstrap"
+            if [ ! -L "${PUB_DIR}" ] && [ -d "${PUB_DIR}" ]; then mkdir -p "${PUB_RLS}/${ts_bootstrap}"; rsync -a --delete "${PUB_DIR}/" "${PUB_RLS}/${ts_bootstrap}/"; ln -sfn "${PUB_RLS}/${ts_bootstrap}" "${PUB_DIR}"; fi
+            if [ ! -L "${BE_DIR}" ] && [ -d "${BE_DIR}" ]; then mkdir -p "${BE_RLS}/${ts_bootstrap}"; rsync -a --delete "${BE_DIR}/" "${BE_RLS}/${ts_bootstrap}/"; ln -sfn "${BE_RLS}/${ts_bootstrap}" "${BE_DIR}"; fi
+            [ -e "${PUB_DIR}" ] || ln -sfn /dev/null "${PUB_DIR}" || true
+            [ -e "${BE_DIR}" ] || ln -sfn /dev/null "${BE_DIR}" || true
+
+            if [ -n "${ROLLBACK}" ]; then
+              echo "== Rollback mode =="
+              # Определяем релиз для отката
+              if [ -n "${TO_RELEASE}" ]; then
+                PUB_TARGET="${PUB_RLS}/${TO_RELEASE}"
+                BE_TARGET="${BE_RLS}/${TO_RELEASE}"
+                [ -d "${PUB_TARGET}" ] || { echo "No public release ${TO_RELEASE}"; exit 1; }
+                [ -d "${BE_TARGET}" ] || { echo "No backend release ${TO_RELEASE}"; exit 1; }
+              else
+                # предыдущий релиз (не текущий)
+                last_pub="$(ls -1 ${PUB_RLS} | sort | tail -n 2 | head -n 1 || true)"
+                last_be="$(ls -1 ${BE_RLS} | sort | tail -n 2 | head -n 1 || true)"
+                [ -n "${last_pub}" ] && PUB_TARGET="${PUB_RLS}/${last_pub}" || PUB_TARGET=""
+                [ -n "${last_be}" ] && BE_TARGET="${BE_RLS}/${last_be}" || BE_TARGET=""
+                [ -n "${PUB_TARGET}" ] || [ -n "${BE_TARGET}" ] || { echo "No previous release found"; exit 1; }
+              fi
+
+              # Переключаем симлинки
+              if [ -n "${PUB_TARGET:-}" ] && [ -d "${PUB_TARGET}" ]; then ln -sfn "${PUB_TARGET}" "${PUB_DIR}"; fi
+              if [ -n "${BE_TARGET:-}" ] && [ -d "${BE_TARGET}" ]; then ln -sfn "${BE_TARGET}" "${BE_DIR}"; fi
+
+            else
+              echo "== Deploy new build =="
+
+              PUB_SRC="/tmp/deploy/${SHA}/public"
+              BE_SRC="/tmp/deploy/${SHA}/backend"
+
+              NOW="$(date +%Y%m%d-%H%M%S)"
+              PUB_NEW="${PUB_RLS}/${NOW}"
+              BE_NEW="${BE_RLS}/${NOW}"
+
+              # Копируем новые сборки
+              if [ -d "$PUB_SRC" ]; then rm -rf "$PUB_NEW"; mkdir -p "$PUB_NEW"; rsync -a --delete "$PUB_SRC"/ "$PUB_NEW"/; fi
+              if [ -d "$BE_SRC" ]; then rm -rf "$BE_NEW"; mkdir -p "$BE_NEW"; rsync -a --delete "$BE_SRC"/ "$BE_NEW"/; fi
+
+              # Атомарно переключаем симлинки
+              if [ -d "$PUB_NEW" ]; then ln -sfn "$PUB_NEW" "$PUB_DIR"; fi
+              if [ -d "$BE_NEW" ]; then ln -sfn "$BE_NEW" "$BE_DIR"; fi
+            fi
+
+            # Nginx проверка и перезагрузка (если установлен)
+            if command -v nginx >/dev/null 2>&1; then
+              sudo nginx -t && sudo systemctl reload nginx || true
+            fi
+
+            # Backend: npm i + pm2 reload (если есть backend)
+            if [ -d "${BE_DIR}" ] && [ -f "${BE_DIR}/package.json" ]; then
+              cd "${BE_DIR}"
+              npm ci --omit=dev || npm install --omit=dev
+              if command -v pm2 >/dev/null 2>&1; then
+                pm2 startOrReload ecosystem.config.js --only "${PM2_NAME}" || pm2 restart "${PM2_NAME}" || true
+                pm2 save || true
+              else
+                echo "pm2 not found — skipping"
+              fi
+            fi
+
+            # Healthcheck
+            if [ -n "${HC_URL}" ]; then
+              echo "Healthcheck: ${HC_URL}"
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "${HC_URL}" || echo 000)"
+              echo "HTTP ${code}"
+              [ "${code}" = "200" ] || { echo "Healthcheck failed"; exit 1; }
+            fi
+
+            echo "Deploy OK"
+
+      - name: Cleanup temp on server
+        if: ${{ always() && !inputs.rollback }}
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          script: |
+            rm -rf "/tmp/deploy/${{ github.sha }}" || true
+
+      - name: Notify Telegram (success)
+        if: ${{ success() && env.TG_BOT_TOKEN != '' && env.TG_CHAT_ID != '' }}
+        run: |
+          curl -sS -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" \
+            -d parse_mode=HTML \
+            -d text="<b>✅ Deploy success</b>%0Arepo: ${{ github.repository }}%0Asha: ${{ github.sha }}%0A<code>${{ github.ref_name }}</code>%0A<a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">Open run</a>" \
+            >/dev/null || true
+
+      - name: Notify Telegram (failure)
+        if: ${{ failure() && env.TG_BOT_TOKEN != '' && env.TG_CHAT_ID != '' }}
+        run: |
+          curl -sS -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" \
+            -d parse_mode=HTML \
+            -d text="<b>❌ Deploy failed</b>%0Arepo: ${{ github.repository }}%0Asha: ${{ github.sha }}%0A<code>${{ github.ref_name }}</code>%0A<a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">Open run</a>" \
+            >/dev/null || true
