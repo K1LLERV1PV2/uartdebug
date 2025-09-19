@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UART Terminal - 1Logic</title>
+    <!-- link to global styles and uart specific styles -->
+    <link rel="stylesheet" href="uart.css" />
+    <!-- include Chart.js library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js"></script>
+    <script src="uart.js"></script>
+  </head>
+  <body>
+    <main>
+      <div class="feature-panel">
+        <!-- Web Serial API support warning -->
+        <div class="api-support-warning" id="apiWarning">
+          <strong>Attention:</strong> Your browser does not support the
+          Web&nbsp;Serial API. To work with UART you need a modern browser based
+          on Chromium (Chrome, Edge, Opera).
+        </div>
+
+        <!-- Connection section -->
+        <section class="uart-section">
+          <h2 class="status-indicator disconnected" id="statusIndicator">
+            Disconnected
+          </h2>
+
+          <div class="connection-panel">
+            <button class="connect-btn" id="connectBtn">Connect</button>
+
+            <div class="connection-control">
+              <label>Baud rate</label>
+              <select id="baudRate">
+                <option value="9600">9600</option>
+                <option value="19200">19200</option>
+                <option value="38400">38400</option>
+                <option value="57600">57600</option>
+                <option value="115200" selected>115200</option>
+                <option value="230400">230400</option>
+                <option value="460800">460800</option>
+                <option value="921600">921600</option>
+              </select>
+            </div>
+
+            <button
+              class="settings-btn"
+              id="settingsBtn"
+              title="Connection settings"
+            >
+              <!-- gear icon -->
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66Z"
+                />
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        <!-- Terminal and oscilloscope section -->
+        <section class="uart-section">
+          <!-- TxD and RxD terminals -->
+          <div class="terminals-split-container">
+            <div class="terminal-wrapper">
+              <div class="terminal-header">
+                <h3 class="terminal-label">TxD</h3>
+                <!-- Log controls moved here -->
+                <div class="log-controls">
+                  <button class="log-btn" id="clearBtn">Clear</button>
+                  <button class="log-btn" id="saveLogBtn">Save log</button>
+                  <button
+                    class="log-btn"
+                    id="hexUploadBtn"
+                    title="Load Intel HEX file"
+                  >
+                    Load HEX
+                  </button>
+                  <input
+                    type="file"
+                    id="hexFileInput"
+                    accept=".hex,.ihx,.ihex,.txt"
+                    style="display: none"
+                  />
+                  <button
+                    class="log-btn"
+                    id="flashBtn"
+                    title="Flash MCU over UPDI"
+                  >
+                    Flash MCU
+                  </button>
+                  <input
+                    type="file"
+                    id="flashHexInput"
+                    accept=".hex,.ihx,.ihex,.txt"
+                    style="display: none"
+                  />
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="autoScrollCheckbox" checked />
+                    <span class="checkbox-custom"></span>
+                    Auto&#8209;scroll
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="timestampCheckbox" />
+                    <span class="checkbox-custom"></span>
+                    Show time
+                  </label>
+                </div>
+              </div>
+              <div class="terminal-container" id="terminalSent"></div>
+            </div>
+            <div class="terminal-wrapper">
+              <div class="terminal-header">
+                <h3 class="terminal-label">RxD</h3>
+                <!-- View toggle moved here -->
+                <div class="view-toggle">
+                  <button class="view-btn active" data-view="terminal">
+                    <!-- terminal icon -->
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
+                      <path
+                        d="M20,19V7H4V19H20M20,3A2,2 0 1 1 22,5V19A2,2 0 0,1 20,21H4A2,2 0 0,1 2,19V5C2,3.89 2.9,3 4,3H20M13,17H18V15H13V17M9,17H11V15H9V17M5,17H7V15H5V17M5,13H11V11H5V13M13,13H19V11H13V13M13,9H19V7H13V9M5,9H11V7H5V9Z"
+                      />
+                    </svg>
+                    Text
+                  </button>
+                  <button class="view-btn" data-view="oscilloscope">
+                    <!-- oscilloscope icon -->
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
+                      <path
+                        d="M7.5,21H2V9H7.5V21M14.5,3H9V21H14.5V3M21.5,11H16V21H21.5V11Z"
+                      />
+                    </svg>
+                    Graphic
+                  </button>
+                </div>
+                <!-- Data display mode radio buttons (for oscilloscope) -->
+                <div
+                  class="data-mode-controls"
+                  id="dataModeControls"
+                  style="display: none"
+                >
+                  <!-- Signed/Unsigned selector -->
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="signMode"
+                        value="unsigned"
+                        checked
+                      />
+                      <span>Unsigned</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="signMode" value="signed" />
+                      <span>Signed</span>
+                    </label>
+                  </div>
+
+                  <!-- Byte size selector -->
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input type="radio" name="byteSize" value="1" checked />
+                      <span>1 byte</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="byteSize" value="2BE" />
+                      <span>2 byte (BE)</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="byteSize" value="2LE" />
+                      <span>2 byte (LE)</span>
+                    </label>
+                  </div>
+                </div>
+                <div
+                  class="oscilloscope-controls"
+                  id="oscilloscopeControls"
+                  style="display: none"
+                >
+                  <button class="log-btn" id="oscilloClearBtn">
+                    Clear graph
+                  </button>
+                  <button
+                    class="log-btn"
+                    id="oscilloResetBtn"
+                    title="Reset zoom and pan"
+                  >
+                    Reset zoom
+                  </button>
+                  <!-- Play/Pause button instead of checkbox -->
+                  <button
+                    class="play-pause-btn playing"
+                    id="oscilloPauseBtn"
+                    title="Pause"
+                  >
+                    <!-- Pause icon (shown when playing) -->
+                    <svg
+                      class="pause-icon"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                    >
+                      <path d="M14,19H18V5H14V19M6,19H10V5H6V19Z" />
+                    </svg>
+                    <!-- Play icon (shown when paused) -->
+                    <svg
+                      class="play-icon"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      style="display: none"
+                    >
+                      <path d="M8,5.14V19.14L19,12.14L8,5.14Z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="terminal-container" id="terminalReceived"></div>
+              <div
+                class="oscilloscope-container"
+                id="oscilloscopeContainer"
+                style="display: none"
+              >
+                <canvas id="oscilloscopeCanvas"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Input panel with radio buttons for ASCII/HEX mode -->
+          <div class="terminal-input-panel">
+            <!-- Input mode radio buttons -->
+            <div class="input-mode-controls">
+              <label class="radio-label">
+                <input type="radio" name="inputMode" value="ascii" checked />
+                <span class="radio-custom"></span>
+                ASCII
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="inputMode" value="hex" />
+                <span class="radio-custom"></span>
+                HEX
+              </label>
+            </div>
+
+            <input
+              type="text"
+              class="terminal-input"
+              id="terminalInput"
+              placeholder="Text string"
+              disabled
+            />
+            <button class="send-btn" id="sendBtn" disabled>Send</button>
+            <button
+              class="send-loop-btn"
+              id="sendLoopBtn"
+              disabled
+              title="Send in loop"
+            >
+              <!-- Loop icon (две стрелки по кругу) -->
+              <svg
+                class="loop-icon"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"
+                />
+              </svg>
+              <!-- Stop icon (квадрат) -->
+              <svg
+                class="stop-icon"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                style="display: none"
+              >
+                <path d="M6 6h12v12H6z" />
+              </svg>
+            </button>
+            <input
+              type="number"
+              class="loop-interval-input"
+              id="loopIntervalInput"
+              min="100"
+              max="10000"
+              step="100"
+              value="1000"
+              title="Interval in ms"
+            />
+            <span class="loop-interval-label">ms</span>
+          </div>
+        </section>
+
+        <!-- Modal dialog for connection settings -->
+        <div class="modal-overlay" id="settingsModal">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3>Connection settings</h3>
+              <button class="modal-close" id="modalCloseBtn">&times;</button>
+            </div>
+
+            <div class="modal-body">
+              <div class="connection-control">
+                <label>Baud rate</label>
+                <select id="modalBaudRate">
+                  <option value="9600">9600</option>
+                  <option value="19200">19200</option>
+                  <option value="38400">38400</option>
+                  <option value="57600">57600</option>
+                  <option value="115200" selected>115200</option>
+                  <option value="230400">230400</option>
+                  <option value="460800">460800</option>
+                  <option value="921600">921600</option>
+                </select>
+              </div>
+              <div class="connection-control">
+                <label>Data bits</label>
+                <select id="dataBits">
+                  <option value="7">7</option>
+                  <option value="8" selected>8</option>
+                </select>
+              </div>
+              <div class="connection-control">
+                <label>Stop bits</label>
+                <select id="stopBits">
+                  <option value="1" selected>1</option>
+                  <option value="2">2</option>
+                </select>
+              </div>
+              <div class="connection-control">
+                <label>Parity</label>
+                <select id="parity">
+                  <option value="none" selected>None</option>
+                  <option value="even">Even</option>
+                  <option value="odd">Odd</option>
+                </select>
+              </div>
+              <div class="connection-control">
+                <label>MCU</label>
+                <select id="mcuSelect" title="Target MCU">
+                  <optgroup label="tinyAVR 1/2-series">
+                    <option value="attiny1624" selected>ATtiny1624</option>
+                    <option value="attiny1626">ATtiny1626</option>
+                    <option value="attiny1627">ATtiny1627</option>
+                    <option value="attiny1614">ATtiny1614</option>
+                    <option value="attiny1616">ATtiny1616</option>
+                    <option value="attiny1617">ATtiny1617</option>
+                    <option value="attiny3216">ATtiny3216</option>
+                    <option value="attiny3217">ATtiny3217</option>
+                    <option value="attiny3224">ATtiny3224</option>
+                    <option value="attiny3226">ATtiny3226</option>
+                    <option value="attiny3227">ATtiny3227</option>
+                  </optgroup>
+                  <optgroup label="megaAVR 0-series">
+                    <option value="atmega4808">ATmega4808</option>
+                    <option value="atmega4809">ATmega4809</option>
+                  </optgroup>
+                  <optgroup label="AVR Dx (UPDI)">
+                    <option value="avr64da32">AVR64DA32</option>
+                    <option value="avr64db32">AVR64DB32</option>
+                  </optgroup>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

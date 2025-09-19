@@ -1,0 +1,1343 @@
+/* styles.css */
+
+/* Любой элемент с классом hidden скрыт */
+.hidden {
+  display: none !important;
+}
+
+/* Стили для экрана входа */
+#login-screen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: #2c3e50;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 200;
+}
+
+#login-container {
+  background: #ecf0f1;
+  padding: 30px;
+  border-radius: 8px;
+  width: 300px;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+#login-container h1 {
+  margin-top: 0;
+  margin-bottom: 20px;
+}
+
+#auth-tabs {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+#auth-tabs button {
+  flex: 1;
+  padding: 10px;
+  background: #bdc3c7;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#auth-tabs button.active {
+  background: #16a085;
+  color: #ecf0f1;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-form input {
+  padding: 10px;
+  border: 1px solid #7f8c8d;
+  border-radius: 4px;
+}
+
+.auth-form button {
+  padding: 10px;
+  background: #16a085;
+  color: #ecf0f1;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.auth-form button:hover {
+  background: #1abc9c;
+}
+
+.hidden {
+  display: none;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+}
+
+/* Основной контейнер — спускаем ниже шапки и растягиваем на весь экран */
+#container {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #222;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+#canvas {
+  position: absolute;
+  display: block;
+  width: 100%;
+  height: 100%;
+  background-color: #222;
+}
+
+/* Общий контейнер для боковой панели и кнопки */
+#side-panel-container {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  /* Ширина: ширина панели (270px) + пространство для кнопки (30px) */
+  width: 300px;
+  z-index: 100;
+  overflow: visible;
+  transition: transform 0.3s ease;
+}
+
+#side-panel section {
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: #34495e;
+  border-radius: 4px;
+}
+
+#side-panel section h2 {
+  margin-top: 0;
+  font-size: 16px;
+  border-bottom: 1px solid #7f8c8d;
+  padding-bottom: 5px;
+}
+
+/* Боковая панель */
+#side-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 270px;
+  background-color: #2c3e50;
+  color: #ecf0f1;
+  padding: 15px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: visible;
+  font-size: 14px;
+  transition: transform 0.3s ease;
+  transform: translateX(0);
+}
+
+/* При сворачивании контейнера: сдвигаем боковую панель вправо */
+#side-panel-container.collapsed #side-panel {
+  transform: translateX(270px);
+}
+#side-panel-container.collapsed section {
+  display: none;
+}
+
+/* Кнопка-тогглер */
+#side-panel-toggle {
+  position: absolute;
+  top: 10px; /* ближе к верху */
+  right: 268px; /* располагается непосредственно слева от боковой панели */
+  width: 20px;
+  height: 30px;
+  background-color: #2c3e50; /* тот же фон, что у панели */
+  color: #ecf0f1;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s, right 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  z-index: 101;
+}
+
+#side-panel-toggle:hover {
+  background-color: #34495e;
+}
+
+/* При свернутой панели можно изменить позицию кнопки, если нужно */
+#side-panel-container.collapsed #side-panel-toggle {
+  right: 0;
+}
+
+#project-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+#side-panel h2 {
+  margin-top: 0;
+  text-align: center;
+  border-bottom: 1px solid #7f8c8d;
+  padding-bottom: 5px;
+}
+
+#node-list {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+#node-list li {
+  padding: 8px;
+  cursor: pointer;
+  border-bottom: 1px solid #34495e;
+  transition: background-color 0.2s;
+}
+
+#node-list li:hover {
+  background-color: #34495e;
+}
+
+#node-list li.selected {
+  background-color: transparent;
+}
+
+/* Зеленый фон только для заголовка выбранного узла */
+#node-list li.selected .node-header {
+  background-color: #16a085;
+  width: 95%;
+  padding: 8px;
+}
+
+#node-properties {
+  margin-top: 10px;
+}
+
+#node-properties label {
+  display: block;
+  margin-bottom: 5px;
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 5px;
+  border: 1px solid #7f8c8d;
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+
+/* Стили для кнопок */
+button {
+  width: 100%;
+  padding: 10px;
+  margin-top: 10px;
+  background-color: #16a085;
+  color: #ecf0f1;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+button:hover {
+  background-color: #1abc9c;
+}
+
+/* Улучшенное контекстное меню */
+#context-menu {
+  position: absolute;
+  display: none;
+  background-color: #ecf0f1;
+  border: 1px solid #bdc3c7;
+  padding: 10px;
+  z-index: 10;
+  box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.3);
+}
+
+/* Стили для заголовка узла (имя + стрелочка) */
+.node-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Стрелочка для раскрытия списка связей */
+.toggle-edges {
+  cursor: pointer;
+  margin-left: 5px;
+  font-size: 14px;
+}
+
+/* Контейнер для списка связей */
+.edge-list {
+  list-style: none;
+  padding-left: 15px;
+  margin-top: 5px;
+}
+
+.edge-list .edge-item {
+  background-color: transparent;
+}
+
+/* Один элемент связи */
+.edge-item {
+  padding: 5px 0;
+  cursor: pointer;
+}
+
+/* Выделенная связь – изменяем стрелку */
+.selected-edge .edge-arrow {
+  color: #16a085;
+}
+
+/* Контейнер для визуального представления связи (кружки + стрелка) */
+.edge-visual {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Общий класс кружка */
+.edge-circle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 12px;
+  color: #000;
+}
+
+/* «from-circle» – зелёный */
+.from-circle {
+  background-color: #16a085;
+}
+
+/* «to-circle» – серый */
+.to-circle {
+  background-color: #888;
+}
+
+/* Стрелка (изначально белая) */
+.edge-arrow {
+  font-size: 20px;
+  color: #fff;
+  user-select: none;
+}
+
+#project-actions button {
+  width: 40px;
+  height: 40px;
+  font-size: 24px;
+  line-height: 40px;
+  padding: 0;
+  background-color: #16a085;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+#project-actions button:hover {
+  background-color: #1abc9c;
+}
+
+.target-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.target-name {
+  font-size: 12px;
+  text-align: center;
+}
+
+.target-circle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: #888;
+  border: 1px solid #fff;
+  color: #000;
+  font-size: 12px;
+  text-align: center;
+}
+
+.target-button {
+  background-color: #16a085;
+  border: none;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #ecf0f1;
+  transition: background-color 0.2s;
+}
+
+.target-button:hover {
+  background-color: #1abc9c;
+}
+
+/* …. */
+#node-type-controls {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.shape-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background-color: #16a085;
+  color: #ecf0f1;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+.shape-btn svg {
+  width: 24px;
+  height: 24px;
+}
+.shape-btn:hover {
+  background-color: #1abc9c;
+}
+.shape-btn.active {
+  background-color: #e67e22;
+  color: #fff;
+}
+
+/* Секция “Объекты”: кнопки-иконки */
+#object-type-controls {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.object-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  background-color: #16a085;
+  color: #ecf0f1;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+.object-btn svg {
+  width: 24px;
+  height: 24px;
+}
+.object-btn:hover {
+  background-color: #1abc9c;
+}
+.object-btn.active {
+  background-color: #e67e22;
+  color: #fff;
+}
+
+/* Кастомные узлы */
+#custom-node-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.custom-node-item {
+  display: flex;
+  align-items: center;
+}
+
+.custom-node-btn {
+  padding: 5px;
+  background-color: #16a085;
+  color: #ecf0f1;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: center;
+  transition: background-color 0.2s;
+}
+.custom-node-btn:hover {
+  background-color: #1abc9c;
+}
+.custom-node-btn.active {
+  background-color: #e67e22;
+  color: #fff;
+}
+
+.delete-custom-node-btn {
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  margin-left: 4px;
+  background: none;
+  border: none;
+  color: red;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Кнопки выбора оператора и значения размещаем горизонтально */
+/*#operator-buttons,
+#value-buttons {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+
+.operator-btn,
+.value-btn {
+  flex: 1;
+  padding: 5px;
+  font-size: 14px;
+  background-color: #16a085;
+  color: #ecf0f1;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: center;
+  transition: background-color 0.2s;
+}
+
+.operator-btn:hover,
+.value-btn:hover {
+  background-color: #1abc9c;
+}
+
+.operator-btn.active,
+.value-btn.active {
+  background-color: #e67e22;
+  color: #fff;
+} */
+
+/* Строка с четырьмя кнопками (Undo, Redo, Save, Load) */
+#actions-row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+}
+
+/*#run-logic-btn {
+  width: 100%;
+  height: 50px;
+  font-size: 24px;
+  line-height: 50px;
+}
+
+#project-actions #run-logic-btn {
+  width: 100% !important;
+  height: 40px !important;
+  font-size: 24px !important;
+  line-height: 40px !important;
+  padding: 0 !important;
+} */
+
+/* Для браузеров на базе WebKit (Chrome, Safari) */
+#side-panel::-webkit-scrollbar {
+  width: 8px;
+}
+#side-panel::-webkit-scrollbar-track {
+  background: #2c3e50;
+  border-radius: 4px;
+}
+#side-panel::-webkit-scrollbar-thumb {
+  background-color: #16a085;
+  border-radius: 4px;
+}
+
+/* Для Firefox */
+#side-panel {
+  scrollbar-width: thin;
+  scrollbar-color: #16a085 #2c3e50;
+}
+
+/* Стили для сворачиваемых заголовков */
+.collapsible-header {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.collapsible-header::after {
+  content: "▼";
+  font-size: 12px;
+  margin-left: 5px;
+  transition: transform 0.2s;
+}
+
+.collapsible-header.collapsed::after {
+  transform: rotate(-90deg);
+}
+
+/* Контейнер для содержимого секции */
+.section-content {
+  transition: max-height 0.3s ease;
+  overflow: hidden;
+  max-height: 1000px;
+}
+
+.section-content.collapsed {
+  max-height: 0;
+  padding: 0;
+  margin: 0;
+}
+
+/* Стили для модального окна */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.modal-content {
+  background-color: #ecf0f1;
+  padding: 20px;
+  border-radius: 5px;
+  width: 300px;
+  max-height: 80%;
+  overflow-y: auto;
+  position: relative;
+}
+
+.close-button {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+#save-list {
+  margin-bottom: 15px;
+}
+
+/* Уменьшенная высота элементов списка сохранений */
+.save-item {
+  position: relative;
+  padding: 2px 8px;
+  background-color: #bdc3c7;
+  margin-bottom: 5px;
+  border-radius: 3px;
+  font-size: 14px;
+  min-height: 24px;
+  line-height: 24px;
+}
+
+.save-item > span {
+  display: block;
+}
+
+.save-item:hover {
+  background-color: #95a5a6;
+}
+
+/* Кнопка удаления – фиксированный размер, в правом верхнем углу */
+.save-item button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  background: none;
+  border: none;
+  color: red;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  z-index: 10;
+}
+
+#save-controls {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+#save-name-input {
+  flex: 1;
+  min-width: 150px;
+  padding: 5px;
+  border: 1px solid #7f8c8d;
+  border-radius: 3px;
+}
+
+#save-action-btn {
+  flex: 0;
+  padding: 5px 10px;
+  font-size: 14px;
+  border-radius: 3px;
+  background-color: #16a085;
+  color: #ecf0f1;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  margin: 0;
+}
+
+#save-action-btn:hover {
+  background-color: #1abc9c;
+}
+
+.auth-form input:focus {
+  outline: none;
+  box-shadow: 0 0 5px rgba(22, 160, 133, 0.5);
+}
+
+/* Контейнер для уведомлений – всегда в левом нижнем углу */
+#notification-container {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  z-index: 9999;
+}
+
+/* Стили для отдельного уведомления */
+.notification {
+  background-color: rgba(0, 0, 0, 0.8);
+  color: #ecf0f1;
+  padding: 10px 15px;
+  margin-top: 10px;
+  border-radius: 4px;
+  min-width: 200px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+/* Класс, который делает уведомление видимым */
+.notification.show {
+  opacity: 1;
+}
+
+/* Левая панель */
+#side-panel-left-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 300px;
+  z-index: 100;
+  overflow: visible;
+  transition: transform 0.3s ease;
+}
+
+/* Левый «Тип узла» в стиле секций правой панели */
+#side-panel-left section {
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: #34495e;
+  border-radius: 4px;
+}
+#side-panel-left section h2 {
+  margin-top: 0;
+  font-size: 16px;
+  border-bottom: 1px solid #7f8c8d;
+  padding-bottom: 5px;
+}
+
+#side-panel-left {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 270px;
+  background-color: #2c3e50;
+  color: #ecf0f1;
+  padding: 15px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  font-size: 14px;
+  transition: transform 0.3s ease;
+  transform: translateX(0);
+}
+
+#side-panel-left-container.collapsed #side-panel-left {
+  transform: translateX(-270px);
+}
+#side-panel-left-container.collapsed section {
+  display: none;
+}
+
+/* Кнопка‑тогглер для левой панели */
+#side-panel-left-toggle {
+  position: absolute;
+  top: 30px;
+  left: 268px;
+  width: 20px;
+  height: 30px;
+  background-color: #2c3e50;
+  color: #ecf0f1;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  z-index: 101;
+  transition: background-color 0.2s, left 0.3s;
+}
+#side-panel-left-toggle:hover {
+  background-color: #34495e;
+}
+#side-panel-left-container.collapsed #side-panel-left-toggle {
+  left: 0;
+}
+
+/* ——— Разрешаем клики по канвасу под свёрнутыми панелями ——— */
+/* Отключаем pointer-events для всего контейнера, когда он свернут */
+#side-panel-container.collapsed,
+#side-panel-left-container.collapsed {
+  pointer-events: none;
+}
+/* Включаем pointer-events только для кнопок-тогглеров */
+#side-panel-container.collapsed #side-panel-toggle,
+#side-panel-left-container.collapsed #side-panel-left-toggle {
+  pointer-events: auto;
+}
+
+/* Стили скролла для левой панели, такие же, как и для правой */
+#side-panel-left::-webkit-scrollbar {
+  width: 8px;
+}
+#side-panel-left::-webkit-scrollbar-track {
+  background: #2c3e50;
+  border-radius: 4px;
+}
+#side-panel-left::-webkit-scrollbar-thumb {
+  background-color: #16a085;
+  border-radius: 4px;
+}
+
+#side-panel-left {
+  scrollbar-width: thin;
+  scrollbar-color: #16a085 #2c3e50;
+}
+
+#svg-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* клики проходят на canvas */
+  overflow: visible;
+}
+
+/* Контейнер панели цветов */
+#color-panel-container {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 220px;
+  z-index: 90; /* чуть ниже, чем у основной панели (100) */
+  overflow: visible;
+  transition: transform 0.3s ease;
+}
+
+/* Сама панель цветов */
+#color-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 200px;
+  background-color: #2c3e50;
+  color: #ecf0f1;
+  padding: 15px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  font-size: 14px;
+  transform: translateX(0);
+  transition: transform 0.3s ease;
+}
+
+#color-panel-container.collapsed #color-panel {
+  transform: translateX(200px);
+}
+
+/* Тогглер для панели цветов */
+#color-panel-toggle {
+  position: absolute;
+  top: 45px; /* ближе к верху */
+  right: 197px; /* располагается непосредственно слева от боковой панели */
+  width: 20px;
+  height: 30px;
+  background-color: #2c3e50; /* тот же фон, что у панели */
+  color: #ecf0f1;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s, right 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  z-index: 101;
+}
+#color-panel-container.collapsed #color-panel-toggle {
+  right: 0;
+}
+
+/* Секция «Цвет объектов» внутри панели */
+#object-color-section {
+  margin-bottom: 15px;
+}
+#object-color-section h2 {
+  margin-top: 0;
+  text-align: center;
+  border-bottom: 1px solid #7f8c8d;
+  padding-bottom: 5px;
+}
+#object-color-picker {
+  width: 100%;
+  height: 40px;
+  border: none;
+  padding: 0;
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+/* Топ-бар */
+#top-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 30px;
+  background-color: #2c3e50;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  box-sizing: border-box;
+  z-index: 110;
+}
+
+#breadcrumb-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background-color: #2c3e50;
+  padding: 2px 6px;
+}
+
+/* Кнопка “i” в кружке */
+#info-button {
+  margin-right: 8px;
+  margin-left: auto;
+  align-self: center; 
+  margin-top: 3px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #ecf0f1;
+  border-radius: 4px;
+  background-color: transparent !important; /* явно прозрачный фон */
+  color: #ecf0f1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+#info-button:hover {
+  background-color: rgba(236, 240, 241, 0.2) !important; /* свой hover-цвет */
+}
+
+/* Вкладки в топ-баре */
+#tabs-container {
+  position: absolute;
+  left: 280px;
+  right: 10px;
+  top: 30px;
+  display: flex;
+  width: auto;
+  transition: left 0.3s ease; /* плавное перемещение */
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  background-color: #222;
+  color: #ecf0f1;
+  padding: 2px 6px;
+  margin-right: 4px;
+  /* Верхние углы не скругляем, чтобы вкладка плавно примыкала к breadcrumb-row */
+  /* Нижние углы слегка скруглены */
+  border-radius: 0 0 4px 4px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s;
+}
+
+.tab:hover {
+  background-color: #333;
+}
+
+.tab.active {
+  background-color: #2c3e50;
+  color: #ecf0f1;
+  margin-bottom: -2px;
+  padding-bottom: 4px;
+  /* Сохраняем скругление снизу для активной вкладки */
+  border-bottom-left-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.close-tab {
+  margin-left: 6px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.tab.active .close-tab {
+  color: #ecf0f1;
+}
+
+/* Breadcrumbs в топ-баре */
+#path-display {
+  color: #ecf0f1; /* светлый текст */
+  font-size: 14px; /* размер шрифта */
+  font-weight: 500; /* чуть более жирный */
+  font-family: Arial, sans-serif;
+  display: flex;
+  align-items: center;
+}
+
+/* Сегменты пути */
+#path-display a {
+  color: #16a085; /* зеленый акцент */
+  text-decoration: none;
+  margin: 0 4px;
+  cursor: pointer;
+  position: relative;
+}
+
+/* Добавляем разделитель “\” после каждого сегмента, кроме последнего */
+#path-display a:not(:last-child)::after {
+  content: "\\";
+  position: absolute;
+  right: -8px;
+  color: #7f8c8d; /* более приглушённый цвет разделителя */
+}
+
+/* Hover-эффект для сегмента */
+#path-display a:hover {
+  text-decoration: underline;
+}
+
+/* ====== Кнопка «Аккаунт» ====== */
+#account-btn {
+  /* наследует стили .auth-btn */
+  width: auto !important;
+  display:flex;
+  align-items:center;
+  margin-left:auto;
+  flex: 0 0 auto;
+  cursor: pointer;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 3px;
+  color: #ecf0f1;
+  transition: background .2s;
+}
+#account-btn:hover {
+  background-color: #1abc9c;
+}
+/* Скрываем кнопку, если есть атрибут hidden */
+#account-btn[hidden] {
+  display: none !important;
+}
+
+/* ====== Правое выезжающее меню «Аккаунт» ====== */
+#account-menu {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 200px;
+  height: 100vh;
+  background-color: #1abc9c;
+  transform: translateX(100%);  /* изначально скрыто справа */
+  transition: transform 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  padding-top: 40px;            /* отступ под высоту хедера */
+  box-sizing: border-box;
+  z-index: 150;
+}
+#account-menu.open {
+  transform: translateX(0);     /* выезжает на экран */
+}
+
+/* Стили для элементов внутри меню */
+#account-menu a,
+#account-menu button {
+  margin: 0;
+  padding: 10px 20px;
+  text-align: left;
+  font-size: 16px;
+  color: #fff;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+#account-menu a:hover,
+#account-menu button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Верхняя панель с логотипом */
+#header-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background-color: #1abc9c;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  z-index: 200;
+  box-sizing: border-box;
+}
+
+#logo-link {
+  color: white;
+  font-size: 18px;
+  font-weight: bold;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+#logo-link:hover {
+  text-decoration: underline;
+}
+
+/* Сдвигаем нижестоящий контейнер */
+#top-bar {
+  top: 40px !important;
+}
+
+#container {
+  top: 70px !important; /* 40 + 30px высота top-bar */
+}
+
+/* Кнопка-гамбургер */
+.menu-toggle{width:24px;height:24px;padding:0;margin:0 10px 0 0;position:relative;z-index:160;background:none;border:none;color:inherit;overflow:visible}
+.menu-toggle span{position:absolute;left:50%;width:18px;height:2px;background:currentColor;transform-origin:center;transition:transform .3s,opacity .3s,top .3s}
+.menu-toggle span:nth-child(1){top:6px;transform:translateX(-50%)}
+.menu-toggle span:nth-child(2){top:50%;transform:translate(-50%,-50%)}
+.menu-toggle span:nth-child(3){top:16px;transform:translateX(-50%)}
+.menu-toggle.open span:nth-child(1){top:50%;transform:translate(-50%,-50%) rotate(45deg)}
+.menu-toggle.open span:nth-child(2){opacity:0}
+.menu-toggle.open span:nth-child(3){top:50%;transform:translate(-50%,-50%) rotate(-45deg)}
+/* Выезжающее меню-панель */
+#site-menu{position:fixed;top:0;left:0;height:100vh;width:200px;background:#1abc9c;transform:translateX(-100%);transition:transform .3s ease;z-index:150;display:flex;flex-direction:column;padding-top:40px;box-sizing:border-box}
+#site-menu.open{transform:translateX(0)}
+#site-menu a{padding:10px 20px;color:#fff;text-decoration:none;font-size:16px}
+#site-menu a:hover{background:rgba(255,255,255,0.2)}
+/* Полупрозрачный фон-оверлей */
+#overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4);opacity:0;visibility:hidden;transition:opacity .3s;z-index:140}
+#overlay.open{opacity:1;visibility:visible}
+/* чтобы бургер был того же цвета, что и текст в шапке */
+#header-bar {
+  color: #fff;
+}
+
+.auth-buttons{display:flex;align-items:center;margin-left:auto}
+.auth-btn{white-space:nowrap;cursor:pointer;padding:5px 10px;border:none;border-radius:3px;background:#16a085;color:#ecf0f1;transition:background .2s}
+.auth-btn:hover{background:#1abc9c}
+#login-container{color:#2c3e50}
+
+/* Гарантированно скрываем по hidden */
+.auth-buttons[hidden],
+#account-btn[hidden] {
+  display: none !important;
+}
+
+/* Секция “Возможности” на главной */
+#features {
+  max-width: 1000px;
+  margin: 80px auto;
+  padding: 0 20px;
+  text-align: center;
+}
+#features h2 {
+  font-size: 32px;
+  color: #ecf0f1;
+  margin-bottom: 40px;
+}
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 30px;
+}
+.feature-card {
+  background-color: rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 20px;
+  transition: background-color .3s, transform .3s;
+}
+.feature-card:hover {
+  background-color: rgba(255,255,255,0.2);
+  transform: translateY(-5px);
+}
+.feature-card img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  margin-bottom: 15px;
+}
+.feature-card h3 {
+  font-size: 20px;
+  margin: 10px 0;
+  color: #fff;
+}
+.feature-card p {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #ddd;
+}
+
+/* Адаптивный герой-блок */
+.hero {
+  background: url('/images/hero-bg.jpg') center/cover no-repeat;
+  padding: 120px 20px;
+  color: #fff;
+}
+.hero h1 {
+  font-size: 48px;
+  margin-bottom: 20px;
+}
+.hero p {
+  font-size: 18px;
+  margin-bottom: 30px;
+}
+.editor-link {
+  font-size: 18px;
+  padding: 12px 30px;
+  border-radius: 4px;
+}
+
+.site-footer {
+  margin-top: 80px;
+  padding: 20px;
+  text-align: center;
+  color: #aaa;
+  font-size: 14px;
+}
+
+/* === Снэп-скролл карусели === */
+#feature-carousel {
+  scroll-snap-type: y mandatory;
+  overflow-y: scroll;
+  height: calc(100vh - var(--header-height)); /* отнимаем высоту шапки */
+}
+
+.feature-panel {
+  position: relative;
+  scroll-snap-align: start;
+  height: calc(100vh - var(--header-height)); 
+  display: flex;
+  flex-direction: column;
+}
+
+/* Блок с гифкой на всю ширину */
+.feature-media {
+  position: relative;
+  flex: 1 0 auto;
+  background-size: cover;
+  background-position: center;
+}
+
+/* Градиент сверху, чтобы мягко переходило в фон */
+.gradient-top {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 150px;
+  background: linear-gradient(to bottom, var(--bg-color) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+/* Текст под гифкой */
+.feature-text {
+  flex: 0 0 auto;
+  padding: 40px 20px;
+  background: var(--bg-color);
+  color: #fff;
+  text-align: center;
+}
+.feature-text h2 {
+  font-size: 2rem;
+  margin-bottom: .5em;
+}
+.feature-text p {
+  max-width: 600px;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+
+/* Переменные для фона и высоты хедера */
+:root {
+  --bg-color: #16a085;
+  --header-height: 60px;
+}
+
+/* Убираем скроллбар в WebKit */
+#feature-carousel::-webkit-scrollbar {
+  width: 0;
+  background: transparent;
+}

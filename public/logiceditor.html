@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logic Editor</title>
+    <link rel="stylesheet" href="styles_logiceditor.css">
+</head>
+<body>
+    <!-- Header Bar -->
+    <header class="header-bar">
+        <div class="header-content">
+            <h1 class="header-title" href="https://1logic.org">1Logic Editor</h1>
+            <div class="header-controls">
+                <button class="header-btn" id="zoomInBtn">
+                    <span>+</span>
+                </button>
+                <button class="header-btn" id="zoomOutBtn">
+                    <span>−</span>
+                </button>
+                <button class="header-btn" id="resetViewBtn">
+                    <span>⟲</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Editor Container -->
+    <main class="editor-container">
+        <!-- Side Menu -->
+        <aside class="side-menu" id="sideMenu">
+            <button class="menu-toggle" id="menuToggle">
+                <span class="toggle-arrow">▶</span>
+            </button>
+            <div class="menu-content">
+                <h3 class="menu-title">Elements</h3>
+                <div class="menu-items">
+                    <div class="menu-item draggable-item" data-node-type="variable">
+                        <div class="item-preview">
+                            <div class="node-preview variable">Variable</div>
+                        </div>
+                        <span class="item-label">Variable Node</span>
+                    </div>
+                    <div class="menu-item draggable-item" data-node-type="container">
+                        <div class="item-preview">
+                            <div class="node-preview container">Container {}</div>
+                        </div>
+                        <span class="item-label">Container Node</span>
+                    </div>
+                    <div class="menu-item draggable-item" data-node-type="onlyone">
+                        <div class="item-preview">
+                            <div class="node-preview function">OnlyOne()</div>
+                        </div>
+                        <span class="item-label">OnlyOne Function</span>
+                    </div>
+                    <div class="menu-item draggable-item" data-node-type="equal">
+                        <div class="item-preview">
+                            <div class="node-preview function">Equal()</div>
+                        </div>
+                        <span class="item-label">Equal Function</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Grid Canvas -->
+        <div class="grid-viewport" id="gridViewport">
+            <div class="grid-canvas" id="gridCanvas">
+                <!-- Selection Box -->
+                <div class="selection-box" id="selectionBox"></div>
+                <!-- Nodes will be added here -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Scripts -->
+    <script src="logiceditor.js"></script>
+</body>
+</html>
