@@ -62,7 +62,7 @@ jobs:
           strip_components: 1
           rm: true
 
-      - name: Run remote deploy / rollback (versions + retention)
+      - name: Run remote deploy / rollback (fixed bootstrap + versions + retention)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -79,7 +79,7 @@ jobs:
             RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
             ROOT="/var/www/uartdebug"
-            PUB_DIR="${ROOT}/public"    # стабильные симлинки
+            PUB_DIR="${ROOT}/public"
             BE_DIR="${ROOT}/backend"
             RLS="${ROOT}/releases"
             PUB_RLS="${RLS}/public"
@@ -95,41 +95,42 @@ jobs:
             ROLLBACK="${{ inputs.rollback && '1' || '' }}"
             TO_RELEASE="${{ inputs.to_release || '' }}"
 
-            # ===== Prepare dirs & bootstrap =====
+            # ===== Prepare dirs =====
             sudo mkdir -p "${PUB_RLS}" "${BE_RLS}"
             sudo chown -R "$USER":"$USER" "${ROOT}" "${RLS}" "${PUB_RLS}" "${BE_RLS}"
 
+            # ===== Fixed bootstrap: если public/backend — каталоги, превращаем в симлинки на релизы =====
             ts_bootstrap="$(date +%Y%m%d-%H%M%S)-bootstrap"
-            if [ ! -L "${PUB_DIR}" ] && [ -d "${PUB_DIR}" ]; then
-              mkdir -p "${PUB_RLS}/${ts_bootstrap}"
-              rsync -a --delete "${PUB_DIR}/" "${PUB_RLS}/${ts_bootstrap}/"
-              ln -sfn "${PUB_RLS}/${ts_bootstrap}" "${PUB_DIR}"
-            fi
-            if [ ! -L "${BE_DIR}" ] && [ -d "${BE_DIR}" ]; then
-              mkdir -p "${BE_RLS}/${ts_bootstrap}"
-              rsync -a --delete "${BE_DIR}/" "${BE_RLS}/${ts_bootstrap}/"
-              ln -sfn "${BE_RLS}/${ts_bootstrap}" "${BE_DIR}"
-            fi
-            [ -e "${PUB_DIR}" ] || ln -sfn /dev/null "${PUB_DIR}" || true
-            [ -e "${BE_DIR}" ] || ln -sfn /dev/null "${BE_DIR}" || true
+            for X in public backend; do
+              DIR="${ROOT}/${X}"
+              RLS_DIR="${RLS}/${X}"
+              [ -d "$RLS_DIR" ] || mkdir -p "$RLS_DIR"
+              if [ ! -L "$DIR" ] && [ -d "$DIR" ]; then
+                mkdir -p "${RLS_DIR}/${ts_bootstrap}"
+                rsync -a --delete "${DIR}/" "${RLS_DIR}/${ts_bootstrap}/"
+                rm -rf "${DIR}"                          # важный момент: убираем каталог
+                ln -sfn "${RLS_DIR}/${ts_bootstrap}" "${DIR}"
+              fi
+            done
 
             # ===== Rollback or Deploy =====
             if [ -n "${ROLLBACK}" ]; then
               echo "== Rollback mode =="
               if [ -n "${TO_RELEASE}" ]; then
-                PUB_TARGET="${PUB_RLS}/${TO_RELEASE}"
-                BE_TARGET="${BE_RLS}/${TO_RELEASE}"
-                [ -d "${PUB_TARGET}" ] || { echo "No public release ${TO_RELEASE}"; exit 1; }
-                [ -d "${BE_TARGET}" ] || { echo "No backend release ${TO_RELEASE}"; exit 1; }
+                # откат к конкретному релизу (если есть)
+                [ -d "${PUB_RLS}/${TO_RELEASE}" ] && ln -sfn "${PUB_RLS}/${TO_RELEASE}" "${PUB_DIR}" || echo "No public release ${TO_RELEASE}"
+                [ -d "${BE_RLS}/${TO_RELEASE}" ]  && ln -sfn "${BE_RLS}/${TO_RELEASE}"  "${BE_DIR}"  || echo "No backend release ${TO_RELEASE}"
               else
-                last_pub="$(ls -1 ${PUB_RLS} | sort | tail -n 2 | head -n 1 || true)"
-                last_be="$(ls -1 ${BE_RLS} | sort | tail -n 2 | head -n 1 || true)"
-                [ -n "${last_pub}" ] && PUB_TARGET="${PUB_RLS}/${last_pub}" || PUB_TARGET=""
-                [ -n "${last_be}" ] && BE_TARGET="${BE_RLS}/${last_be}" || BE_TARGET=""
-                [ -n "${PUB_TARGET}" ] || [ -n "${BE_TARGET}" ] || { echo "No previous release found"; exit 1; }
+                # откат на предыдущий (не текущий)
+                if [ -d "${PUB_RLS}" ]; then
+                  last_pub="$(ls -1 "${PUB_RLS}" | sort | tail -n 2 | head -n 1 || true)"
+                  [ -n "${last_pub}" ] && ln -sfn "${PUB_RLS}/${last_pub}" "${PUB_DIR}" || echo "No previous public release"
+                fi
+                if [ -d "${BE_RLS}" ]; then
+                  last_be="$(ls -1 "${BE_RLS}" | sort | tail -n 2 | head -n 1 || true)"
+                  [ -n "${last_be}" ] && ln -sfn "${BE_RLS}/${last_be}" "${BE_DIR}" || echo "No previous backend release"
+                fi
               fi
-              [ -n "${PUB_TARGET:-}" ] && [ -d "${PUB_TARGET}" ] && ln -sfn "${PUB_TARGET}" "${PUB_DIR}"
-              [ -n "${BE_TARGET:-}" ] && [ -d "${BE_TARGET}" ] && ln -sfn "${BE_TARGET}" "${BE_DIR}"
 
             else
               echo "== Deploy new build =="
@@ -139,21 +140,24 @@ jobs:
               PUB_NEW="${PUB_RLS}/${NOW}"
               BE_NEW="${BE_RLS}/${NOW}"
 
-              # copy artifacts
+              # Копируем артефакты, пишем метаданные, переключаем симлинки
               if [ -d "$PUB_SRC" ]; then
                 rm -rf "$PUB_NEW"; mkdir -p "$PUB_NEW"
                 rsync -a --delete "$PUB_SRC"/ "$PUB_NEW"/
                 printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$PUB_NEW/RELEASE.txt"
+                ln -sfn "$PUB_NEW" "$PUB_DIR"
+              else
+                echo "No frontend artifacts at $PUB_SRC (skip)"
               fi
+
               if [ -d "$BE_SRC" ]; then
                 rm -rf "$BE_NEW"; mkdir -p "$BE_NEW"
                 rsync -a --delete "$BE_SRC"/ "$BE_NEW"/
                 printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$BE_NEW/RELEASE.txt"
+                ln -sfn "$BE_NEW" "$BE_DIR"
+              else
+                echo "No backend artifacts at $BE_SRC (skip)"
               fi
-
-              # atomically switch
-              [ -d "$PUB_NEW" ] && ln -sfn "$PUB_NEW" "$PUB_DIR"
-              [ -d "$BE_NEW" ] && ln -sfn "$BE_NEW" "$BE_DIR"
             fi
 
             # ===== Nginx reload (optional) =====
@@ -162,7 +166,7 @@ jobs:
             fi
 
             # ===== Backend deps & PM2 =====
-            if [ -d "${BE_DIR}" ] && [ -f "${BE_DIR}/package.json" ]; then
+            if [ -f "${BE_DIR}/package.json" ]; then
               cd "${BE_DIR}"
               npm ci --omit=dev || npm install --omit=dev
               if command -v pm2 >/dev/null 2>&1; then
@@ -185,12 +189,11 @@ jobs:
             if [ -z "${ROLLBACK}" ]; then
               for BASE in "${PUB_RLS}" "${BE_RLS}"; do
                 [ -d "$BASE" ] || continue
-                cd "$BASE"
-                count="$(ls -1 | sort | wc -l | tr -d ' ')"
+                count="$(ls -1 "$BASE" | sort | wc -l | tr -d ' ')"
                 if [ "$count" -gt "$KEEP" ]; then
                   del=$((count - KEEP))
                   echo "Pruning $del old releases in $BASE..."
-                  ls -1 | sort | head -n "$del" | xargs -r -I{} rm -rf "{}"
+                  ls -1 "$BASE" | sort | head -n "$del" | xargs -r -I{} rm -rf "$BASE/{}"
                 fi
               done
             fi
