@@ -24,6 +24,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug SSH connectivity (temporary)
+        run: |
+          set -euo pipefail
+          KEY_FILE="$(mktemp)"
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+              -i "$KEY_FILE" -p "${{ secrets.SSH_PORT || 22 }}" \
+              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" 'whoami && hostname'
+
       - name: Upload public/ if exists and not rollback
         if: ${{ (hashFiles('public/**') != '') && (!inputs.rollback) }}
         uses: appleboy/scp-action@v0.1.7
