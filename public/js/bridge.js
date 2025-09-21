@@ -30,10 +30,10 @@
   };
 
   let ws = null;
-  let chosenPort = null; // порт, выбранный в user-gesture
-  let port = null,
-    reader = null,
+  let flashPort = null; // наш порт для прошивки (после requestPort)
+  let reader = null,
     writer = null;
+  let weOpenedPort = false; // открывали ли мы порт (чтобы решать, закрывать ли его в конце)
 
   function connectBridge(sessionId) {
     return new Promise((resolve, reject) => {
@@ -80,26 +80,51 @@
 
           if (cmd === "open") {
             try {
-              // используем порт, выбранный ранее в user-gesture
-              port = chosenPort || (await navigator.serial.requestPort());
-              await port.open({
+              // 1) Если терминал держал порт — мы его уже закрыли в onHexChosen()
+              // 2) Если порт уже открыт (редкий случай) — не пытаемся открыть заново
+              if (flashPort && flashPort.readable) {
+                reader = flashPort.readable.getReader();
+                writer = flashPort.writable.getWriter();
+                weOpenedPort = false; // открыт не нами
+                return reply({ ok: true });
+              }
+
+              if (!flashPort) {
+                // на всякий случай: если не задан, спросим у пользователя
+                flashPort = await navigator.serial.requestPort();
+              }
+
+              await flashPort.open({
                 baudRate: args?.baud || 230400,
                 dataBits: 8,
                 stopBits: 1,
                 parity: "none",
                 bufferSize: 65536,
               });
-              reader = port.readable.getReader();
-              writer = port.writable.getWriter();
+              reader = flashPort.readable.getReader();
+              writer = flashPort.writable.getWriter();
+              weOpenedPort = true;
               return reply({ ok: true });
             } catch (e) {
-              return reply({ ok: false, error: String(e?.message || e) });
+              // Если порт уже открыт кем-то — считаем это успехом и просто берём writer/reader
+              const msg = String(e?.message || e);
+              if (/already open/i.test(msg)) {
+                try {
+                  reader = flashPort.readable.getReader();
+                  writer = flashPort.writable.getWriter();
+                  weOpenedPort = false;
+                  return reply({ ok: true });
+                } catch (e2) {
+                  return reply({ ok: false, error: String(e2?.message || e2) });
+                }
+              }
+              return reply({ ok: false, error: msg });
             }
           }
 
           if (cmd === "setSignals") {
-            if (!port) throw new Error("port not open");
-            await port.setSignals(args || {}); // { dataTerminalReady?, requestToSend?, break? }
+            if (!flashPort) throw new Error("port not open");
+            await flashPort.setSignals(args || {}); // { dataTerminalReady?, requestToSend?, break? }
             return reply({ ok: true });
           }
 
@@ -123,16 +148,19 @@
           }
 
           if (cmd === "close") {
+            // Закрываем только если открывали мы
             try {
               reader?.releaseLock();
             } catch {}
             try {
               writer?.releaseLock();
             } catch {}
-            try {
-              await port?.close();
-            } catch {}
-            port = reader = writer = null;
+            if (weOpenedPort) {
+              try {
+                await flashPort?.close();
+              } catch {}
+            }
+            reader = writer = null;
             return reply({ ok: true });
           }
         } catch (e) {
@@ -147,21 +175,40 @@
     if (!file) return;
 
     try {
-      // 1) ВАЖНО: захватываем Serial-порт СЕЙЧАС, пока есть user-gesture
-      chosenPort = await navigator.serial.requestPort();
-    } catch (e) {
-      log(`Serial access denied: ${e?.message || e}`, "error");
-      fileInput.value = "";
-      return;
-    }
+      // 0) Если терминал уже подключён — аккуратно его разомкнём
+      if (window.port) {
+        try {
+          if (typeof window.disconnectSerial === "function") {
+            await window.disconnectSerial();
+          } else {
+            // жёсткая остановка, если нет экспортированной функции
+            try {
+              window.reader?.cancel();
+              window.reader?.releaseLock();
+            } catch {}
+            try {
+              window.writer?.releaseLock();
+            } catch {}
+            try {
+              await window.port?.close();
+            } catch {}
+            window.port = null;
+          }
+          log("Terminal disconnected for flashing…");
+        } catch (e) {
+          log(`Failed to disconnect terminal: ${e?.message || e}`, "error");
+        }
+      }
 
-    try {
-      // 2) Создаём сессию и ЖДЁМ, пока WS реально откроется
+      // 1) Захватываем порт в user-gesture
+      flashPort = await navigator.serial.requestPort();
+
+      // 2) Создаём сессию и ждём WS
       const sRes = await fetch("/api/flash/create-session", { method: "POST" });
       const { sessionId } = await sRes.json();
       await connectBridge(sessionId);
 
-      // 3) Стартуем Python на бэкенде
+      // 3) Стартуем Python
       const fd = new FormData();
       fd.append("sessionId", sessionId);
       fd.append("device", mcuSelect?.value || "attiny1624");
@@ -175,12 +222,10 @@
     } catch (e) {
       log(`Start error: ${e?.message || e}`, "error");
     } finally {
-      // очищаем выбор файла, чтобы можно было повторно прошивать тот же файл
       fileInput.value = "";
     }
   }
 
-  // Привязываем UI
   if (flashBtn) {
     flashBtn.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", onHexChosen);
