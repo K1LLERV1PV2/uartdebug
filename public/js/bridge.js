@@ -30,10 +30,10 @@
   };
 
   let ws = null;
-  let flashPort = null; // наш порт для прошивки (после requestPort)
+  let flashPort = null; // выбранный пользователем порт
   let reader = null,
     writer = null;
-  let weOpenedPort = false; // открывали ли мы порт (чтобы решать, закрывать ли его в конце)
+  let weOpenedPort = false;
 
   function connectBridge(sessionId) {
     return new Promise((resolve, reject) => {
@@ -80,25 +80,24 @@
 
           if (cmd === "open") {
             try {
-              // 1) Если терминал держал порт — мы его уже закрыли в onHexChosen()
-              // 2) Если порт уже открыт (редкий случай) — не пытаемся открыть заново
-              if (flashPort && flashPort.readable) {
+              // если терминал держал порт — мы отключили его раньше
+              if (flashPort && flashPort.readable && flashPort.writable) {
                 reader = flashPort.readable.getReader();
                 writer = flashPort.writable.getWriter();
-                weOpenedPort = false; // открыт не нами
+                weOpenedPort = false;
                 return reply({ ok: true });
               }
 
               if (!flashPort) {
-                // на всякий случай: если не задан, спросим у пользователя
                 flashPort = await navigator.serial.requestPort();
               }
 
+              // ВАЖНО: UPDI предпочитает 8E2; браузер это поддерживает
               await flashPort.open({
                 baudRate: args?.baud || 230400,
                 dataBits: 8,
-                stopBits: 1,
-                parity: "none",
+                stopBits: 2,
+                parity: "even",
                 bufferSize: 65536,
               });
               reader = flashPort.readable.getReader();
@@ -106,7 +105,6 @@
               weOpenedPort = true;
               return reply({ ok: true });
             } catch (e) {
-              // Если порт уже открыт кем-то — считаем это успехом и просто берём writer/reader
               const msg = String(e?.message || e);
               if (/already open/i.test(msg)) {
                 try {
@@ -148,7 +146,6 @@
           }
 
           if (cmd === "close") {
-            // Закрываем только если открывали мы
             try {
               reader?.releaseLock();
             } catch {}
@@ -175,13 +172,12 @@
     if (!file) return;
 
     try {
-      // 0) Если терминал уже подключён — аккуратно его разомкнём
+      // если терминал подключён — аккуратно его разомкнём
       if (window.port) {
         try {
           if (typeof window.disconnectSerial === "function") {
             await window.disconnectSerial();
           } else {
-            // жёсткая остановка, если нет экспортированной функции
             try {
               window.reader?.cancel();
               window.reader?.releaseLock();
@@ -200,15 +196,15 @@
         }
       }
 
-      // 1) Захватываем порт в user-gesture
+      // захватываем порт в user-gesture (без открытия)
       flashPort = await navigator.serial.requestPort();
 
-      // 2) Создаём сессию и ждём WS
+      // сессия + WS
       const sRes = await fetch("/api/flash/create-session", { method: "POST" });
       const { sessionId } = await sRes.json();
       await connectBridge(sessionId);
 
-      // 3) Стартуем Python
+      // старт Python
       const fd = new FormData();
       fd.append("sessionId", sessionId);
       fd.append("device", mcuSelect?.value || "attiny1624");
