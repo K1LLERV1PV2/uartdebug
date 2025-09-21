@@ -11,45 +11,28 @@ from pymcuprog.deviceinfo import deviceinfo
 NVM_BY_FAMILY = {"P:0": NvmUpdiP0, "P:2": NvmUpdiP2, "P:3": NvmUpdiP3}
 
 class UpdiPhysicalBridge:
-    """Физический слой для UpdiDatalink поверх нашего удалённого Serial."""
     def __init__(self, ser: RemoteSerialSync):
         self.ser = ser
-
-    # Управляющие линии
-    def set_break(self, level: bool):
-        self.ser.set_break(bool(level))
-
-    def set_dtr(self, level: bool):
-        self.ser.set_dtr(bool(level))
-
-    def set_rts(self, level: bool):
-        self.ser.set_rts(bool(level))
-
-    # BREAK последовательности
-    def send_break(self, duration_s: float = 0.003):
+    def set_break(self, level: bool): self.ser.set_break(bool(level))
+    def set_dtr(self, level: bool):   self.ser.set_dtr(bool(level))
+    def set_rts(self, level: bool):   self.ser.set_rts(bool(level))
+    def send_break(self, duration_s: float = 0.006):
         self.set_break(True);  time.sleep(duration_s)
-        self.set_break(False); time.sleep(duration_s)
-
-    def send_double_break(self, duration_s: float = 0.003):
+        self.set_break(False); time.sleep(0.002)
+    def send_double_break(self, duration_s: float = 0.006):
         self.send_break(duration_s); self.send_break(duration_s)
-
-    # Обмен байтами
     def send(self, data):
-        if isinstance(data, list):
-            data = bytes(data)
-        elif isinstance(data, bytearray):
-            data = bytes(data)
-        elif not isinstance(data, (bytes, bytearray)):
-            data = bytes([int(data) & 0xFF])
+        if isinstance(data, list): data = bytes(data)
+        elif isinstance(data, bytearray): data = bytes(data)
+        elif not isinstance(data, (bytes, bytearray)): data = bytes([int(data) & 0xFF])
         self.ser.write(data)
-
     def receive(self, n: int):
         return list(self.ser.read(int(n)))
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--session', required=True)
-    p.add_argument('--device',  required=True)  # напр. attiny1624
+    p.add_argument('--device',  required=True)
     p.add_argument('--hex',     required=True)
     p.add_argument('--baud',    type=int, default=230400)
     p.add_argument('--erase',   action='store_true')
@@ -58,31 +41,36 @@ def main():
     args = p.parse_args()
 
     ws_url = f"{args.ws.rstrip('/')}/ws/flash/{args.session}?role=python"
-    # Увеличим таймаут до 1.5 c — UPDI на веб-мосте может отвечать не мгновенно
-    serial = RemoteSerialSync(ws_url, baudrate=args.baud, timeout=1.5)
+    # Чуть длиннее таймаут: веб-мост иногда вносит задержки
+    serial = RemoteSerialSync(ws_url, baudrate=args.baud, timeout=2.0)
 
     def log_line(text: str):
         try:
             serial.ws.send('{"cmd":"log","args":{"text":' + __import__('json').dumps(text) + '}}')
-        except:
-            pass
+        except: pass
 
     log_line(f"pymcuprog driver starting for {args.device} @ {args.baud}")
     serial.open()
 
-    # Небольшой «ритуал входа» в режим программирования
+    # --- Усиленный вход в режим программирования ---
     phys = UpdiPhysicalBridge(serial)
     try:
-        phys.set_dtr(False); phys.set_rts(False)
-        time.sleep(0.002)
-        phys.send_double_break(0.004)   # двойной BREAK
-        time.sleep(0.006)               # короткая пауза
+        # некоторые переходники через обвязку вешают UPDI на DTR/RTS — дёрнем
+        phys.set_dtr(True);  phys.set_rts(False); time.sleep(0.010)
+        phys.set_dtr(False); phys.set_rts(False); time.sleep(0.003)
+        # длинный double-break
+        phys.send_double_break(0.008)           # 8 мс * 2
+        time.sleep(0.006)
+        # парочка sync байтов
+        phys.send([0x55]); time.sleep(0.003)
+        phys.send([0x55]); time.sleep(0.003)
     except Exception as e:
         log_line(f"Warn: pre-init sequence failed: {e}")
 
+    # --- UPDI link ---
     link = UpdiDatalink()
     link.set_physical(phys)
-    link.init_datalink()                # здесь должна успешно пройти инициализация
+    link.init_datalink()
 
     rw = UpdiReadWrite(link)
 
