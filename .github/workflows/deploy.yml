@@ -62,6 +62,20 @@ jobs:
           strip_components: 1
           rm: true
 
+      - name: Upload python/ if exists and not rollback
+        if: ${{ (hashFiles('python/**') != '') && (!inputs.rollback) }}
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          source: "python"
+          target: "/tmp/deploy/${{ github.sha }}/python"
+          strip_components: 1
+          rm: true
+
       - name: Run remote deploy / rollback (fixed bootstrap + versions + retention)
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -84,6 +98,8 @@ jobs:
             RLS="${ROOT}/releases"
             PUB_RLS="${RLS}/public"
             BE_RLS="${RLS}/backend"
+            PY_DIR="${ROOT}/python"
+            PY_RLS="${RLS}/python"
 
             PM2_NAME="${{ secrets.PM2_NAME }}"
             [ -z "${PM2_NAME:-}" ] && PM2_NAME="uartdebug-backend"
@@ -96,12 +112,12 @@ jobs:
             TO_RELEASE="${{ inputs.to_release || '' }}"
 
             # ===== Prepare dirs =====
-            sudo mkdir -p "${PUB_RLS}" "${BE_RLS}"
-            sudo chown -R "$USER":"$USER" "${ROOT}" "${RLS}" "${PUB_RLS}" "${BE_RLS}"
+            sudo mkdir -p "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
+            sudo chown -R "$USER":"$USER" "${ROOT}" "${RLS}" "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
 
             # ===== Fixed bootstrap: если public/backend — каталоги, превращаем в симлинки на релизы =====
             ts_bootstrap="$(date +%Y%m%d-%H%M%S)-bootstrap"
-            for X in public backend; do
+            for X in public backend python; do
               DIR="${ROOT}/${X}"
               RLS_DIR="${RLS}/${X}"
               [ -d "$RLS_DIR" ] || mkdir -p "$RLS_DIR"
@@ -120,6 +136,7 @@ jobs:
                 # откат к конкретному релизу (если есть)
                 [ -d "${PUB_RLS}/${TO_RELEASE}" ] && ln -sfn "${PUB_RLS}/${TO_RELEASE}" "${PUB_DIR}" || echo "No public release ${TO_RELEASE}"
                 [ -d "${BE_RLS}/${TO_RELEASE}" ]  && ln -sfn "${BE_RLS}/${TO_RELEASE}"  "${BE_DIR}"  || echo "No backend release ${TO_RELEASE}"
+                [ -d "${PY_RLS}/${TO_RELEASE}" ]  && ln -sfn "${PY_RLS}/${TO_RELEASE}"  "${PY_DIR}"  || echo "No python release ${TO_RELEASE}"
               else
                 # откат на предыдущий (не текущий)
                 if [ -d "${PUB_RLS}" ]; then
@@ -130,15 +147,22 @@ jobs:
                   last_be="$(ls -1 "${BE_RLS}" | sort | tail -n 2 | head -n 1 || true)"
                   [ -n "${last_be}" ] && ln -sfn "${BE_RLS}/${last_be}" "${BE_DIR}" || echo "No previous backend release"
                 fi
+
+                if [ -d "${PY_RLS}" ]; then
+                  last_py="$(ls -1 "${PY_RLS}" | sort | tail -n 2 | head -n 1 || true)"
+                  [ -n "${last_py}" ] && ln -sfn "${PY_RLS}/${last_py}" "${PY_DIR}" || echo "No previous python release"
+                fi
               fi
 
             else
               echo "== Deploy new build =="
               PUB_SRC="/tmp/deploy/${SHA}/public"
               BE_SRC="/tmp/deploy/${SHA}/backend"
+              PY_SRC="/tmp/deploy/${SHA}/python"
               NOW="$(date +%Y%m%d-%H%M%S)-${SHA:0:7}"
               PUB_NEW="${PUB_RLS}/${NOW}"
               BE_NEW="${BE_RLS}/${NOW}"
+              PY_NEW="${PY_RLS}/${NOW}"
 
               # Копируем артефакты, пишем метаданные, переключаем симлинки
               if [ -d "$PUB_SRC" ]; then
@@ -157,6 +181,14 @@ jobs:
                 ln -sfn "$BE_NEW" "$BE_DIR"
               else
                 echo "No backend artifacts at $BE_SRC (skip)"
+              fi
+              if [ -d "$PY_SRC" ]; then
+                rm -rf "$PY_NEW"; mkdir -p "$PY_NEW"
+                rsync -a --delete "$PY_SRC"/ "$PY_NEW"/
+                printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$PY_NEW/RELEASE.txt"
+                ln -sfn "$PY_NEW" "$PY_DIR"
+              else
+                echo "No python artifacts at $PY_SRC (skip)"
               fi
             fi
 
@@ -187,7 +219,7 @@ jobs:
 
             # ===== Retention (keep last N) — skip on rollback =====
             if [ -z "${ROLLBACK}" ]; then
-              for BASE in "${PUB_RLS}" "${BE_RLS}"; do
+              for BASE in "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"; do
                 [ -d "$BASE" ] || continue
                 count="$(ls -1 "$BASE" | sort | wc -l | tr -d ' ')"
                 if [ "$count" -gt "$KEEP" ]; then
