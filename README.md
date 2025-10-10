@@ -1,4 +1,4 @@
-# 1Logic — UART Terminal (Web)
+# Uartdebug — UART Terminal (Web)
 
 A fast, modern UART terminal that runs **entirely in your browser** using the Web Serial API — no drivers or extra software to install.
 It features text and hex transmission, auto‑scrolling logs, log export, **oscilloscope‑style live plotting** (1‑byte / 2‑byte BE/LE, signed/unsigned), and a clean dark UI.
@@ -48,9 +48,9 @@ It features text and hex transmission, auto‑scrolling logs, log export, **osci
 
 ## Quick Start
 
-Just open **https://1logic.org** in a supported browser and launch **UART Terminal** from the home page.
+Just open **https://uartdebug.com** in a supported browser and launch **UART Terminal** from the home page.
 
-> The app runs entirely in your browser via the Web Serial API. 1Logic is served over **HTTPS**, so Web Serial permissions will work out of the box on Chromium‑based browsers (Chrome, Edge, Opera).
+> The app runs entirely in your browser via the Web Serial API. Uartdebug is served over **HTTPS**, so Web Serial permissions will work out of the box on Chromium‑based browsers (Chrome, Edge, Opera).
 
 ### Landing
 
