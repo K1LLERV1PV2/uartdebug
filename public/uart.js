@@ -2070,3 +2070,136 @@ async function flashMCU_fromBrowser(
       })`
     );
 }
+
+// ===== Device-specific constants (tiny/mega 0/1/2 series) =====
+const FLASH_START = 0x8000; // дата: Flash виден для LD/ST с 0x8000
+const NVM_BASE = 0x1000; // база NVMCTRL
+const NVM_CTRLA = NVM_BASE + 0x00;
+const NVM_STATUS = NVM_BASE + 0x02; // bit0=FBUSY, bit1=EEBUSY
+const NVM_DATA = NVM_BASE + 0x06; // 16-bit рег (для fuse через UPDI)
+const NVM_ADDR = NVM_BASE + 0x08; // 16-bit адрес страницы
+const CPU_BASE = 0x0030;
+const CPU_CCP = CPU_BASE + 0x04;
+
+// Команды NVMCTRL.CTRLA (датащит)
+const NVM_CMD = {
+  WP: 0x1, // write page buffer -> memory
+  ER: 0x2, // erase page
+  ERWP: 0x3, // erase+write page
+  PBC: 0x4, // page buffer clear
+};
+
+// Ключ для CPU.CCP чтобы разрешить запись CTRLA (SPM key)
+const CCP_SPM = 0x9d; // для AVR 0/1/2 серий
+
+// ===== Общие утилиты NVM =====
+
+async function nvmWaitIdle() {
+  // Ждём окончания любых NVM-операций (FBUSY/EEBUSY=0)
+  for (;;) {
+    const s = await updiLDS8(NVM_STATUS);
+    if ((s & 0x03) === 0) break;
+  }
+}
+
+async function nvmExec(cmd) {
+  // Разрешаем самопрограммирование и записываем команду в CTRLA
+  await updiSTS8(CPU_CCP, CCP_SPM);
+  await updiSTS8(NVM_CTRLA, cmd);
+  await nvmWaitIdle();
+}
+
+// ====== WRITE ======
+// Запись произвольного буфера в Flash c автоматическим разбиением на страницы.
+// startAddr — адрес в Flash в БАЙТАХ (обычно 0), dataU8 — Uint8Array с данными.
+// pageSizeBytes — размер страницы Flash (байт), напр. 64 для ATtiny1616.
+async function updiWriteFlash(startAddr, dataU8, pageSizeBytes = 64) {
+  // Flash пишется 16-битными словами — довыровняем хвост до 0xFF.
+  let bytes = dataU8;
+  if (bytes.length & 1) {
+    const t = new Uint8Array(bytes.length + 1);
+    t.set(bytes);
+    t[t.length - 1] = 0xff;
+    bytes = t;
+  }
+
+  // Идём по страницам
+  let cur = startAddr >>> 0;
+  for (let off = 0; off < bytes.length; off += pageSizeBytes) {
+    const page = bytes.subarray(
+      off,
+      Math.min(off + pageSizeBytes, bytes.length)
+    );
+
+    // 1) Загрузка страничного буфера: пишем СРАЗУ в карту памяти Flash.
+    //    Адресация — прямая (LD/ST). UPDI pointer + post-inc 16-bit.
+    await nvmWaitIdle();
+
+    // Установим UPDI pointer на начало этой страницы (в data space, от 0x8000)
+    const pageDataAddr = (FLASH_START + cur) & 0xffff;
+    await updiSTptr(pageDataAddr);
+
+    // Записываем словами (16-bit). Для больших страниц — кусками <= 64 слов.
+    const words = page.length >>> 1;
+    let i = 0;
+    while (i < words) {
+      const chunkWords = Math.min(64, words - i); // безопасный размер блока
+      if (chunkWords > 1) await updiREPEAT(chunkWords - 1);
+      // Сформируем поток 2*chunkWords байт (LE: LSB, MSB)
+      const tx = new Uint8Array(chunkWords * 2);
+      for (let j = 0; j < chunkWords; j++) {
+        tx[2 * j + 0] = page[2 * (i + j) + 0];
+        tx[2 * j + 1] = page[2 * (i + j) + 1];
+      }
+      await updiSTptrInc16(tx);
+      i += chunkWords;
+    }
+
+    // 2) Сообщим NVM адресу страницы (на всякий случай) и запустим Erase+Write
+    await updiSTS16(NVM_ADDR, pageDataAddr);
+    await nvmExec(NVM_CMD.ERWP); // страница стирается и пишется
+
+    cur += pageSizeBytes;
+  }
+}
+
+// ====== VERIFY ======
+// Читаем обратно и сравниваем. Бросаем исключение при первом несовпадении.
+async function updiVerifyFlash(startAddr, dataU8) {
+  // Выравниваем как при записи
+  let bytes = dataU8;
+  if (bytes.length & 1) {
+    const t = new Uint8Array(bytes.length + 1);
+    t.set(bytes);
+    t[t.length - 1] = 0xff;
+    bytes = t;
+  }
+
+  let addr = (FLASH_START + startAddr) & 0xffff;
+  await updiSTptr(addr);
+
+  const totalWords = bytes.length >>> 1;
+  let done = 0;
+
+  while (done < totalWords) {
+    const chunkWords = Math.min(64, totalWords - done);
+    if (chunkWords > 1) await updiREPEAT(chunkWords - 1);
+
+    const rx = await updiLDptrInc16(chunkWords); // Uint8Array длиной 2*chunkWords
+
+    // Сравниваем побайтно
+    for (let i = 0; i < rx.length; i++) {
+      const exp = bytes[2 * done + i];
+      if (rx[i] !== exp) {
+        const abs = startAddr + 2 * done + i;
+        throw new Error(
+          `VERIFY FAIL @ 0x${abs.toString(16).padStart(4, "0")}: ` +
+            `exp=0x${exp.toString(16).padStart(2, "0")} got=0x${rx[i]
+              .toString(16)
+              .padStart(2, "0")}`
+        );
+      }
+    }
+    done += chunkWords;
+  }
+}
