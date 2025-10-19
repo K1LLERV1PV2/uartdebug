@@ -539,56 +539,84 @@ async function sendHexBytes(uint8) {
 }
 
 async function onFlashClick() {
-  // ---------- helpers ----------
-  const getEl = (id) => document.getElementById(id);
+  // ---------- утилиты ----------
+  const $ = (id) => document.getElementById(id);
   const log = (msg, kind = "info") => {
     try {
-      const sink = window.terminalReceived || window.terminalSent;
-      addToTerminal(kind, String(msg), sink);
+      addToTerminal(
+        kind,
+        String(msg),
+        window.terminalReceived || window.terminalSent
+      );
     } catch {
-      console[kind === "error" ? "error" : "log"](msg);
+      (kind === "error" ? console.error : console.log)(msg);
     }
   };
   const setBusy = (busy) => {
     ["flashBtn", "connectBtn", "sendBtn", "sendLoopBtn", "terminalInput"]
-      .map(getEl)
+      .map($)
       .filter(Boolean)
       .forEach((el) => (el.disabled = !!busy));
   };
-  const pickHexViaInput = (inputId) =>
-    new Promise((resolve, reject) => {
-      const input = getEl(inputId);
-      if (!input) return reject(new Error(`Не найден <input id="${inputId}">`));
-      const onChange = async (e) => {
-        input.removeEventListener("change", onChange);
-        const f = e.target.files && e.target.files[0];
-        input.value = "";
-        if (!f) return reject(new Error("Файл не выбран"));
-        resolve(await f.text());
-      };
-      input.addEventListener("change", onChange, { once: true });
-      input.click();
-    });
 
-  // ---------- preflight ----------
   try {
     setBusy(true);
 
     if (!("serial" in navigator)) {
       throw new Error(
-        "Браузер не поддерживает Web Serial. Используй Chrome/Edge на HTTPS (или localhost)."
+        "Ваш браузер не поддерживает Web Serial. Нужен Chrome/Edge (HTTPS или localhost)."
       );
     }
     if (!window.WebSerialUPDI) {
-      throw new Error(
-        "Класс WebSerialUPDI не найден. Подключи updi.js ДО uart.js."
-      );
-    }
-    if (location.protocol !== "https:" && location.hostname !== "localhost") {
-      log("Внимание: Web Serial требует HTTPS (кроме localhost).", "warn");
+      throw new Error("Не найден WebSerialUPDI (подключи updi.js ДО uart.js).");
     }
 
-    // Если открыт обычный UART терминала — освободим порт
+    // ===== 1) СРАЗУ запрашиваем порт (без await-ов до этого!) =====
+    // Это сохраняет «жест пользователя» для диалога выбора порта.
+    const userPort = await navigator.serial.requestPort();
+
+    // ===== 2) Получаем HEX =====
+    // если уже загружен через #hexFileInput — используем его
+    let hexText = null;
+    const preloaded = $("hexFileInput")?.files?.[0];
+    if (preloaded) {
+      hexText = await preloaded.text();
+    } else {
+      // попытаемся открыть скрытый <input id="flashHexInput">
+      const picker = $("flashHexInput");
+      if (picker) {
+        // клик может быть заблокирован вне жеста; попробуем — если не вышло, попросим выбрать вручную
+        let picked = await new Promise((resolve) => {
+          const handler = async (e) => {
+            picker.removeEventListener("change", handler);
+            const f = e.target.files && e.target.files[0];
+            picker.value = "";
+            resolve(f ? await f.text() : null);
+          };
+          picker.addEventListener("change", handler, { once: true });
+          try {
+            picker.click();
+          } catch {
+            /* ignore */
+          }
+          // запасной таймер: если ничего не выбрали за 1500 мс — вернём null
+          setTimeout(() => resolve(null), 1500);
+        });
+        hexText = picked;
+      }
+
+      if (!hexText) {
+        // Нет файла — короткая подсказка и выход
+        log(
+          "Выберите HEX через кнопку «Load HEX», затем нажмите «Flash MCU» ещё раз.",
+          "warn"
+        );
+        return;
+      }
+    }
+
+    // ===== 3) Теперь можно делать любые await-операции =====
+    // Освободим обычный UART терминала, если он был подключен
     if (window.port) {
       log("Отключаю текущий UART-сеанс…");
       try {
@@ -600,33 +628,18 @@ async function onFlashClick() {
       log("Disconnected");
     }
 
-    // ---------- получаем HEX ----------
-    let hexText = null;
-    const loaded = getEl("hexFileInput")?.files?.[0];
-    if (loaded) {
-      hexText = await loaded.text();
-    } else {
-      hexText = await pickHexViaInput("flashHexInput");
-    }
-    if (!hexText || !hexText.trim()) throw new Error("Пустой HEX.");
-
-    // ---------- выбор порта ----------
-    log("Выбор порта…");
-    const userPort = await navigator.serial.requestPort(); // можно добавить filters
-    const speeds = [230400, 115200, 57600]; // fallback последовательность
-
-    // ---------- прошивка с фоллбэками по скорости ----------
+    // ===== 4) Прошивка с фоллбэками по скорости =====
+    const speeds = [230400, 115200, 57600];
     let flashed = false;
-    for (let i = 0; i < speeds.length && !flashed; i++) {
-      const baud = speeds[i];
+
+    for (const baud of speeds) {
       try {
-        log(`Подключение UPDI @ ${baud} бод…`);
+        log(`UPDI: открываю порт @ ${baud} бод…`);
         const updi = new window.WebSerialUPDI(userPort, {
           baud,
           pageSize: 64,
           rowSize: 256,
         });
-
         await updi.open();
         try {
           log("HEX: парсинг и подготовка…");
@@ -639,15 +652,15 @@ async function onFlashClick() {
         } finally {
           await updi.close();
         }
+        if (flashed) break;
       } catch (e) {
         log(`Не удалось на ${baud} бод: ${e?.message || e}`, "warn");
-        // попробуем следующую скорость
       }
     }
 
     if (!flashed) {
       throw new Error(
-        "Не удалось установить сеанс UPDI на доступных скоростях."
+        "Не удалось установить сеанс UPDI на доступных скоростях (230400/115200/57600)."
       );
     }
   } catch (err) {
