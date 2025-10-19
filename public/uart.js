@@ -1,3 +1,5 @@
+import { WebSerialUPDI } from "./updi.js";
+
 // Global variables
 let port = null;
 let reader = null;
@@ -142,6 +144,8 @@ function initializeEventListeners() {
   const hexFileInput = document.getElementById("hexFileInput");
   hexUploadBtn?.addEventListener("click", () => hexFileInput?.click());
   hexFileInput?.addEventListener("change", handleHexFileSelected);
+
+  document.getElementById("flashBtn")?.addEventListener("click", onFlashClick);
 }
 
 /**
@@ -1564,4 +1568,138 @@ function resetChartView() {
 
     oscilloscopeChart.update();
   }
+}
+
+async function flashHexTextWithUpdiJS(hexText, onProgress) {
+  onProgress ??= (msg) => console.log(msg);
+  try {
+    if (!("serial" in navigator)) {
+      throw new Error(
+        "Ваш браузер не поддерживает Web Serial. Откройте сайт в Chrome/Edge на Windows/macOS/Linux."
+      );
+    }
+    onProgress("Выбор порта…");
+    const port = await navigator.serial.requestPort({ filters: [] }); // при желании добавьте vendor/productId
+    const updi = new WebSerialUPDI(port, {
+      baud: 230400,
+      pageSize: 64,
+      rowSize: 256,
+    });
+    await updi.open();
+    try {
+      await updi.flashIntelHex(hexText, {
+        erase: true,
+        progress: (m) => onProgress(m),
+      });
+    } finally {
+      await updi.close();
+    }
+    onProgress("✅ Прошивка завершена");
+    return true;
+  } catch (e) {
+    onProgress("❌ " + (e?.message || e));
+    return false;
+  }
+}
+
+async function onFlashClick() {
+  // --- утилиты UI ---
+  const els = {
+    flashBtn: document.getElementById("flashBtn"),
+    connectBtn,
+    sendBtn,
+    sendLoopBtn,
+    terminalInput,
+  };
+  const setBusy = (b) => {
+    Object.values(els).forEach((el) => el && (el.disabled = !!b));
+  };
+  const log = (msg, kind = "info") => addToTerminal(kind, msg, terminalSent);
+
+  // --- основной запуск с текстом HEX ---
+  const runWithHexText = async (hexText) => {
+    try {
+      setBusy(true);
+      log("JS-UPDI: подготовка…");
+
+      // если открыт обычный UART в терминале — закроем, чтобы освободить порт
+      if (port) {
+        log("Отключаю текущий UART-сеанс…");
+        try {
+          await disconnectSerial();
+        } catch {}
+
+        // обновим статус в UI, если у тебя есть такая функция
+        if (typeof updateConnectionStatus === "function") {
+          updateConnectionStatus(false, "");
+        }
+      }
+
+      if (!("serial" in navigator)) {
+        throw new Error(
+          "Ваш браузер не поддерживает Web Serial (нужен Chrome/Edge)."
+        );
+      }
+      if (!window.WebSerialUPDI) {
+        throw new Error(
+          "Класс WebSerialUPDI не найден. Подключите updi.js до uart.js."
+        );
+      }
+
+      log("Выбор порта…");
+      const userPort = await navigator.serial.requestPort(); // можно добавить filters
+
+      const updi = new window.WebSerialUPDI(userPort, {
+        baud: 230400, // fallback на 57600, если адаптер капризничает
+        pageSize: 64, // дефолт для tinyAVR 1-series
+        rowSize: 256,
+      });
+
+      await updi.open();
+      try {
+        await updi.flashIntelHex(hexText, {
+          erase: true,
+          progress: (m) => log(m, "info"),
+        });
+        log("✅ Прошивка завершена");
+      } finally {
+        await updi.close();
+      }
+    } catch (e) {
+      log("❌ Ошибка прошивки: " + (e?.message || e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // --- 1) если HEX уже загружен через Load HEX (#hexFileInput) ---
+  const fileFromLoad = document.getElementById("hexFileInput")?.files?.[0];
+  if (fileFromLoad) {
+    const hexText = await fileFromLoad.text();
+    return runWithHexText(hexText);
+  }
+
+  // --- 2) иначе попросим выбрать файл через скрытый #flashHexInput ---
+  const picker = document.getElementById("flashHexInput");
+  if (!picker) {
+    log("Не найден input #flashHexInput. Проверь разметку.", "error");
+    return;
+  }
+
+  // одноразовый обработчик выбора файла
+  const once = async (e) => {
+    picker.removeEventListener("change", once);
+    const f = e.target.files && e.target.files[0];
+    picker.value = "";
+    if (!f) {
+      log("Файл не выбран.", "warn");
+      return;
+    }
+    const hexText = await f.text();
+    await runWithHexText(hexText);
+  };
+
+  picker.value = "";
+  picker.addEventListener("change", once, { once: true });
+  picker.click();
 }
