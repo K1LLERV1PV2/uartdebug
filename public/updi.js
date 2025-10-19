@@ -194,55 +194,96 @@
       return a instanceof Uint8Array ? a : Uint8Array.from(a);
     }
     async instr_sync(op, payload = []) {
-      const f = this.make([WebSerialUPDI.SYNCH, op, ...payload]);
-      await this.write(f);
-      if (this.echo) await this.drainEcho(f.length);
+      // Оставляем для совместимости (без ожидания ответа)
+      const frame = [WebSerialUPDI.SYNCH, op, ...payload];
+      await this.xfer(frame, 0);
     }
-    async ldcs(cs) {
-      await this.instr_sync(WebSerialUPDI.OPC.LDCS | (cs & 0x0f));
-      const b = await this.readExact(1);
-      return b[0];
+
+    async ldcs(csAddr) {
+      const resp = await this.xfer(
+        [WebSerialUPDI.SYNCH, WebSerialUPDI.OPC.LDCS | (csAddr & 0x0f)],
+        1,
+        200
+      );
+      return resp[0];
     }
-    async stcs(cs, v) {
-      await this.instr_sync(WebSerialUPDI.OPC.STCS | (cs & 0x0f), [v & 0xff]);
+    async stcs(csAddr, value) {
+      await this.xfer(
+        [
+          WebSerialUPDI.SYNCH,
+          WebSerialUPDI.OPC.STCS | (csAddr & 0x0f),
+          value & 0xff,
+        ],
+        0
+      );
     }
-    async repeat(nm1) {
-      await this.instr_sync(WebSerialUPDI.OPC.REPEAT | 0x00, [nm1 & 0xff]);
+
+    async repeat(countMinus1) {
+      await this.xfer(
+        [
+          WebSerialUPDI.SYNCH,
+          WebSerialUPDI.OPC.REPEAT | 0x00,
+          countMinus1 & 0xff,
+        ],
+        0
+      );
     }
     async ld8_addr16(addr) {
-      await this.instr_sync(WebSerialUPDI.OPC.LD | 0x04, [
-        addr & 0xff,
-        (addr >> 8) & 0xff,
-      ]);
-      const b = await this.readExact(1);
-      return b[0];
+      const resp = await this.xfer(
+        [
+          WebSerialUPDI.SYNCH,
+          WebSerialUPDI.OPC.LD | 0x04,
+          addr & 0xff,
+          (addr >> 8) & 0xff,
+        ],
+        1,
+        300
+      );
+      return resp[0];
     }
-    async st8_addr16(addr, v) {
-      await this.instr_sync(WebSerialUPDI.OPC.ST | 0x04, [
-        addr & 0xff,
-        (addr >> 8) & 0xff,
-        v & 0xff,
-      ]);
+
+    async st8_addr16(addr, value) {
+      await this.xfer(
+        [
+          WebSerialUPDI.SYNCH,
+          WebSerialUPDI.OPC.ST | 0x04,
+          addr & 0xff,
+          (addr >> 8) & 0xff,
+          value & 0xff,
+        ],
+        0
+      );
     }
-    async st16_addr16(addr, v16) {
-      await this.instr_sync(WebSerialUPDI.OPC.ST | 0x05, [
-        addr & 0xff,
-        (addr >> 8) & 0xff,
-        v16 & 0xff,
-        (v16 >> 8) & 0xff,
-      ]);
+    async st16_addr16(addr, value16) {
+      await this.xfer(
+        [
+          WebSerialUPDI.SYNCH,
+          WebSerialUPDI.OPC.ST | 0x05,
+          addr & 0xff,
+          (addr >> 8) & 0xff,
+          value16 & 0xff,
+          (value16 >> 8) & 0xff,
+        ],
+        0
+      );
     }
-    async key_send(key) {
-      await this.instr_sync(WebSerialUPDI.OPC.KEY | 0x00, [0x00]);
-      await this.write(key);
-      if (this.echo) await this.drainEcho(key.length);
+
+    async key_send(keyBytes) {
+      // KEY-пролог + 8 байт ключа одной транзакцией
+      const pre = [WebSerialUPDI.SYNCH, WebSerialUPDI.OPC.KEY | 0x00, 0x00];
+      const frame = new Uint8Array(pre.length + keyBytes.length);
+      frame.set(pre, 0);
+      frame.set(keyBytes, pre.length);
+      await this.xfer(frame, 0, 100);
     }
 
     async initSession({ progress } = {}) {
       progress?.("UPDI: double-break…");
       await this.doubleBreak();
+
       progress?.("UPDI: sync…");
-      await this.instr_sync(WebSerialUPDI.SYNCH);
+      await this.sendSync();
+
       const stat = await this.ldcs(WebSerialUPDI.CS.ASI_STATUS);
       return stat;
     }
@@ -315,6 +356,29 @@
         }
       }
       progress?.("Готово");
+    }
+
+    async xfer(frameBytes, respLen = 0, timeoutMs = 200) {
+      // frameBytes: Uint8Array | number[]
+      const frame =
+        frameBytes instanceof Uint8Array
+          ? frameBytes
+          : Uint8Array.from(frameBytes);
+
+      // Пишем весь кадр
+      await this.write(frame);
+
+      // Сколько ждать байт на вход: echo (если включен) + ожидаемый ответ
+      const need = (this.echo ? frame.length : 0) + respLen;
+      if (need === 0) return new Uint8Array(0);
+      const buf = await this.readExact(need, timeoutMs);
+
+      // Отбрасываем эхо, возвращаем только ответ
+      return this.echo ? buf.slice(frame.length) : buf;
+    }
+
+    async sendSync() {
+      await this.xfer([WebSerialUPDI.SYNCH], 0, 50);
     }
   }
 
