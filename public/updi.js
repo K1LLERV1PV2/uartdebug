@@ -1,6 +1,7 @@
 /* updi.js — Web Serial UPDI (глобальная версия без ES-модулей)
    Экспортирует в window: window.WebSerialUPDI и window.IntelHex
 */
+
 (function (global) {
   class IntelHex {
     static parse(hexText) {
