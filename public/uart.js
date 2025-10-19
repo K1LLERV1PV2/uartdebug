@@ -1,5 +1,3 @@
-import { WebSerialUPDI } from "./updi.js";
-
 // Global variables
 let port = null;
 let reader = null;
