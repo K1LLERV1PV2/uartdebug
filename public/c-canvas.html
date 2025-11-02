@@ -250,23 +250,43 @@
       .cm-s-material-darker .CodeMirror-activeline-gutter {
         background: transparent !important;
       }
+
+      /* New pseudo-file row for creating files */
+      .file-item.new-item {
+        justify-content: center;
+        gap: 6px;
+        font-weight: 700;
+        color: var(--primary-color);
+        border: 1px dashed var(--border-color);
+      }
+      .file-item.new-item:hover {
+        background: rgba(26, 188, 156, 0.1);
+        border-color: var(--primary-color);
+      }
+      .file-item.new-item .file-name {
+        flex: 0 0 auto;
+      }
+      .file-actions button.download {
+        border-color: var(--primary-color);
+      }
+      .file-actions button.download:hover {
+        color: #fff;
+        border-color: var(--primary-hover);
+        background: var(--primary-color);
+      }
+
+      /* GAP for file list items */
+      .outliner-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
     </style>
   </head>
 
   <body>
     <main>
       <div class="feature-panel">
-        <section class="canvas-section">
-          <h2 class="status-indicator connected">Uart Debug Code</h2>
-
-          <div class="toolbar">
-            <button class="btn" id="newBtn">New file</button>
-            <button class="btn secondary" id="downloadBtn" disabled>
-              Download .c
-            </button>
-          </div>
-        </section>
-
         <section class="canvas-section">
           <div class="canvas-split-container">
             <!-- Left: outliner -->

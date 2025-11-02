@@ -47,6 +47,7 @@ int main(void) {
   function persistState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(files));
     if (current) localStorage.setItem(STORAGE_CURRENT, current);
+    else try { localStorage.removeItem(STORAGE_CURRENT); } catch (e) {}
   }
 
   function uniqueName(base) {
@@ -71,6 +72,21 @@ int main(void) {
   function renderOutliner() {
     const list = $("fileList");
     list.innerHTML = "";
+
+    // "+" pseudo file to create new files
+    const newRow = document.createElement("div");
+    newRow.className = "file-item active new-item";
+    newRow.title = "Create new file";
+    const plus = document.createElement("div");
+    plus.className = "file-name";
+    plus.textContent = "+";
+    newRow.appendChild(plus);
+    newRow.addEventListener("click", (e) => {
+      e.stopPropagation();
+      newCanvas();
+    });
+    list.appendChild(newRow);
+
     const names = Object.keys(files).sort((a, b) => a.localeCompare(b));
     for (const name of names) {
       const row = document.createElement("div");
@@ -103,6 +119,16 @@ int main(void) {
       });
       acts.appendChild(delBtn);
 
+      const dlBtn = document.createElement("button");
+      dlBtn.textContent = "↓";
+      dlBtn.className = "download";
+      dlBtn.title = "Download file";
+      dlBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        downloadFile(name);
+      });
+      acts.appendChild(dlBtn);
+
       row.appendChild(acts);
       row.addEventListener("click", () => selectFile(name));
       list.appendChild(row);
@@ -114,7 +140,10 @@ int main(void) {
   function selectFile(name) {
     if (!files[name]) return;
     current = name;
-    if (editor) editor.setValue(files[name]);
+    if (editor) {
+      editor.setOption("readOnly", false);
+      editor.setValue(files[name]);
+    }
     $("editorTitle").textContent = `Editor — ${name}`;
     persistState();
     renderOutliner();
@@ -160,13 +189,37 @@ int main(void) {
     if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
     delete files[name];
     if (current === name) current = null;
-    ensureAtLeastOneFile();
+
+    // Persist state; clear current pointer if needed
     persistState();
-    if (current) {
-      editor && editor.setValue(files[current]);
+
+    if (!current) {
+      try { localStorage.removeItem(STORAGE_CURRENT); } catch (e) {}
+      if (Object.keys(files).length === 0 && editor) {
+        editor.setValue("");
+        editor.setOption("readOnly", "nocursor");
+      }
+      $("editorTitle").textContent = "Editor";
+    } else {
+      if (editor) {
+        editor.setOption("readOnly", false);
+        editor.setValue(files[current] || "");
+      }
       $("editorTitle").textContent = `Editor — ${current}`;
     }
     renderOutliner();
+  }
+
+  function downloadFile(name) {
+    if (!name || !files[name]) return;
+    const blob = new Blob([files[name]], { type: "text/x-c" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
   }
 
   function downloadCurrent() {
@@ -194,7 +247,7 @@ int main(void) {
   function initEditor() {
     // Create a CodeMirror instance inside #editorHost
     editor = CodeMirror($("editorHost"), {
-      value: files[current] || defaultTemplate(current || "main.c"),
+      value: current && files[current] ? files[current] : "", 
       mode: "text/x-csrc",
       theme: "material-darker",
       lineNumbers: true,
@@ -204,7 +257,9 @@ int main(void) {
       matchBrackets: true,
       autofocus: true,
     });
-
+    if (!current) {
+      editor.setOption("readOnly", "nocursor");
+    }
     // Autosave with debounce
     editor.on("change", () => {
       if (!current) return;
@@ -233,8 +288,10 @@ int main(void) {
     const downloadBtn = $("downloadBtn");
 
     newBtn && newBtn.addEventListener("click", newCanvas);
-    renameBtn && renameBtn.addEventListener("click", () => current && renameFile(current));
-    deleteBtn && deleteBtn.addEventListener("click", () => current && deleteFile(current));
+    renameBtn &&
+      renameBtn.addEventListener("click", () => current && renameFile(current));
+    deleteBtn &&
+      deleteBtn.addEventListener("click", () => current && deleteFile(current));
     downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
 
     window.addEventListener("beforeunload", () => {
