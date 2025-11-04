@@ -1,0 +1,370 @@
+/* Minor layout glue on top of uart.css, using the same palette */
+.canvas-section {
+  background: var(--darker-bg);
+  border-radius: 8px;
+  padding: 10px 20px 20px 20px;
+  margin: 10px 20px 20px 20px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.toolbar .btn {
+  padding: 8px 12px;
+  background: var(--primary-color);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background 0.2s;
+}
+.toolbar .btn:hover {
+  background: var(--primary-hover);
+}
+.toolbar .btn.secondary {
+  background: #7f8c8d;
+}
+.toolbar .btn.secondary:hover {
+  background: #95a5a6;
+}
+.toolbar .btn.danger {
+  background: var(--danger-color);
+}
+.toolbar .btn.danger:hover {
+  background: #c0392b;
+}
+
+/* Split layout reuses the visual language from UART terminals */
+.canvas-split-container {
+  display: flex;
+  gap: 15px;
+  height: calc(100vh - 220px);
+  min-height: 380px;
+}
+
+.outliner {
+  width: 260px;
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.outliner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px 0;
+  min-height: 20px;
+  gap: 10px;
+}
+
+.outliner-title {
+  margin: 0;
+  color: var(--primary-color);
+  font-size: 14px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.outliner-list {
+  background: var(--dark-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  height: calc(100% - 0px);
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-color);
+  user-select: none;
+}
+.file-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.file-item.active {
+  background: rgba(26, 188, 156, 0.18);
+  border: 1px solid rgba(26, 188, 156, 0.35);
+}
+.file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.file-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.file-actions button {
+  background: transparent;
+  color: var(--muted-text);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.file-actions button:hover {
+  color: var(--text-color);
+  border-color: var(--primary-hover);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.editor-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+
+  min-height: 0;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px 0;
+}
+.editor-title {
+  margin: 0;
+  color: var(--primary-color);
+  font-size: 14px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.editor-container {
+  background: var(--dark-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.CodeMirror {
+  height: 100%;
+  width: 100%;
+  font-family: "Consolas", "Monaco", "Courier New", monospace;
+  font-size: 14px;
+  background: var(--dark-bg);
+  color: var(--text-color);
+}
+.cm-s-material-darker.CodeMirror {
+  background: var(--dark-bg);
+  color: var(--text-color);
+}
+
+@media (max-width: 900px) {
+  .canvas-split-container {
+    flex-direction: column;
+    height: auto;
+
+    min-height: 0;
+  }
+  .outliner {
+    width: 100%;
+    flex: 0 0 auto;
+  }
+}
+/* 1) Запрет скролла у страницы (перебиваем uart.css) */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+main,
+.feature-panel {
+  height: 100vh;
+  overflow: hidden !important;
+}
+
+/* 2) Стили скролла как у .terminal-container (uart.html) */
+/* CodeMirror filler squares (when both scrollbars are visible) */
+.CodeMirror-scrollbar-filler,
+.CodeMirror-gutter-filler {
+  background: var(--dark-bg) !important;
+  color: #2c3e50 !important;
+  background-color: #2c3e50 !important;
+}
+
+/* === CodeMirror scrollbars styled like UART page === */
+/* WebKit/Blink */
+.CodeMirror-vscrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+.CodeMirror-hscrollbar::-webkit-scrollbar {
+  height: 8px;
+}
+.CodeMirror-vscrollbar::-webkit-scrollbar-track,
+.CodeMirror-hscrollbar::-webkit-scrollbar-track {
+  background: var(--dark-bg);
+}
+.CodeMirror-vscrollbar::-webkit-scrollbar-thumb,
+.CodeMirror-hscrollbar::-webkit-scrollbar-thumb {
+  background: var(--primary-color);
+  border-radius: 4px;
+}
+
+/* Firefox */
+.CodeMirror-vscrollbar,
+.CodeMirror-hscrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-color) var(--dark-bg);
+}
+
+.outliner-list::-webkit-scrollbar,
+      .outliner-list::-webkit-scrollbar-track,
+      .outliner-list::-webkit-scrollbar-thumb,
+      /* Firefox */
+      .outliner-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-color) var(--dark-bg);
+}
+
+/* === Gutter same as canvas background (no separation) === */
+.cm-s-material-darker .CodeMirror-gutters {
+  background: var(--dark-bg) !important;
+  border-right: none !important;
+}
+.cm-s-material-darker .CodeMirror-linenumber {
+  background: transparent !important;
+  color: var(--muted-text);
+}
+.cm-s-material-darker .CodeMirror-activeline-gutter {
+  background: transparent !important;
+}
+
+/* New pseudo-file row for creating files */
+.file-item.new-item {
+  justify-content: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--primary-color);
+  border: 1px dashed var(--border-color);
+}
+.file-item.new-item:hover {
+  background: rgba(26, 188, 156, 0.1);
+  border-color: var(--primary-color);
+}
+.file-item.new-item .file-name {
+  flex: 0 0 auto;
+}
+/* GAP for file list items */
+.outliner-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ——— Actions column ——— */
+.actions {
+  width: 140px;
+  flex: 0 0 140px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.actions-body {
+  background: var(--dark-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Кнопки в колонке действий */
+
+/* Маленькие иконки внутри кнопок и в списке файлов */
+
+/* На узких экранах Actions уезжает наверх отдельным блоком */
+@media (max-width: 900px) {
+  .actions {
+    width: 100%;
+    flex: 0 0 auto;
+  }
+}
+/* === Canvas page (extracted) === */
+/* Actions column buttons styled like file tiles */
+.action-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--dark-bg);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  font-weight: 600;
+  text-align: center;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.action-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--primary-hover);
+  color: var(--text-color);
+}
+.action-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  filter: grayscale(25%);
+}
+/* Keep small icon style for file list only */
+.file-actions .icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.file-actions .icon svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.CodeMirror,
+.CodeMirror-scroll {
+  height: 100%;
+}
+
+/* Force CodeMirror theme background to match site (#2c3e50) */
+.cm-s-material-darker.CodeMirror,
+.cm-s-material-darker .CodeMirror-scroll,
+.cm-s-material-darker .CodeMirror-gutters {
+  background: var(--dark-bg) !important;
+}
+.cm-s-material-darker .CodeMirror-linenumber {
+  color: var(--muted-text) !important;
+}
+.cm-s-material-darker .CodeMirror-activeline-background {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
