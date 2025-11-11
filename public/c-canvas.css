@@ -368,3 +368,45 @@ main,
 .cm-s-material-darker .CodeMirror-activeline-background {
   background: rgba(255, 255, 255, 0.04) !important;
 }
+
+/* === HEX Download button (canvas topbar) === */
+.hex-panel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.hex-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.hex-download.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  font-size: 16px; /* arrow size */
+  border-radius: 8px;
+  border: 1px solid var(--ud-border, #3a3a3a);
+  background: var(--ud-btn-bg, #1f1f1f);
+  color: var(--ud-btn-fg, #e6e6e6);
+  cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  user-select: none;
+  padding: 0;
+  line-height: 1;
+}
+.hex-download.icon:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.hex-download.icon:not(:disabled):hover {
+  background: #262626;
+  border-color: #4a4a4a;
+  transform: translateY(-1px);
+}
+.hex-download.icon:not(:disabled):active {
+  transform: translateY(0);
+}
+
