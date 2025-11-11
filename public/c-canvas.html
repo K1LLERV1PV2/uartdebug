@@ -26,6 +26,18 @@
   <body>
     <main>
       <div class="feature-panel">
+        <!-- Duplicated UART connection section (trimmed) -->
+        <section class="uart-section">
+          <h2 class="status-indicator disconnected" id="statusIndicator">
+            Disconnected
+          </h2>
+
+          <div class="connection-panel">
+            <button class="connect-btn" id="connectBtn">Connect</button>
+            <!-- NOTE: per spec, removed .connection-control and .settings-btn -->
+          </div>
+        </section>
+
         <section class="canvas-section">
           <div class="canvas-split-container">
             <!-- Left: outliner -->

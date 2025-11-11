@@ -305,12 +305,118 @@ int main(void) {
       deleteBtn.addEventListener("click", () => current && deleteFile(current));
     downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
 
-    window.addEventListener("beforeunload", () => {
+    window.addEventListener("beforeunload", async () => {
       if (editor && current) {
         files[current] = editor.getValue();
         persistState();
       }
+      // ensure serial port is closed
+      try { await disconnectSerialCanvas(); } catch {}
     });
+  }
+
+  // ------------- Minimal UART connect (Microchip defaults) -------------
+  // Defaults for Microchip UPDI-like UART: 230400 baud, 8 data bits, EVEN parity, 2 stop bits.
+  let canvasPort = null;
+  let canvasReader = null;
+  let canvasWriter = null;
+
+  function getPortLabel(info) {
+    if (!info) return "Unknown device";
+    const hex = (n) => Number(n).toString(16).padStart(4, "0").toUpperCase();
+    if (info.usbVendorId != null && info.usbProductId != null) {
+      return `USB ${hex(info.usbVendorId)}:${hex(info.usbProductId)}`;
+    }
+    if (info.usbVendorId != null) return `USB ${hex(info.usbVendorId)}`;
+    return "Unknown device";
+  }
+
+  async function connectSerialCanvas() {
+    try {
+      if (!("serial" in navigator)) {
+        updateConnectionStatusCanvas(false);
+        const btn = $("connectBtn");
+        if (btn) btn.disabled = true;
+        return;
+      }
+
+      // Must be called from button click (user gesture)
+      canvasPort = await navigator.serial.requestPort();
+      await canvasPort.open({
+        baudRate: 230400,
+        dataBits: 8,
+        parity: "even",
+        stopBits: 2,
+        bufferSize: 4096,
+      });
+
+      canvasReader = canvasPort.readable.getReader();
+      canvasWriter = canvasPort.writable.getWriter();
+
+      const label = getPortLabel(canvasPort.getInfo?.());
+      updateConnectionStatusCanvas(true, label || "");
+    } catch (e) {
+      console.error("[canvas] connect error:", e);
+      // keep UI as disconnected
+      updateConnectionStatusCanvas(false);
+    }
+  }
+
+  async function disconnectSerialCanvas() {
+    try {
+      if (canvasReader) {
+        try { await canvasReader.cancel(); } catch {}
+        try { canvasReader.releaseLock(); } catch {}
+      }
+      if (canvasWriter) {
+        try { canvasWriter.releaseLock(); } catch {}
+      }
+      if (canvasPort) {
+        try { await canvasPort.close(); } catch {}
+      }
+    } finally {
+      canvasReader = null;
+      canvasWriter = null;
+      canvasPort = null;
+      updateConnectionStatusCanvas(false);
+    }
+  }
+
+  function updateConnectionStatusCanvas(connected, label = "") {
+    const status = $("statusIndicator");
+    const btn = $("connectBtn");
+    if (!status || !btn) return;
+
+    if (connected) {
+      status.textContent = label ? `Connected: ${label}` : "Connected";
+      status.classList.remove("disconnected");
+      status.classList.add("connected");
+      btn.textContent = "Disconnect";
+    } else {
+      status.textContent = "Disconnected";
+      status.classList.remove("connected");
+      status.classList.add("disconnected");
+      btn.textContent = "Connect";
+    }
+  }
+
+  async function toggleConnectionCanvas() {
+    if (canvasPort) {
+      await disconnectSerialCanvas();
+    } else {
+      await connectSerialCanvas();
+    }
+  }
+
+  function initSerialUI() {
+    const btn = $("connectBtn");
+    if (btn) btn.addEventListener("click", toggleConnectionCanvas);
+
+    if (!("serial" in navigator)) {
+      // No Web Serial support
+      updateConnectionStatusCanvas(false);
+      if (btn) btn.disabled = true;
+    }
   }
 
   // --- Boot ---
@@ -321,6 +427,7 @@ int main(void) {
     if (!current) current = Object.keys(files)[0];
     bindUI();
     initEditor();
+    initSerialUI();
     selectFile(current);
   }
 
