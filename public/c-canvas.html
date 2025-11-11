@@ -5,11 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Uart Debug Code</title>
 
-    <!-- Reuse site's UART styles for 1:1 look & feel -->
     <link rel="stylesheet" href="uart.css" />
     <link rel="stylesheet" href="c-canvas.css" />
 
-    <!-- CodeMirror 5 (classic, non-ESM) for live C syntax highlighting -->
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
@@ -26,7 +24,7 @@
   <body>
     <main>
       <div class="feature-panel">
-        <!-- Duplicated UART connection section (trimmed) -->
+        <!-- UART section (duplicated & trimmed) -->
         <section class="uart-section">
           <h2 class="status-indicator disconnected" id="statusIndicator">
             Disconnected
@@ -34,15 +32,18 @@
 
           <div class="connection-panel">
             <button class="connect-btn" id="connectBtn">Connect</button>
+            <!-- HEX presence indicator & download control -->
+            <div class="hex-panel" style="display:inline-flex; align-items:center; gap:8px; margin-left:12px;">
+              <span id="hexStatus" class="hex-status" title="Статус HEX">HEX: —</span>
+              <button id="hexDownloadBtn" class="hex-download" disabled title="Скачать HEX">Download</button>
+            </div>
             <!-- NOTE: per spec, removed .connection-control and .settings-btn -->
           </div>
         </section>
 
         <section class="canvas-section">
           <div class="canvas-split-container">
-            <!-- Left: outliner -->
-
-            <!-- New: Actions column (left of Files) -->
+            <!-- Actions (left) -->
             <aside class="actions">
               <div class="outliner-header">
                 <h3 class="outliner-title">Actions</h3>
@@ -69,8 +70,17 @@
                 >
                   Download
                 </button>
+                <button
+                  id="compileBtn"
+                  class="action-item"
+                  title="Compile current .c with avr-gcc and get HEX"
+                >
+                  Compile
+                </button>
               </div>
             </aside>
+
+            <!-- Files (middle) -->
             <aside class="outliner">
               <div class="outliner-header">
                 <h3 class="outliner-title">Files</h3>
@@ -78,7 +88,7 @@
               <div class="outliner-list" id="fileList"></div>
             </aside>
 
-            <!-- Right: editor -->
+            <!-- Editor (right) -->
             <div class="editor-wrap">
               <div class="editor-header">
                 <h3 class="editor-title" id="editorTitle">Editor</h3>
@@ -105,7 +115,6 @@
       Contact: <a href="mailto:uartdebug@gmail.com">uartdebug@gmail.com</a>
     </footer>
 
-    <!-- App logic -->
     <script defer src="c-canvas.js"></script>
   </body>
 </html>

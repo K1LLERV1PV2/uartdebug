@@ -1,19 +1,15 @@
-// c-canvas.js — simple C editor 'canvas' with file outliner (localStorage-backed)
-// Uses CodeMirror 5 to avoid ESM issues and to keep 1:1 styling with uart.html.
-
+// c-canvas.js — code canvas with local files, CodeMirror editor, UART connect, and AVR compile->HEX
 (function () {
   const STORAGE_KEY = "ud_c_canvas_files_v1";
   const STORAGE_CURRENT = "ud_c_canvas_current_v1";
 
   const $ = (id) => document.getElementById(id);
 
-  /** @type {CodeMirror.Editor} */
   let editor = null;
   let files = {};
   let current = null;
   let saveTimer = null;
 
-  // --- Helpers ---
   function defaultTemplate(name = "main.c") {
     return `// ${name}
 // UartDebug C code canvas
@@ -21,13 +17,14 @@
 
 #include <stdint.h>
 
-// Blink example (pseudo):
-// Adjust pins/headers for your MCU/toolchain
+#ifndef F_CPU
+#define F_CPU 20000000UL
+#endif
+
 int main(void) {
-  // init();
+  // put your setup code here
   for (;;) {
-    // toggle_led();
-    // delay_ms(500);
+    // loop
   }
   return 0;
 }
@@ -47,10 +44,9 @@ int main(void) {
   function persistState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(files));
     if (current) localStorage.setItem(STORAGE_CURRENT, current);
-    else
-      try {
-        localStorage.removeItem(STORAGE_CURRENT);
-      } catch (e) {}
+    else {
+      try { localStorage.removeItem(STORAGE_CURRENT); } catch {}
+    }
   }
 
   function uniqueName(base) {
@@ -76,7 +72,6 @@ int main(void) {
     const list = $("fileList");
     list.innerHTML = "";
 
-    // "+" pseudo file to create new files
     const newRow = document.createElement("div");
     newRow.className = "file-item active new-item";
     newRow.title = "Create new file";
@@ -104,7 +99,6 @@ int main(void) {
       const acts = document.createElement("div");
       acts.className = "file-actions";
 
-      // 🗑 Delete — иконкой
       const delBtn = document.createElement("button");
       delBtn.className = "icon";
       delBtn.title = "Delete file";
@@ -118,7 +112,6 @@ int main(void) {
       });
       acts.appendChild(delBtn);
 
-      // ⬇ Download — текстовая кнопка (как было)
       const dlBtn = document.createElement("button");
       dlBtn.textContent = "↓";
       dlBtn.className = "download";
@@ -147,7 +140,6 @@ int main(void) {
     $("editorTitle").textContent = `Editor — ${name}`;
     persistState();
     renderOutliner();
-
     if (editor) setTimeout(() => editor.refresh(), 0);
   }
 
@@ -156,12 +148,10 @@ int main(void) {
     if (!name) return;
     name = name.trim();
     if (!name) return;
-
     if (files[name]) {
       alert("A file with this name already exists.");
       return;
     }
-
     files[name] = defaultTemplate(name);
     current = name;
     persistState();
@@ -191,14 +181,9 @@ int main(void) {
     if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
     delete files[name];
     if (current === name) current = null;
-
-    // Persist state; clear current pointer if needed
     persistState();
-
     if (!current) {
-      try {
-        localStorage.removeItem(STORAGE_CURRENT);
-      } catch (e) {}
+      try { localStorage.removeItem(STORAGE_CURRENT); } catch {}
       if (Object.keys(files).length === 0 && editor) {
         editor.setValue("");
         editor.setOption("readOnly", "nocursor");
@@ -249,7 +234,6 @@ int main(void) {
   }
 
   function initEditor() {
-    // Create a CodeMirror instance inside #editorHost
     editor = CodeMirror($("editorHost"), {
       value: current && files[current] ? files[current] : "",
       mode: "text/x-csrc",
@@ -261,17 +245,12 @@ int main(void) {
       matchBrackets: true,
       autofocus: true,
     });
-    // Force CodeMirror to fill container height and width
     if (editor && editor.setSize) {
       editor.setSize("100%", "100%");
       setTimeout(() => editor.refresh(), 0);
       window.addEventListener("resize", () => editor && editor.refresh());
     }
-
-    if (!current) {
-      editor.setOption("readOnly", "nocursor");
-    }
-    // Autosave with debounce
+    if (!current) editor.setOption("readOnly", "nocursor");
     editor.on("change", () => {
       if (!current) return;
       if (saveTimer) clearTimeout(saveTimer);
@@ -280,15 +259,9 @@ int main(void) {
         persistState();
       }, 250);
     });
-
-    // Ctrl/Cmd + S => download current file
     editor.addKeyMap({
-      "Ctrl-S": function () {
-        downloadCurrent();
-      },
-      "Cmd-S": function () {
-        downloadCurrent();
-      },
+      "Ctrl-S": function () { downloadCurrent(); },
+      "Cmd-S": function () { downloadCurrent(); },
     });
   }
 
@@ -297,26 +270,132 @@ int main(void) {
     const renameBtn = $("renameBtn");
     const deleteBtn = $("deleteBtn");
     const downloadBtn = $("downloadBtn");
+    const compileBtn = $("compileBtn");
+    const hexDownloadBtn = $("hexDownloadBtn");
 
     newBtn && newBtn.addEventListener("click", newCanvas);
-    renameBtn &&
-      renameBtn.addEventListener("click", () => current && renameFile(current));
-    deleteBtn &&
-      deleteBtn.addEventListener("click", () => current && deleteFile(current));
+    renameBtn && renameBtn.addEventListener("click", () => current && renameFile(current));
+    deleteBtn && deleteBtn.addEventListener("click", () => current && deleteFile(current));
     downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
+    compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
+    hexDownloadBtn && hexDownloadBtn.addEventListener("click", downloadHex);
 
     window.addEventListener("beforeunload", async () => {
       if (editor && current) {
         files[current] = editor.getValue();
         persistState();
       }
-      // ensure serial port is closed
       try { await disconnectSerialCanvas(); } catch {}
     });
   }
 
+  // --- HEX artifact state ---
+  let lastHexContent = null;
+  let lastHexName = null;
+
+  function updateHexUI(hasHex) {
+    const st = $("hexStatus");
+    const dl = $("hexDownloadBtn");
+    if (!st || !dl) return;
+    if (hasHex) {
+      st.textContent = "HEX: готов";
+      dl.disabled = false;
+    } else {
+      st.textContent = "HEX: —";
+      dl.disabled = true;
+    }
+  }
+
+  function downloadHex() {
+    if (!lastHexContent || !lastHexName) return;
+    const blob = new Blob([lastHexContent], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = lastHexName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function compileCurrentFile() {
+    if (!current || !files[current]) {
+      alert("Нет открытого файла.");
+      return;
+    }
+    if (!/\\.c$/i.test(current)) {
+      alert("Скомпилировать можно только *.c файл. Выберите .c.");
+      return;
+    }
+
+    const payload = {
+      filename: current,
+      code: files[current],
+      mcu: "attiny1624",
+      f_cpu: 20000000,
+      optimize: "Os"
+    };
+
+    const btn = $("compileBtn");
+    const prevLabel = btn ? btn.textContent : "";
+    try {
+      if (btn) { btn.disabled = true; btn.textContent = "Compiling…"; }
+    } catch {}
+
+    let resp;
+    try {
+      resp = await fetch("/api/avr/compile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      console.error("Network error:", e);
+      alert("Не удалось отправить код на компиляцию (сеть).");
+      if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+      return;
+    }
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.error("Server error:", txt);
+      alert("Ошибка сервера компиляции: " + resp.status + "\\n" + txt);
+      if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+      return;
+    }
+
+    let data;
+    try {
+      data = await resp.json();
+    } catch (e) {
+      console.error("Bad JSON:", e);
+      alert("Некорректный ответ от сервера компиляции.");
+      if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+      return;
+    }
+
+    if (!data || data.ok !== true || !data.hex) {
+      const stderr = (data && data.stderr) ? data.stderr : "unknown error";
+      alert("Компиляция не удалась.\\n" + stderr);
+      lastHexContent = null;
+      lastHexName = null;
+      updateHexUI(false);
+      if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+      return;
+    }
+
+    lastHexContent = data.hex;
+    const base = current.replace(/\\.c$/i, "");
+    lastHexName = (data.hex_name && data.hex_name.trim()) || base + ".hex";
+    updateHexUI(true);
+
+    if (data.stderr && data.stderr.trim()) {
+      console.warn("avr-gcc warnings:", data.stderr);
+    }
+    if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+  }
+
   // ------------- Minimal UART connect (Microchip defaults) -------------
-  // Defaults for Microchip UPDI-like UART: 230400 baud, 8 data bits, EVEN parity, 2 stop bits.
   let canvasPort = null;
   let canvasReader = null;
   let canvasWriter = null;
@@ -340,7 +419,6 @@ int main(void) {
         return;
       }
 
-      // Must be called from button click (user gesture)
       canvasPort = await navigator.serial.requestPort();
       await canvasPort.open({
         baudRate: 230400,
@@ -357,7 +435,6 @@ int main(void) {
       updateConnectionStatusCanvas(true, label || "");
     } catch (e) {
       console.error("[canvas] connect error:", e);
-      // keep UI as disconnected
       updateConnectionStatusCanvas(false);
     }
   }
@@ -401,25 +478,19 @@ int main(void) {
   }
 
   async function toggleConnectionCanvas() {
-    if (canvasPort) {
-      await disconnectSerialCanvas();
-    } else {
-      await connectSerialCanvas();
-    }
+    if (canvasPort) await disconnectSerialCanvas();
+    else await connectSerialCanvas();
   }
 
   function initSerialUI() {
     const btn = $("connectBtn");
     if (btn) btn.addEventListener("click", toggleConnectionCanvas);
-
     if (!("serial" in navigator)) {
-      // No Web Serial support
       updateConnectionStatusCanvas(false);
       if (btn) btn.disabled = true;
     }
   }
 
-  // --- Boot ---
   function boot() {
     loadState();
     ensureAtLeastOneFile();
@@ -428,6 +499,7 @@ int main(void) {
     bindUI();
     initEditor();
     initSerialUI();
+    updateHexUI(false);
     selectFile(current);
   }
 
