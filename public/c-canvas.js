@@ -227,9 +227,11 @@ int main(void) {
     const rb = $("renameBtn");
     const db = $("deleteBtn");
     const dl = $("downloadBtn");
+    const cb = $("compileBtn");
     if (rb) rb.disabled = !has;
     if (db) db.disabled = !has;
     if (dl) dl.disabled = !has;
+    if (cb) cb.disabled = !has || !/\.c$/i.test(current);
   }
 
   function initEditor() {
