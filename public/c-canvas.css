@@ -438,3 +438,19 @@ main,
 .hex-status {
   font-size: 13px;
 }
+
+/* CodeMirror hints — тёмная тема под палитру сайта */
+.CodeMirror-hints {
+  background: var(--dark-bg) !important;
+  color: var(--text-color) !important;
+  border: 1px solid var(--border-color) !important;
+  max-height: 240px;
+}
+.CodeMirror-hint {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.CodeMirror-hint-active {
+  background: rgba(26, 188, 156, 0.18) !important;
+  color: var(--text-color) !important;
+}

@@ -234,6 +234,113 @@ int main(void) {
     if (cb) cb.disabled = !has || !/\.c$/i.test(current);
   }
 
+  const C_HINT_WORDS = [
+    // ключевые слова
+    "auto",
+    "break",
+    "case",
+    "char",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extern",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "inline",
+    "int",
+    "long",
+    "register",
+    "restrict",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "struct",
+    "switch",
+    "typedef",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+    "while",
+    // типы stdint
+    "int8_t",
+    "int16_t",
+    "int32_t",
+    "uint8_t",
+    "uint16_t",
+    "uint32_t",
+    // часто встречающиеся функции
+    "printf",
+    "puts",
+    "putchar",
+    "scanf",
+    "strlen",
+    "strcpy",
+    "strncpy",
+    "strcmp",
+    "memcpy",
+    "memset",
+    "abs",
+    "labs",
+    "rand",
+    "srand",
+    // твоё железо/прошивки (примерные хелперы)
+    "F_CPU",
+    "sei",
+    "cli",
+    "_delay_ms",
+    "_delay_us",
+  ];
+
+  // Регистрируем собственный хинт: словарик + любые слова из файла
+  CodeMirror.registerHelper("hint", "udc", function (cm) {
+    const cur = cm.getCursor();
+    const line = cm.getLine(cur.line);
+    let start = cur.ch,
+      end = cur.ch;
+
+    // расширяем слово влево/вправо (латиница, цифры, подчёркивание)
+    while (start && /[\w_]/.test(line.charAt(start - 1))) start--;
+    while (end < line.length && /[\w_]/.test(line.charAt(end))) end++;
+
+    const prefix = line.slice(start, cur.ch);
+    const lcPref = prefix.toLowerCase();
+
+    // 1) из словарика
+    const dict = C_HINT_WORDS.filter((w) => w.toLowerCase().startsWith(lcPref));
+
+    // 2) из текущего буфера (anyword)
+    let any = [];
+    try {
+      any = (CodeMirror.hint.anyword(cm) || {}).list || [];
+    } catch {}
+    any = any.filter(
+      (w) => w && typeof w === "string" && w.toLowerCase().startsWith(lcPref)
+    );
+
+    // склеим и удалим дубликаты, кроме точного совпадения с уже набранным префиксом
+    const seen = new Set();
+    const list = []
+      .concat(dict, any)
+      .filter((w) => w !== prefix)
+      .filter((w) => (seen.has(w) ? false : (seen.add(w), true)))
+      .slice(0, 200); // на всякий случай ограничим
+
+    return {
+      list,
+      from: CodeMirror.Pos(cur.line, start),
+      to: CodeMirror.Pos(cur.line, end),
+    };
+  });
+
   function initEditor() {
     editor = CodeMirror($("editorHost"), {
       value: current && files[current] ? files[current] : "",
@@ -244,7 +351,23 @@ int main(void) {
       tabSize: 2,
       indentWithTabs: false,
       matchBrackets: true,
+      autoCloseBrackets: true,
       autofocus: true,
+      extraKeys: {
+        "Ctrl-Space": "autocomplete",
+        "Alt-Space": "autocomplete",
+      },
+    });
+    editor.on("inputRead", function (cm, change) {
+      if (!change || !change.text || !change.text.length) return;
+      const ch = change.text.join("");
+      if (/\w|_/.test(ch)) {
+        cm.showHint({
+          hint: CodeMirror.hint.udc,
+          completeSingle: false,
+          closeOnUnfocus: true,
+        });
+      }
     });
     if (editor && editor.setSize) {
       editor.setSize("100%", "100%");

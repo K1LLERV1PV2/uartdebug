@@ -19,6 +19,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/anyword-hint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
   </head>
 
   <body>
@@ -33,9 +40,26 @@
           <div class="connection-panel">
             <button class="connect-btn" id="connectBtn">Connect</button>
             <!-- HEX presence indicator & download control -->
-            <div class="hex-panel" style="display:inline-flex; align-items:center; gap:8px; margin-left:12px;">
-              <span id="hexStatus" class="hex-status" title="HEX status">HEX: none</span>
-              <button id="hexDownloadBtn" class="hex-download download" disabled title="Download HEX">↓</button>
+            <div
+              class="hex-panel"
+              style="
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                margin-left: 12px;
+              "
+            >
+              <span id="hexStatus" class="hex-status" title="HEX status"
+                >HEX: none</span
+              >
+              <button
+                id="hexDownloadBtn"
+                class="hex-download download"
+                disabled
+                title="Download HEX"
+              >
+                ↓
+              </button>
             </div>
             <!-- NOTE: per spec, removed .connection-control and .settings-btn -->
           </div>
