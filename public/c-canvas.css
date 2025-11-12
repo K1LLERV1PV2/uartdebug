@@ -376,7 +376,8 @@ main,
   gap: 8px;
 }
 .hex-status {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
   opacity: 0.85;
 }
@@ -392,7 +393,8 @@ main,
   background: var(--ud-btn-bg, #1f1f1f);
   color: var(--ud-btn-fg, #e6e6e6);
   cursor: pointer;
-  transition: transform 120ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+  transition: transform 120ms ease, background 120ms ease,
+    border-color 120ms ease, opacity 120ms ease;
   user-select: none;
   padding: 0;
   line-height: 1;
@@ -410,3 +412,29 @@ main,
   transform: translateY(0);
 }
 
+/* === Make HEX download button look exactly like file list buttons === */
+.hex-panel .hex-download {
+  background: transparent;
+  color: var(--muted-text);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px !important;
+  height: 28px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.hex-panel .hex-download:hover {
+  color: var(--text-color);
+  border-color: var(--primary-hover);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Bigger hex status (English only) */
+.hex-status {
+  font-size: 13px;
+}

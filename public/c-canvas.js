@@ -13,13 +13,8 @@
   function defaultTemplate(name = "main.c") {
     return `// ${name}
 // UartDebug C code canvas
-// Tip: your files are kept in your browser's LocalStorage
 
 #include <stdint.h>
-
-#ifndef F_CPU
-#define F_CPU 20000000UL
-#endif
 
 int main(void) {
   // put your setup code here
@@ -45,7 +40,9 @@ int main(void) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(files));
     if (current) localStorage.setItem(STORAGE_CURRENT, current);
     else {
-      try { localStorage.removeItem(STORAGE_CURRENT); } catch {}
+      try {
+        localStorage.removeItem(STORAGE_CURRENT);
+      } catch {}
     }
   }
 
@@ -183,7 +180,9 @@ int main(void) {
     if (current === name) current = null;
     persistState();
     if (!current) {
-      try { localStorage.removeItem(STORAGE_CURRENT); } catch {}
+      try {
+        localStorage.removeItem(STORAGE_CURRENT);
+      } catch {}
       if (Object.keys(files).length === 0 && editor) {
         editor.setValue("");
         editor.setOption("readOnly", "nocursor");
@@ -260,8 +259,12 @@ int main(void) {
       }, 250);
     });
     editor.addKeyMap({
-      "Ctrl-S": function () { downloadCurrent(); },
-      "Cmd-S": function () { downloadCurrent(); },
+      "Ctrl-S": function () {
+        downloadCurrent();
+      },
+      "Cmd-S": function () {
+        downloadCurrent();
+      },
     });
   }
 
@@ -274,8 +277,10 @@ int main(void) {
     const hexDownloadBtn = $("hexDownloadBtn");
 
     newBtn && newBtn.addEventListener("click", newCanvas);
-    renameBtn && renameBtn.addEventListener("click", () => current && renameFile(current));
-    deleteBtn && deleteBtn.addEventListener("click", () => current && deleteFile(current));
+    renameBtn &&
+      renameBtn.addEventListener("click", () => current && renameFile(current));
+    deleteBtn &&
+      deleteBtn.addEventListener("click", () => current && deleteFile(current));
     downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
     compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
     hexDownloadBtn && hexDownloadBtn.addEventListener("click", downloadHex);
@@ -285,7 +290,9 @@ int main(void) {
         files[current] = editor.getValue();
         persistState();
       }
-      try { await disconnectSerialCanvas(); } catch {}
+      try {
+        await disconnectSerialCanvas();
+      } catch {}
     });
   }
 
@@ -298,10 +305,10 @@ int main(void) {
     const dl = $("hexDownloadBtn");
     if (!st || !dl) return;
     if (hasHex) {
-      st.textContent = "HEX: готов";
+      st.textContent = "HEX: ready";
       dl.disabled = false;
     } else {
-      st.textContent = "HEX: —";
+      st.textContent = "HEX: none";
       dl.disabled = true;
     }
   }
@@ -333,13 +340,16 @@ int main(void) {
       code: files[current],
       mcu: "attiny1624",
       f_cpu: 20000000,
-      optimize: "Os"
+      optimize: "Os",
     };
 
     const btn = $("compileBtn");
     const prevLabel = btn ? btn.textContent : "";
     try {
-      if (btn) { btn.disabled = true; btn.textContent = "Compiling…"; }
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "Compiling…";
+      }
     } catch {}
 
     let resp;
@@ -352,7 +362,10 @@ int main(void) {
     } catch (e) {
       console.error("Network error:", e);
       alert("Не удалось отправить код на компиляцию (сеть).");
-      if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = prevLabel || "Compile";
+      }
       return;
     }
 
@@ -360,7 +373,10 @@ int main(void) {
       const txt = await resp.text();
       console.error("Server error:", txt);
       alert("Ошибка сервера компиляции: " + resp.status + "\\n" + txt);
-      if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = prevLabel || "Compile";
+      }
       return;
     }
 
@@ -370,17 +386,23 @@ int main(void) {
     } catch (e) {
       console.error("Bad JSON:", e);
       alert("Некорректный ответ от сервера компиляции.");
-      if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = prevLabel || "Compile";
+      }
       return;
     }
 
     if (!data || data.ok !== true || !data.hex) {
-      const stderr = (data && data.stderr) ? data.stderr : "unknown error";
+      const stderr = data && data.stderr ? data.stderr : "unknown error";
       alert("Компиляция не удалась.\\n" + stderr);
       lastHexContent = null;
       lastHexName = null;
       updateHexUI(false);
-      if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = prevLabel || "Compile";
+      }
       return;
     }
 
@@ -392,7 +414,10 @@ int main(void) {
     if (data.stderr && data.stderr.trim()) {
       console.warn("avr-gcc warnings:", data.stderr);
     }
-    if (btn) { btn.disabled = false; btn.textContent = prevLabel || "Compile"; }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = prevLabel || "Compile";
+    }
   }
 
   // ------------- Minimal UART connect (Microchip defaults) -------------
@@ -442,14 +467,22 @@ int main(void) {
   async function disconnectSerialCanvas() {
     try {
       if (canvasReader) {
-        try { await canvasReader.cancel(); } catch {}
-        try { canvasReader.releaseLock(); } catch {}
+        try {
+          await canvasReader.cancel();
+        } catch {}
+        try {
+          canvasReader.releaseLock();
+        } catch {}
       }
       if (canvasWriter) {
-        try { canvasWriter.releaseLock(); } catch {}
+        try {
+          canvasWriter.releaseLock();
+        } catch {}
       }
       if (canvasPort) {
-        try { await canvasPort.close(); } catch {}
+        try {
+          await canvasPort.close();
+        } catch {}
       }
     } finally {
       canvasReader = null;
