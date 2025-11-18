@@ -168,6 +168,9 @@ int main(void) {
       editor.setOption("readOnly", false);
       editor.setValue(files[name]);
     }
+
+    resetHexArtifact();
+
     $("editorTitle").textContent = `Editor — ${name}`;
     persistState();
     renderOutliner();
@@ -458,6 +461,20 @@ int main(void) {
   // --- HEX artifact state ---
   let lastHexContent = null;
   let lastHexName = null;
+
+  function resetHexArtifact() {
+    lastHexContent = null;
+    lastHexName = null;
+    try {
+      markHexDownloadReady(false);
+    } catch {}
+    try {
+      updateHexUI(false);
+    } catch {}
+    try {
+      setHexStatus("idle");
+    } catch {}
+  }
 
   function updateHexUI(hasHex) {
     const st = $("hexStatus");

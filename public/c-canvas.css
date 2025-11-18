@@ -460,19 +460,20 @@ main,
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border-color, #253142);
-  background: var(--dark-bg, #0b0f14);
-  color: var(--text-color, #cbd5e1);
+  padding: 0 10px;
+  min-height: 28px;
+  border-radius: 4px;
+  border: 1px solid var(--ud-border, #3a3a3a);
+  background: var(--ud-btn-bg, #1f1f1f);
+  color: var(--ud-btn-fg, #e6e6e6);
   font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas,
     "Liberation Mono", monospace;
   opacity: 0;
   transform: translateY(-4px) scale(0.98);
   transition: opacity 0.2s ease, transform 0.2s ease, background 0.3s ease,
     border-color 0.3s ease, color 0.3s ease;
-  user-select: none;
 }
+
 .hex-status .dot {
   width: 8px;
   height: 8px;
