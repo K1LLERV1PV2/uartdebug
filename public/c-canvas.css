@@ -454,3 +454,117 @@ main,
   background: rgba(26, 188, 156, 0.18) !important;
   color: var(--text-color) !important;
 }
+
+/* HEX status pill */
+.hex-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color, #253142);
+  background: var(--dark-bg, #0b0f14);
+  color: var(--text-color, #cbd5e1);
+  font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  transition: opacity 0.2s ease, transform 0.2s ease, background 0.3s ease,
+    border-color 0.3s ease, color 0.3s ease;
+  user-select: none;
+}
+.hex-status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa7bd;
+  position: relative;
+}
+
+/* States */
+.hex-status.building {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.hex-status.building .dot {
+  background: #f1c40f;
+}
+.hex-status.building .dot::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  border: 2px dashed rgba(241, 196, 15, 0.6);
+  animation: spin 1s linear infinite;
+}
+.hex-status.ready {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  color: #c8ffdd;
+  border-color: rgba(46, 204, 113, 0.4);
+  background: rgba(46, 204, 113, 0.08);
+  animation: pulseGlow 1.8s ease-out 2;
+}
+.hex-status.ready .dot {
+  background: #2ecc71;
+}
+.hex-status.ready .dot::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid rgba(46, 204, 113, 0.6);
+  animation: ring 1.8s ease-out 2;
+}
+.hex-status.error {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  color: #ffd6d6;
+  border-color: rgba(231, 76, 60, 0.5);
+  background: rgba(231, 76, 60, 0.08);
+}
+.hex-status.error .dot {
+  background: #e74c3c;
+}
+
+/* Button micro-animation when ready */
+#hexDownloadBtn.ready {
+  animation: bump 0.35s ease;
+}
+
+/* Keyframes */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ring {
+  from {
+    transform: scale(0.5);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+@keyframes pulseGlow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(46, 204, 113, 0);
+  }
+  50% {
+    box-shadow: 0 0 32px rgba(46, 204, 113, 0.18);
+  }
+}
+@keyframes bump {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}

@@ -10,6 +10,40 @@
   let current = null;
   let saveTimer = null;
 
+  function setHexStatus(state, filename) {
+    const el = document.getElementById("hexStatus");
+    if (!el) return;
+    const label = el.querySelector(".label");
+    el.classList.remove("building", "ready", "error");
+
+    switch (state) {
+      case "building":
+        el.classList.add("building");
+        label.textContent = "HEX: building…";
+        break;
+      case "ready":
+        el.classList.add("ready");
+        label.textContent = filename ? `HEX: ${filename}` : "HEX: ready";
+        markHexDownloadReady(true);
+        break;
+      case "error":
+        el.classList.add("error");
+        label.textContent = "HEX: failed";
+        markHexDownloadReady(false);
+        break;
+      default:
+        label.textContent = "HEX: idle";
+        markHexDownloadReady(false);
+    }
+  }
+
+  function markHexDownloadReady(ready) {
+    const btn = document.getElementById("hexDownloadBtn");
+    if (!btn) return;
+    btn.disabled = !ready;
+    btn.classList.toggle("ready", !!ready);
+  }
+
   function defaultTemplate(name = "main.c") {
     return `// ${name}
 // UartDebug C code canvas
@@ -451,24 +485,49 @@ int main(void) {
   }
 
   async function compileCurrentFile() {
+    // Ensure we have a .c file open
     if (!current || !files[current]) {
-      alert("Нет открытого файла.");
+      alert("No open file.");
+      // индикатор ошибки
+      try {
+        if (typeof setHexStatus === "function") setHexStatus("error");
+      } catch {}
+      try {
+        updateHexUI(false);
+      } catch {}
       return;
     }
     if (!/\.c$/i.test(current)) {
-      alert("Скомпилировать можно только *.c файл. Vыберите .c.");
+      alert("Only *.c files can be compiled. Select a .c file.");
+      try {
+        if (typeof setHexStatus === "function") setHexStatus("error");
+      } catch {}
+      try {
+        updateHexUI(false);
+      } catch {}
       return;
     }
+
+    // Persist editor buffer just in case
+    try {
+      if (editor && current) files[current] = editor.getValue();
+    } catch {}
+
+    // Read compile options if present in UI, fallback to defaults
+    const mcuEl = document.getElementById("mcuSelect");
+    const fcpuEl = document.getElementById("fCpuInput");
+    const optEl = document.getElementById("optimizeSelect");
 
     const payload = {
       filename: current,
       code: files[current],
-      mcu: "attiny1624",
-      f_cpu: 20000000,
-      optimize: "Os",
+      mcu: mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624",
+      f_cpu: fcpuEl && Number(fcpuEl.value) ? Number(fcpuEl.value) : 20000000,
+      optimize: optEl && optEl.value ? optEl.value.trim() : "Os",
     };
 
-    const btn = $("compileBtn");
+    // UI: button state + HEX status: building
+    const btn = document.getElementById("compileBtn");
     const prevLabel = btn ? btn.textContent : "";
     try {
       if (btn) {
@@ -476,7 +535,20 @@ int main(void) {
         btn.textContent = "Compiling…";
       }
     } catch {}
+    try {
+      if (typeof setHexStatus === "function") setHexStatus("building");
+    } catch {}
+    try {
+      updateHexUI(false);
+    } catch {}
 
+    // Reset last HEX
+    try {
+      lastHexContent = null;
+      lastHexName = null;
+    } catch {}
+
+    // Request compile
     let resp;
     try {
       resp = await fetch("/api/avr/compile", {
@@ -486,7 +558,13 @@ int main(void) {
       });
     } catch (e) {
       console.error("Network error:", e);
-      alert("Не удалось отправить код на компиляцию (сеть).");
+      alert("Failed to send code for compilation (network error).");
+      try {
+        if (typeof setHexStatus === "function") setHexStatus("error");
+      } catch {}
+      try {
+        updateHexUI(false);
+      } catch {}
       if (btn) {
         btn.disabled = false;
         btn.textContent = prevLabel || "Compile";
@@ -495,9 +573,15 @@ int main(void) {
     }
 
     if (!resp.ok) {
-      const txt = await resp.text();
-      console.error("Server error:", txt);
-      alert("Ошибка сервера компиляции: " + resp.status + "\\n" + txt);
+      const txt = await resp.text().catch(() => "");
+      console.error("Server error:", resp.status, txt);
+      alert("Compile server error: " + resp.status + (txt ? "\n" + txt : ""));
+      try {
+        if (typeof setHexStatus === "function") setHexStatus("error");
+      } catch {}
+      try {
+        updateHexUI(false);
+      } catch {}
       if (btn) {
         btn.disabled = false;
         btn.textContent = prevLabel || "Compile";
@@ -505,12 +589,19 @@ int main(void) {
       return;
     }
 
+    // Parse JSON
     let data;
     try {
       data = await resp.json();
     } catch (e) {
       console.error("Bad JSON:", e);
-      alert("Некорректный ответ от сервера компиляции.");
+      alert("Invalid response from compile server.");
+      try {
+        if (typeof setHexStatus === "function") setHexStatus("error");
+      } catch {}
+      try {
+        updateHexUI(false);
+      } catch {}
       if (btn) {
         btn.disabled = false;
         btn.textContent = prevLabel || "Compile";
@@ -518,12 +609,18 @@ int main(void) {
       return;
     }
 
+    // Validate payload
     if (!data || data.ok !== true || !data.hex) {
-      const stderr = data && data.stderr ? data.stderr : "unknown error";
-      alert("Компиляция не удалась.\\n" + stderr);
-      lastHexContent = null;
-      lastHexName = null;
-      updateHexUI(false);
+      const stderr =
+        data && data.stderr ? String(data.stderr) : "unknown error";
+      console.error("Compile failed:", stderr, data);
+      alert("Compilation failed.\n" + stderr);
+      try {
+        if (typeof setHexStatus === "function") setHexStatus("error");
+      } catch {}
+      try {
+        updateHexUI(false);
+      } catch {}
       if (btn) {
         btn.disabled = false;
         btn.textContent = prevLabel || "Compile";
@@ -531,14 +628,29 @@ int main(void) {
       return;
     }
 
-    lastHexContent = data.hex;
-    const base = current.replace(/\.c$/i, "");
-    lastHexName = (data.hex_name && data.hex_name.trim()) || base + ".hex";
-    updateHexUI(true);
+    // Success: store HEX, name, update UI
+    try {
+      lastHexContent = data.hex;
+      const base = current.replace(/\.c$/i, "");
+      lastHexName = (data.hex_name && data.hex_name.trim()) || base + ".hex";
+    } catch (e) {
+      console.warn("HEX handling warning:", e);
+    }
 
-    if (data.stderr && data.stderr.trim()) {
+    try {
+      updateHexUI(true);
+    } catch {}
+    try {
+      if (typeof setHexStatus === "function")
+        setHexStatus("ready", lastHexName);
+    } catch {}
+
+    // Show warnings if any
+    if (data.stderr && String(data.stderr).trim()) {
       console.warn("avr-gcc warnings:", data.stderr);
     }
+
+    // Restore button
     if (btn) {
       btn.disabled = false;
       btn.textContent = prevLabel || "Compile";
