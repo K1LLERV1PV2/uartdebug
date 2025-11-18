@@ -31,12 +31,8 @@
         label.textContent = "HEX: failed";
         markHexDownloadReady(false);
         break;
-      case "none": // ← новое состояние
-        label.textContent = "HEX: none";
-        markHexDownloadReady(false);
-        break;
-      default: // ← по умолчанию тоже "none"
-        label.textContent = "HEX: none";
+      default:
+        label.textContent = "HEX: idle";
         markHexDownloadReady(false);
     }
   }
@@ -778,9 +774,4 @@ int main(void) {
   }
 
   document.addEventListener("DOMContentLoaded", boot);
-  document.addEventListener("DOMContentLoaded", () => {
-    setHexStatus("none");
-    const dl = document.getElementById("hexDownloadBtn");
-    if (dl) dl.disabled = true; // чтобы логика совпадала с "none"
-  });
 })();
