@@ -49,6 +49,7 @@
 // UartDebug C code canvas
 
 #include <stdint.h>
+#include <avr/interrupt.h>
 
 int main(void) {
   // put your setup code here
