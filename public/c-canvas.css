@@ -50,8 +50,8 @@
 }
 
 .outliner {
-  width: 260px;
-  flex: 0 0 260px;
+  width: 305px;
+  flex: 0 0 305px;
   display: flex;
   flex-direction: column;
   min-width: 0;
