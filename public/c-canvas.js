@@ -12,37 +12,55 @@
   let contextMenuFile = null;
 
   function setHexStatus(state, filename) {
+    setHexStatus._state = state;
+
     const el = document.getElementById("hexStatus");
     if (!el) return;
-    const label = el.querySelector(".label");
+
+    let label = el.querySelector(".label");
+    if (!label) label = el;
+
     el.classList.remove("building", "ready", "error");
 
     switch (state) {
       case "building":
         el.classList.add("building");
-        label.textContent = "HEX: building…";
+        label.textContent = "HEX: building...";
+        markHexDownloadReady(false);
         break;
+
       case "ready":
         el.classList.add("ready");
         label.textContent = filename ? `HEX: ${filename}` : "HEX: ready";
         markHexDownloadReady(true);
         break;
+
       case "error":
         el.classList.add("error");
         label.textContent = "HEX: failed";
         markHexDownloadReady(false);
         break;
+
       default:
         label.textContent = "HEX: idle";
         markHexDownloadReady(false);
+        break;
     }
   }
 
   function markHexDownloadReady(ready) {
-    const btn = document.getElementById("hexDownloadBtn");
-    if (!btn) return;
-    btn.disabled = !ready;
-    btn.classList.toggle("ready", !!ready);
+    const el = document.getElementById("hexStatus");
+    if (!el) return;
+
+    if (ready) {
+      el.classList.add("download-ready");
+      el.setAttribute("aria-disabled", "false");
+      el.title = "Download .hex";
+    } else {
+      el.classList.remove("download-ready");
+      el.setAttribute("aria-disabled", "true");
+      el.title = "HEX not ready";
+    }
   }
 
   function defaultTemplate(name = "main.c") {
@@ -108,25 +126,32 @@ int main(void) {
     const list = $("fileList");
     list.innerHTML = "";
 
-    // Pseudo-row for creating a new file
     const newRow = document.createElement("div");
     newRow.className = "file-item active new-item";
     newRow.title = "Create new file";
+
     const plus = document.createElement("div");
     plus.className = "file-name";
     plus.textContent = "+";
+
     newRow.appendChild(plus);
     newRow.addEventListener("click", (e) => {
       e.stopPropagation();
       newCanvas();
     });
+
     list.appendChild(newRow);
 
     const names = Object.keys(files).sort((a, b) => a.localeCompare(b));
+
     for (const name of names) {
       const row = document.createElement("div");
-      row.className = "file-item" + (name === current ? " active" : "");
+      row.className = "file-item";
       row.dataset.file = name;
+
+      if (name === current) {
+        row.classList.add("active");
+      }
 
       const label = document.createElement("div");
       label.className = "file-name";
@@ -136,22 +161,41 @@ int main(void) {
       const acts = document.createElement("div");
       acts.className = "file-actions";
 
+      if (name === current) {
+        const hex = document.createElement("div");
+        hex.id = "hexStatus";
+        hex.className = "hex-status";
+        hex.setAttribute("aria-live", "polite");
+        hex.innerHTML =
+          '<span class="dot" aria-hidden="true"></span>' +
+          '<span class="label">HEX: idle</span>';
+
+        hex.addEventListener("click", (e) => {
+          e.stopPropagation();
+          downloadHex();
+        });
+
+        acts.appendChild(hex);
+      }
+
       const menuBtn = document.createElement("button");
       menuBtn.className = "file-menu-btn";
       menuBtn.title = "File actions";
       menuBtn.innerHTML = "⋯";
+
       menuBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         const rect = menuBtn.getBoundingClientRect();
         openFileContextMenu(name, rect.left + rect.width / 2, rect.bottom + 4);
       });
-      acts.appendChild(menuBtn);
 
+      acts.appendChild(menuBtn);
       row.appendChild(acts);
 
-      row.addEventListener("click", () => selectFile(name));
+      row.addEventListener("click", () => {
+        selectFile(name);
+      });
 
-      // Right-click context menu on the whole row
       row.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         openFileContextMenu(name, e.clientX, e.clientY);
@@ -159,6 +203,9 @@ int main(void) {
 
       list.appendChild(row);
     }
+
+    const state = setHexStatus._state || "idle";
+    setHexStatus(state, state === "ready" ? lastHexName : undefined);
 
     updateToolbarState();
   }
@@ -510,7 +557,6 @@ int main(void) {
     const deleteBtn = $("deleteBtn");
     const downloadBtn = $("downloadBtn");
     const compileBtn = $("compileBtn");
-    const hexDownloadBtn = $("hexDownloadBtn");
     const fileContextMenu = $("fileContextMenu");
 
     newBtn && newBtn.addEventListener("click", newCanvas);
@@ -520,7 +566,6 @@ int main(void) {
       deleteBtn.addEventListener("click", () => current && deleteFile(current));
     downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
     compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
-    hexDownloadBtn && hexDownloadBtn.addEventListener("click", downloadHex);
 
     // Shared file context menu: click on items
     if (fileContextMenu) {
@@ -568,28 +613,7 @@ int main(void) {
   function resetHexArtifact() {
     lastHexContent = null;
     lastHexName = null;
-    try {
-      markHexDownloadReady(false);
-    } catch {}
-    try {
-      updateHexUI(false);
-    } catch {}
-    try {
-      setHexStatus("idle");
-    } catch {}
-  }
-
-  function updateHexUI(hasHex) {
-    const st = $("hexStatus");
-    const dl = $("hexDownloadBtn");
-    if (!st || !dl) return;
-    if (hasHex) {
-      st.textContent = "HEX: ready";
-      dl.disabled = false;
-    } else {
-      st.textContent = "HEX: none";
-      dl.disabled = true;
-    }
+    setHexStatus("idle");
   }
 
   function downloadHex() {

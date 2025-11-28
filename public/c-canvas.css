@@ -560,6 +560,19 @@ main,
   background: #e74c3c;
 }
 
+/* HEX-статус прямо в строке файла (список файлов) */
+.file-actions .hex-status {
+  cursor: default;
+}
+
+.file-actions .hex-status.download-ready {
+  cursor: pointer;
+}
+
+.file-actions .hex-status.download-ready:hover {
+  background: rgba(26, 188, 156, 0.15);
+}
+
 /* Button micro-animation when ready */
 #hexDownloadBtn.ready {
   animation: bump 0.35s ease;
