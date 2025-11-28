@@ -373,6 +373,12 @@ main,
 .cm-s-material-darker .CodeMirror-activeline-background {
   background: rgba(255, 255, 255, 0.04) !important;
 }
+.cm-s-material-darker span.cm-comment {
+  color: var(--muted-text) !important;
+}
+.cm-s-material-darker span.cm-number {
+  color: #b5cea8 !important; /* VS Code number green */
+}
 
 /* === HEX Download button (canvas topbar) === */
 .hex-panel {
@@ -454,6 +460,7 @@ main,
 .CodeMirror-hint {
   padding: 4px 8px;
   font-size: 13px;
+  color: var(--text-color) !important;
 }
 .CodeMirror-hint-active {
   background: rgba(26, 188, 156, 0.18) !important;
