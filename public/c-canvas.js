@@ -54,11 +54,12 @@
 
 int main(void) {
   sei();
-
   // put your setup code here
+  
   for (;;) {
     // loop
   }
+  
   return 0;
 }
 `;

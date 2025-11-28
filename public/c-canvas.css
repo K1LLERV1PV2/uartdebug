@@ -450,13 +450,33 @@ main,
   font-size: 13px;
 }
 
-/* CodeMirror hints — тёмная тема под палитру сайта */
+/* CodeMirror hints*/
 .CodeMirror-hints {
   background: var(--dark-bg) !important;
   color: var(--text-color) !important;
   border: 1px solid var(--border-color) !important;
   max-height: 240px;
+  overflow-y: auto;
 }
+
+/* WebKit/Blink */
+.CodeMirror-hints::-webkit-scrollbar {
+  width: 8px;
+}
+.CodeMirror-hints::-webkit-scrollbar-track {
+  background: var(--dark-bg);
+}
+.CodeMirror-hints::-webkit-scrollbar-thumb {
+  background: var(--primary-color);
+  border-radius: 4px;
+}
+
+/* Firefox */
+.CodeMirror-hints {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-color) var(--dark-bg);
+}
+
 .CodeMirror-hint {
   padding: 4px 8px;
   font-size: 13px;
