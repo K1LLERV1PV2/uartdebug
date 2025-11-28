@@ -133,6 +133,11 @@
   border-color: var(--primary-hover);
   background: rgba(255, 255, 255, 0.04);
 }
+.file-menu-btn {
+  font-size: 18px;
+  line-height: 1;
+  padding-bottom: 2px;
+}
 
 .editor-wrap {
   flex: 1;
@@ -531,6 +536,43 @@ main,
 /* Button micro-animation when ready */
 #hexDownloadBtn.ready {
   animation: bump 0.35s ease;
+}
+
+/* Shared file context menu for file actions */
+.file-context-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 160px;
+  background: var(--dark-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  padding: 4px;
+  display: none;
+}
+
+.file-context-menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-color);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.file-context-menu button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-color);
+}
+
+.file-context-menu button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Keyframes */

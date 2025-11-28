@@ -68,44 +68,7 @@
 
         <section class="canvas-section">
           <div class="canvas-split-container">
-            <!-- Actions (left) -->
-            <aside class="actions">
-              <div class="outliner-header">
-                <h3 class="outliner-title">Actions</h3>
-              </div>
-              <div class="actions-body">
-                <button
-                  id="renameBtn"
-                  class="action-item"
-                  title="Rename current file"
-                >
-                  Rename
-                </button>
-                <button
-                  id="deleteBtn"
-                  class="action-item"
-                  title="Delete current file"
-                >
-                  Delete
-                </button>
-                <button
-                  id="downloadBtn"
-                  class="action-item"
-                  title="Download current file"
-                >
-                  Download
-                </button>
-                <button
-                  id="compileBtn"
-                  class="action-item"
-                  title="Compile current .c with avr-gcc and get HEX"
-                >
-                  Compile
-                </button>
-              </div>
-            </aside>
-
-            <!-- Files (middle) -->
+            <!-- Files (left) -->
             <aside class="outliner">
               <div class="outliner-header">
                 <h3 class="outliner-title">Files</h3>
@@ -120,6 +83,14 @@
               </div>
               <div class="editor-container" id="editorHost"></div>
             </div>
+          </div>
+
+          <!-- Shared context menu for file actions (opened by "⋯" or right-click) -->
+          <div id="fileContextMenu" class="file-context-menu">
+            <button type="button" data-action="rename">Rename</button>
+            <button type="button" data-action="delete">Delete</button>
+            <button type="button" data-action="download">Download</button>
+            <button type="button" data-action="compile">Compile</button>
           </div>
         </section>
       </div>
