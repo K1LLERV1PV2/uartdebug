@@ -8,6 +8,9 @@ const { execFile } = require("child_process");
 const app = express();
 const PORT = process.env.PORT || 8082;
 
+const XC8_CC = process.env.XC8_CC || "xc8-cc";
+const AVR_OBJCOPY = process.env.AVR_OBJCOPY || "avr-objcopy";
+
 // Allow CORS from your site if backend runs on a different origin
 if (process.env.CORS_ORIGIN) {
   app.use((req, res, next) => {
@@ -32,6 +35,11 @@ function run(cmd, args, opts = {}) {
         stderr: stderr?.toString?.() || "",
       });
     });
+
+    if (opts.input) {
+      child.stdin.write(opts.input);
+      child.stdin.end();
+    }
   });
 }
 
@@ -65,9 +73,9 @@ app.post("/api/avr/compile", async (req, res) => {
 
     await writeFile(srcPath, code, "utf8");
 
-    // Compile
+    // --- XC8 (xc8-cc) ---
     const compileArgs = [
-      `-mmcu=${MCU}`,
+      `-mcpu=${MCU}`,
       `-${OPT}`,
       "-Wall",
       "-Wextra",
@@ -76,22 +84,23 @@ app.post("/api/avr/compile", async (req, res) => {
       "-o",
       elfPath,
     ];
-    const gcc = await run("avr-gcc", compileArgs, { timeout: 20000 });
-    if (gcc.error) {
+
+    const cc = await run(XC8_CC, compileArgs, { timeout: 20000 });
+
+    if (cc.error) {
       await rm(tmp, { recursive: true, force: true });
       return res.json({
         ok: false,
-        stdout: gcc.stdout,
-        stderr: gcc.stderr || String(gcc.error),
+        stdout: cc.stdout,
+        stderr: cc.stderr || String(cc.error),
       });
     }
 
-    // Convert to HEX
-    const oc = await run(
-      "avr-objcopy",
-      ["-O", "ihex", "-R", ".eeprom", elfPath, hexPath],
-      { timeout: 10000 }
-    );
+    // --- ELF -> HEX ---
+    const ocArgs = ["-O", "ihex", "-R", ".eeprom", elfPath, hexPath];
+
+    const oc = await run(AVR_OBJCOPY, ocArgs, { timeout: 10000 });
+
     if (oc.error) {
       await rm(tmp, { recursive: true, force: true });
       return res.json({
