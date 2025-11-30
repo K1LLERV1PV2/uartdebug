@@ -63,6 +63,10 @@
     }
   }
 
+  function updateHexUI(hasHex) {
+    markHexDownloadReady(!!hasHex);
+  }
+
   function defaultTemplate(name = "main.c") {
     return `// ${name}
 // UartDebug C code canvas
