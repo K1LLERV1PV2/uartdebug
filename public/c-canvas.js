@@ -10,6 +10,11 @@
   let current = null;
   let saveTimer = null;
   let contextMenuFile = null;
+  let compactInitEditor = null;
+  let compactLoopEditor = null;
+  let isUpdatingFromMainToCompact = false;
+  let isUpdatingFromCompactToMain = false;
+  let compactSyncTimer = null;
 
   function setHexStatus(state, filename) {
     setHexStatus._state = state;
@@ -300,6 +305,10 @@ int main(void) {
     persistState();
     renderOutliner();
     if (editor) setTimeout(() => editor.refresh(), 0);
+
+    if (compactInitEditor && compactLoopEditor) {
+      updateCompactFromMain(files[name]);
+    }
   }
 
   function newCanvas() {
@@ -503,6 +512,192 @@ int main(void) {
     };
   });
 
+  function parseMainSections(source) {
+    const mainRegex = /\bint\s+main\s*\([^)]*\)\s*{/m;
+    const match = mainRegex.exec(source);
+    if (!match) {
+      throw new Error("main() not found");
+    }
+
+    const braceIndex = source.indexOf("{", match.index);
+    if (braceIndex === -1) {
+      throw new Error("main() opening brace not found");
+    }
+
+    let depth = 0;
+    let bodyEndBraceIndex = -1;
+    for (let i = braceIndex; i < source.length; i++) {
+      const ch = source[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          bodyEndBraceIndex = i;
+          break;
+        }
+      }
+    }
+    if (bodyEndBraceIndex === -1) {
+      throw new Error("main() closing brace not found");
+    }
+
+    const bodyStartIndex = braceIndex + 1;
+    const beforeMain = source.slice(0, bodyStartIndex);
+    const body = source.slice(bodyStartIndex, bodyEndBraceIndex);
+    const afterMain = source.slice(bodyEndBraceIndex);
+
+    const loopRegex = /\bwhile\s*\([^)]*\)|\bfor\s*\([^)]*\)/g;
+    const loopMatch = loopRegex.exec(body);
+
+    if (!loopMatch) {
+      return {
+        beforeMain,
+        afterMain,
+        body,
+        initSection: body,
+        loopSection: "",
+        tailSection: "",
+      };
+    }
+
+    const loopKeywordIndex = loopMatch.index;
+
+    let blockStartIndex = -1;
+    for (let j = loopKeywordIndex; j < body.length; j++) {
+      const ch = body[j];
+      if (ch === "{") {
+        blockStartIndex = j;
+        break;
+      }
+      if (ch === ";") {
+        break;
+      }
+    }
+
+    if (blockStartIndex === -1) {
+      const semiIndex = body.indexOf(";", loopKeywordIndex);
+      if (semiIndex === -1) {
+        throw new Error("Loop without ';'");
+      }
+      const initSection = body.slice(0, loopKeywordIndex);
+      const loopSection = body.slice(loopKeywordIndex, semiIndex + 1);
+      const tailSection = body.slice(semiIndex + 1);
+      return {
+        beforeMain,
+        afterMain,
+        body,
+        initSection,
+        loopSection,
+        tailSection,
+      };
+    }
+
+    let depth2 = 0;
+    let blockEndIndex = -1;
+    for (let k = blockStartIndex; k < body.length; k++) {
+      const ch = body[k];
+      if (ch === "{") depth2++;
+      else if (ch === "}") {
+        depth2--;
+        if (depth2 === 0) {
+          blockEndIndex = k;
+          break;
+        }
+      }
+    }
+    if (blockEndIndex === -1) {
+      throw new Error("Cannot find end of main loop block");
+    }
+
+    const initSection = body.slice(0, loopKeywordIndex);
+    const loopSection = body.slice(loopKeywordIndex, blockEndIndex + 1);
+    const tailSection = body.slice(blockEndIndex + 1);
+
+    return {
+      beforeMain,
+      afterMain,
+      body,
+      initSection,
+      loopSection,
+      tailSection,
+    };
+  }
+
+  function detectBodyIndent(body) {
+    const lines = body.split(/\r?\n/);
+    for (const line of lines) {
+      const m = line.match(/^(\s+)\S/);
+      if (m) return m[1];
+    }
+    return "  ";
+  }
+
+  function rebuildSourceFromCompact(source, newInit, newLoop) {
+    const sections = parseMainSections(source);
+    const indent = detectBodyIndent(sections.body);
+
+    function indentBlock(text) {
+      if (!text) return "";
+      const lines = text.replace(/\r\n/g, "\n").split("\n");
+      return lines
+        .map((line) => {
+          if (!line.trim()) return "";
+          return indent + line.trimEnd();
+        })
+        .join("\n");
+    }
+
+    const initPart = newInit && newInit.trim() ? indentBlock(newInit) : "";
+    const loopPart = newLoop && newLoop.trim() ? indentBlock(newLoop) : "";
+
+    let bodyParts = [];
+    if (initPart) bodyParts.push(initPart);
+    if (loopPart) bodyParts.push(loopPart);
+
+    let joinedBody;
+    if (bodyParts.length) {
+      joinedBody = bodyParts.join("\n");
+      if (sections.tailSection.trim()) {
+        joinedBody += "\n" + sections.tailSection.replace(/^\s*\n/, "");
+      } else {
+        joinedBody += sections.tailSection;
+      }
+    } else {
+      joinedBody = sections.body;
+    }
+
+    return sections.beforeMain + joinedBody + sections.afterMain;
+  }
+
+  function updateCompactFromMain(source) {
+    if (!compactInitEditor || !compactLoopEditor) return;
+
+    let sections;
+    try {
+      sections = parseMainSections(source);
+    } catch (e) {
+      isUpdatingFromMainToCompact = true;
+      try {
+        compactInitEditor.setValue("");
+        compactLoopEditor.setValue("");
+      } finally {
+        isUpdatingFromMainToCompact = false;
+      }
+      return;
+    }
+
+    const initTrimmed = sections.initSection.trim().replace(/^\s*\n/, "");
+    const loopTrimmed = sections.loopSection.trim().replace(/^\s*\n/, "");
+
+    isUpdatingFromMainToCompact = true;
+    try {
+      compactInitEditor.setValue(initTrimmed);
+      compactLoopEditor.setValue(loopTrimmed);
+    } finally {
+      isUpdatingFromMainToCompact = false;
+    }
+  }
+
   function initEditor() {
     editor = CodeMirror($("editorHost"), {
       value: current && files[current] ? files[current] : "",
@@ -540,9 +735,16 @@ int main(void) {
     editor.on("change", () => {
       if (!current) return;
       if (saveTimer) clearTimeout(saveTimer);
+
+      const codeSnapshot = editor.getValue();
+
       saveTimer = setTimeout(() => {
-        files[current] = editor.getValue();
+        files[current] = codeSnapshot;
         persistState();
+
+        if (!isUpdatingFromCompactToMain) {
+          updateCompactFromMain(codeSnapshot);
+        }
       }, 250);
     });
     editor.addKeyMap({
@@ -553,6 +755,69 @@ int main(void) {
         downloadCurrent();
       },
     });
+  }
+
+  function initCompactEditors() {
+    const initTextarea = document.getElementById("compactInit");
+    const loopTextarea = document.getElementById("compactLoop");
+    if (!initTextarea || !loopTextarea || !window.CodeMirror) return;
+
+    compactInitEditor = CodeMirror.fromTextArea(initTextarea, {
+      mode: "text/x-csrc",
+      theme: "material-darker",
+      lineNumbers: false,
+      matchBrackets: false,
+      autoCloseBrackets: false,
+    });
+
+    compactLoopEditor = CodeMirror.fromTextArea(loopTextarea, {
+      mode: "text/x-csrc",
+      theme: "material-darker",
+      lineNumbers: false,
+      matchBrackets: false,
+      autoCloseBrackets: false,
+    });
+
+    compactInitEditor.setSize("100%", "100%");
+    compactLoopEditor.setSize("100%", "100%");
+    setTimeout(() => {
+      compactInitEditor.refresh();
+      compactLoopEditor.refresh();
+    }, 0);
+
+    const handleCompactChange = () => {
+      if (!current) return;
+      if (isUpdatingFromMainToCompact) return;
+
+      if (compactSyncTimer) clearTimeout(compactSyncTimer);
+      compactSyncTimer = setTimeout(() => {
+        try {
+          const newInit = compactInitEditor.getValue();
+          const newLoop = compactLoopEditor.getValue();
+          const origin = (editor && editor.getValue()) || files[current] || "";
+
+          const rebuilt = rebuildSourceFromCompact(origin, newInit, newLoop);
+
+          isUpdatingFromCompactToMain = true;
+          try {
+            if (editor) {
+              const cursor = editor.getCursor();
+              editor.setValue(rebuilt);
+              editor.setCursor(cursor);
+            }
+            files[current] = rebuilt;
+            persistState();
+          } finally {
+            isUpdatingFromCompactToMain = false;
+          }
+        } catch (e) {
+          console.error("[compact] apply error:", e);
+        }
+      }, 250);
+    };
+
+    compactInitEditor.on("change", handleCompactChange);
+    compactLoopEditor.on("change", handleCompactChange);
   }
 
   function bindUI() {
@@ -916,6 +1181,7 @@ int main(void) {
     if (!current) current = Object.keys(files)[0];
     bindUI();
     initEditor();
+    initCompactEditors();
     initSerialUI();
     updateHexUI(false);
     selectFile(current);

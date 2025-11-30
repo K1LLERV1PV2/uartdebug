@@ -39,29 +39,6 @@
 
           <div class="connection-panel">
             <button class="connect-btn" id="connectBtn">Connect</button>
-            <!-- HEX presence indicator & download control -->
-            <!--<div
-              class="hex-panel"
-              style="
-                display: inline-flex;
-                align-items: center;
-                gap: 8px;
-                margin-left: 12px;
-              "
-            >
-              <button
-                id="hexDownloadBtn"
-                class="hex-download download"
-                disabled
-                title="Download HEX"
-              >
-                ↓
-              </button>
-              <div id="hexStatus" class="hex-status" aria-live="polite">
-                <span class="dot" aria-hidden="true"></span>
-                <span class="label">HEX: idle</span>
-              </div>
-            </div> -->
           </div>
         </section>
 
@@ -80,7 +57,31 @@
               <div class="editor-header">
                 <h3 class="editor-title" id="editorTitle">Editor</h3>
               </div>
-              <div class="editor-container" id="editorHost"></div>
+
+              <div class="editor-container">
+                <!-- Левый: основной CodeMirror -->
+                <div class="editor-main">
+                  <div id="editorHost"></div>
+                </div>
+
+                <!-- Правый: компактное представление main() -->
+                <aside class="compact-pane">
+                  <div class="compact-header">
+                    <h4 class="compact-title">main() compact</h4>
+                  </div>
+
+                  <div class="compact-body">
+                    <div class="compact-half">
+                      <div class="compact-subtitle">Init (start of main)</div>
+                      <textarea id="compactInit"></textarea>
+                    </div>
+                    <div class="compact-half">
+                      <div class="compact-subtitle">Loop (main cycle)</div>
+                      <textarea id="compactLoop"></textarea>
+                    </div>
+                  </div>
+                </aside>
+              </div>
             </div>
           </div>
 
