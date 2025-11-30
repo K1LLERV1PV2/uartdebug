@@ -35,7 +35,7 @@ function run(cmd, args, opts = {}) {
   });
 }
 
-app.post("/api/avr", async (req, res) => {
+app.post("/api/avr/compile", async (req, res) => {
   try {
     const { filename, code, mcu, f_cpu, optimize } = req.body || {};
 
