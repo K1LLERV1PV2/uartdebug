@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 8082;
 
 const XC8_CC = process.env.XC8_CC || "xc8-cc";
 const AVR_OBJCOPY = process.env.AVR_OBJCOPY || "avr-objcopy";
+const DFP_PATH = process.env.XC8_DFP || "/opt/microchip/dfp/attiny/xc8";
 
 // Allow CORS from your site if backend runs on a different origin
 if (process.env.CORS_ORIGIN) {
@@ -75,8 +76,10 @@ app.post("/api/avr/compile", async (req, res) => {
 
     // --- XC8 (xc8-cc) ---
     const compileArgs = [
-      `-mcpu=${MCU}`,
-      `-${OPT}`,
+      // для XC8 AVR правильнее использовать -mcpu
+      `-mcpu=${MCU}`, // например, "attiny1624"
+      `-mdfp=${DFP_PATH}`, // путь к DFP: /opt/microchip/dfp/attiny/xc8
+      `-${OPT}`, // O0/O1/O2/O3/Os
       "-Wall",
       "-Wextra",
       `-DF_CPU=${F_CPU}UL`,
