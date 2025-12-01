@@ -83,7 +83,7 @@ int main(void) {
   sei();
   // put your setup code here
   
-  for (;;) {
+  while (1) {
     // loop
   }
   
@@ -773,6 +773,7 @@ int main(void) {
     try {
       sections = parseMainSections(source);
     } catch (e) {
+      // Если main() не нашли — просто очищаем компакт-панель
       isUpdatingFromMainToCompact = true;
       try {
         compactInitEditor.setValue("");
@@ -783,18 +784,43 @@ int main(void) {
       return;
     }
 
-    const initTrimmed = sections.initSection.trim().replace(/^\s*\n/, "");
+    // Берём кусок из основного редактора "как есть",
+    // аккуратно убирая только пустые строки по краям,
+    // но НЕ меняя отступы самих строк.
+    const segmentToCompact = (segment) => {
+      if (!segment) return "";
+      let s = segment.replace(/\r\n/g, "\n");
 
-    const rawLoopSection =
+      // 1) убираем только ОДНУ первую пустую строку после '{',
+      //    но не лезем в пробелы перед кодом
+      if (s.startsWith("\n")) {
+        s = s.slice(1);
+      }
+
+      // 2) убираем полностью пустые строки в начале
+      s = s.replace(/^(?:[ \t]*\n)+/, "");
+
+      // 3) и в конце
+      s = s.replace(/(?:\n[ \t]*)+$/, "");
+
+      return s;
+    };
+
+    // Всё, что до первого цикла — в Init
+    const initText = segmentToCompact(sections.initSection);
+
+    // Тело цикла: либо чистое тело { ... }, либо весь loopSection, если тело отдельно не выделено
+    const loopSource =
       (sections.loopBody && sections.loopBody.length
         ? sections.loopBody
         : sections.loopSection) || "";
-    const loopTrimmed = rawLoopSection.trim().replace(/^\s*\n/, "");
+    const loopText = segmentToCompact(loopSource);
 
+    // Обновляем компакт-редакторы, помечая, что это "синхронизация слева направо"
     isUpdatingFromMainToCompact = true;
     try {
-      compactInitEditor.setValue(initTrimmed);
-      compactLoopEditor.setValue(loopTrimmed);
+      compactInitEditor.setValue(initText);
+      compactLoopEditor.setValue(loopText);
     } finally {
       isUpdatingFromMainToCompact = false;
     }
