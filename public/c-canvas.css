@@ -192,19 +192,6 @@
   background: var(--dark-bg);
 }
 
-.compact-header {
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.compact-title {
-  margin: 0;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--primary-color);
-}
-
 .compact-body {
   flex: 1;
   min-height: 0;
