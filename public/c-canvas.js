@@ -549,6 +549,7 @@ int main(void) {
     const loopRegex = /\bwhile\s*\([^)]*\)|\bfor\s*\([^)]*\)/g;
     const loopMatch = loopRegex.exec(body);
 
+    // main() без цикла — всё считается init-частью
     if (!loopMatch) {
       return {
         beforeMain,
@@ -556,12 +557,15 @@ int main(void) {
         body,
         initSection: body,
         loopSection: "",
+        loopHeader: "",
+        loopBody: "",
         tailSection: "",
       };
     }
 
     const loopKeywordIndex = loopMatch.index;
 
+    // Пытаемся найти фигурную скобку после while/for
     let blockStartIndex = -1;
     for (let j = loopKeywordIndex; j < body.length; j++) {
       const ch = body[j];
@@ -570,10 +574,12 @@ int main(void) {
         break;
       }
       if (ch === ";") {
+        // цикл без { } — одиночное выражение
         break;
       }
     }
 
+    // Вариант без блока: while (...) stmt;
     if (blockStartIndex === -1) {
       const semiIndex = body.indexOf(";", loopKeywordIndex);
       if (semiIndex === -1) {
@@ -588,10 +594,13 @@ int main(void) {
         body,
         initSection,
         loopSection,
+        loopHeader: "",
+        loopBody: "",
         tailSection,
       };
     }
 
+    // Вариант с блоком: while (...) { ... }
     let depth2 = 0;
     let blockEndIndex = -1;
     for (let k = blockStartIndex; k < body.length; k++) {
@@ -613,12 +622,17 @@ int main(void) {
     const loopSection = body.slice(loopKeywordIndex, blockEndIndex + 1);
     const tailSection = body.slice(blockEndIndex + 1);
 
+    const loopHeader = body.slice(loopKeywordIndex, blockStartIndex + 1);
+    const loopBody = body.slice(blockStartIndex + 1, blockEndIndex);
+
     return {
       beforeMain,
       afterMain,
       body,
       initSection,
       loopSection,
+      loopHeader,
+      loopBody,
       tailSection,
     };
   }
@@ -634,21 +648,82 @@ int main(void) {
 
   function rebuildSourceFromCompact(source, newInit, newLoop) {
     const sections = parseMainSections(source);
-    const indent = detectBodyIndent(sections.body);
+    const bodyIndent = detectBodyIndent(sections.body);
 
-    function indentBlock(text) {
+    const loopBodyIndent =
+      sections.loopBody && sections.loopBody.trim()
+        ? detectBodyIndent(sections.loopBody)
+        : bodyIndent + bodyIndent;
+
+    function reindentBlock(text, baseIndent) {
       if (!text) return "";
-      const lines = text.replace(/\r\n/g, "\n").split("\n");
-      return lines
-        .map((line) => {
-          if (!line.trim()) return "";
-          return indent + line.trimEnd();
-        })
-        .join("\n");
+      const normalized = text.replace(/\r\n/g, "\n");
+      let lines = normalized.split("\n");
+
+      while (lines.length && !lines[0].trim()) lines.shift();
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+
+      if (!lines.length) return "";
+
+      let minIndent = null;
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const m = line.match(/^(\s*)/);
+        const indent = m ? m[1] : "";
+        if (minIndent === null || indent.length < minIndent.length) {
+          minIndent = indent;
+        }
+      }
+      if (minIndent == null) minIndent = "";
+
+      const outLines = lines.map((line) => {
+        if (!line.trim()) return "";
+        if (minIndent && line.startsWith(minIndent)) {
+          line = line.slice(minIndent.length);
+        }
+        return baseIndent + line;
+      });
+
+      return outLines.join("\n");
     }
 
-    const initPart = newInit && newInit.trim() ? indentBlock(newInit) : "";
-    const loopPart = newLoop && newLoop.trim() ? indentBlock(newLoop) : "";
+    const hasNewInit = newInit && newInit.trim();
+    const hasNewLoop = newLoop && newLoop.trim();
+
+    if (sections.loopHeader && typeof sections.loopBody === "string") {
+      let newInitPart = sections.initSection;
+      if (hasNewInit) {
+        newInitPart = reindentBlock(newInit, bodyIndent);
+      }
+
+      let newLoopBodyPart = sections.loopBody;
+      if (hasNewLoop) {
+        newLoopBodyPart = reindentBlock(newLoop, loopBodyIndent);
+      }
+
+      const loopSection = sections.loopSection || "";
+      const closingPart = loopSection.slice(
+        sections.loopHeader.length + sections.loopBody.length
+      );
+
+      const newLoopSection =
+        sections.loopHeader + newLoopBodyPart + closingPart;
+
+      let newBody = "";
+
+      if (newInitPart && newInitPart.length) {
+        newBody += newInitPart;
+        if (!newBody.endsWith("\n")) newBody += "\n";
+      }
+
+      newBody += newLoopSection;
+      newBody += sections.tailSection || "";
+
+      return sections.beforeMain + newBody + sections.afterMain;
+    }
+
+    const initPart = hasNewInit ? reindentBlock(newInit, bodyIndent) : "";
+    const loopPart = hasNewLoop ? reindentBlock(newLoop, bodyIndent) : "";
 
     let bodyParts = [];
     if (initPart) bodyParts.push(initPart);
@@ -657,10 +732,10 @@ int main(void) {
     let joinedBody;
     if (bodyParts.length) {
       joinedBody = bodyParts.join("\n");
-      if (sections.tailSection.trim()) {
+      if (sections.tailSection && sections.tailSection.trim()) {
         joinedBody += "\n" + sections.tailSection.replace(/^\s*\n/, "");
       } else {
-        joinedBody += sections.tailSection;
+        joinedBody += sections.tailSection || "";
       }
     } else {
       joinedBody = sections.body;
@@ -687,7 +762,12 @@ int main(void) {
     }
 
     const initTrimmed = sections.initSection.trim().replace(/^\s*\n/, "");
-    const loopTrimmed = sections.loopSection.trim().replace(/^\s*\n/, "");
+
+    const rawLoopSection =
+      (sections.loopBody && sections.loopBody.length
+        ? sections.loopBody
+        : sections.loopSection) || "";
+    const loopTrimmed = rawLoopSection.trim().replace(/^\s*\n/, "");
 
     isUpdatingFromMainToCompact = true;
     try {
