@@ -662,108 +662,46 @@ int main(void) {
 
   function rebuildSourceFromCompact(source, newInit, newLoop) {
     const sections = parseMainSections(source);
-    const bodyIndent = detectBodyIndent(sections.body);
 
-    // Базовый отступ для тела цикла — как в оригинале
-    const loopBodyIndent =
-      sections.loopBody && sections.loopBody.trim()
-        ? detectBodyIndent(sections.loopBody)
-        : bodyIndent + bodyIndent;
+    // Берём исходное тело main() целиком
+    let body = sections.body;
 
-    // Простой реиндент: все строки блока получают один и тот же базовый отступ,
-    // плюс мы сохраняем паттерн начального \n и конечного "\n\t..." из оригинала.
-    function reindentSimple(text, baseIndent, origSegment, origLeading) {
-      if (!text) return "";
+    // --- 1. Подменяем init-часть (всё до первой строки цикла) ---
+    const initText =
+      typeof newInit === "string" ? newInit.replace(/\r\n/g, "\n") : "";
+    const initEnd = sections.initSection.length;
 
-      let lines = text.replace(/\r\n/g, "\n").split("\n");
+    // Заменяем старый init-блок на то, что в compactInit
+    body = initText + body.slice(initEnd);
 
-      // Убираем пустые строки в начале/конце
-      while (lines.length && !lines[0].trim()) lines.shift();
-      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+    // --- 2. Подменяем тело цикла ---
+    // Если удалось выделить чистое тело { ... } — меняем только его,
+    // иначе (цикл без фигурных скобок) – весь loopSection.
+    const loopSegment =
+      sections.loopBody && sections.loopBody.length
+        ? sections.loopBody
+        : sections.loopSection;
 
-      let core = "";
-      if (lines.length) {
-        const out = lines.map((line) => {
-          if (!line.trim()) return "";
-          const stripped = line.replace(/^\s+/, ""); // всё, что слева, выкинули
-          return baseIndent + stripped;
-        });
-        core = out.join("\n");
-      }
+    const loopText =
+      typeof newLoop === "string" ? newLoop.replace(/\r\n/g, "\n") : "";
 
-      let result = core;
-
-      // Сохраняем ведущий перенос строки (после '{' или после '{' в main)
-      if (origLeading && origLeading.startsWith("\n")) {
-        result = "\n" + result;
-      }
-
-      // Сохраняем хвост вида "\n\t..." из оригинального блока (для строки с '}')
-      if (origSegment) {
-        const m = origSegment.match(/\n[ \t]*$/);
-        if (m) {
-          result = result.replace(/\s*$/, ""); // срезаем свой хвост
-          result += m[0]; // и подставляем оригинальный
-        }
-      }
-
-      return result;
-    }
-
-    const hasNewInit = newInit && newInit.trim();
-    const hasNewLoop = newLoop && newLoop.trim();
-
-    // ----- INIT (верхняя половина) -----
-    let newInitPart = sections.initSection;
-    if (hasNewInit) {
-      newInitPart = reindentSimple(
-        newInit,
-        bodyIndent,
-        null, // хвост init-части нам не критичен
-        sections.initSection
-      );
-    }
-
-    // ----- LOOP BODY (нижняя половина) -----
-    let newLoopBody = sections.loopBody;
-    if (hasNewLoop) {
-      newLoopBody = reindentSimple(
-        newLoop,
-        loopBodyIndent,
-        sections.loopBody,
-        sections.loopBody
-      );
-    }
-
-    // Собираем новый loopSection: подменяем старое loopBody на новое
-    let newLoopSection = sections.loopSection || "";
-    if (sections.loopBody && newLoopSection) {
-      const idx = newLoopSection.indexOf(sections.loopBody);
+    if (loopSegment && loopSegment.length) {
+      // Ищем только ПОСЛЕ init-блока, чтобы не попасть в совпадения в init
+      const searchFrom = initText.length;
+      const idx = body.indexOf(loopSegment, searchFrom);
       if (idx !== -1) {
-        newLoopSection =
-          newLoopSection.slice(0, idx) +
-          newLoopBody +
-          newLoopSection.slice(idx + sections.loopBody.length);
+        body =
+          body.slice(0, idx) + loopText + body.slice(idx + loopSegment.length);
       }
-    } else if (hasNewLoop && sections.loopSection) {
-      // На всякий случай — цикл без { }, всё считается телом
-      newLoopSection = reindentSimple(
-        newLoop,
-        bodyIndent,
-        sections.loopSection,
-        sections.loopSection
-      );
     }
 
-    // ----- Финальная сборка тела main() -----
-    let newBody = newInitPart || "";
-    if (newBody && !newBody.endsWith("\n")) {
-      newBody += "\n";
+    // Небольшой safety: если тело не пустое и не заканчивается \n,
+    // добавим перевод строки перед закрывающей скобкой main().
+    if (body && !body.endsWith("\n")) {
+      body += "\n";
     }
-    newBody += newLoopSection || "";
-    newBody += sections.tailSection || "";
 
-    return sections.beforeMain + newBody + sections.afterMain;
+    return sections.beforeMain + body + sections.afterMain;
   }
 
   function updateCompactFromMain(source) {
@@ -865,12 +803,13 @@ int main(void) {
       if (saveTimer) clearTimeout(saveTimer);
 
       const codeSnapshot = editor.getValue();
+      const fromCompact = isUpdatingFromCompactToMain;
 
       saveTimer = setTimeout(() => {
         files[current] = codeSnapshot;
         persistState();
 
-        if (!isUpdatingFromCompactToMain) {
+        if (!fromCompact) {
           updateCompactFromMain(codeSnapshot);
         }
       }, 250);
