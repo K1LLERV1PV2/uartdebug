@@ -722,39 +722,21 @@ int main(void) {
       return;
     }
 
-    // Берём кусок из основного редактора "как есть",
-    // аккуратно убирая только пустые строки по краям,
-    // но НЕ меняя отступы самих строк.
-    const segmentToCompact = (segment) => {
-      if (!segment) return "";
-      let s = segment.replace(/\r\n/g, "\n");
+    // Никаких "умных" отступов/обрезания — только нормализация \r\n -> \n
+    const normalize = (segment) =>
+      segment ? segment.replace(/\r\n/g, "\n") : "";
 
-      // 1) убираем только ОДНУ первую пустую строку после '{',
-      //    но не лезем в пробелы перед кодом
-      if (s.startsWith("\n")) {
-        s = s.slice(1);
-      }
+    // Всё, что до первого цикла — как есть в compactInit
+    const initText = normalize(sections.initSection);
 
-      // 2) убираем полностью пустые строки в начале
-      s = s.replace(/^(?:[ \t]*\n)+/, "");
-
-      // 3) и в конце
-      s = s.replace(/(?:\n[ \t]*)+$/, "");
-
-      return s;
-    };
-
-    // Всё, что до первого цикла — в Init
-    const initText = segmentToCompact(sections.initSection);
-
-    // Тело цикла: либо чистое тело { ... }, либо весь loopSection, если тело отдельно не выделено
+    // Тело цикла: либо чистое тело { ... }, либо весь loopSection
     const loopSource =
       (sections.loopBody && sections.loopBody.length
         ? sections.loopBody
         : sections.loopSection) || "";
-    const loopText = segmentToCompact(loopSource);
+    const loopText = normalize(loopSource);
 
-    // Обновляем компакт-редакторы, помечая, что это "синхронизация слева направо"
+    // Обновляем компакт-редакторы, помечая, что это "слева направо"
     isUpdatingFromMainToCompact = true;
     try {
       compactInitEditor.setValue(initText);
