@@ -519,11 +519,13 @@ int main(void) {
       throw new Error("main() not found");
     }
 
+    // Открывающая { у main()
     const braceIndex = source.indexOf("{", match.index);
     if (braceIndex === -1) {
       throw new Error("main() opening brace not found");
     }
 
+    // Находим соответствующую закрывающую } main()
     let depth = 0;
     let bodyEndBraceIndex = -1;
     for (let i = braceIndex; i < source.length; i++) {
@@ -549,7 +551,7 @@ int main(void) {
     const loopRegex = /\bwhile\s*\([^)]*\)|\bfor\s*\([^)]*\)/g;
     const loopMatch = loopRegex.exec(body);
 
-    // main() без цикла — всё считается init-частью
+    // main() без цикла — всё это init-часть
     if (!loopMatch) {
       return {
         beforeMain,
@@ -565,7 +567,17 @@ int main(void) {
 
     const loopKeywordIndex = loopMatch.index;
 
-    // Пытаемся найти фигурную скобку после while/for
+    // ВАЖНО: тащим отступ строки целиком, а не только слово while/for
+    let loopHeaderStart = loopKeywordIndex;
+    for (let i = loopKeywordIndex - 1; i >= 0; i--) {
+      const ch = body[i];
+      if (ch === "\n") {
+        loopHeaderStart = i + 1;
+        break;
+      }
+    }
+
+    // Ищем { после while/for
     let blockStartIndex = -1;
     for (let j = loopKeywordIndex; j < body.length; j++) {
       const ch = body[j];
@@ -574,7 +586,7 @@ int main(void) {
         break;
       }
       if (ch === ";") {
-        // цикл без { } — одиночное выражение
+        // цикл без { } — одна строка
         break;
       }
     }
@@ -585,9 +597,11 @@ int main(void) {
       if (semiIndex === -1) {
         throw new Error("Loop without ';'");
       }
-      const initSection = body.slice(0, loopKeywordIndex);
-      const loopSection = body.slice(loopKeywordIndex, semiIndex + 1);
+
+      const initSection = body.slice(0, loopHeaderStart);
+      const loopSection = body.slice(loopHeaderStart, semiIndex + 1);
       const tailSection = body.slice(semiIndex + 1);
+
       return {
         beforeMain,
         afterMain,
@@ -618,11 +632,11 @@ int main(void) {
       throw new Error("Cannot find end of main loop block");
     }
 
-    const initSection = body.slice(0, loopKeywordIndex);
-    const loopSection = body.slice(loopKeywordIndex, blockEndIndex + 1);
+    const initSection = body.slice(0, loopHeaderStart);
+    const loopSection = body.slice(loopHeaderStart, blockEndIndex + 1);
     const tailSection = body.slice(blockEndIndex + 1);
 
-    const loopHeader = body.slice(loopKeywordIndex, blockStartIndex + 1);
+    const loopHeader = body.slice(loopHeaderStart, blockStartIndex + 1);
     const loopBody = body.slice(blockStartIndex + 1, blockEndIndex);
 
     return {
@@ -650,98 +664,106 @@ int main(void) {
     const sections = parseMainSections(source);
     const bodyIndent = detectBodyIndent(sections.body);
 
+    // Базовый отступ для тела цикла — как в оригинале
     const loopBodyIndent =
       sections.loopBody && sections.loopBody.trim()
         ? detectBodyIndent(sections.loopBody)
         : bodyIndent + bodyIndent;
 
-    function reindentBlock(text, baseIndent) {
+    // Простой реиндент: все строки блока получают один и тот же базовый отступ,
+    // плюс мы сохраняем паттерн начального \n и конечного "\n\t..." из оригинала.
+    function reindentSimple(text, baseIndent, origSegment, origLeading) {
       if (!text) return "";
-      const normalized = text.replace(/\r\n/g, "\n");
-      let lines = normalized.split("\n");
 
+      let lines = text.replace(/\r\n/g, "\n").split("\n");
+
+      // Убираем пустые строки в начале/конце
       while (lines.length && !lines[0].trim()) lines.shift();
       while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
 
-      if (!lines.length) return "";
+      let core = "";
+      if (lines.length) {
+        const out = lines.map((line) => {
+          if (!line.trim()) return "";
+          const stripped = line.replace(/^\s+/, ""); // всё, что слева, выкинули
+          return baseIndent + stripped;
+        });
+        core = out.join("\n");
+      }
 
-      let minIndent = null;
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const m = line.match(/^(\s*)/);
-        const indent = m ? m[1] : "";
-        if (minIndent === null || indent.length < minIndent.length) {
-          minIndent = indent;
+      let result = core;
+
+      // Сохраняем ведущий перенос строки (после '{' или после '{' в main)
+      if (origLeading && origLeading.startsWith("\n")) {
+        result = "\n" + result;
+      }
+
+      // Сохраняем хвост вида "\n\t..." из оригинального блока (для строки с '}')
+      if (origSegment) {
+        const m = origSegment.match(/\n[ \t]*$/);
+        if (m) {
+          result = result.replace(/\s*$/, ""); // срезаем свой хвост
+          result += m[0]; // и подставляем оригинальный
         }
       }
-      if (minIndent == null) minIndent = "";
 
-      const outLines = lines.map((line) => {
-        if (!line.trim()) return "";
-        if (minIndent && line.startsWith(minIndent)) {
-          line = line.slice(minIndent.length);
-        }
-        return baseIndent + line;
-      });
-
-      return outLines.join("\n");
+      return result;
     }
 
     const hasNewInit = newInit && newInit.trim();
     const hasNewLoop = newLoop && newLoop.trim();
 
-    if (sections.loopHeader && typeof sections.loopBody === "string") {
-      let newInitPart = sections.initSection;
-      if (hasNewInit) {
-        newInitPart = reindentBlock(newInit, bodyIndent);
-      }
-
-      let newLoopBodyPart = sections.loopBody;
-      if (hasNewLoop) {
-        newLoopBodyPart = reindentBlock(newLoop, loopBodyIndent);
-      }
-
-      const loopSection = sections.loopSection || "";
-      const closingPart = loopSection.slice(
-        sections.loopHeader.length + sections.loopBody.length
+    // ----- INIT (верхняя половина) -----
+    let newInitPart = sections.initSection;
+    if (hasNewInit) {
+      newInitPart = reindentSimple(
+        newInit,
+        bodyIndent,
+        null, // хвост init-части нам не критичен
+        sections.initSection
       );
-
-      const newLoopSection =
-        sections.loopHeader + newLoopBodyPart + closingPart;
-
-      let newBody = "";
-
-      if (newInitPart && newInitPart.length) {
-        newBody += newInitPart;
-        if (!newBody.endsWith("\n")) newBody += "\n";
-      }
-
-      newBody += newLoopSection;
-      newBody += sections.tailSection || "";
-
-      return sections.beforeMain + newBody + sections.afterMain;
     }
 
-    const initPart = hasNewInit ? reindentBlock(newInit, bodyIndent) : "";
-    const loopPart = hasNewLoop ? reindentBlock(newLoop, bodyIndent) : "";
-
-    let bodyParts = [];
-    if (initPart) bodyParts.push(initPart);
-    if (loopPart) bodyParts.push(loopPart);
-
-    let joinedBody;
-    if (bodyParts.length) {
-      joinedBody = bodyParts.join("\n");
-      if (sections.tailSection && sections.tailSection.trim()) {
-        joinedBody += "\n" + sections.tailSection.replace(/^\s*\n/, "");
-      } else {
-        joinedBody += sections.tailSection || "";
-      }
-    } else {
-      joinedBody = sections.body;
+    // ----- LOOP BODY (нижняя половина) -----
+    let newLoopBody = sections.loopBody;
+    if (hasNewLoop) {
+      newLoopBody = reindentSimple(
+        newLoop,
+        loopBodyIndent,
+        sections.loopBody,
+        sections.loopBody
+      );
     }
 
-    return sections.beforeMain + joinedBody + sections.afterMain;
+    // Собираем новый loopSection: подменяем старое loopBody на новое
+    let newLoopSection = sections.loopSection || "";
+    if (sections.loopBody && newLoopSection) {
+      const idx = newLoopSection.indexOf(sections.loopBody);
+      if (idx !== -1) {
+        newLoopSection =
+          newLoopSection.slice(0, idx) +
+          newLoopBody +
+          newLoopSection.slice(idx + sections.loopBody.length);
+      }
+    } else if (hasNewLoop && sections.loopSection) {
+      // На всякий случай — цикл без { }, всё считается телом
+      newLoopSection = reindentSimple(
+        newLoop,
+        bodyIndent,
+        sections.loopSection,
+        sections.loopSection
+      );
+    }
+
+    // ----- Финальная сборка тела main() -----
+    let newBody = newInitPart || "";
+    if (newBody && !newBody.endsWith("\n")) {
+      newBody += "\n";
+    }
+    newBody += newLoopSection || "";
+    newBody += sections.tailSection || "";
+
+    return sections.beforeMain + newBody + sections.afterMain;
   }
 
   function updateCompactFromMain(source) {
