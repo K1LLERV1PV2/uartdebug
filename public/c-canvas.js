@@ -15,6 +15,7 @@
   let isUpdatingFromMainToCompact = false;
   let isUpdatingFromCompactToMain = false;
   let compactSyncTimer = null;
+  let currentFullPane = "left";
 
   function setHexStatus(state, filename) {
     setHexStatus._state = state;
@@ -746,6 +747,98 @@ int main(void) {
     }
   }
 
+  function layoutEditorsForModes() {
+    const leftBody = document.querySelector(".editor-main .pane-body");
+    const rightBody = document.querySelector(".compact-pane .pane-body");
+    const fullHost = document.getElementById("editorHost");
+    const compactWrapper = document.getElementById("compactWrapper");
+
+    if (!leftBody || !rightBody || !fullHost || !compactWrapper) return;
+
+    if (currentFullPane === "left") {
+      if (fullHost.parentNode !== leftBody) {
+        leftBody.appendChild(fullHost);
+      }
+      if (compactWrapper.parentNode !== rightBody) {
+        rightBody.appendChild(compactWrapper);
+      }
+    } else {
+      if (fullHost.parentNode !== rightBody) {
+        rightBody.appendChild(fullHost);
+      }
+      if (compactWrapper.parentNode !== leftBody) {
+        leftBody.appendChild(compactWrapper);
+      }
+    }
+
+    // После перестановки обязательно рефрешим редакторы
+    if (editor) {
+      setTimeout(() => editor.refresh(), 0);
+    }
+    if (compactInitEditor) {
+      setTimeout(() => compactInitEditor.refresh(), 0);
+    }
+    if (compactLoopEditor) {
+      setTimeout(() => compactLoopEditor.refresh(), 0);
+    }
+  }
+
+  function initPaneModeControls() {
+    const leftFull = document.querySelector(
+      'input[name="leftMode"][value="full"]'
+    );
+    const leftCompact = document.querySelector(
+      'input[name="leftMode"][value="compact"]'
+    );
+    const rightFull = document.querySelector(
+      'input[name="rightMode"][value="full"]'
+    );
+    const rightCompact = document.querySelector(
+      'input[name="rightMode"][value="compact"]'
+    );
+
+    if (!leftFull || !leftCompact || !rightFull || !rightCompact) {
+      return;
+    }
+
+    function setFullPane(pane) {
+      currentFullPane = pane === "right" ? "right" : "left";
+
+      if (currentFullPane === "left") {
+        leftFull.checked = true;
+        leftCompact.checked = false;
+        rightFull.checked = false;
+        rightCompact.checked = true;
+      } else {
+        rightFull.checked = true;
+        rightCompact.checked = false;
+        leftFull.checked = false;
+        leftCompact.checked = true;
+      }
+
+      layoutEditorsForModes();
+    }
+
+    // Левый слот: выбор Full/Compact
+    leftFull.addEventListener("change", (e) => {
+      if (e.target.checked) setFullPane("left");
+    });
+    leftCompact.addEventListener("change", (e) => {
+      if (e.target.checked) setFullPane("right");
+    });
+
+    // Правый слот: выбор Full/Compact
+    rightFull.addEventListener("change", (e) => {
+      if (e.target.checked) setFullPane("right");
+    });
+    rightCompact.addEventListener("change", (e) => {
+      if (e.target.checked) setFullPane("left");
+    });
+
+    // Стартовое состояние: Full слева, Compact справа
+    setFullPane("left");
+  }
+
   function initEditor() {
     editor = CodeMirror($("editorHost"), {
       value: current && files[current] ? files[current] : "",
@@ -867,6 +960,53 @@ int main(void) {
 
     compactInitEditor.on("change", handleCompactChange);
     compactLoopEditor.on("change", handleCompactChange);
+  }
+
+  function initResizableSplit() {
+    const container = document.querySelector(".editor-container");
+    const leftPane = document.querySelector(".editor-main");
+    const rightPane = document.querySelector(".compact-pane");
+    const divider = document.getElementById("editorDivider");
+
+    if (!container || !leftPane || !rightPane || !divider) return;
+
+    let isDragging = false;
+    let containerRect = null;
+
+    divider.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) return; // только ЛКМ
+      isDragging = true;
+      containerRect = container.getBoundingClientRect();
+      document.body.classList.add("editor-resizing");
+      event.preventDefault();
+    });
+
+    window.addEventListener("mousemove", (event) => {
+      if (!isDragging) return;
+      if (!containerRect) return;
+
+      const relX = event.clientX - containerRect.left;
+      const minWidth = containerRect.width * 0.15; // минимум 15% на каждую панель
+      const maxWidth = containerRect.width - minWidth;
+
+      let clampedX = Math.min(Math.max(relX, minWidth), maxWidth);
+      const leftPercent = (clampedX / containerRect.width) * 100;
+      const rightPercent = 100 - leftPercent;
+
+      leftPane.style.flex = `0 0 ${leftPercent}%`;
+      rightPane.style.flex = `0 0 ${rightPercent}%`;
+
+      if (editor) editor.refresh();
+      if (compactInitEditor) compactInitEditor.refresh();
+      if (compactLoopEditor) compactLoopEditor.refresh();
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (!isDragging) return;
+      isDragging = false;
+      containerRect = null;
+      document.body.classList.remove("editor-resizing");
+    });
   }
 
   function bindUI() {
@@ -1228,10 +1368,14 @@ int main(void) {
     ensureAtLeastOneFile();
     renderOutliner();
     if (!current) current = Object.keys(files)[0];
+
     bindUI();
     initEditor();
     initCompactEditors();
+    initPaneModeControls(); // радиокнопки Full/Compact + раскладка
+    initResizableSplit(); // движущийся разделитель
     initSerialUI();
+
     updateHexUI(false);
     selectFile(current);
   }

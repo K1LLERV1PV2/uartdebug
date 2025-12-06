@@ -59,21 +59,68 @@
               </div>
 
               <div class="editor-container">
-                <!-- Левый: основной CodeMirror -->
-                <div class="editor-main">
-                  <div id="editorHost"></div>
+                <!-- Левый слот -->
+                <div class="editor-main editor-pane" data-pane="left">
+                  <div class="pane-header">
+                    <span class="pane-title">Left view</span>
+                    <div class="pane-mode-toggle">
+                      <label class="pane-mode-option">
+                        <input
+                          type="radio"
+                          name="leftMode"
+                          value="full"
+                          checked
+                        />
+                        <span>Full</span>
+                      </label>
+                      <label class="pane-mode-option">
+                        <input type="radio" name="leftMode" value="compact" />
+                        <span>Compact</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="pane-body" data-pane-body="left">
+                    <!-- сюда будет перемещаться обычный CodeMirror -->
+                    <div id="editorHost"></div>
+                  </div>
                 </div>
 
-                <!-- Правый: компактное представление main() -->
-                <aside class="compact-pane">
-                  <div class="compact-body">
-                    <div class="compact-half">
-                      <div class="compact-subtitle">Init</div>
-                      <textarea id="compactInit"></textarea>
+                <!-- Перегородка между слотами -->
+                <div class="editor-divider" id="editorDivider"></div>
+
+                <!-- Правый слот -->
+                <aside class="compact-pane editor-pane" data-pane="right">
+                  <div class="pane-header">
+                    <span class="pane-title">Right view</span>
+                    <div class="pane-mode-toggle">
+                      <label class="pane-mode-option">
+                        <input type="radio" name="rightMode" value="full" />
+                        <span>Full</span>
+                      </label>
+                      <label class="pane-mode-option">
+                        <input
+                          type="radio"
+                          name="rightMode"
+                          value="compact"
+                          checked
+                        />
+                        <span>Compact</span>
+                      </label>
                     </div>
-                    <div class="compact-half">
-                      <div class="compact-subtitle">Loop</div>
-                      <textarea id="compactLoop"></textarea>
+                  </div>
+
+                  <div class="pane-body" data-pane-body="right">
+                    <!-- компактный режим обёрнут в отдельный контейнер -->
+                    <div class="compact-body" id="compactWrapper">
+                      <div class="compact-half">
+                        <div class="compact-subtitle">Init</div>
+                        <textarea id="compactInit"></textarea>
+                      </div>
+                      <div class="compact-half">
+                        <div class="compact-subtitle">Loop</div>
+                        <textarea id="compactLoop"></textarea>
+                      </div>
                     </div>
                   </div>
                 </aside>

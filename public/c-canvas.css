@@ -172,24 +172,92 @@
   min-height: 0;
 }
 
-.editor-main {
-  flex: 3 1 0;
+/* Два равноправных слота */
+.editor-main,
+.compact-pane {
+  flex: 1 1 0;
   min-width: 0;
-  border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
 }
 
+/* Хедер над каждым окном с Full/Compact */
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+  gap: 8px;
+}
+
+.pane-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted-text);
+}
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Тогглы Full / Compact (радио) */
+.pane-mode-toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pane-mode-option {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--muted-text);
+  user-select: none;
+}
+
+.pane-mode-option input[type="radio"] {
+  display: none;
+}
+
+.pane-mode-option span {
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.pane-mode-option input[type="radio"]:checked + span {
+  background: var(--primary-color);
+  border-color: var(--primary-hover);
+  color: #fff;
+}
+
+.pane-mode-option:hover span {
+  border-color: var(--primary-color);
+  color: var(--text-color);
+}
+
+/* Контент слотов */
 .editor-main #editorHost {
+  flex: 1;
   height: 100%;
 }
 
 .compact-pane {
-  flex: 2 1 0;
-  min-width: 0;
+  background: var(--dark-bg);
+}
+
+/* Обёртка компактного вида, которая мигрирует между слотами */
+#compactWrapper {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--dark-bg);
 }
 
 .compact-body {
@@ -199,6 +267,25 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* Перегородка между окнами */
+.editor-divider {
+  width: 6px;
+  background: var(--border-color);
+  cursor: col-resize;
+  flex: 0 0 auto;
+}
+
+.editor-divider:hover,
+body.editor-resizing .editor-divider {
+  background: var(--primary-color);
+}
+
+/* Когда тащим разделитель — отключаем выделение и ставим курсор */
+body.editor-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .compact-half {
@@ -232,6 +319,10 @@
 
   .compact-pane {
     border-top: none;
+  }
+
+  .editor-divider {
+    display: none;
   }
 }
 
