@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -8,7 +8,6 @@
     <link rel="stylesheet" href="uart.css" />
     <!-- include Chart.js library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js"></script>
-    <script src="updi.js"></script>
     <script defer src="uart.js"></script>
   </head>
   <body>
@@ -61,11 +60,18 @@
                 />
               </svg>
             </button>
+            <span class="connection-note">
+              Hardware debugging via USB-UART bridge
+            </span>
           </div>
         </section>
 
         <!-- Terminal and oscilloscope section -->
-        <section class="uart-section">
+        <section
+          class="uart-section uart-session is-locked"
+          id="uartSession"
+          aria-disabled="true"
+        >
           <!-- TxD and RxD terminals -->
           <div class="terminals-split-container">
             <div class="terminal-wrapper">
@@ -88,19 +94,6 @@
                     accept=".hex,.ihx,.ihex,.txt"
                     style="display: none"
                   />
-                  <button
-                    class="log-btn"
-                    id="flashBtn"
-                    title="Flash MCU over UPDI"
-                  >
-                    Flash MCU
-                  </button>
-                  <input
-                    type="file"
-                    id="flashHexInput"
-                    accept=".hex,.ihx,.ihex,.txt"
-                    style="display: none"
-                  />
                   <label class="checkbox-label">
                     <input type="checkbox" id="autoScrollCheckbox" checked />
                     <span class="checkbox-custom"></span>
@@ -111,6 +104,26 @@
                     <span class="checkbox-custom"></span>
                     Show time
                   </label>
+                </div>
+                <div class="run-controls">
+                  <button class="send-btn" id="sendBtn" disabled>Run</button>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="cycleCheckbox" />
+                    <span class="checkbox-custom"></span>
+                    Cycle
+                  </label>
+                </div>
+                <div class="mode-controls" aria-label="TxD mode">
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txMode" value="ascii" checked />
+                      <span>ASCII</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txMode" value="hex" />
+                      <span>HEX</span>
+                    </label>
+                  </div>
                 </div>
               </div>
               <div class="terminal-container" id="terminalSent"></div>
@@ -148,6 +161,21 @@
                     </svg>
                     Graphic
                   </button>
+                </div>
+                <div
+                  class="mode-controls mode-controls-right"
+                  aria-label="RxD mode"
+                >
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input type="radio" name="rxMode" value="ascii" checked />
+                      <span>ASCII</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="rxMode" value="hex" />
+                      <span>HEX</span>
+                    </label>
+                  </div>
                 </div>
                 <!-- Data display mode radio buttons (for oscilloscope) -->
                 <div
@@ -244,22 +272,8 @@
             </div>
           </div>
 
-          <!-- Input panel with radio buttons for ASCII/HEX mode -->
+          <!-- Input panel -->
           <div class="terminal-input-panel">
-            <!-- Input mode radio buttons -->
-            <div class="input-mode-controls">
-              <label class="radio-label">
-                <input type="radio" name="inputMode" value="ascii" checked />
-                <span class="radio-custom"></span>
-                ASCII
-              </label>
-              <label class="radio-label">
-                <input type="radio" name="inputMode" value="hex" />
-                <span class="radio-custom"></span>
-                HEX
-              </label>
-            </div>
-
             <input
               type="text"
               class="terminal-input"
@@ -267,37 +281,6 @@
               placeholder="Text string"
               disabled
             />
-            <button class="send-btn" id="sendBtn" disabled>Send</button>
-            <button
-              class="send-loop-btn"
-              id="sendLoopBtn"
-              disabled
-              title="Send in loop"
-            >
-              <!-- Loop icon (две стрелки по кругу) -->
-              <svg
-                class="loop-icon"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-              >
-                <path
-                  d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"
-                />
-              </svg>
-              <!-- Stop icon (квадрат) -->
-              <svg
-                class="stop-icon"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                style="display: none"
-              >
-                <path d="M6 6h12v12H6z" />
-              </svg>
-            </button>
             <input
               type="number"
               class="loop-interval-input"
@@ -356,38 +339,11 @@
                   <option value="odd">Odd</option>
                 </select>
               </div>
-              <div class="connection-control">
-                <label>MCU</label>
-                <select id="mcuSelect" title="Target MCU">
-                  <optgroup label="tinyAVR 1/2-series">
-                    <option value="attiny1624" selected>ATtiny1624</option>
-                    <option value="attiny1626">ATtiny1626</option>
-                    <option value="attiny1627">ATtiny1627</option>
-                    <option value="attiny1614">ATtiny1614</option>
-                    <option value="attiny1616">ATtiny1616</option>
-                    <option value="attiny1617">ATtiny1617</option>
-                    <option value="attiny3216">ATtiny3216</option>
-                    <option value="attiny3217">ATtiny3217</option>
-                    <option value="attiny3224">ATtiny3224</option>
-                    <option value="attiny3226">ATtiny3226</option>
-                    <option value="attiny3227">ATtiny3227</option>
-                  </optgroup>
-                  <optgroup label="megaAVR 0-series">
-                    <option value="atmega4808">ATmega4808</option>
-                    <option value="atmega4809">ATmega4809</option>
-                  </optgroup>
-                  <optgroup label="AVR Dx (UPDI)">
-                    <option value="avr64da32">AVR64DA32</option>
-                    <option value="avr64db32">AVR64DB32</option>
-                  </optgroup>
-                </select>
-              </div>
             </div>
           </div>
         </div>
       </div>
     </main>
-    <input id="flashHexFile" type="file" accept=".hex,.ihx,.ihex" hidden />
     <footer
       style="
         margin: 40px auto;
@@ -395,9 +351,18 @@
         padding: 16px;
         opacity: 0.7;
         text-align: center;
-        font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu,
-          Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji',
-          'Segoe UI Emoji';
+        font:
+          14px/1.4 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Ubuntu,
+          Cantarell,
+          &quot;Helvetica Neue&quot;,
+          Arial,
+          &quot;Noto Sans&quot;,
+          &quot;Apple Color Emoji&quot;,
+          &quot;Segoe UI Emoji&quot;;
       "
     >
       Contact: <a href="mailto:uartdebug@gmail.com">uartdebug@gmail.com</a>

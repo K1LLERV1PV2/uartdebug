@@ -14,6 +14,10 @@ let byteBuffer = [];
 let chartZoom = { x: 1, y: 1 };
 let chartPan = { x: 0, y: 0 };
 let isPanningChart = false;
+let isAxisDrag = false;
+let axisDragMode = null;
+let axisDragStart = { x: 0, y: 0 };
+let axisDragScaleStart = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 };
 let panStartPos = { x: 0, y: 0 };
 let panStartOffset = { x: 0, y: 0 };
 let rxBuffer = new Uint8Array(0);
@@ -31,12 +35,16 @@ let autoScrollCheckbox = null;
 let timestampCheckbox = null;
 let oscilloscopeCanvas = null;
 let oscilloscopeContainer = null;
-let sendLoopBtn = null;
+let cycleCheckbox = null;
+let uartSession = null;
 
 // Initialize on page load
 document.addEventListener("DOMContentLoaded", function () {
   initializeElements();
   initializeEventListeners();
+  updateTxInputPlaceholder();
+  updateRunButtonState();
+  updateConnectionStatus(false);
   checkWebSerialSupport();
 });
 
@@ -49,13 +57,14 @@ function initializeElements() {
   terminalInput = document.getElementById("terminalInput");
   connectBtn = document.getElementById("connectBtn");
   sendBtn = document.getElementById("sendBtn");
-  sendLoopBtn = document.getElementById("sendLoopBtn");
   loopIntervalInput = document.getElementById("loopIntervalInput");
   statusIndicator = document.getElementById("statusIndicator");
   autoScrollCheckbox = document.getElementById("autoScrollCheckbox");
   timestampCheckbox = document.getElementById("timestampCheckbox");
   oscilloscopeCanvas = document.getElementById("oscilloscopeCanvas");
   oscilloscopeContainer = document.getElementById("oscilloscopeContainer");
+  cycleCheckbox = document.getElementById("cycleCheckbox");
+  uartSession = document.getElementById("uartSession");
 }
 
 /**
@@ -65,16 +74,16 @@ function initializeEventListeners() {
   // Connection button
   connectBtn.addEventListener("click", toggleConnection);
 
-  // Send button and input
-  sendBtn.addEventListener("click", sendData);
+  // Run/Stop button and input
+  sendBtn.addEventListener("click", handleRunAction);
   terminalInput.addEventListener("keypress", function (e) {
     if (e.key === "Enter") {
-      sendData();
+      handleRunAction();
     }
   });
 
-  // Loop send button
-  sendLoopBtn.addEventListener("click", toggleLoopSend);
+  // Cycle checkbox
+  cycleCheckbox?.addEventListener("change", handleCycleChange);
 
   // Loop interval input
   loopIntervalInput.addEventListener("change", function () {
@@ -109,9 +118,12 @@ function initializeEventListeners() {
       }
     });
 
-  // Input mode radio buttons
-  document.querySelectorAll('input[name="inputMode"]').forEach((radio) => {
-    radio.addEventListener("change", handleInputModeChange);
+  // Mode radio buttons
+  document.querySelectorAll('input[name="txMode"]').forEach((radio) => {
+    radio.addEventListener("change", handleTxModeChange);
+  });
+  document.querySelectorAll('input[name="rxMode"]').forEach((radio) => {
+    radio.addEventListener("change", handleRxModeChange);
   });
 
   // View toggle buttons
@@ -142,8 +154,6 @@ function initializeEventListeners() {
   const hexFileInput = document.getElementById("hexFileInput");
   hexUploadBtn?.addEventListener("click", () => hexFileInput?.click());
   hexFileInput?.addEventListener("change", handleHexFileSelected);
-
-  document.getElementById("flashBtn")?.addEventListener("click", onFlashClick);
 }
 
 /**
@@ -272,6 +282,31 @@ async function disconnectSerial() {
 /**
  * Update connection status in UI
  */
+function setUartSessionLocked(locked) {
+  if (!uartSession) return;
+  uartSession.classList.toggle("is-locked", !!locked);
+  uartSession.setAttribute("aria-disabled", locked ? "true" : "false");
+  uartSession.inert = !!locked;
+}
+
+function getTxMode() {
+  const inputModeElement = document.querySelector(
+    'input[name="txMode"]:checked'
+  );
+  return inputModeElement ? inputModeElement.value : "ascii";
+}
+
+function getRxMode() {
+  const inputModeElement = document.querySelector(
+    'input[name="rxMode"]:checked'
+  );
+  return inputModeElement ? inputModeElement.value : "ascii";
+}
+
+function getModeForTarget(targetTerminal) {
+  return targetTerminal === terminalReceived ? getRxMode() : getTxMode();
+}
+
 function updateConnectionStatus(connected, deviceLabel = "") {
   if (connected) {
     statusIndicator.textContent = deviceLabel
@@ -281,7 +316,7 @@ function updateConnectionStatus(connected, deviceLabel = "") {
     statusIndicator.classList.add("connected");
     connectBtn.textContent = "Disconnect";
     sendBtn.disabled = false;
-    sendLoopBtn.disabled = false;
+    if (cycleCheckbox) cycleCheckbox.disabled = false;
     loopIntervalInput.disabled = false;
     terminalInput.disabled = false;
   } else {
@@ -290,11 +325,12 @@ function updateConnectionStatus(connected, deviceLabel = "") {
     statusIndicator.classList.add("disconnected");
     connectBtn.textContent = "Connect";
     sendBtn.disabled = true;
-    sendLoopBtn.disabled = true;
+    if (cycleCheckbox) cycleCheckbox.disabled = true;
     loopIntervalInput.disabled = true;
     terminalInput.disabled = true;
   }
 
+  setUartSessionLocked(!connected);
   setConnectionSelectsDisabled(connected);
 }
 
@@ -393,10 +429,7 @@ function flushRxBufferToTerminal() {
   if (!rxBuffer || rxBuffer.length === 0) return;
 
   // Определяем текущий режим отображения RxD
-  const inputModeElement = document.querySelector(
-    'input[name="inputMode"]:checked'
-  );
-  const inputMode = inputModeElement ? inputModeElement.value : "ascii";
+  const inputMode = getRxMode();
 
   if (inputMode === "hex") {
     // HEX: весь буфер одной строкой
@@ -423,10 +456,7 @@ async function sendData() {
     return;
   }
 
-  const inputModeElement = document.querySelector(
-    'input[name="inputMode"]:checked'
-  );
-  const inputMode = inputModeElement ? inputModeElement.value : "ascii";
+  const inputMode = getTxMode();
   const inputValue = terminalInput.value;
 
   try {
@@ -538,137 +568,6 @@ async function sendHexBytes(uint8) {
   }
 }
 
-async function onFlashClick() {
-  // ---------- утилиты ----------
-  const $ = (id) => document.getElementById(id);
-  const log = (msg, kind = "info") => {
-    try {
-      addToTerminal(
-        kind,
-        String(msg),
-        window.terminalReceived || window.terminalSent
-      );
-    } catch {
-      (kind === "error" ? console.error : console.log)(msg);
-    }
-  };
-  const setBusy = (busy) => {
-    ["flashBtn", "connectBtn", "sendBtn", "sendLoopBtn", "terminalInput"]
-      .map($)
-      .filter(Boolean)
-      .forEach((el) => (el.disabled = !!busy));
-  };
-
-  try {
-    setBusy(true);
-
-    if (!("serial" in navigator)) {
-      throw new Error(
-        "Ваш браузер не поддерживает Web Serial. Нужен Chrome/Edge (HTTPS или localhost)."
-      );
-    }
-    if (!window.WebSerialUPDI) {
-      throw new Error("Не найден WebSerialUPDI (подключи updi.js ДО uart.js).");
-    }
-
-    // ===== 1) СРАЗУ запрашиваем порт (без await-ов до этого!) =====
-    // Это сохраняет «жест пользователя» для диалога выбора порта.
-    const userPort = await navigator.serial.requestPort();
-
-    // ===== 2) Получаем HEX =====
-    // если уже загружен через #hexFileInput — используем его
-    let hexText = null;
-    const preloaded = $("hexFileInput")?.files?.[0];
-    if (preloaded) {
-      hexText = await preloaded.text();
-    } else {
-      // попытаемся открыть скрытый <input id="flashHexInput">
-      const picker = $("flashHexInput");
-      if (picker) {
-        // клик может быть заблокирован вне жеста; попробуем — если не вышло, попросим выбрать вручную
-        let picked = await new Promise((resolve) => {
-          const handler = async (e) => {
-            picker.removeEventListener("change", handler);
-            const f = e.target.files && e.target.files[0];
-            picker.value = "";
-            resolve(f ? await f.text() : null);
-          };
-          picker.addEventListener("change", handler, { once: true });
-          try {
-            picker.click();
-          } catch {
-            /* ignore */
-          }
-          // запасной таймер: если ничего не выбрали за 1500 мс — вернём null
-          setTimeout(() => resolve(null), 1500);
-        });
-        hexText = picked;
-      }
-
-      if (!hexText) {
-        // Нет файла — короткая подсказка и выход
-        log(
-          "Выберите HEX через кнопку «Load HEX», затем нажмите «Flash MCU» ещё раз.",
-          "warn"
-        );
-        return;
-      }
-    }
-
-    // ===== 3) Теперь можно делать любые await-операции =====
-    // Освободим обычный UART терминала, если он был подключен
-    if (window.port) {
-      log("Отключаю текущий UART-сеанс…");
-      try {
-        await window.disconnectSerial?.();
-      } catch {}
-      try {
-        window.updateConnectionStatus?.(false, "");
-      } catch {}
-      log("Disconnected");
-    }
-
-    // ===== 4) Прошивка с фоллбэками по скорости =====
-    const speeds = [230400, 115200, 57600];
-    let flashed = false;
-
-    for (const baud of speeds) {
-      try {
-        log(`UPDI: открываю порт @ ${baud} бод…`);
-        const updi = new window.WebSerialUPDI(userPort, {
-          baud,
-          pageSize: 64,
-          rowSize: 256,
-        });
-        await updi.open();
-        try {
-          log("HEX: парсинг и подготовка…");
-          await updi.flashIntelHex(hexText, {
-            erase: true,
-            progress: (m) => log(m, "info"),
-          });
-          flashed = true;
-          log("✅ Прошивка завершена");
-        } finally {
-          await updi.close();
-        }
-        if (flashed) break;
-      } catch (e) {
-        log(`Не удалось на ${baud} бод: ${e?.message || e}`, "warn");
-      }
-    }
-
-    if (!flashed) {
-      throw new Error(
-        "Не удалось установить сеанс UPDI на доступных скоростях (230400/115200/57600)."
-      );
-    }
-  } catch (err) {
-    log(`❌ Ошибка прошивки: ${err?.message || err}`, "error");
-  } finally {
-    setBusy(false);
-  }
-}
 
 /**
  * Intel HEX (IHEX) parser.
@@ -781,10 +680,7 @@ function addToTerminal(type, data, targetTerminal) {
     : "";
 
   // Check if we're in hex mode
-  const inputModeElement = document.querySelector(
-    'input[name="inputMode"]:checked'
-  );
-  const inputMode = inputModeElement ? inputModeElement.value : "ascii";
+  const inputMode = getModeForTarget(targetTerminal);
 
   if (inputMode === "hex" && (type === "sent" || type === "received")) {
     line.classList.add("hex-mode");
@@ -816,11 +712,9 @@ function formatHexData(uint8Array) {
     .join(" ");
 }
 
-/**
- * Handle input mode change
- */
-function handleInputModeChange(event) {
-  const inputMode = event.target.value;
+function updateTxInputPlaceholder() {
+  if (!terminalInput) return;
+  const inputMode = getTxMode();
 
   if (inputMode === "hex") {
     terminalInput.placeholder = "String of Hex Digits like 37 AB 02 fD 7c";
@@ -831,6 +725,44 @@ function handleInputModeChange(event) {
   }
 }
 
+function updateRunButtonState() {
+  if (!sendBtn) return;
+  const running = !!loopInterval;
+  sendBtn.textContent = running ? "Stop" : "Run";
+  sendBtn.classList.toggle("running", running);
+  sendBtn.title = running ? "Stop cycle" : "Run";
+}
+
+function handleRunAction() {
+  if (loopInterval) {
+    stopLoopSend();
+    return;
+  }
+
+  if (cycleCheckbox?.checked) {
+    startLoopSend();
+    return;
+  }
+
+  sendData();
+  updateRunButtonState();
+}
+
+function handleCycleChange() {
+  if (!cycleCheckbox?.checked && loopInterval) {
+    stopLoopSend();
+  }
+}
+
+/**
+ * Handle Tx/Rx mode change
+ */
+function handleTxModeChange() {
+  updateTxInputPlaceholder();
+}
+
+function handleRxModeChange() {}
+
 /**
  * Handle view change (Terminal/Oscilloscope)
  */
@@ -839,6 +771,9 @@ function handleViewChange(event) {
   const view = button.dataset.view;
   const oscilloscopeControls = document.getElementById("oscilloscopeControls");
   const dataModeControls = document.getElementById("dataModeControls");
+  const rxModeControls = document.querySelectorAll(
+    ".terminal-wrapper:nth-child(2) .mode-controls"
+  );
 
   // Update active button
   document.querySelectorAll(".view-btn").forEach((btn) => {
@@ -852,6 +787,7 @@ function handleViewChange(event) {
     oscilloscopeContainer.style.display = "block";
     oscilloscopeControls.style.display = "flex";
     dataModeControls.style.display = "flex"; // Show new data mode controls
+    rxModeControls.forEach((el) => (el.style.display = "none"));
     currentView = "oscilloscope";
 
     // Initialize oscilloscope if needed
@@ -864,6 +800,7 @@ function handleViewChange(event) {
     oscilloscopeContainer.style.display = "none";
     oscilloscopeControls.style.display = "none";
     dataModeControls.style.display = "none"; // Hide data mode controls
+    rxModeControls.forEach((el) => (el.style.display = "flex"));
     currentView = "terminal";
   }
 }
@@ -1237,7 +1174,7 @@ function updateOscilloscopeSettings() {
 document.addEventListener("keydown", function (e) {
   // Ctrl+Enter to send
   if (e.ctrlKey && e.key === "Enter" && !sendBtn.disabled) {
-    sendData();
+    handleRunAction();
   }
 
   // Ctrl+L to clear
@@ -1295,24 +1232,10 @@ window.addEventListener("beforeunload", async function (e) {
 });
 
 /**
- * Toggle loop sending
- */
-function toggleLoopSend() {
-  if (loopInterval) {
-    stopLoopSend();
-  } else {
-    startLoopSend();
-  }
-}
-
-/**
  * Start loop sending
  */
 function startLoopSend() {
   // Проверяем, что есть что отправлять
-  const inputMode = document.querySelector(
-    'input[name="inputMode"]:checked'
-  ).value;
   const inputValue = terminalInput.value.trim();
 
   if (!inputValue) {
@@ -1323,14 +1246,6 @@ function startLoopSend() {
   // Получаем интервал из поля ввода
   const intervalMs = parseInt(loopIntervalInput.value) || 1000;
 
-  // Меняем иконку на стоп
-  const loopIcon = sendLoopBtn.querySelector(".loop-icon");
-  const stopIcon = sendLoopBtn.querySelector(".stop-icon");
-  loopIcon.style.display = "none";
-  stopIcon.style.display = "block";
-  sendLoopBtn.classList.add("active");
-  sendLoopBtn.title = "Stop loop";
-
   // Отправляем первый раз сразу
   sendDataLoop();
 
@@ -1338,8 +1253,9 @@ function startLoopSend() {
   loopInterval = setInterval(() => {
     sendDataLoop();
   }, intervalMs);
-}
 
+  updateRunButtonState();
+}
 /**
  * Stop loop sending
  */
@@ -1349,24 +1265,15 @@ function stopLoopSend() {
     loopInterval = null;
   }
 
-  // Возвращаем иконку цикла
-  const loopIcon = sendLoopBtn.querySelector(".loop-icon");
-  const stopIcon = sendLoopBtn.querySelector(".stop-icon");
-  loopIcon.style.display = "block";
-  stopIcon.style.display = "none";
-  sendLoopBtn.classList.remove("active");
-  sendLoopBtn.title = "Send in loop";
+  updateRunButtonState();
 }
-
 /**
  * Send data in loop (without clearing input)
  */
 async function sendDataLoop() {
   if (!writer) return;
 
-  const inputMode = document.querySelector(
-    'input[name="inputMode"]:checked'
-  ).value;
+  const inputMode = getTxMode();
   const inputValue = terminalInput.value.trim();
 
   if (!inputValue) return;
@@ -1435,6 +1342,49 @@ function initChartControls() {
   oscilloscopeCanvas.addEventListener("mousemove", handleChartMouseMove);
   oscilloscopeCanvas.addEventListener("mouseup", handleChartMouseUp);
   oscilloscopeCanvas.addEventListener("mouseleave", handleChartMouseUp);
+}
+
+function getMousePos(e) {
+  const rect = oscilloscopeCanvas.getBoundingClientRect();
+  return {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
+  };
+}
+
+function getAxisHoverMode(chart, x, y) {
+  if (!chart) return null;
+  const chartArea = chart.chartArea;
+  if (!chartArea) return null;
+  const xScale = chart.scales?.x;
+  const yScale = chart.scales?.y;
+  if (!xScale || !yScale) return null;
+
+  const padding = 8;
+
+  const inXBand =
+    x >= chartArea.left - padding &&
+    x <= chartArea.right + padding &&
+    y >= chartArea.bottom &&
+    y <= xScale.bottom + padding;
+
+  if (inXBand) return "x";
+
+  const leftAxisBand =
+    x >= yScale.left - padding &&
+    x <= chartArea.left &&
+    y >= chartArea.top - padding &&
+    y <= chartArea.bottom + padding;
+
+  const rightAxisBand =
+    x >= chartArea.right &&
+    x <= yScale.right + padding &&
+    y >= chartArea.top - padding &&
+    y <= chartArea.bottom + padding;
+
+  if (leftAxisBand || rightAxisBand) return "y";
+
+  return null;
 }
 
 /**
@@ -1510,15 +1460,38 @@ function handleChartZoom(e) {
  * Handle mouse down for panning
  */
 function handleChartMouseDown(e) {
+  if (!oscilloscopeChart) return;
+
+  const mouse = getMousePos(e);
+  if (e.button === 0) {
+    const axisMode = getAxisHoverMode(oscilloscopeChart, mouse.x, mouse.y);
+    if (axisMode) {
+      e.preventDefault();
+      isAxisDrag = true;
+      axisDragMode = axisMode;
+      axisDragStart = { ...mouse };
+
+      const xScale = oscilloscopeChart.scales.x;
+      const yScale = oscilloscopeChart.scales.y;
+      axisDragScaleStart = {
+        xMin: xScale.options.min ?? xScale.min,
+        xMax: xScale.options.max ?? xScale.max,
+        yMin: yScale.options.min ?? yScale.min,
+        yMax: yScale.options.max ?? yScale.max,
+      };
+
+      oscilloscopeCanvas.style.cursor =
+        axisMode === "y" ? "ns-resize" : "ew-resize";
+      return;
+    }
+  }
+
   // Check for middle mouse button (button === 1)
   if (e.button === 1) {
     e.preventDefault();
     isPanningChart = true;
 
-    panStartPos = {
-      x: e.clientX,
-      y: e.clientY,
-    };
+    panStartPos = { x: e.clientX, y: e.clientY };
 
     if (oscilloscopeChart) {
       const xScale = oscilloscopeChart.scales.x;
@@ -1543,7 +1516,74 @@ function handleChartMouseDown(e) {
  * Handle mouse move for panning
  */
 function handleChartMouseMove(e) {
-  if (!isPanningChart || !oscilloscopeChart) return;
+  if (!oscilloscopeChart) return;
+
+  if (isAxisDrag) {
+    const mouse = getMousePos(e);
+    const chartArea = oscilloscopeChart.chartArea;
+    if (!chartArea) return;
+
+    if (axisDragMode === "x") {
+      const deltaX = mouse.x - axisDragStart.x;
+      const xScale = oscilloscopeChart.scales.x;
+      const startMin = axisDragScaleStart.xMin;
+      const startMax = axisDragScaleStart.xMax;
+      const startRange = startMax - startMin;
+      const factor = Math.exp(-deltaX * 0.005);
+      let newRange = Math.max(startRange * factor, 1e-6);
+      const mid = (startMin + startMax) / 2;
+
+      const xDataMax =
+        oscilloscopeData.length > 0 ? oscilloscopeData.length - 1 : 499;
+      const minLimit = 0;
+      const maxLimit = xDataMax;
+      const maxRange = maxLimit - minLimit;
+
+      if (newRange > maxRange) newRange = maxRange;
+
+      let newMin = mid - newRange / 2;
+      let newMax = mid + newRange / 2;
+
+      if (newMin < minLimit) {
+        newMin = minLimit;
+        newMax = minLimit + newRange;
+      }
+      if (newMax > maxLimit) {
+        newMax = maxLimit;
+        newMin = maxLimit - newRange;
+      }
+
+      xScale.options.min = newMin;
+      xScale.options.max = newMax;
+    } else if (axisDragMode === "y") {
+      const deltaY = mouse.y - axisDragStart.y;
+      const yScale = oscilloscopeChart.scales.y;
+      const startMin = axisDragScaleStart.yMin;
+      const startMax = axisDragScaleStart.yMax;
+      const startRange = startMax - startMin;
+      const factor = Math.exp(deltaY * 0.005);
+      const newRange = Math.max(startRange * factor, 1e-6);
+      const mid = (startMin + startMax) / 2;
+      yScale.options.min = mid - newRange / 2;
+      yScale.options.max = mid + newRange / 2;
+    }
+
+    oscilloscopeChart.update("none");
+    return;
+  }
+
+  if (!isPanningChart) {
+    const mouse = getMousePos(e);
+    const hoverMode = getAxisHoverMode(oscilloscopeChart, mouse.x, mouse.y);
+    if (hoverMode === "y") {
+      oscilloscopeCanvas.style.cursor = "ns-resize";
+    } else if (hoverMode === "x") {
+      oscilloscopeCanvas.style.cursor = "ew-resize";
+    } else {
+      oscilloscopeCanvas.style.cursor = "default";
+    }
+    return;
+  }
 
   const chartArea = oscilloscopeChart.chartArea;
   if (!chartArea) return;
@@ -1597,6 +1637,14 @@ function handleChartMouseMove(e) {
 function handleChartMouseUp(e) {
   if (e.button === 1 || isPanningChart) {
     isPanningChart = false;
+  }
+
+  if (e.button === 0 || isAxisDrag) {
+    isAxisDrag = false;
+    axisDragMode = null;
+  }
+
+  if (!isPanningChart && !isAxisDrag) {
     oscilloscopeCanvas.style.cursor = "default";
   }
 }
@@ -1652,136 +1700,3 @@ function resetChartView() {
   }
 }
 
-async function flashHexTextWithUpdiJS(hexText, onProgress) {
-  onProgress ??= (msg) => console.log(msg);
-  try {
-    if (!("serial" in navigator)) {
-      throw new Error(
-        "Ваш браузер не поддерживает Web Serial. Откройте сайт в Chrome/Edge на Windows/macOS/Linux."
-      );
-    }
-    onProgress("Выбор порта…");
-    const port = await navigator.serial.requestPort({ filters: [] }); // при желании добавьте vendor/productId
-    const updi = new WebSerialUPDI(port, {
-      baud: 230400,
-      pageSize: 64,
-      rowSize: 256,
-    });
-    await updi.open();
-    try {
-      await updi.flashIntelHex(hexText, {
-        erase: true,
-        progress: (m) => onProgress(m),
-      });
-    } finally {
-      await updi.close();
-    }
-    onProgress("✅ Прошивка завершена");
-    return true;
-  } catch (e) {
-    onProgress("❌ " + (e?.message || e));
-    return false;
-  }
-}
-
-async function onFlashClick() {
-  // --- утилиты UI ---
-  const els = {
-    flashBtn: document.getElementById("flashBtn"),
-    connectBtn,
-    sendBtn,
-    sendLoopBtn,
-    terminalInput,
-  };
-  const setBusy = (b) => {
-    Object.values(els).forEach((el) => el && (el.disabled = !!b));
-  };
-  const log = (msg, kind = "info") => addToTerminal(kind, msg, terminalSent);
-
-  // --- основной запуск с текстом HEX ---
-  const runWithHexText = async (hexText) => {
-    try {
-      setBusy(true);
-      log("JS-UPDI: подготовка…");
-
-      // если открыт обычный UART в терминале — закроем, чтобы освободить порт
-      if (port) {
-        log("Отключаю текущий UART-сеанс…");
-        try {
-          await disconnectSerial();
-        } catch {}
-
-        // обновим статус в UI, если у тебя есть такая функция
-        if (typeof updateConnectionStatus === "function") {
-          updateConnectionStatus(false, "");
-        }
-      }
-
-      if (!("serial" in navigator)) {
-        throw new Error(
-          "Ваш браузер не поддерживает Web Serial (нужен Chrome/Edge)."
-        );
-      }
-      if (!window.WebSerialUPDI) {
-        throw new Error(
-          "Класс WebSerialUPDI не найден. Подключите updi.js до uart.js."
-        );
-      }
-
-      log("Выбор порта…");
-      const userPort = await navigator.serial.requestPort(); // можно добавить filters
-
-      const updi = new window.WebSerialUPDI(userPort, {
-        baud: 230400, // fallback на 57600, если адаптер капризничает
-        pageSize: 64, // дефолт для tinyAVR 1-series
-        rowSize: 256,
-      });
-
-      await updi.open();
-      try {
-        await updi.flashIntelHex(hexText, {
-          erase: true,
-          progress: (m) => log(m, "info"),
-        });
-        log("✅ Прошивка завершена");
-      } finally {
-        await updi.close();
-      }
-    } catch (e) {
-      log("❌ Ошибка прошивки: " + (e?.message || e), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // --- 1) если HEX уже загружен через Load HEX (#hexFileInput) ---
-  const fileFromLoad = document.getElementById("hexFileInput")?.files?.[0];
-  if (fileFromLoad) {
-    const hexText = await fileFromLoad.text();
-    return runWithHexText(hexText);
-  }
-
-  // --- 2) иначе попросим выбрать файл через скрытый #flashHexInput ---
-  const picker = document.getElementById("flashHexInput");
-  if (!picker) {
-    log("Не найден input #flashHexInput. Проверь разметку.", "error");
-    return;
-  }
-
-  // одноразовый обработчик выбора файла
-  const once = async (e) => {
-    picker.removeEventListener("change", once);
-    const f = e.target.files && e.target.files[0];
-    picker.value = "";
-    if (!f) {
-      log("Файл не выбран.", "warn");
-      return;
-    }
-    const hexText = await f.text();
-    await runWithHexText(hexText);
-  };
-
-  picker.value = "";
-  picker.addEventListener("change", once, { once: true });
-  picker.click();
-}

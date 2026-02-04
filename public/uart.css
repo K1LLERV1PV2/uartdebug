@@ -45,6 +45,12 @@ body {
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
 }
 
+.uart-section.is-locked {
+  position: relative;
+  pointer-events: none;
+  filter: brightness(0.6) grayscale(20%);
+}
+
 .uart-section h2 {
   border-bottom: 2px solid;
   padding-bottom: 8px;
@@ -87,6 +93,15 @@ body {
   align-items: flex-end;
   flex-wrap: wrap;
   margin-bottom: 15px;
+}
+
+.connection-note {
+  margin-left: auto;
+  color: #bdc3c7;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
 }
 
 .connection-control {
@@ -298,7 +313,7 @@ body {
   border-radius: 4px;
   height: calc(100% - 28px);
   overflow: hidden;
-  padding: 10px;
+  padding: 0px !important;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -360,7 +375,7 @@ body {
 
 /* Play/Pause button */
 .play-pause-btn {
-  padding: 4px;
+  padding: 4px 8px;
   background: #7f8c8d;
   color: white;
   border: none;
@@ -370,8 +385,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
 }
 
 .play-pause-btn:hover {
@@ -383,8 +396,8 @@ body {
 }
 
 .play-pause-btn svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 /* Terminal lines */
@@ -463,9 +476,22 @@ body {
   background: #1abc9c;
 }
 
+.send-btn.running {
+  background: #e74c3c;
+}
+
+.send-btn.running:hover {
+  background: #c0392b;
+}
+
 .send-btn:disabled {
   background: #7f8c8d;
   cursor: not-allowed;
+}
+
+.terminal-header .send-btn {
+  padding: 4px 8px;
+  font-size: 11px;
 }
 
 .send-loop-btn {
@@ -869,6 +895,11 @@ main {
     font-size: 10px;
   }
 
+  .terminal-header .send-btn {
+    padding: 3px 6px;
+    font-size: 10px;
+  }
+
   .terminal-container,
   .oscilloscope-container {
     height: calc(100% - 24px);
@@ -963,6 +994,11 @@ main {
     font-size: 9px;
   }
 
+  .terminal-header .send-btn {
+    padding: 2px 5px;
+    font-size: 9px;
+  }
+
   .send-container {
     padding: 6px;
     margin-top: 6px;
@@ -1004,13 +1040,12 @@ main {
   }
 
   .play-pause-btn {
-    width: 24px;
-    height: 24px;
+    padding: 2px 5px;
   }
 
   .play-pause-btn svg {
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
   }
 }
 
@@ -1050,6 +1085,16 @@ body {
   gap: 15px;
   align-items: center;
   margin-left: 10px;
+}
+
+.mode-controls {
+  display: flex;
+  align-items: center;
+  margin-left: 10px;
+}
+
+.mode-controls-right {
+  margin-left: auto;
 }
 
 /* Radio group container */
@@ -1121,6 +1166,13 @@ body {
   gap: 5px;
   align-items: center;
   flex: 1;
+  flex-wrap: wrap;
+}
+
+.run-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
   flex-wrap: wrap;
 }
 
