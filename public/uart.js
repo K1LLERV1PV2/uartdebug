@@ -30,6 +30,8 @@ let terminalSent = null;
 let terminalReceived = null;
 let terminalInput = null;
 let txGeneratorPanel = null;
+let txLogControls = null;
+let txModeControls = null;
 let connectBtn = null;
 let sendBtn = null;
 let receiveToggleBtn = null;
@@ -61,6 +63,8 @@ function initializeElements() {
   terminalReceived = document.getElementById("terminalReceived");
   terminalInput = document.getElementById("terminalInput");
   txGeneratorPanel = document.getElementById("txGeneratorPanel");
+  txLogControls = document.getElementById("txLogControls");
+  txModeControls = document.getElementById("txModeControls");
   connectBtn = document.getElementById("connectBtn");
   sendBtn = document.getElementById("sendBtn");
   receiveToggleBtn = document.getElementById("receiveToggleBtn");
@@ -108,7 +112,10 @@ function initializeEventListeners() {
   });
 
   // Clear and save buttons
-  document.getElementById("clearBtn").addEventListener("click", clearTerminals);
+  document.getElementById("clearBtn").addEventListener("click", clearTxTerminal);
+  document
+    .getElementById("clearBtnRx")
+    .addEventListener("click", clearRxTerminal);
   document.getElementById("saveLogBtn").addEventListener("click", saveLog);
 
   // Settings modal
@@ -630,10 +637,14 @@ function handleTxViewChange(event) {
   if (txView === "generator") {
     terminalSent.style.display = "none";
     if (txGeneratorPanel) txGeneratorPanel.style.display = "flex";
+    if (txLogControls) txLogControls.style.display = "none";
+    if (txModeControls) txModeControls.style.display = "none";
     if (loopInterval) stopLoopSend();
   } else {
     terminalSent.style.display = "block";
     if (txGeneratorPanel) txGeneratorPanel.style.display = "none";
+    if (txLogControls) txLogControls.style.display = "flex";
+    if (txModeControls) txModeControls.style.display = "flex";
   }
 
   updateTxInputAvailability();
@@ -741,8 +752,20 @@ function handleViewChange(event) {
  * Clear both terminals
  */
 function clearTerminals() {
-  terminalSent.innerHTML = "";
-  terminalReceived.innerHTML = "";
+  clearTxTerminal();
+  clearRxTerminal();
+}
+
+function clearTxTerminal() {
+  if (terminalSent) {
+    terminalSent.innerHTML = "";
+  }
+}
+
+function clearRxTerminal() {
+  if (terminalReceived) {
+    terminalReceived.innerHTML = "";
+  }
 }
 
 /**

@@ -374,6 +374,13 @@ body {
   flex-wrap: wrap;
 }
 
+.rx-left-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .oscilloscope-controls .connection-control {
   margin: 0;
 }
@@ -1230,6 +1237,7 @@ body {
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .cycle-interval {

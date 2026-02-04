@@ -89,8 +89,24 @@
                     </label>
                   </div>
                 </div>
+                <div
+                  class="mode-controls"
+                  id="txModeControls"
+                  aria-label="TxD mode"
+                >
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txMode" value="ascii" checked />
+                      <span>ASCII</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txMode" value="hex" />
+                      <span>HEX</span>
+                    </label>
+                  </div>
+                </div>
                 <!-- Log controls moved here -->
-                <div class="log-controls">
+                <div class="log-controls" id="txLogControls">
                   <button class="log-btn" id="clearBtn">Clear</button>
                   <button class="log-btn" id="saveLogBtn">Save log</button>
                   <label class="checkbox-label">
@@ -122,24 +138,6 @@
                       title="Interval in ms"
                     />
                     <span class="loop-interval-label">ms</span>
-                  </div>
-
-                  <div class="mode-controls" aria-label="TxD mode">
-                    <div class="radio-group">
-                      <label class="radio-label-inline">
-                        <input
-                          type="radio"
-                          name="txMode"
-                          value="ascii"
-                          checked
-                        />
-                        <span>ASCII</span>
-                      </label>
-                      <label class="radio-label-inline">
-                        <input type="radio" name="txMode" value="hex" />
-                        <span>HEX</span>
-                      </label>
-                    </div>
                   </div>
                   <button class="send-btn" id="sendBtn" disabled>Run</button>
                 </div>
