@@ -112,11 +112,13 @@ function initializeEventListeners() {
   });
 
   // Clear and save buttons
-  document.getElementById("clearBtn").addEventListener("click", clearTxTerminal);
+  document
+    .getElementById("clearBtn")
+    ?.addEventListener("click", clearTxTerminal);
   document
     .getElementById("clearBtnRx")
-    .addEventListener("click", clearRxTerminal);
-  document.getElementById("saveLogBtn").addEventListener("click", saveLog);
+    ?.addEventListener("click", clearRxTerminal);
+  document.getElementById("saveLogBtn")?.addEventListener("click", saveLog);
 
   // Settings modal
   document
@@ -723,6 +725,7 @@ function handleViewChange(event) {
   const rxModeControls = document.querySelectorAll(
     ".terminal-wrapper:nth-child(2) .mode-controls"
   );
+  const rxClearBtn = document.getElementById("clearBtnRx");
 
   if (view === "oscilloscope") {
     // Show oscilloscope
@@ -731,6 +734,7 @@ function handleViewChange(event) {
     oscilloscopeControls.style.display = "flex";
     dataModeControls.style.display = "flex"; // Show new data mode controls
     rxModeControls.forEach((el) => (el.style.display = "none"));
+    if (rxClearBtn) rxClearBtn.style.display = "none";
     currentView = "oscilloscope";
 
     // Initialize oscilloscope if needed
@@ -744,6 +748,7 @@ function handleViewChange(event) {
     oscilloscopeControls.style.display = "none";
     dataModeControls.style.display = "none"; // Hide data mode controls
     rxModeControls.forEach((el) => (el.style.display = "flex"));
+    if (rxClearBtn) rxClearBtn.style.display = "inline-flex";
     currentView = "terminal";
   }
 }
