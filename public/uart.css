@@ -1176,6 +1176,25 @@ body {
   flex-wrap: wrap;
 }
 
+.cycle-interval {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.terminal-header .loop-interval-input {
+  height: 20px;
+  padding: 2px 5px;
+  font-size: 10px;
+  width: 58px;
+  line-height: 1;
+}
+
+.terminal-header .loop-interval-label {
+  font-size: 10px;
+  margin-left: 0;
+}
+
 /* Responsive adjustments for data mode controls */
 @media (max-width: 768px) {
   .data-mode-controls {

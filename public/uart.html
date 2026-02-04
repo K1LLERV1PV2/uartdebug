@@ -112,6 +112,19 @@
                     <span class="checkbox-custom"></span>
                     Cycle
                   </label>
+                  <div class="cycle-interval">
+                    <input
+                      type="number"
+                      class="loop-interval-input"
+                      id="loopIntervalInput"
+                      min="100"
+                      max="10000"
+                      step="100"
+                      value="1000"
+                      title="Interval in ms"
+                    />
+                    <span class="loop-interval-label">ms</span>
+                  </div>
                 </div>
                 <div class="mode-controls" aria-label="TxD mode">
                   <div class="radio-group">
@@ -281,17 +294,6 @@
               placeholder="Text string"
               disabled
             />
-            <input
-              type="number"
-              class="loop-interval-input"
-              id="loopIntervalInput"
-              min="100"
-              max="10000"
-              step="100"
-              value="1000"
-              title="Interval in ms"
-            />
-            <span class="loop-interval-label">ms</span>
           </div>
         </section>
 
