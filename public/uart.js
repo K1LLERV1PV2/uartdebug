@@ -3,7 +3,7 @@ let port = null;
 let reader = null;
 let writer = null;
 let currentView = "terminal";
-let oscilloscopePaused = false;
+let isReceiving = true;
 let oscilloscopeData = [];
 let oscilloscopeChart = null;
 let zoomLevel = 1;
@@ -30,6 +30,7 @@ let terminalReceived = null;
 let terminalInput = null;
 let connectBtn = null;
 let sendBtn = null;
+let receiveToggleBtn = null;
 let statusIndicator = null;
 let autoScrollCheckbox = null;
 let timestampCheckbox = null;
@@ -44,6 +45,7 @@ document.addEventListener("DOMContentLoaded", function () {
   initializeEventListeners();
   updateTxInputPlaceholder();
   updateRunButtonState();
+  updateReceiveButtonState();
   updateConnectionStatus(false);
   checkWebSerialSupport();
 });
@@ -57,6 +59,7 @@ function initializeElements() {
   terminalInput = document.getElementById("terminalInput");
   connectBtn = document.getElementById("connectBtn");
   sendBtn = document.getElementById("sendBtn");
+  receiveToggleBtn = document.getElementById("receiveToggleBtn");
   loopIntervalInput = document.getElementById("loopIntervalInput");
   statusIndicator = document.getElementById("statusIndicator");
   autoScrollCheckbox = document.getElementById("autoScrollCheckbox");
@@ -81,6 +84,9 @@ function initializeEventListeners() {
       handleRunAction();
     }
   });
+
+  // Receive toggle
+  receiveToggleBtn?.addEventListener("click", toggleReceiving);
 
   // Cycle checkbox
   cycleCheckbox?.addEventListener("change", handleCycleChange);
@@ -138,9 +144,6 @@ function initializeEventListeners() {
   document
     .getElementById("oscilloClearBtn")
     .addEventListener("click", clearOscilloscope);
-  document
-    .getElementById("oscilloPauseBtn")
-    .addEventListener("click", toggleOscilloscopePause);
 
   document.querySelectorAll('input[name="signMode"]').forEach((radio) => {
     radio.addEventListener("change", updateOscilloscopeSettings);
@@ -164,6 +167,7 @@ function checkWebSerialSupport() {
     document.getElementById("apiWarning").classList.add("show");
     connectBtn.disabled = true;
     sendBtn.disabled = true;
+    if (receiveToggleBtn) receiveToggleBtn.disabled = true;
     terminalInput.disabled = true;
   }
 }
@@ -315,7 +319,9 @@ function updateConnectionStatus(connected, deviceLabel = "") {
     statusIndicator.classList.remove("disconnected");
     statusIndicator.classList.add("connected");
     connectBtn.textContent = "Disconnect";
+    connectBtn.classList.add("connected");
     sendBtn.disabled = false;
+    if (receiveToggleBtn) receiveToggleBtn.disabled = false;
     if (cycleCheckbox) cycleCheckbox.disabled = false;
     loopIntervalInput.disabled = false;
     terminalInput.disabled = false;
@@ -324,7 +330,9 @@ function updateConnectionStatus(connected, deviceLabel = "") {
     statusIndicator.classList.remove("connected");
     statusIndicator.classList.add("disconnected");
     connectBtn.textContent = "Connect";
+    connectBtn.classList.remove("connected");
     sendBtn.disabled = true;
+    if (receiveToggleBtn) receiveToggleBtn.disabled = true;
     if (cycleCheckbox) cycleCheckbox.disabled = true;
     loopIntervalInput.disabled = true;
     terminalInput.disabled = true;
@@ -407,7 +415,11 @@ async function readLoop() {
  * Handle received data from serial port
  */
 function handleReceivedData(data) {
-  if (currentView === "oscilloscope" && !oscilloscopePaused) {
+  if (!isReceiving) {
+    return;
+  }
+
+  if (currentView === "oscilloscope") {
     updateOscilloscopeData(data);
   }
 
@@ -731,6 +743,26 @@ function updateRunButtonState() {
   sendBtn.textContent = running ? "Stop" : "Run";
   sendBtn.classList.toggle("running", running);
   sendBtn.title = running ? "Stop cycle" : "Run";
+}
+
+function updateReceiveButtonState() {
+  if (!receiveToggleBtn) return;
+  const receiving = !!isReceiving;
+  receiveToggleBtn.textContent = receiving ? "Stop" : "Get";
+  receiveToggleBtn.classList.toggle("receiving", receiving);
+  receiveToggleBtn.title = receiving ? "Stop receiving" : "Get data";
+}
+
+function toggleReceiving() {
+  isReceiving = !isReceiving;
+  if (!isReceiving) {
+    rxBuffer = new Uint8Array(0);
+    if (rxFlushTimer) {
+      clearTimeout(rxFlushTimer);
+      rxFlushTimer = null;
+    }
+  }
+  updateReceiveButtonState();
 }
 
 function handleRunAction() {
@@ -1059,7 +1091,7 @@ function byteToHex(v) {
  * Update oscilloscope with new data
  */
 function updateOscilloscopeData(uint8Array) {
-  if (!oscilloscopeChart || oscilloscopePaused) {
+  if (!oscilloscopeChart) {
     return;
   }
 
@@ -1137,29 +1169,6 @@ function clearOscilloscope() {
 }
 
 /**
- * Toggle oscilloscope pause/play
- */
-function toggleOscilloscopePause() {
-  oscilloscopePaused = !oscilloscopePaused;
-
-  const btn = document.getElementById("oscilloPauseBtn");
-  const pauseIcon = btn.querySelector(".pause-icon");
-  const playIcon = btn.querySelector(".play-icon");
-
-  if (oscilloscopePaused) {
-    btn.classList.remove("playing");
-    pauseIcon.style.display = "none";
-    playIcon.style.display = "block";
-    btn.title = "Play";
-  } else {
-    btn.classList.add("playing");
-    pauseIcon.style.display = "block";
-    playIcon.style.display = "none";
-    btn.title = "Pause";
-  }
-}
-
-/**
  * Update oscilloscope settings
  */
 function updateOscilloscopeSettings() {
@@ -1187,16 +1196,6 @@ document.addEventListener("keydown", function (e) {
   if (e.ctrlKey && e.key === "s") {
     e.preventDefault();
     saveLog();
-  }
-
-  // Space to pause/play oscilloscope when in graphic mode
-  if (
-    e.key === " " &&
-    currentView === "oscilloscope" &&
-    document.activeElement !== terminalInput
-  ) {
-    e.preventDefault();
-    toggleOscilloscopePause();
   }
 
   // R key to reset zoom/pan when oscilloscope is visible

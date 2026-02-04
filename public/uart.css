@@ -163,6 +163,14 @@ body {
   background: #1abc9c;
 }
 
+.connect-btn.connected {
+  background: #e74c3c;
+}
+
+.connect-btn.connected:hover {
+  background: #c0392b;
+}
+
 .connect-btn:disabled {
   background: #7f8c8d;
   cursor: not-allowed;
@@ -334,7 +342,14 @@ body {
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.rx-controls-right {
   margin-left: auto;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .oscilloscope-controls .connection-control {
@@ -393,6 +408,27 @@ body {
 
 .play-pause-btn.playing {
   background: #16a085;
+}
+
+.receive-toggle-btn {
+  background: #16a085;
+}
+
+.receive-toggle-btn:hover {
+  background: #1abc9c;
+}
+
+.receive-toggle-btn.receiving {
+  background: #e74c3c;
+}
+
+.receive-toggle-btn.receiving:hover {
+  background: #c0392b;
+}
+
+.receive-toggle-btn:disabled {
+  background: #7f8c8d;
+  cursor: not-allowed;
 }
 
 .play-pause-btn svg {
@@ -1090,7 +1126,6 @@ body {
 .mode-controls {
   display: flex;
   align-items: center;
-  margin-left: 10px;
 }
 
 .mode-controls-right {

@@ -106,7 +106,6 @@
                   </label>
                 </div>
                 <div class="run-controls">
-                  <button class="send-btn" id="sendBtn" disabled>Run</button>
                   <label class="checkbox-label">
                     <input type="checkbox" id="cycleCheckbox" />
                     <span class="checkbox-custom"></span>
@@ -125,18 +124,25 @@
                     />
                     <span class="loop-interval-label">ms</span>
                   </div>
-                </div>
-                <div class="mode-controls" aria-label="TxD mode">
-                  <div class="radio-group">
-                    <label class="radio-label-inline">
-                      <input type="radio" name="txMode" value="ascii" checked />
-                      <span>ASCII</span>
-                    </label>
-                    <label class="radio-label-inline">
-                      <input type="radio" name="txMode" value="hex" />
-                      <span>HEX</span>
-                    </label>
+
+                  <div class="mode-controls" aria-label="TxD mode">
+                    <div class="radio-group">
+                      <label class="radio-label-inline">
+                        <input
+                          type="radio"
+                          name="txMode"
+                          value="ascii"
+                          checked
+                        />
+                        <span>ASCII</span>
+                      </label>
+                      <label class="radio-label-inline">
+                        <input type="radio" name="txMode" value="hex" />
+                        <span>HEX</span>
+                      </label>
+                    </div>
                   </div>
+                  <button class="send-btn" id="sendBtn" disabled>Run</button>
                 </div>
               </div>
               <div class="terminal-container" id="terminalSent"></div>
@@ -174,21 +180,6 @@
                     </svg>
                     Graphic
                   </button>
-                </div>
-                <div
-                  class="mode-controls mode-controls-right"
-                  aria-label="RxD mode"
-                >
-                  <div class="radio-group">
-                    <label class="radio-label-inline">
-                      <input type="radio" name="rxMode" value="ascii" checked />
-                      <span>ASCII</span>
-                    </label>
-                    <label class="radio-label-inline">
-                      <input type="radio" name="rxMode" value="hex" />
-                      <span>HEX</span>
-                    </label>
-                  </div>
                 </div>
                 <!-- Data display mode radio buttons (for oscilloscope) -->
                 <div
@@ -229,48 +220,46 @@
                     </label>
                   </div>
                 </div>
-                <div
-                  class="oscilloscope-controls"
-                  id="oscilloscopeControls"
-                  style="display: none"
-                >
-                  <button class="log-btn" id="oscilloClearBtn">
-                    Clear graph
-                  </button>
-                  <button
-                    class="log-btn"
-                    id="oscilloResetBtn"
-                    title="Reset zoom and pan"
+                <div class="rx-controls-right">
+                  <div class="mode-controls" aria-label="RxD mode">
+                    <div class="radio-group">
+                      <label class="radio-label-inline">
+                        <input
+                          type="radio"
+                          name="rxMode"
+                          value="ascii"
+                          checked
+                        />
+                        <span>ASCII</span>
+                      </label>
+                      <label class="radio-label-inline">
+                        <input type="radio" name="rxMode" value="hex" />
+                        <span>HEX</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div
+                    class="oscilloscope-controls"
+                    id="oscilloscopeControls"
+                    style="display: none"
                   >
-                    Reset zoom
-                  </button>
-                  <!-- Play/Pause button instead of checkbox -->
+                    <button class="log-btn" id="oscilloClearBtn">
+                      Clear graph
+                    </button>
+                    <button
+                      class="log-btn"
+                      id="oscilloResetBtn"
+                      title="Reset zoom and pan"
+                    >
+                      Reset zoom
+                    </button>
+                  </div>
                   <button
-                    class="play-pause-btn playing"
-                    id="oscilloPauseBtn"
-                    title="Pause"
+                    class="log-btn receive-toggle-btn receiving"
+                    id="receiveToggleBtn"
+                    title="Stop receiving"
                   >
-                    <!-- Pause icon (shown when playing) -->
-                    <svg
-                      class="pause-icon"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <path d="M14,19H18V5H14V19M6,19H10V5H6V19Z" />
-                    </svg>
-                    <!-- Play icon (shown when paused) -->
-                    <svg
-                      class="play-icon"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                      style="display: none"
-                    >
-                      <path d="M8,5.14V19.14L19,12.14L8,5.14Z" />
-                    </svg>
+                    Stop
                   </button>
                 </div>
               </div>
