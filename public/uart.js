@@ -11,6 +11,7 @@ let panOffset = 0;
 let loopInterval = null;
 let loopIntervalInput = null;
 let byteBuffer = [];
+let txView = "text";
 let chartZoom = { x: 1, y: 1 };
 let chartPan = { x: 0, y: 0 };
 let isPanningChart = false;
@@ -28,6 +29,7 @@ let rxSilenceMs = 5;
 let terminalSent = null;
 let terminalReceived = null;
 let terminalInput = null;
+let txGeneratorPanel = null;
 let connectBtn = null;
 let sendBtn = null;
 let receiveToggleBtn = null;
@@ -44,6 +46,7 @@ document.addEventListener("DOMContentLoaded", function () {
   initializeElements();
   initializeEventListeners();
   updateTxInputPlaceholder();
+  updateGeneratorUi();
   updateRunButtonState();
   updateReceiveButtonState();
   updateConnectionStatus(false);
@@ -57,6 +60,7 @@ function initializeElements() {
   terminalSent = document.getElementById("terminalSent");
   terminalReceived = document.getElementById("terminalReceived");
   terminalInput = document.getElementById("terminalInput");
+  txGeneratorPanel = document.getElementById("txGeneratorPanel");
   connectBtn = document.getElementById("connectBtn");
   sendBtn = document.getElementById("sendBtn");
   receiveToggleBtn = document.getElementById("receiveToggleBtn");
@@ -132,9 +136,14 @@ function initializeEventListeners() {
     radio.addEventListener("change", handleRxModeChange);
   });
 
-  // View toggle buttons
-  document.querySelectorAll(".view-btn").forEach((btn) => {
-    btn.addEventListener("click", handleViewChange);
+  // View toggle radios
+  document.querySelectorAll('input[name="rxView"]').forEach((radio) => {
+    radio.addEventListener("change", handleViewChange);
+  });
+
+  // Tx view toggle radios
+  document.querySelectorAll('input[name="txView"]').forEach((radio) => {
+    radio.addEventListener("change", handleTxViewChange);
   });
 
   // Oscilloscope controls
@@ -153,10 +162,10 @@ function initializeEventListeners() {
     radio.addEventListener("change", updateOscilloscopeSettings);
   });
 
-  const hexUploadBtn = document.getElementById("hexUploadBtn");
-  const hexFileInput = document.getElementById("hexFileInput");
-  hexUploadBtn?.addEventListener("click", () => hexFileInput?.click());
-  hexFileInput?.addEventListener("change", handleHexFileSelected);
+  document.getElementById("genWaveform")?.addEventListener("change", () => {
+    updateGeneratorUi();
+  });
+
 }
 
 /**
@@ -324,7 +333,7 @@ function updateConnectionStatus(connected, deviceLabel = "") {
     if (receiveToggleBtn) receiveToggleBtn.disabled = false;
     if (cycleCheckbox) cycleCheckbox.disabled = false;
     loopIntervalInput.disabled = false;
-    terminalInput.disabled = false;
+    updateTxInputAvailability();
   } else {
     statusIndicator.textContent = "Disconnected";
     statusIndicator.classList.remove("connected");
@@ -335,11 +344,17 @@ function updateConnectionStatus(connected, deviceLabel = "") {
     if (receiveToggleBtn) receiveToggleBtn.disabled = true;
     if (cycleCheckbox) cycleCheckbox.disabled = true;
     loopIntervalInput.disabled = true;
-    terminalInput.disabled = true;
+    updateTxInputAvailability();
   }
 
   setUartSessionLocked(!connected);
   setConnectionSelectsDisabled(connected);
+}
+
+function updateTxInputAvailability() {
+  if (!terminalInput) return;
+  const enabled = !!port && txView === "text";
+  terminalInput.disabled = !enabled;
 }
 
 function setConnectionSelectsDisabled(disabled) {
@@ -526,144 +541,6 @@ async function sendData() {
   }
 }
 
-/**
- * Intel HEX upload support
- */
-async function handleHexFileSelected(e) {
-  const file = e.target.files && e.target.files[0];
-  if (!file) return;
-
-  try {
-    const text = await file.text();
-    const { bytes, records } = parseIntelHex(text);
-
-    if (!writer) {
-      addToTerminal("error", "Not connected", terminalSent);
-      return;
-    }
-
-    addToTerminal(
-      "info",
-      `HEX: parsed ${bytes.length} bytes from ${records} records. Sending...`,
-      terminalSent
-    );
-
-    await sendHexBytes(bytes);
-
-    addToTerminal("info", `HEX: done (${bytes.length} bytes).`, terminalSent);
-  } catch (err) {
-    console.error(err);
-    addToTerminal("error", `HEX error: ${err.message}`, terminalSent);
-  } finally {
-    e.target.value = "";
-  }
-}
-
-async function sendHexBytes(uint8) {
-  if (!writer) {
-    addToTerminal("error", "Not connected", terminalSent);
-    return;
-  }
-  const CHUNK = 512;
-  for (let i = 0; i < uint8.length; i += CHUNK) {
-    const chunk = uint8.subarray(i, Math.min(i + CHUNK, uint8.length));
-    await writer.write(chunk);
-  }
-  const previewLen = Math.min(64, uint8.length);
-  if (previewLen) {
-    addToTerminal(
-      "sent",
-      formatHexData(uint8.subarray(0, previewLen)) +
-        (uint8.length > previewLen ? " ..." : ""),
-      terminalSent
-    );
-  }
-}
-
-
-/**
- * Intel HEX (IHEX) parser.
- * Supports record types: 00 (data), 01 (EOF), 02 (Ext. Segment), 04 (Ext. Linear).
- * Addresses are used only for correct parsing; we send the data in the file order.
- */
-function parseIntelHex(text) {
-  let extSegBase = 0;
-  let extLinBase = 0;
-  let totalRecords = 0;
-  const out = [];
-
-  const lines = text.split(/\r?\n/);
-  lines.forEach((raw, idx) => {
-    const line = raw.trim();
-    if (!line) return;
-    if (line[0] !== ":") throw new Error(`Line ${idx + 1}: missing ':'`);
-
-    const hex = line.slice(1);
-    if (hex.length < 10) throw new Error(`Line ${idx + 1}: too short`);
-
-    const byteCount = parseInt(hex.slice(0, 2), 16);
-    const addr = parseInt(hex.slice(2, 6), 16);
-    const type = parseInt(hex.slice(6, 8), 16);
-
-    const dataStr = hex.slice(8, 8 + byteCount * 2);
-    const checksumStr = hex.slice(8 + byteCount * 2, 8 + byteCount * 2 + 2);
-
-    if (dataStr.length !== byteCount * 2) {
-      throw new Error(`Line ${idx + 1}: byte count mismatch`);
-    }
-    const checksum = parseInt(checksumStr, 16);
-
-    let sum = (byteCount + ((addr >> 8) & 0xff) + (addr & 0xff) + type) & 0xff;
-    const data = [];
-    for (let i = 0; i < dataStr.length; i += 2) {
-      const b = parseInt(dataStr.slice(i, i + 2), 16);
-      if (Number.isNaN(b)) throw new Error(`Line ${idx + 1}: invalid hex`);
-      data.push(b);
-      sum = (sum + b) & 0xff;
-    }
-    const calcCks = ((~sum + 1) & 0xff) >>> 0;
-    if (calcCks !== checksum) {
-      const got = checksum.toString(16).toUpperCase().padStart(2, "0");
-      const exp = calcCks.toString(16).toUpperCase().padStart(2, "0");
-      throw new Error(
-        `Line ${idx + 1}: bad checksum (got 0x${got}, expected 0x${exp})`
-      );
-    }
-
-    totalRecords++;
-
-    switch (type) {
-      case 0x00: {
-        // data record
-        out.push(...data);
-        break;
-      }
-      case 0x01:
-        // EOF
-        break;
-      case 0x02: {
-        // Extended Segment Address: (value << 4)
-        if (data.length !== 2)
-          throw new Error(`Line ${idx + 1}: ESA length != 2`);
-        extSegBase = ((data[0] << 8) | data[1]) << 4;
-        extLinBase = 0;
-        break;
-      }
-      case 0x04: {
-        // Extended Linear Address: (value << 16)
-        if (data.length !== 2)
-          throw new Error(`Line ${idx + 1}: ELA length != 2`);
-        extLinBase = ((data[0] << 8) | data[1]) << 16;
-        extSegBase = 0;
-        break;
-      }
-      default:
-        break;
-    }
-  });
-
-  return { bytes: new Uint8Array(out), records: totalRecords };
-}
 
 /**
  * Add line to terminal
@@ -737,6 +614,31 @@ function updateTxInputPlaceholder() {
   }
 }
 
+function updateGeneratorUi() {
+  const dutyField = document.getElementById("genDutyField");
+  const waveform = document.getElementById("genWaveform")?.value || "sine";
+  if (dutyField) {
+    dutyField.style.display = waveform === "square" ? "flex" : "none";
+  }
+}
+
+function handleTxViewChange(event) {
+  const view = event.target.value;
+  if (!view || !event.target.checked) return;
+
+  txView = view;
+  if (txView === "generator") {
+    terminalSent.style.display = "none";
+    if (txGeneratorPanel) txGeneratorPanel.style.display = "flex";
+    if (loopInterval) stopLoopSend();
+  } else {
+    terminalSent.style.display = "block";
+    if (txGeneratorPanel) txGeneratorPanel.style.display = "none";
+  }
+
+  updateTxInputAvailability();
+}
+
 function updateRunButtonState() {
   if (!sendBtn) return;
   const running = !!loopInterval;
@@ -776,7 +678,11 @@ function handleRunAction() {
     return;
   }
 
-  sendData();
+  if (txView === "generator") {
+    sendGeneratorOnce();
+  } else {
+    sendData();
+  }
   updateRunButtonState();
 }
 
@@ -799,19 +705,13 @@ function handleRxModeChange() {}
  * Handle view change (Terminal/Oscilloscope)
  */
 function handleViewChange(event) {
-  const button = event.currentTarget;
-  const view = button.dataset.view;
+  const view = event.target.value;
+  if (!event.target.checked) return;
   const oscilloscopeControls = document.getElementById("oscilloscopeControls");
   const dataModeControls = document.getElementById("dataModeControls");
   const rxModeControls = document.querySelectorAll(
     ".terminal-wrapper:nth-child(2) .mode-controls"
   );
-
-  // Update active button
-  document.querySelectorAll(".view-btn").forEach((btn) => {
-    btn.classList.remove("active");
-  });
-  button.classList.add("active");
 
   if (view === "oscilloscope") {
     // Show oscilloscope
@@ -1237,7 +1137,7 @@ function startLoopSend() {
   // Проверяем, что есть что отправлять
   const inputValue = terminalInput.value.trim();
 
-  if (!inputValue) {
+  if (txView !== "generator" && !inputValue) {
     addToTerminal("error", "Nothing to send", terminalSent);
     return;
   }
@@ -1266,11 +1166,116 @@ function stopLoopSend() {
 
   updateRunButtonState();
 }
+
+function getGeneratorConfig() {
+  const waveform = document.getElementById("genWaveform")?.value || "sine";
+  const samples = parseInt(document.getElementById("genSamples")?.value) || 64;
+  const amplitude =
+    parseFloat(document.getElementById("genAmplitude")?.value) || 0;
+  const offset = parseFloat(document.getElementById("genOffset")?.value) || 0;
+  const duty = parseFloat(document.getElementById("genDuty")?.value) || 50;
+  const signMode =
+    document.querySelector('input[name="genSignMode"]:checked')?.value ||
+    "unsigned";
+  const byteSize =
+    document.querySelector('input[name="genByteSize"]:checked')?.value || "1";
+
+  return {
+    waveform,
+    samples: Math.max(4, Math.min(4096, samples)),
+    amplitude,
+    offset,
+    duty: Math.max(1, Math.min(99, duty)),
+    signMode,
+    byteSize,
+  };
+}
+
+function generateWaveSamples(config) {
+  const { waveform, samples, amplitude, offset, duty } = config;
+  const out = new Array(samples);
+
+  for (let i = 0; i < samples; i++) {
+    const t = i / samples;
+    let base = 0;
+
+    if (waveform === "triangle") {
+      base = 2 * Math.abs(2 * (t - Math.floor(t + 0.5))) - 1;
+    } else if (waveform === "square") {
+      base = t < duty / 100 ? 1 : -1;
+    } else {
+      base = Math.sin(2 * Math.PI * t);
+    }
+
+    out[i] = offset + amplitude * base;
+  }
+
+  return out;
+}
+
+function encodeGeneratorSamples(values, signMode, byteSize) {
+  const bytes = [];
+  const signed = signMode === "signed";
+
+  for (const raw of values) {
+    let v = Math.round(raw);
+
+    if (byteSize === "1") {
+      if (signed) {
+        v = Math.max(-128, Math.min(127, v));
+        if (v < 0) v += 256;
+      } else {
+        v = Math.max(0, Math.min(255, v));
+      }
+      bytes.push(v & 0xff);
+    } else {
+      if (signed) {
+        v = Math.max(-32768, Math.min(32767, v));
+        if (v < 0) v += 65536;
+      } else {
+        v = Math.max(0, Math.min(65535, v));
+      }
+      const high = (v >> 8) & 0xff;
+      const low = v & 0xff;
+      if (byteSize === "2LE") {
+        bytes.push(low, high);
+      } else {
+        bytes.push(high, low);
+      }
+    }
+  }
+
+  return new Uint8Array(bytes);
+}
+
+async function sendGeneratorOnce() {
+  if (!writer) return;
+
+  const config = getGeneratorConfig();
+  const values = generateWaveSamples(config);
+  const payload = encodeGeneratorSamples(
+    values,
+    config.signMode,
+    config.byteSize
+  );
+
+  await writer.write(payload);
+  addToTerminal(
+    "sent",
+    `GEN ${config.waveform}: ${values.length} samples`,
+    terminalSent
+  );
+}
 /**
  * Send data in loop (without clearing input)
  */
 async function sendDataLoop() {
   if (!writer) return;
+
+  if (txView === "generator") {
+    await sendGeneratorOnce();
+    return;
+  }
 
   const inputMode = getTxMode();
   const inputValue = terminalInput.value.trim();

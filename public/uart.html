@@ -77,23 +77,22 @@
             <div class="terminal-wrapper">
               <div class="terminal-header">
                 <h3 class="terminal-label">TxD</h3>
+                <div class="view-toggle">
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txView" value="text" checked />
+                      <span>Text</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txView" value="generator" />
+                      <span>Generator</span>
+                    </label>
+                  </div>
+                </div>
                 <!-- Log controls moved here -->
                 <div class="log-controls">
                   <button class="log-btn" id="clearBtn">Clear</button>
                   <button class="log-btn" id="saveLogBtn">Save log</button>
-                  <button
-                    class="log-btn"
-                    id="hexUploadBtn"
-                    title="Load Intel HEX file"
-                  >
-                    Load HEX
-                  </button>
-                  <input
-                    type="file"
-                    id="hexFileInput"
-                    accept=".hex,.ihx,.ihex,.txt"
-                    style="display: none"
-                  />
                   <label class="checkbox-label">
                     <input type="checkbox" id="autoScrollCheckbox" checked />
                     <span class="checkbox-custom"></span>
@@ -146,40 +145,114 @@
                 </div>
               </div>
               <div class="terminal-container" id="terminalSent"></div>
+              <div
+                class="generator-panel"
+                id="txGeneratorPanel"
+                style="display: none"
+              >
+                <div class="generator-grid">
+                  <div class="generator-field">
+                    <label for="genWaveform">Wave</label>
+                    <select id="genWaveform">
+                      <option value="sine" selected>Синус</option>
+                      <option value="triangle">Треугольник</option>
+                      <option value="square">Прямоугольник</option>
+                    </select>
+                  </div>
+                  <div class="generator-field">
+                    <label for="genSamples">Samples</label>
+                    <input
+                      type="number"
+                      id="genSamples"
+                      min="4"
+                      max="4096"
+                      step="1"
+                      value="64"
+                    />
+                  </div>
+                  <div class="generator-field">
+                    <label for="genAmplitude">Amplitude</label>
+                    <input
+                      type="number"
+                      id="genAmplitude"
+                      step="1"
+                      value="100"
+                    />
+                  </div>
+                  <div class="generator-field">
+                    <label for="genOffset">Offset</label>
+                    <input type="number" id="genOffset" step="1" value="0" />
+                  </div>
+                  <div class="generator-field" id="genDutyField">
+                    <label for="genDuty">Duty %</label>
+                    <input
+                      type="number"
+                      id="genDuty"
+                      min="1"
+                      max="99"
+                      step="1"
+                      value="50"
+                    />
+                  </div>
+                </div>
+                <div class="generator-options">
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="genSignMode"
+                        value="unsigned"
+                        checked
+                      />
+                      <span>Unsigned</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="genSignMode" value="signed" />
+                      <span>Signed</span>
+                    </label>
+                  </div>
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="genByteSize"
+                        value="1"
+                        checked
+                      />
+                      <span>1 byte</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="genByteSize" value="2BE" />
+                      <span>2 byte (BE)</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="genByteSize" value="2LE" />
+                      <span>2 byte (LE)</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="terminal-wrapper">
               <div class="terminal-header">
                 <h3 class="terminal-label">RxD</h3>
                 <!-- View toggle moved here -->
                 <div class="view-toggle">
-                  <button class="view-btn active" data-view="terminal">
-                    <!-- terminal icon -->
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <path
-                        d="M20,19V7H4V19H20M20,3A2,2 0 1 1 22,5V19A2,2 0 0,1 20,21H4A2,2 0 0,1 2,19V5C2,3.89 2.9,3 4,3H20M13,17H18V15H13V17M9,17H11V15H9V17M5,17H7V15H5V17M5,13H11V11H5V13M13,13H19V11H13V13M13,9H19V7H13V9M5,9H11V7H5V9Z"
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="rxView"
+                        value="terminal"
+                        checked
                       />
-                    </svg>
-                    Text
-                  </button>
-                  <button class="view-btn" data-view="oscilloscope">
-                    <!-- oscilloscope icon -->
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <path
-                        d="M7.5,21H2V9H7.5V21M14.5,3H9V21H14.5V3M21.5,11H16V21H21.5V11Z"
-                      />
-                    </svg>
-                    Graphic
-                  </button>
+                      <span>Text</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="rxView" value="oscilloscope" />
+                      <span>Graphic</span>
+                    </label>
+                  </div>
                 </div>
                 <!-- Data display mode radio buttons (for oscilloscope) -->
                 <div
