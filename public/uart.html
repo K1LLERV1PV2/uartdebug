@@ -67,13 +67,12 @@
         </section>
 
         <!-- Terminal and oscilloscope section -->
-        <section
-          class="uart-section uart-session is-locked"
-          id="uartSession"
-          aria-disabled="true"
-        >
-          <!-- TxD and RxD terminals -->
-          <div class="terminals-split-container">
+        <div class="uart-sessions-split">
+          <section
+            class="uart-section uart-session is-locked"
+            id="uartTxSession"
+            aria-disabled="true"
+          >
             <div class="terminal-wrapper">
               <div class="terminal-header">
                 <h3 class="terminal-label">TxD</h3>
@@ -105,10 +104,7 @@
                     </label>
                   </div>
                 </div>
-                <!-- Log controls moved here -->
                 <div class="log-controls" id="txLogControls">
-                  <button class="log-btn" id="clearBtn">Clear</button>
-                  <button class="log-btn" id="saveLogBtn">Save log</button>
                   <label class="checkbox-label">
                     <input type="checkbox" id="autoScrollCheckbox" checked />
                     <span class="checkbox-custom"></span>
@@ -142,7 +138,45 @@
                   <button class="send-btn" id="sendBtn" disabled>Run</button>
                 </div>
               </div>
-              <div class="terminal-container" id="terminalSent"></div>
+              <div class="terminal-shell" id="txTerminalShell">
+                <div class="terminal-actions" id="terminalActionsTx">
+                  <button
+                    class="icon-btn"
+                    id="clearBtn"
+                    title="Clear TxD log"
+                    aria-label="Clear TxD log"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M9 3h6M5 6h14m-1 0l-1 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 6m3 4v8m4-8v8"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    class="icon-btn"
+                    id="saveLogBtn"
+                    title="Save TxD log"
+                    aria-label="Save TxD log"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M12 4v11m0 0l4-4m-4 4l-4-4M5 20h14"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div class="terminal-container" id="terminalSent"></div>
+              </div>
               <div
                 class="generator-panel"
                 id="txGeneratorPanel"
@@ -152,9 +186,9 @@
                   <div class="generator-field">
                     <label for="genWaveform">Wave</label>
                     <select id="genWaveform">
-                      <option value="sine" selected>Синус</option>
-                      <option value="triangle">Треугольник</option>
-                      <option value="square">Прямоугольник</option>
+                      <option value="sine" selected>Sine</option>
+                      <option value="triangle">Triangle</option>
+                      <option value="square">Square</option>
                     </select>
                   </div>
                   <div class="generator-field">
@@ -231,10 +265,26 @@
                 </div>
               </div>
             </div>
+
+            <div class="terminal-input-panel">
+              <input
+                type="text"
+                class="terminal-input"
+                id="terminalInput"
+                placeholder="Text string"
+                disabled
+              />
+            </div>
+          </section>
+
+          <section
+            class="uart-section uart-session is-locked"
+            id="uartRxSession"
+            aria-disabled="true"
+          >
             <div class="terminal-wrapper">
               <div class="terminal-header">
                 <h3 class="terminal-label">RxD</h3>
-                <!-- View toggle moved here -->
                 <div class="view-toggle">
                   <div class="radio-group">
                     <label class="radio-label-inline">
@@ -270,15 +320,12 @@
                       </label>
                     </div>
                   </div>
-                  <button class="log-btn" id="clearBtnRx">Clear</button>
                 </div>
-                <!-- Data display mode radio buttons (for oscilloscope) -->
                 <div
                   class="data-mode-controls"
                   id="dataModeControls"
                   style="display: none"
                 >
-                  <!-- Signed/Unsigned selector -->
                   <div class="radio-group">
                     <label class="radio-label-inline">
                       <input
@@ -295,7 +342,6 @@
                     </label>
                   </div>
 
-                  <!-- Byte size selector -->
                   <div class="radio-group">
                     <label class="radio-label-inline">
                       <input type="radio" name="byteSize" value="1" checked />
@@ -337,28 +383,74 @@
                   </button>
                 </div>
               </div>
-              <div class="terminal-container" id="terminalReceived"></div>
+              <div class="terminal-shell" id="rxTerminalShell">
+                <div class="terminal-actions" id="terminalActionsRx">
+                  <button
+                    class="icon-btn"
+                    id="clearBtnRx"
+                    title="Clear RxD log"
+                    aria-label="Clear RxD log"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M9 3h6M5 6h14m-1 0l-1 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 6m3 4v8m4-8v8"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    class="icon-btn"
+                    id="saveLogBtnRx"
+                    title="Save RxD log"
+                    aria-label="Save RxD log"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M12 4v11m0 0l4-4m-4 4l-4-4M5 20h14"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div class="terminal-container" id="terminalReceived"></div>
+              </div>
               <div
                 class="oscilloscope-container"
                 id="oscilloscopeContainer"
                 style="display: none"
               >
+                <div class="oscilloscope-actions">
+                  <button
+                    class="icon-btn"
+                    id="oscilloFullscreenBtn"
+                    title="Fullscreen"
+                    aria-label="Fullscreen"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
                 <canvas id="oscilloscopeCanvas"></canvas>
               </div>
             </div>
-          </div>
-
-          <!-- Input panel -->
-          <div class="terminal-input-panel">
-            <input
-              type="text"
-              class="terminal-input"
-              id="terminalInput"
-              placeholder="Text string"
-              disabled
-            />
-          </div>
-        </section>
+          </section>
+        </div>
 
         <!-- Modal dialog for connection settings -->
         <div class="modal-overlay" id="settingsModal">

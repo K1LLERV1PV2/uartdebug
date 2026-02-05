@@ -24,10 +24,13 @@ let panStartOffset = { x: 0, y: 0 };
 let rxBuffer = new Uint8Array(0);
 let rxFlushTimer = null;
 let rxSilenceMs = 5;
+let generatorStream = null;
 
 // DOM elements cache
 let terminalSent = null;
 let terminalReceived = null;
+let txTerminalShell = null;
+let rxTerminalShell = null;
 let terminalInput = null;
 let txGeneratorPanel = null;
 let txLogControls = null;
@@ -41,7 +44,7 @@ let timestampCheckbox = null;
 let oscilloscopeCanvas = null;
 let oscilloscopeContainer = null;
 let cycleCheckbox = null;
-let uartSession = null;
+let uartSessions = [];
 
 // Initialize on page load
 document.addEventListener("DOMContentLoaded", function () {
@@ -61,6 +64,8 @@ document.addEventListener("DOMContentLoaded", function () {
 function initializeElements() {
   terminalSent = document.getElementById("terminalSent");
   terminalReceived = document.getElementById("terminalReceived");
+  txTerminalShell = document.getElementById("txTerminalShell");
+  rxTerminalShell = document.getElementById("rxTerminalShell");
   terminalInput = document.getElementById("terminalInput");
   txGeneratorPanel = document.getElementById("txGeneratorPanel");
   txLogControls = document.getElementById("txLogControls");
@@ -75,7 +80,7 @@ function initializeElements() {
   oscilloscopeCanvas = document.getElementById("oscilloscopeCanvas");
   oscilloscopeContainer = document.getElementById("oscilloscopeContainer");
   cycleCheckbox = document.getElementById("cycleCheckbox");
-  uartSession = document.getElementById("uartSession");
+  uartSessions = Array.from(document.querySelectorAll(".uart-session"));
 }
 
 /**
@@ -118,7 +123,10 @@ function initializeEventListeners() {
   document
     .getElementById("clearBtnRx")
     ?.addEventListener("click", clearRxTerminal);
-  document.getElementById("saveLogBtn")?.addEventListener("click", saveLog);
+  document.getElementById("saveLogBtn")?.addEventListener("click", saveTxLog);
+  document
+    .getElementById("saveLogBtnRx")
+    ?.addEventListener("click", saveRxLog);
 
   // Settings modal
   document
@@ -162,6 +170,9 @@ function initializeEventListeners() {
   document
     .getElementById("oscilloClearBtn")
     .addEventListener("click", clearOscilloscope);
+  document
+    .getElementById("oscilloFullscreenBtn")
+    ?.addEventListener("click", toggleOscilloscopeFullscreen);
 
   document.querySelectorAll('input[name="signMode"]').forEach((radio) => {
     radio.addEventListener("change", updateOscilloscopeSettings);
@@ -174,6 +185,11 @@ function initializeEventListeners() {
   document.getElementById("genWaveform")?.addEventListener("change", () => {
     updateGeneratorUi();
   });
+
+  document.addEventListener(
+    "fullscreenchange",
+    updateOscilloscopeFullscreenState
+  );
 
 }
 
@@ -305,10 +321,12 @@ async function disconnectSerial() {
  * Update connection status in UI
  */
 function setUartSessionLocked(locked) {
-  if (!uartSession) return;
-  uartSession.classList.toggle("is-locked", !!locked);
-  uartSession.setAttribute("aria-disabled", locked ? "true" : "false");
-  uartSession.inert = !!locked;
+  if (!uartSessions || uartSessions.length === 0) return;
+  uartSessions.forEach((session) => {
+    session.classList.toggle("is-locked", !!locked);
+    session.setAttribute("aria-disabled", locked ? "true" : "false");
+    session.inert = !!locked;
+  });
 }
 
 function getTxMode() {
@@ -637,13 +655,13 @@ function handleTxViewChange(event) {
 
   txView = view;
   if (txView === "generator") {
-    terminalSent.style.display = "none";
+    if (txTerminalShell) txTerminalShell.style.display = "none";
     if (txGeneratorPanel) txGeneratorPanel.style.display = "flex";
     if (txLogControls) txLogControls.style.display = "none";
     if (txModeControls) txModeControls.style.display = "none";
     if (loopInterval) stopLoopSend();
   } else {
-    terminalSent.style.display = "block";
+    if (txTerminalShell) txTerminalShell.style.display = "flex";
     if (txGeneratorPanel) txGeneratorPanel.style.display = "none";
     if (txLogControls) txLogControls.style.display = "flex";
     if (txModeControls) txModeControls.style.display = "flex";
@@ -692,7 +710,8 @@ function handleRunAction() {
   }
 
   if (txView === "generator") {
-    sendGeneratorOnce();
+    startGeneratorStream(false);
+    return;
   } else {
     sendData();
   }
@@ -723,18 +742,16 @@ function handleViewChange(event) {
   const oscilloscopeControls = document.getElementById("oscilloscopeControls");
   const dataModeControls = document.getElementById("dataModeControls");
   const rxModeControls = document.querySelectorAll(
-    ".terminal-wrapper:nth-child(2) .mode-controls"
+    "#uartRxSession .mode-controls"
   );
-  const rxClearBtn = document.getElementById("clearBtnRx");
 
   if (view === "oscilloscope") {
     // Show oscilloscope
-    terminalReceived.style.display = "none";
-    oscilloscopeContainer.style.display = "block";
+    if (rxTerminalShell) rxTerminalShell.style.display = "none";
+    oscilloscopeContainer.style.display = "flex";
     oscilloscopeControls.style.display = "flex";
     dataModeControls.style.display = "flex"; // Show new data mode controls
     rxModeControls.forEach((el) => (el.style.display = "none"));
-    if (rxClearBtn) rxClearBtn.style.display = "none";
     currentView = "oscilloscope";
 
     // Initialize oscilloscope if needed
@@ -743,12 +760,11 @@ function handleViewChange(event) {
     }
   } else {
     // Show terminal
-    terminalReceived.style.display = "block";
+    if (rxTerminalShell) rxTerminalShell.style.display = "flex";
     oscilloscopeContainer.style.display = "none";
     oscilloscopeControls.style.display = "none";
     dataModeControls.style.display = "none"; // Hide data mode controls
     rxModeControls.forEach((el) => (el.style.display = "flex"));
-    if (rxClearBtn) rxClearBtn.style.display = "inline-flex";
     currentView = "terminal";
   }
 }
@@ -776,37 +792,50 @@ function clearRxTerminal() {
 /**
  * Save terminal log to file
  */
-function saveLog() {
-  const sentLines = Array.from(
-    terminalSent.querySelectorAll(".terminal-line")
-  ).map((line) => "TX: " + line.textContent);
-  const receivedLines = Array.from(
-    terminalReceived.querySelectorAll(".terminal-line")
-  ).map((line) => "RX: " + line.textContent);
+function getBaudRateValue() {
+  const baudRate = document.getElementById("baudRate");
+  return baudRate ? baudRate.value : "";
+}
+
+function buildLogContent(label, terminal) {
+  const lines = Array.from(terminal.querySelectorAll(".terminal-line")).map(
+    (line) => line.textContent
+  );
 
   const allLines = [];
-  allLines.push("=== UART Terminal Log ===");
+  allLines.push(`=== UART ${label} Log ===`);
   allLines.push(`Date: ${new Date().toLocaleString()}`);
-  allLines.push(`Baud Rate: ${document.getElementById("baudRate").value}`);
+  const baudRate = getBaudRateValue();
+  if (baudRate) {
+    allLines.push(`Baud Rate: ${baudRate}`);
+  }
   allLines.push("");
-  allLines.push("=== TxD ===");
-  allLines.push(...sentLines);
-  allLines.push("");
-  allLines.push("=== RxD ===");
-  allLines.push(...receivedLines);
+  allLines.push(...lines);
 
-  const logContent = allLines.join("\n");
+  return allLines.join("\n");
+}
 
-  // Create download
+function saveTerminalLog(label, terminal, filePrefix) {
+  if (!terminal) return;
+
+  const logContent = buildLogContent(label, terminal);
   const blob = new Blob([logContent], { type: "text/plain" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `uart_log_${Date.now()}.txt`;
+  a.download = `uart_${filePrefix}_log_${Date.now()}.txt`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function saveTxLog() {
+  saveTerminalLog("TxD", terminalSent, "tx");
+}
+
+function saveRxLog() {
+  saveTerminalLog("RxD", terminalReceived, "rx");
 }
 
 /**
@@ -927,6 +956,10 @@ function initOscilloscope() {
         mode: "nearest",
       },
       plugins: {
+        overflowIndicator: {
+          color: "#e74c3c",
+          lineWidth: 2,
+        },
         legend: { display: false },
         tooltip: {
           enabled: true,
@@ -1000,6 +1033,7 @@ function initOscilloscope() {
         },
       },
     },
+    plugins: [overflowIndicatorPlugin],
   });
 
   // Initialize zoom and pan controls
@@ -1014,6 +1048,93 @@ function byteToHex(v) {
   const n = Math.max(0, Math.min(255, Math.round(v)));
   return n.toString(16).padStart(2, "0").toUpperCase();
 }
+
+const overflowIndicatorPlugin = {
+  id: "overflowIndicator",
+  afterDatasetsDraw(chart, args, options) {
+    const xScale = chart.scales?.x;
+    const yScale = chart.scales?.y;
+    const chartArea = chart.chartArea;
+    if (!xScale || !yScale || !chartArea) return;
+
+    const data = chart.data?.datasets?.[0]?.data || [];
+    const labels = chart.data?.labels || [];
+    const xMin = Number.isFinite(xScale.min) ? xScale.min : -Infinity;
+    const xMax = Number.isFinite(xScale.max) ? xScale.max : Infinity;
+    let hasHigh = false;
+    let hasLow = false;
+    let visibleMinIndex = null;
+    let visibleMaxIndex = null;
+
+    const getXValue = (index) => {
+      const label = labels[index];
+      const parsed = Number(label);
+      if (Number.isFinite(parsed)) return parsed;
+      return index;
+    };
+
+    for (let i = 0; i < data.length; i += 1) {
+      const value = data[i];
+      if (value == null) continue;
+      const xValue = getXValue(i);
+      if (xValue < xMin || xValue > xMax) continue;
+      if (value > yScale.max) {
+        hasHigh = true;
+      } else if (value < yScale.min) {
+        hasLow = true;
+      } else {
+        if (visibleMinIndex === null || i < visibleMinIndex) {
+          visibleMinIndex = i;
+        }
+        if (visibleMaxIndex === null || i > visibleMaxIndex) {
+          visibleMaxIndex = i;
+        }
+      }
+      if (hasHigh && hasLow) break;
+    }
+
+    if (!hasHigh && !hasLow) return;
+
+    const { color = "#e74c3c", lineWidth = 2 } = options || {};
+    const ctx = chart.ctx;
+    let xStart = chartArea.left;
+    let xEnd = chartArea.right;
+
+    if (visibleMinIndex !== null && visibleMaxIndex !== null) {
+      xStart = xScale.getPixelForValue(getXValue(visibleMinIndex));
+      xEnd = xScale.getPixelForValue(getXValue(visibleMaxIndex));
+
+      if (xStart > xEnd) {
+        const tmp = xStart;
+        xStart = xEnd;
+        xEnd = tmp;
+      }
+
+      xStart = Math.max(chartArea.left, Math.min(xStart, chartArea.right));
+      xEnd = Math.max(chartArea.left, Math.min(xEnd, chartArea.right));
+    }
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+
+    if (hasHigh) {
+      ctx.beginPath();
+      ctx.moveTo(xStart, chartArea.top);
+      ctx.lineTo(xEnd, chartArea.top);
+      ctx.stroke();
+    }
+
+    if (hasLow) {
+      ctx.beginPath();
+      ctx.moveTo(xStart, chartArea.bottom);
+      ctx.lineTo(xEnd, chartArea.bottom);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  },
+};
 
 /**
  * Update oscilloscope with new data
@@ -1120,10 +1241,10 @@ document.addEventListener("keydown", function (e) {
     clearTerminals();
   }
 
-  // Ctrl+S to save log
+  // Ctrl+S to save TxD log
   if (e.ctrlKey && e.key === "s") {
     e.preventDefault();
-    saveLog();
+    saveTxLog();
   }
 
   // R key to reset zoom/pan when oscilloscope is visible
@@ -1165,7 +1286,12 @@ function startLoopSend() {
   // Проверяем, что есть что отправлять
   const inputValue = terminalInput.value.trim();
 
-  if (txView !== "generator" && !inputValue) {
+  if (txView === "generator") {
+    startGeneratorStream(true);
+    return;
+  }
+
+  if (!inputValue) {
     addToTerminal("error", "Nothing to send", terminalSent);
     return;
   }
@@ -1191,6 +1317,7 @@ function stopLoopSend() {
     clearInterval(loopInterval);
     loopInterval = null;
   }
+  generatorStream = null;
 
   updateRunButtonState();
 }
@@ -1276,9 +1403,7 @@ function encodeGeneratorSamples(values, signMode, byteSize) {
   return new Uint8Array(bytes);
 }
 
-async function sendGeneratorOnce() {
-  if (!writer) return;
-
+function buildGeneratorStream(looping) {
   const config = getGeneratorConfig();
   const values = generateWaveSamples(config);
   const payload = encodeGeneratorSamples(
@@ -1287,23 +1412,78 @@ async function sendGeneratorOnce() {
     config.byteSize
   );
 
-  await writer.write(payload);
-  addToTerminal(
-    "sent",
-    `GEN ${config.waveform}: ${values.length} samples`,
-    terminalSent
-  );
+  return {
+    payload,
+    index: 0,
+    loop: looping,
+    logged: false,
+    sending: false,
+    label: `GEN ${config.waveform}: ${values.length} samples`,
+  };
+}
+
+function startGeneratorStream(looping) {
+  if (!writer) return;
+
+  generatorStream = buildGeneratorStream(looping);
+  if (!generatorStream.payload || generatorStream.payload.length === 0) {
+    generatorStream = null;
+    return;
+  }
+
+  const intervalMs = parseInt(loopIntervalInput.value) || 1000;
+  sendGeneratorByte();
+  loopInterval = setInterval(() => {
+    sendGeneratorByte();
+  }, intervalMs);
+
+  updateRunButtonState();
+}
+
+async function sendGeneratorByte() {
+  if (!writer || !generatorStream || generatorStream.sending) return;
+
+  const payload = generatorStream.payload;
+  if (!payload || payload.length === 0) return;
+
+  generatorStream.sending = true;
+  try {
+    const byte = payload[generatorStream.index];
+    await writer.write(new Uint8Array([byte]));
+
+    if (!generatorStream.logged) {
+      addToTerminal("sent", generatorStream.label, terminalSent);
+      generatorStream.logged = true;
+    }
+
+    generatorStream.index += 1;
+
+    if (generatorStream.index >= payload.length) {
+      if (generatorStream.loop) {
+        generatorStream.index = 0;
+      } else {
+        stopLoopSend();
+      }
+    }
+  } catch (error) {
+    console.error("Generator send error:", error);
+    addToTerminal(
+      "error",
+      `Generator send failed: ${error.message}`,
+      terminalSent
+    );
+    stopLoopSend();
+  } finally {
+    if (generatorStream) {
+      generatorStream.sending = false;
+    }
+  }
 }
 /**
  * Send data in loop (without clearing input)
  */
 async function sendDataLoop() {
   if (!writer) return;
-
-  if (txView === "generator") {
-    await sendGeneratorOnce();
-    return;
-  }
 
   const inputMode = getTxMode();
   const inputValue = terminalInput.value.trim();
@@ -1518,8 +1698,8 @@ function handleChartMouseDown(e) {
     }
   }
 
-  // Check for middle mouse button (button === 1)
-  if (e.button === 1) {
+  // Pan with left mouse button when not dragging axes
+  if (e.button === 0) {
     e.preventDefault();
     isPanningChart = true;
 
@@ -1633,7 +1813,7 @@ function handleChartMouseMove(e) {
     const yRange = panStartOffset.yMax - panStartOffset.yMin;
 
     const xDataDelta = -(deltaX / chartArea.width) * xRange;
-    const yDataDelta = (deltaY / chartArea.height) * yRange;
+    let yDataDelta = (deltaY / chartArea.height) * yRange;
 
     // Calculate new X boundaries
     let newXMin = panStartOffset.xMin + xDataDelta;
@@ -1653,6 +1833,13 @@ function handleChartMouseMove(e) {
       newXMin = originalXMax - xRange;
     }
 
+    // Clamp vertical pan to +/-40% of the max amplitude for the current mode
+    const { yMin, yMax, maxAmplitude } = getOscilloscopeModeRange();
+    const limitShift = maxAmplitude * 0.4;
+    const minDelta = yMin - limitShift - panStartOffset.yMin;
+    const maxDelta = yMax + limitShift - panStartOffset.yMax;
+    yDataDelta = Math.min(Math.max(yDataDelta, minDelta), maxDelta);
+
     // Update scales
     xScale.options.min = newXMin;
     xScale.options.max = newXMax;
@@ -1667,7 +1854,7 @@ function handleChartMouseMove(e) {
  * Handle mouse up to stop panning
  */
 function handleChartMouseUp(e) {
-  if (e.button === 1 || isPanningChart) {
+  if (e.button === 0 || isPanningChart) {
     isPanningChart = false;
   }
 
@@ -1694,33 +1881,7 @@ function resetChartView() {
   const yScale = oscilloscopeChart.scales.y;
 
   if (xScale && yScale) {
-    // Get the current data range
-    const byteSize = document.querySelector(
-      'input[name="byteSize"]:checked'
-    ).value;
-    const signMode = document.querySelector(
-      'input[name="signMode"]:checked'
-    ).value;
-
-    // Determine Y axis range based on mode
-    let yMin, yMax;
-    if (byteSize === "1") {
-      if (signMode === "unsigned") {
-        yMin = 0;
-        yMax = 255;
-      } else {
-        yMin = -128;
-        yMax = 127;
-      }
-    } else {
-      if (signMode === "unsigned") {
-        yMin = 0;
-        yMax = 65535;
-      } else {
-        yMin = -32768;
-        yMax = 32767;
-      }
-    }
+    const { yMin, yMax } = getOscilloscopeModeRange();
 
     // Reset to original ranges
     delete xScale.options.min;
@@ -1729,6 +1890,69 @@ function resetChartView() {
     yScale.options.max = yMax;
 
     oscilloscopeChart.update();
+  }
+}
+
+function getOscilloscopeModeRange() {
+  const byteSize =
+    document.querySelector('input[name="byteSize"]:checked')?.value || "1";
+  const signMode =
+    document.querySelector('input[name="signMode"]:checked')?.value ||
+    "unsigned";
+
+  let yMin;
+  let yMax;
+  let maxAmplitude;
+
+  if (byteSize === "1") {
+    if (signMode === "unsigned") {
+      yMin = 0;
+      yMax = 255;
+      maxAmplitude = 255;
+    } else {
+      yMin = -128;
+      yMax = 127;
+      maxAmplitude = 128;
+    }
+  } else {
+    if (signMode === "unsigned") {
+      yMin = 0;
+      yMax = 65535;
+      maxAmplitude = 65535;
+    } else {
+      yMin = -32768;
+      yMax = 32767;
+      maxAmplitude = 32768;
+    }
+  }
+
+  return { yMin, yMax, maxAmplitude };
+}
+
+function updateOscilloscopeFullscreenState() {
+  const btn = document.getElementById("oscilloFullscreenBtn");
+  const rxSession = document.getElementById("uartRxSession");
+  if (!btn || !rxSession) return;
+  const isFull = document.fullscreenElement === rxSession;
+  btn.classList.toggle("active", isFull);
+  btn.title = isFull ? "Exit fullscreen" : "Fullscreen";
+  btn.setAttribute("aria-label", btn.title);
+  if (oscilloscopeChart) {
+    oscilloscopeChart.resize();
+  }
+}
+
+function toggleOscilloscopeFullscreen() {
+  const rxSession = document.getElementById("uartRxSession");
+  if (!rxSession) return;
+
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.();
+    return;
+  }
+
+  if (rxSession.requestFullscreen) {
+    rxSession.requestFullscreen();
   }
 }
 
