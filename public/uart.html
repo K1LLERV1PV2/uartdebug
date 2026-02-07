@@ -127,9 +127,9 @@
                       type="number"
                       class="loop-interval-input"
                       id="loopIntervalInput"
-                      min="100"
+                      min="10"
                       max="10000"
-                      step="100"
+                      step="10"
                       value="1000"
                       title="Interval in ms"
                     />
@@ -358,22 +358,6 @@
                   </div>
                 </div>
                 <div class="rx-controls-right">
-                  <div
-                    class="oscilloscope-controls"
-                    id="oscilloscopeControls"
-                    style="display: none"
-                  >
-                    <button class="log-btn" id="oscilloClearBtn">
-                      Clear graph
-                    </button>
-                    <button
-                      class="log-btn"
-                      id="oscilloResetBtn"
-                      title="Reset zoom and pan"
-                    >
-                      Reset zoom
-                    </button>
-                  </div>
                   <button
                     class="log-btn receive-toggle-btn receiving"
                     id="receiveToggleBtn"
@@ -428,23 +412,80 @@
                 style="display: none"
               >
                 <div class="oscilloscope-actions">
-                  <button
-                    class="icon-btn"
-                    id="oscilloFullscreenBtn"
-                    title="Fullscreen"
-                    aria-label="Fullscreen"
+                  <div
+                    class="oscilloscope-controls"
+                    id="oscilloscopeControls"
+                    style="display: none"
                   >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path
-                        d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.6"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                    </svg>
-                  </button>
+                    <button
+                      class="icon-btn"
+                      id="oscilloFullscreenBtn"
+                      title="Fullscreen"
+                      aria-label="Fullscreen"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      class="icon-btn"
+                      id="oscilloResetBtn"
+                      title="Reset zoom and pan"
+                      aria-label="Reset zoom and pan"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M20 12a8 8 0 1 1-2.34-5.66M20 4v6h-6"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      class="icon-btn"
+                      id="oscilloClearBtn"
+                      title="Clear graph"
+                      aria-label="Clear graph"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M9 3h6M5 6h14m-1 0l-1 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 6m3 4v8m4-8v8"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      class="icon-btn"
+                      id="oscilloDownloadBtn"
+                      title="Download graph"
+                      aria-label="Download graph"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M12 4v11m0 0l4-4m-4 4l-4-4M5 20h14"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
                 <canvas id="oscilloscopeCanvas"></canvas>
               </div>

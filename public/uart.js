@@ -16,6 +16,7 @@ let chartZoom = { x: 1, y: 1 };
 let chartPan = { x: 0, y: 0 };
 let isPanningChart = false;
 let isAxisDrag = false;
+let axisHoverMode = null;
 let axisDragMode = null;
 let axisDragStart = { x: 0, y: 0 };
 let axisDragScaleStart = { xMin: 0, xMax: 0, yMin: 0, yMax: 0 };
@@ -25,6 +26,10 @@ let rxBuffer = new Uint8Array(0);
 let rxFlushTimer = null;
 let rxSilenceMs = 5;
 let generatorStream = null;
+const TX_GENERATOR_INTERVAL_MS = 10;
+const TX_TEXT_INTERVAL_MS = 1000;
+const TX_INTERVAL_MIN_MS = 10;
+const TX_INTERVAL_MAX_MS = 10000;
 
 // DOM elements cache
 let terminalSent = null;
@@ -106,13 +111,13 @@ function initializeEventListeners() {
 
   // Loop interval input
   loopIntervalInput.addEventListener("change", function () {
-    const value = parseInt(this.value);
-    if (value >= 100 && value <= 10000) {
-      // If loop is active, restart with new interval
-      if (loopInterval) {
-        stopLoopSend();
-        startLoopSend();
-      }
+    getNormalizedLoopIntervalMs(
+      txView === "generator" ? TX_GENERATOR_INTERVAL_MS : TX_TEXT_INTERVAL_MS
+    );
+    // If loop is active, restart with new interval
+    if (loopInterval) {
+      stopLoopSend();
+      startLoopSend();
     }
   });
 
@@ -170,6 +175,9 @@ function initializeEventListeners() {
   document
     .getElementById("oscilloClearBtn")
     .addEventListener("click", clearOscilloscope);
+  document
+    .getElementById("oscilloDownloadBtn")
+    ?.addEventListener("click", downloadOscilloscopeImage);
   document
     .getElementById("oscilloFullscreenBtn")
     ?.addEventListener("click", toggleOscilloscopeFullscreen);
@@ -649,6 +657,37 @@ function updateGeneratorUi() {
   }
 }
 
+function getNormalizedLoopIntervalMs(defaultValue = TX_TEXT_INTERVAL_MS) {
+  const parsed = parseInt(loopIntervalInput?.value, 10);
+  const fallback = Number.isFinite(defaultValue)
+    ? defaultValue
+    : TX_TEXT_INTERVAL_MS;
+  const normalized = Number.isFinite(parsed)
+    ? Math.min(TX_INTERVAL_MAX_MS, Math.max(TX_INTERVAL_MIN_MS, parsed))
+    : fallback;
+  if (loopIntervalInput) {
+    loopIntervalInput.value = String(normalized);
+  }
+  return normalized;
+}
+
+function applyTxViewDefaults() {
+  if (txView === "generator") {
+    if (cycleCheckbox) cycleCheckbox.checked = true;
+    if (loopIntervalInput) {
+      loopIntervalInput.value = String(TX_GENERATOR_INTERVAL_MS);
+    }
+    getNormalizedLoopIntervalMs(TX_GENERATOR_INTERVAL_MS);
+    return;
+  }
+
+  if (cycleCheckbox) cycleCheckbox.checked = false;
+  if (loopIntervalInput) {
+    loopIntervalInput.value = String(TX_TEXT_INTERVAL_MS);
+  }
+  getNormalizedLoopIntervalMs(TX_TEXT_INTERVAL_MS);
+}
+
 function handleTxViewChange(event) {
   const view = event.target.value;
   if (!view || !event.target.checked) return;
@@ -659,7 +698,6 @@ function handleTxViewChange(event) {
     if (txGeneratorPanel) txGeneratorPanel.style.display = "flex";
     if (txLogControls) txLogControls.style.display = "none";
     if (txModeControls) txModeControls.style.display = "none";
-    if (loopInterval) stopLoopSend();
   } else {
     if (txTerminalShell) txTerminalShell.style.display = "flex";
     if (txGeneratorPanel) txGeneratorPanel.style.display = "none";
@@ -667,6 +705,10 @@ function handleTxViewChange(event) {
     if (txModeControls) txModeControls.style.display = "flex";
   }
 
+  if (loopInterval) {
+    stopLoopSend();
+  }
+  applyTxViewDefaults();
   updateTxInputAvailability();
 }
 
@@ -838,6 +880,17 @@ function saveRxLog() {
   saveTerminalLog("RxD", terminalReceived, "rx");
 }
 
+function downloadOscilloscopeImage() {
+  if (!oscilloscopeCanvas) return;
+  const imageUrl = oscilloscopeCanvas.toDataURL("image/png");
+  const a = document.createElement("a");
+  a.href = imageUrl;
+  a.download = `uart_oscilloscope_${Date.now()}.png`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 /**
  * Open settings modal
  */
@@ -901,6 +954,7 @@ function initOscilloscope() {
   // Initialize data array
   oscilloscopeData = new Array(points).fill(0);
   byteBuffer = []; // Clear byte buffer
+  axisHoverMode = null;
 
   // Determine Y axis range based on mode
   let yMin, yMax, yTitle;
@@ -935,13 +989,25 @@ function initOscilloscope() {
       datasets: [
         {
           label: "RxD Signal",
-          data: oscilloscopeData,
+          data: buildOscilloscopeViewportData(yMin, yMax),
           borderColor: "#2ecc71",
           backgroundColor: "rgba(46, 204, 113, 0.1)",
           borderWidth: 2,
-          tension: 0.1,
-          pointRadius: 0,
-          pointHoverRadius: 3,
+          tension: 0,
+          pointRadius: function (context) {
+            return context.raw?.overflow ? 1.8 : 0;
+          },
+          pointHoverRadius: 4,
+          pointBackgroundColor: function (context) {
+            return context.raw?.overflow ? "#e74c3c" : "#2ecc71";
+          },
+          segment: {
+            borderColor: function (context) {
+              return context.p0.raw?.overflow || context.p1.raw?.overflow
+                ? "#e74c3c"
+                : "#2ecc71";
+            },
+          },
         },
       ],
     },
@@ -956,16 +1022,14 @@ function initOscilloscope() {
         mode: "nearest",
       },
       plugins: {
-        overflowIndicator: {
-          color: "#e74c3c",
-          lineWidth: 2,
-        },
         legend: { display: false },
         tooltip: {
           enabled: true,
           callbacks: {
             label: function (context) {
-              const value = context.parsed.y;
+              const value = Number.isFinite(context.raw?.rawY)
+                ? context.raw.rawY
+                : context.parsed.y;
               // Format tooltip based on current mode
               if (byteSize === "1") {
                 if (signMode === "unsigned") {
@@ -1005,7 +1069,20 @@ function initOscilloscope() {
           display: true,
           title: { display: true, text: "Sample", color: "#ecf0f1" },
           ticks: { color: "#bdc3c7" },
-          grid: { color: "rgba(127, 140, 141, 0.2)" },
+          border: {
+            display: true,
+            color: function () {
+              return axisHoverMode === "x"
+                ? "rgba(236, 240, 241, 0.9)"
+                : "rgba(236, 240, 241, 0.08)";
+            },
+            width: function () {
+              return axisHoverMode === "x" ? 1.6 : 1;
+            },
+          },
+          grid: {
+            color: "rgba(127, 140, 141, 0.2)",
+          },
         },
         y: {
           display: true,
@@ -1013,6 +1090,17 @@ function initOscilloscope() {
             display: true,
             text: yTitle,
             color: "#ecf0f1",
+          },
+          border: {
+            display: true,
+            color: function () {
+              return axisHoverMode === "y"
+                ? "rgba(236, 240, 241, 0.9)"
+                : "rgba(236, 240, 241, 0.08)";
+            },
+            width: function () {
+              return axisHoverMode === "y" ? 1.6 : 1;
+            },
           },
           min: yMin,
           max: yMax,
@@ -1029,11 +1117,12 @@ function initOscilloscope() {
               }
             },
           },
-          grid: { color: "rgba(127, 140, 141, 0.2)" },
+          grid: {
+            color: "rgba(127, 140, 141, 0.2)",
+          },
         },
       },
     },
-    plugins: [overflowIndicatorPlugin],
   });
 
   // Initialize zoom and pan controls
@@ -1049,92 +1138,59 @@ function byteToHex(v) {
   return n.toString(16).padStart(2, "0").toUpperCase();
 }
 
-const overflowIndicatorPlugin = {
-  id: "overflowIndicator",
-  afterDatasetsDraw(chart, args, options) {
-    const xScale = chart.scales?.x;
-    const yScale = chart.scales?.y;
-    const chartArea = chart.chartArea;
-    if (!xScale || !yScale || !chartArea) return;
+function clampToRange(value, minValue, maxValue) {
+  return Math.min(maxValue, Math.max(minValue, value));
+}
 
-    const data = chart.data?.datasets?.[0]?.data || [];
-    const labels = chart.data?.labels || [];
-    const xMin = Number.isFinite(xScale.min) ? xScale.min : -Infinity;
-    const xMax = Number.isFinite(xScale.max) ? xScale.max : Infinity;
-    let hasHigh = false;
-    let hasLow = false;
-    let visibleMinIndex = null;
-    let visibleMaxIndex = null;
+function getCurrentOscilloscopeYBounds() {
+  const modeRange = getOscilloscopeModeRange();
+  const fallbackMin = modeRange.yMin;
+  const fallbackMax = modeRange.yMax;
 
-    const getXValue = (index) => {
-      const label = labels[index];
-      const parsed = Number(label);
-      if (Number.isFinite(parsed)) return parsed;
-      return index;
+  if (!oscilloscopeChart?.scales?.y) {
+    return { yMin: fallbackMin, yMax: fallbackMax };
+  }
+
+  const yScale = oscilloscopeChart.scales.y;
+  let yMin = Number.isFinite(yScale.options?.min)
+    ? Number(yScale.options.min)
+    : Number(yScale.min);
+  let yMax = Number.isFinite(yScale.options?.max)
+    ? Number(yScale.options.max)
+    : Number(yScale.max);
+
+  if (!Number.isFinite(yMin)) yMin = fallbackMin;
+  if (!Number.isFinite(yMax)) yMax = fallbackMax;
+  if (yMin > yMax) {
+    const tmp = yMin;
+    yMin = yMax;
+    yMax = tmp;
+  }
+
+  return { yMin, yMax };
+}
+
+function buildOscilloscopeViewportData(yMin, yMax) {
+  return oscilloscopeData.map((rawY, index) => {
+    const overflow = rawY < yMin || rawY > yMax;
+    return {
+      x: index,
+      y: clampToRange(rawY, yMin, yMax),
+      rawY,
+      overflow,
     };
+  });
+}
 
-    for (let i = 0; i < data.length; i += 1) {
-      const value = data[i];
-      if (value == null) continue;
-      const xValue = getXValue(i);
-      if (xValue < xMin || xValue > xMax) continue;
-      if (value > yScale.max) {
-        hasHigh = true;
-      } else if (value < yScale.min) {
-        hasLow = true;
-      } else {
-        if (visibleMinIndex === null || i < visibleMinIndex) {
-          visibleMinIndex = i;
-        }
-        if (visibleMaxIndex === null || i > visibleMaxIndex) {
-          visibleMaxIndex = i;
-        }
-      }
-      if (hasHigh && hasLow) break;
-    }
-
-    if (!hasHigh && !hasLow) return;
-
-    const { color = "#e74c3c", lineWidth = 2 } = options || {};
-    const ctx = chart.ctx;
-    let xStart = chartArea.left;
-    let xEnd = chartArea.right;
-
-    if (visibleMinIndex !== null && visibleMaxIndex !== null) {
-      xStart = xScale.getPixelForValue(getXValue(visibleMinIndex));
-      xEnd = xScale.getPixelForValue(getXValue(visibleMaxIndex));
-
-      if (xStart > xEnd) {
-        const tmp = xStart;
-        xStart = xEnd;
-        xEnd = tmp;
-      }
-
-      xStart = Math.max(chartArea.left, Math.min(xStart, chartArea.right));
-      xEnd = Math.max(chartArea.left, Math.min(xEnd, chartArea.right));
-    }
-
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-
-    if (hasHigh) {
-      ctx.beginPath();
-      ctx.moveTo(xStart, chartArea.top);
-      ctx.lineTo(xEnd, chartArea.top);
-      ctx.stroke();
-    }
-
-    if (hasLow) {
-      ctx.beginPath();
-      ctx.moveTo(xStart, chartArea.bottom);
-      ctx.lineTo(xEnd, chartArea.bottom);
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  },
-};
+function syncOscilloscopeViewportData(updateMode = "none") {
+  if (!oscilloscopeChart) return;
+  const { yMin, yMax } = getCurrentOscilloscopeYBounds();
+  oscilloscopeChart.data.datasets[0].data = buildOscilloscopeViewportData(
+    yMin,
+    yMax
+  );
+  oscilloscopeChart.update(updateMode);
+}
 
 /**
  * Update oscilloscope with new data
@@ -1199,9 +1255,8 @@ function updateOscilloscopeData(uint8Array) {
     }
   }
 
-  // Update chart
-  oscilloscopeChart.data.datasets[0].data = [...oscilloscopeData];
-  oscilloscopeChart.update("none");
+  // Update chart with clamped-to-viewport values
+  syncOscilloscopeViewportData("none");
 }
 
 /**
@@ -1212,8 +1267,7 @@ function clearOscilloscope() {
     const points = 500;
     oscilloscopeData = new Array(points).fill(0);
     byteBuffer = []; // Clear byte buffer
-    oscilloscopeChart.data.datasets[0].data = [...oscilloscopeData];
-    oscilloscopeChart.update("none");
+    syncOscilloscopeViewportData("none");
   }
 }
 
@@ -1297,7 +1351,7 @@ function startLoopSend() {
   }
 
   // Получаем интервал из поля ввода
-  const intervalMs = parseInt(loopIntervalInput.value) || 1000;
+  const intervalMs = getNormalizedLoopIntervalMs(TX_TEXT_INTERVAL_MS);
 
   // Отправляем первый раз сразу
   sendDataLoop();
@@ -1431,7 +1485,7 @@ function startGeneratorStream(looping) {
     return;
   }
 
-  const intervalMs = parseInt(loopIntervalInput.value) || 1000;
+  const intervalMs = getNormalizedLoopIntervalMs(TX_GENERATOR_INTERVAL_MS);
   sendGeneratorByte();
   loopInterval = setInterval(() => {
     sendGeneratorByte();
@@ -1599,6 +1653,15 @@ function getAxisHoverMode(chart, x, y) {
   return null;
 }
 
+function setAxisHoverMode(mode) {
+  const normalized = mode === "x" || mode === "y" ? mode : null;
+  if (axisHoverMode === normalized) return;
+  axisHoverMode = normalized;
+  if (oscilloscopeChart) {
+    oscilloscopeChart.update("none");
+  }
+}
+
 /**
  * Handle chart zoom with mouse wheel
  */
@@ -1663,7 +1726,7 @@ function handleChartZoom(e) {
       yScale.options.min = newYMin;
       yScale.options.max = newYMax;
 
-      oscilloscopeChart.update("none");
+      syncOscilloscopeViewportData("none");
     }
   }
 }
@@ -1681,6 +1744,7 @@ function handleChartMouseDown(e) {
       e.preventDefault();
       isAxisDrag = true;
       axisDragMode = axisMode;
+      setAxisHoverMode(axisMode);
       axisDragStart = { ...mouse };
 
       const xScale = oscilloscopeChart.scales.x;
@@ -1702,6 +1766,7 @@ function handleChartMouseDown(e) {
   if (e.button === 0) {
     e.preventDefault();
     isPanningChart = true;
+    setAxisHoverMode(null);
 
     panStartPos = { x: e.clientX, y: e.clientY };
 
@@ -1780,13 +1845,14 @@ function handleChartMouseMove(e) {
       yScale.options.max = mid + newRange / 2;
     }
 
-    oscilloscopeChart.update("none");
+    syncOscilloscopeViewportData("none");
     return;
   }
 
   if (!isPanningChart) {
     const mouse = getMousePos(e);
     const hoverMode = getAxisHoverMode(oscilloscopeChart, mouse.x, mouse.y);
+    setAxisHoverMode(hoverMode);
     if (hoverMode === "y") {
       oscilloscopeCanvas.style.cursor = "ns-resize";
     } else if (hoverMode === "x") {
@@ -1846,7 +1912,7 @@ function handleChartMouseMove(e) {
     yScale.options.min = panStartOffset.yMin + yDataDelta;
     yScale.options.max = panStartOffset.yMax + yDataDelta;
 
-    oscilloscopeChart.update("none");
+    syncOscilloscopeViewportData("none");
   }
 }
 
@@ -1865,6 +1931,9 @@ function handleChartMouseUp(e) {
 
   if (!isPanningChart && !isAxisDrag) {
     oscilloscopeCanvas.style.cursor = "default";
+    if (e.type === "mouseleave") {
+      setAxisHoverMode(null);
+    }
   }
 }
 
@@ -1889,7 +1958,7 @@ function resetChartView() {
     yScale.options.min = yMin;
     yScale.options.max = yMax;
 
-    oscilloscopeChart.update();
+    syncOscilloscopeViewportData();
   }
 }
 

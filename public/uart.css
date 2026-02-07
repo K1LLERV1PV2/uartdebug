@@ -443,6 +443,12 @@ body {
   z-index: 2;
 }
 
+.oscilloscope-actions .oscilloscope-controls {
+  gap: 6px;
+  flex-wrap: nowrap;
+  margin-left: 0;
+}
+
 .icon-btn.active {
   background: rgba(22, 160, 133, 0.35);
   color: #ecf0f1;
