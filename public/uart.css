@@ -463,6 +463,22 @@ body {
   min-height: 200px;
 }
 
+.oscilloscope-info-tooltip {
+  position: absolute;
+  transform: translateY(-50%);
+  background: transparent;
+  color: #ecf0f1;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+}
+
 /* Oscilloscope controls */
 .oscilloscope-controls {
   display: flex;

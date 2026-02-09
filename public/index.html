@@ -1,457 +1,569 @@
-<!DOCTYPE html>
-<html lang="ru">
+<!doctype html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Uart Debug</title>
-
-    <style>
-      body {
-        background-color: #2c3e50;
-        color: #ecf0f1;
-        margin: 0;
-        padding: 0;
-        font-family: Arial, sans-serif;
-        overflow: hidden;
-        height: 100vh;
-      }
-
-      /* Animated background */
-      body::before {
-        content: "";
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: radial-gradient(
-            circle at 20% 80%,
-            rgba(26, 188, 156, 0.1) 0%,
-            transparent 50%
-          ),
-          radial-gradient(
-            circle at 80% 20%,
-            rgba(22, 160, 133, 0.08) 0%,
-            transparent 50%
-          ),
-          radial-gradient(
-            circle at 40% 60%,
-            rgba(52, 152, 219, 0.05) 0%,
-            transparent 50%
-          );
-        animation: backgroundFloat 20s ease-in-out infinite;
-        z-index: -1;
-      }
-
-      @keyframes backgroundFloat {
-        0%,
-        100% {
-          transform: scale(1) rotate(0deg);
-        }
-        50% {
-          transform: scale(1.1) rotate(1deg);
-        }
-      }
-
-      /* Hero section */
-      .hero-section {
-        padding: clamp(30px, 8vh, 60px) clamp(15px, 4vw, 25px)
-          clamp(20px, 5vh, 40px);
-        text-align: center;
-        background: linear-gradient(
-          135deg,
-          rgba(26, 188, 156, 0.1) 0%,
-          rgba(22, 160, 133, 0.05) 100%
-        );
-        position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: clamp(200px, 30vh, 300px);
-      }
-
-      .hero-content {
-        width: 100%;
-        max-width: 90vw;
-      }
-
-      .hero-content h1 {
-        font-size: clamp(2.5rem, 5vw, 4rem);
-        margin-bottom: 20px;
-        background: linear-gradient(135deg, #1abc9c, #16a085, #3498db);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        animation: titleGlow 3s ease-in-out infinite alternate;
-      }
-
-      @keyframes titleGlow {
-        0% {
-          filter: brightness(1) drop-shadow(0 0 5px rgba(26, 188, 156, 0.3));
-        }
-        100% {
-          filter: brightness(1.1) drop-shadow(0 0 20px rgba(26, 188, 156, 0.6));
-        }
-      }
-
-      .hero-content p {
-        font-size: clamp(1rem, 3vw, 1.3rem);
-        margin-bottom: clamp(20px, 4vh, 40px);
-        opacity: 0.9;
-        max-width: clamp(300px, 80vw, 700px);
-        margin-left: auto;
-        margin-right: auto;
-        line-height: 1.6;
-        padding: 0 clamp(10px, 2vw, 20px);
-      }
-
-      /* Navigation cards */
-      .navigation-section {
-        padding: clamp(40px, 5vw, 40px) !important;
-        margin: 0 auto;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        min-height: 40vh;
-      }
-
-      .nav-grid {
-        display: flex;
-        justify-content: center;
-        width: 100%;
-        max-width: 90vw;
-      }
-
-      .nav-card {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: clamp(15px, 3vw, 25px);
-        padding: clamp(20px, 5vw, 50px) clamp(15px, 4vw, 40px);
-        text-decoration: none;
-        color: #ecf0f1;
-        transition: all 0.4s ease;
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        text-align: center;
-        width: clamp(280px, 80vw, 500px);
-        max-width: 90vw;
-        min-height: clamp(200px, 30vh, 300px);
-        position: relative;
-        overflow: hidden;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-      }
-
-      .nav-card::before {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: -100%;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(
-          90deg,
-          transparent,
-          rgba(26, 188, 156, 0.1),
-          transparent
-        );
-        transition: left 0.6s ease;
-      }
-
-      .nav-card:hover::before {
-        left: 100%;
-      }
-
-      .nav-card:hover {
-        transform: translateY(-10px);
-        background: rgba(255, 255, 255, 0.08);
-        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3),
-          0 0 30px rgba(26, 188, 156, 0.2);
-        border-color: rgba(26, 188, 156, 0.3);
-      }
-
-      .card-icon {
-        font-size: clamp(2.5rem, 8vw, 4rem);
-        margin-bottom: clamp(15px, 3vh, 25px);
-        opacity: 0.9;
-        transition: transform 0.3s ease;
-      }
-
-      .nav-card:hover .card-icon {
-        transform: scale(1.1);
-      }
-
-      .card-title {
-        font-size: clamp(1.2rem, 4vw, 2rem);
-        font-weight: 600;
-        margin-bottom: clamp(10px, 2vh, 20px);
-        color: #1abc9c;
-      }
-
-      .card-description {
-        font-size: clamp(0.9rem, 2.5vw, 1.2rem);
-        opacity: 0.8;
-        line-height: 1.5;
-        margin: 0;
-        text-align: center;
-        max-width: 100%;
-      }
-
-      /* Footer */
-      .site-footer {
-        margin-top: 20px;
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        background: rgba(44, 62, 80, 0.9);
-        text-align: center;
-        padding: clamp(10px, 2vh, 20px) clamp(15px, 3vw, 25px);
-        backdrop-filter: blur(10px);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-      }
-
-      .site-footer p {
-        margin: 0;
-        opacity: 0.7;
-        font-size: clamp(0.7rem, 2vw, 0.9rem);
-      }
-
-      /* Text selection styling */
-      ::selection {
-        background: #16a085;
-        color: #ecf0f1;
-      }
-
-      ::-moz-selection {
-        background: #16a085;
-        color: #ecf0f1;
-      }
-
-      @media (max-width: 768px) {
-        .hero-section {
-          padding: 30px 15px 20px;
-        }
-
-        .hero-content h1 {
-          font-size: clamp(2rem, 8vw, 3rem);
-          margin-bottom: 15px;
-        }
-
-        .hero-content p {
-          font-size: clamp(1rem, 3.5vw, 1.1rem);
-          margin-bottom: 20px;
-          padding: 0 10px;
-        }
-
-        .navigation-section {
-          min-height: 35vh;
-          padding: clamp(15px, 4vw, 30px);
-        }
-
-        .nav-card {
-          width: clamp(250px, 90vw, 400px);
-          min-height: clamp(180px, 25vh, 250px);
-          padding: clamp(15px, 4vw, 35px) clamp(10px, 3vw, 25px);
-        }
-      }
-
-      @media (max-width: 480px) {
-        .hero-content p {
-          font-size: clamp(0.9rem, 3vw, 1rem);
-        }
-
-        .nav-card {
-          width: clamp(220px, 95vw, 350px);
-          min-height: clamp(160px, 20vh, 220px);
-          padding: clamp(12px, 3vw, 25px) clamp(8px, 2vw, 20px);
-        }
-
-        .card-icon {
-          font-size: clamp(2rem, 6vw, 3rem);
-        }
-
-        .card-title {
-          font-size: clamp(1.1rem, 3.5vw, 1.5rem);
-        }
-
-        .card-description {
-          font-size: clamp(0.8rem, 2.2vw, 1rem);
-        }
-      }
-
-      @media (min-width: 1200px) {
-        .nav-card {
-          width: clamp(400px, 30vw, 600px);
-          min-height: clamp(250px, 25vh, 350px);
-        }
-      }
-
-      /* Responsive height adjustments for laptop screens */
-      @media (max-height: 800px) {
-        body {
-          overflow: hidden;
-        }
-
-        main {
-          height: 100vh;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-        }
-
-        .hero-section {
-          min-height: auto;
-          height: 35vh;
-          padding: 20px 15px;
-        }
-
-        .hero-content h1 {
-          font-size: clamp(2rem, 6vw, 3rem);
-          margin-bottom: 10px;
-        }
-
-        .hero-content p {
-          font-size: clamp(0.9rem, 2.5vw, 1.1rem);
-          margin-bottom: 15px;
-        }
-
-        .navigation-section {
-          min-height: auto;
-          flex: 1;
-          padding: 20px !important;
-          display: flex;
-          align-items: center;
-        }
-
-        .nav-card {
-          min-height: 180px;
-          max-height: 35vh;
-          padding: 20px 15px;
-        }
-
-        .card-icon {
-          font-size: 2.5rem;
-          margin-bottom: 10px;
-        }
-
-        .card-title {
-          font-size: 1.3rem;
-          margin-bottom: 10px;
-        }
-
-        .card-description {
-          font-size: 0.95rem;
-        }
-
-        .site-footer {
-          position: relative;
-          padding: 10px 15px;
-          margin-top: auto;
-        }
-
-        .site-footer p {
-          font-size: 0.8rem;
-        }
-      }
-
-      /* Ultra compact mode for very small heights */
-      @media (max-height: 650px) {
-        .hero-section {
-          height: 30vh;
-          padding: 15px;
-        }
-
-        .hero-content h1 {
-          font-size: 2rem;
-          margin-bottom: 8px;
-        }
-
-        .hero-content p {
-          font-size: 0.9rem;
-          margin-bottom: 10px;
-        }
-
-        .nav-card {
-          min-height: 150px;
-          padding: 15px;
-        }
-
-        .card-icon {
-          font-size: 2rem;
-          margin-bottom: 8px;
-        }
-
-        .card-title {
-          font-size: 1.1rem;
-          margin-bottom: 8px;
-        }
-
-        .card-description {
-          font-size: 0.85rem;
-        }
-
-        .site-footer {
-          padding: 8px;
-        }
-
-        .site-footer p {
-          font-size: 0.75rem;
-        }
-      }
-    </style>
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link
-      rel="icon"
-      type="image/png"
-      sizes="192x192"
-      href="/icons/favicon-192.png"
-    />
-    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <script type="application/ld+json">
-      {
-        "@context": "https://schema.org",
-        "@type": "Organization",
-        "name": "Uart Debug",
-        "url": "https://uartdebug.com",
-        "logo": "https://uartdebug.com/icons/logo-512.png"
-      }
-    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UART Terminal - Uart Debug</title>
+    <!-- link to global styles and uart specific styles -->
+    <link rel="stylesheet" href="uart.css" />
+    <!-- include Chart.js library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js"></script>
+    <script defer src="uart.js"></script>
   </head>
   <body>
-    <!-- Main content -->
     <main>
-      <!-- Hero section -->
-      <section class="hero-section">
-        <div class="hero-content">
-          <h1>Uart Debug</h1>
-          <p>
-            UART Terminal in the browser Monitoring and debugging serial
-            connections without installing additional software
-          </p>
+      <div class="feature-panel">
+        <!-- Web Serial API support warning -->
+        <div class="api-support-warning" id="apiWarning">
+          <strong>Attention:</strong> Your browser does not support the
+          Web&nbsp;Serial API. To work with UART you need a modern browser based
+          on Chromium (Chrome, Edge, Opera).
         </div>
-      </section>
 
-      <!-- Navigation cards -->
-      <section class="navigation-section">
-        <div class="nav-grid">
-          <a href="/uart" class="nav-card">
-            <div class="card-icon">📡</div>
-            <h3 class="card-title">UART Terminal</h3>
-            <p class="card-description">
-              Real-time monitoring and debugging of UART connections
-            </p>
-          </a>
+        <!-- Connection section -->
+        <section class="uart-section">
+          <h2 class="status-indicator disconnected" id="statusIndicator">
+            Disconnected
+          </h2>
+
+          <div class="connection-panel">
+            <button class="connect-btn" id="connectBtn">Connect</button>
+
+            <div class="connection-control">
+              <label>Baud rate</label>
+              <select id="baudRate">
+                <option value="9600">9600</option>
+                <option value="19200">19200</option>
+                <option value="38400">38400</option>
+                <option value="57600">57600</option>
+                <option value="115200" selected>115200</option>
+                <option value="230400">230400</option>
+                <option value="460800">460800</option>
+                <option value="921600">921600</option>
+              </select>
+            </div>
+
+            <button
+              class="settings-btn"
+              id="settingsBtn"
+              title="Connection settings"
+            >
+              <!-- gear icon -->
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66Z"
+                />
+              </svg>
+            </button>
+            <span class="connection-note">
+              Hardware debugging via USB-UART bridge
+            </span>
+          </div>
+        </section>
+
+        <!-- Terminal and oscilloscope section -->
+        <div class="uart-sessions-split">
+          <section
+            class="uart-section uart-session is-locked"
+            id="uartTxSession"
+            aria-disabled="true"
+          >
+            <div class="terminal-wrapper">
+              <div class="terminal-header">
+                <h3 class="terminal-label">TxD</h3>
+                <div class="view-toggle">
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txView" value="text" checked />
+                      <span>Text</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txView" value="generator" />
+                      <span>Generator</span>
+                    </label>
+                  </div>
+                </div>
+                <div
+                  class="mode-controls"
+                  id="txModeControls"
+                  aria-label="TxD mode"
+                >
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txMode" value="ascii" checked />
+                      <span>ASCII</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="txMode" value="hex" />
+                      <span>HEX</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="log-controls" id="txLogControls">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="autoScrollCheckbox" checked />
+                    <span class="checkbox-custom"></span>
+                    Auto&#8209;scroll
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="timestampCheckbox" />
+                    <span class="checkbox-custom"></span>
+                    Show time
+                  </label>
+                </div>
+                <div class="run-controls">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="cycleCheckbox" />
+                    <span class="checkbox-custom"></span>
+                    Cycle
+                  </label>
+                  <div class="cycle-interval">
+                    <input
+                      type="number"
+                      class="loop-interval-input"
+                      id="loopIntervalInput"
+                      min="10"
+                      max="10000"
+                      step="10"
+                      value="1000"
+                      title="Interval in ms"
+                    />
+                    <span class="loop-interval-label">ms</span>
+                  </div>
+                  <button class="send-btn" id="sendBtn" disabled>Run</button>
+                </div>
+              </div>
+              <div class="terminal-shell" id="txTerminalShell">
+                <div class="terminal-actions" id="terminalActionsTx">
+                  <button
+                    class="icon-btn"
+                    id="clearBtn"
+                    title="Clear TxD log"
+                    aria-label="Clear TxD log"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M9 3h6M5 6h14m-1 0l-1 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 6m3 4v8m4-8v8"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    class="icon-btn"
+                    id="saveLogBtn"
+                    title="Save TxD log"
+                    aria-label="Save TxD log"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M12 4v11m0 0l4-4m-4 4l-4-4M5 20h14"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div class="terminal-container" id="terminalSent"></div>
+              </div>
+              <div
+                class="generator-panel"
+                id="txGeneratorPanel"
+                style="display: none"
+              >
+                <div class="generator-grid">
+                  <div class="generator-field">
+                    <label for="genWaveform">Wave</label>
+                    <select id="genWaveform">
+                      <option value="sine" selected>Sine</option>
+                      <option value="triangle">Triangle</option>
+                      <option value="square">Square</option>
+                    </select>
+                  </div>
+                  <div class="generator-field">
+                    <label for="genSamples">Samples</label>
+                    <input
+                      type="number"
+                      id="genSamples"
+                      min="4"
+                      max="4096"
+                      step="1"
+                      value="64"
+                    />
+                  </div>
+                  <div class="generator-field">
+                    <label for="genAmplitude">Amplitude</label>
+                    <input
+                      type="number"
+                      id="genAmplitude"
+                      step="1"
+                      value="100"
+                    />
+                  </div>
+                  <div class="generator-field">
+                    <label for="genOffset">Offset</label>
+                    <input type="number" id="genOffset" step="1" value="0" />
+                  </div>
+                  <div class="generator-field" id="genDutyField">
+                    <label for="genDuty">Duty %</label>
+                    <input
+                      type="number"
+                      id="genDuty"
+                      min="1"
+                      max="99"
+                      step="1"
+                      value="50"
+                    />
+                  </div>
+                </div>
+                <div class="generator-options">
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="genSignMode"
+                        value="unsigned"
+                        checked
+                      />
+                      <span>Unsigned</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="genSignMode" value="signed" />
+                      <span>Signed</span>
+                    </label>
+                  </div>
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="genByteSize"
+                        value="1"
+                        checked
+                      />
+                      <span>1 byte</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="genByteSize" value="2BE" />
+                      <span>2 byte (BE)</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="genByteSize" value="2LE" />
+                      <span>2 byte (LE)</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="terminal-input-panel">
+              <input
+                type="text"
+                class="terminal-input"
+                id="terminalInput"
+                placeholder="Text string"
+                disabled
+              />
+            </div>
+          </section>
+
+          <section
+            class="uart-section uart-session is-locked"
+            id="uartRxSession"
+            aria-disabled="true"
+          >
+            <div class="terminal-wrapper">
+              <div class="terminal-header">
+                <h3 class="terminal-label">RxD</h3>
+                <div class="view-toggle">
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="rxView"
+                        value="terminal"
+                        checked
+                      />
+                      <span>Text</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="rxView" value="oscilloscope" />
+                      <span>Graphic</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="rx-left-controls">
+                  <div class="mode-controls" aria-label="RxD mode">
+                    <div class="radio-group">
+                      <label class="radio-label-inline">
+                        <input
+                          type="radio"
+                          name="rxMode"
+                          value="ascii"
+                          checked
+                        />
+                        <span>ASCII</span>
+                      </label>
+                      <label class="radio-label-inline">
+                        <input type="radio" name="rxMode" value="hex" />
+                        <span>HEX</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                <div
+                  class="data-mode-controls"
+                  id="dataModeControls"
+                  style="display: none"
+                >
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="signMode"
+                        value="unsigned"
+                        checked
+                      />
+                      <span>Unsigned</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="signMode" value="signed" />
+                      <span>Signed</span>
+                    </label>
+                  </div>
+
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input type="radio" name="byteSize" value="1" checked />
+                      <span>1 byte</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="byteSize" value="2BE" />
+                      <span>2 byte (BE)</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="byteSize" value="2LE" />
+                      <span>2 byte (LE)</span>
+                    </label>
+                  </div>
+                </div>
+                <div class="rx-controls-right">
+                  <button
+                    class="log-btn receive-toggle-btn receiving"
+                    id="receiveToggleBtn"
+                    title="Stop receiving"
+                  >
+                    Stop
+                  </button>
+                </div>
+              </div>
+              <div class="terminal-shell" id="rxTerminalShell">
+                <div class="terminal-actions" id="terminalActionsRx">
+                  <button
+                    class="icon-btn"
+                    id="clearBtnRx"
+                    title="Clear RxD log"
+                    aria-label="Clear RxD log"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M9 3h6M5 6h14m-1 0l-1 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 6m3 4v8m4-8v8"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  <button
+                    class="icon-btn"
+                    id="saveLogBtnRx"
+                    title="Save RxD log"
+                    aria-label="Save RxD log"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M12 4v11m0 0l4-4m-4 4l-4-4M5 20h14"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div class="terminal-container" id="terminalReceived"></div>
+              </div>
+              <div
+                class="oscilloscope-container"
+                id="oscilloscopeContainer"
+                style="display: none"
+              >
+                <div class="oscilloscope-actions">
+                  <div
+                    class="oscilloscope-controls"
+                    id="oscilloscopeControls"
+                    style="display: none"
+                  >
+                    <button
+                      class="icon-btn"
+                      id="oscilloFullscreenBtn"
+                      title="Fullscreen"
+                      aria-label="Fullscreen"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M8 4H4v4M16 4h4v4M20 16v4h-4M4 16v4h4"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      class="icon-btn"
+                      id="oscilloResetBtn"
+                      title="Reset zoom and pan"
+                      aria-label="Reset zoom and pan"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M20 12a8 8 0 1 1-2.34-5.66M20 4v6h-6"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      class="icon-btn"
+                      id="oscilloClearBtn"
+                      title="Clear graph"
+                      aria-label="Clear graph"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M9 3h6M5 6h14m-1 0l-1 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 6m3 4v8m4-8v8"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      class="icon-btn"
+                      id="oscilloDownloadBtn"
+                      title="Download graph"
+                      aria-label="Download graph"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M12 4v11m0 0l4-4m-4 4l-4-4M5 20h14"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.6"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <canvas id="oscilloscopeCanvas"></canvas>
+              </div>
+            </div>
+          </section>
         </div>
-      </section>
+
+        <!-- Modal dialog for connection settings -->
+        <div class="modal-overlay" id="settingsModal">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3>Connection settings</h3>
+              <button class="modal-close" id="modalCloseBtn">&times;</button>
+            </div>
+
+            <div class="modal-body">
+              <div class="connection-control">
+                <label>Baud rate</label>
+                <select id="modalBaudRate">
+                  <option value="9600">9600</option>
+                  <option value="19200">19200</option>
+                  <option value="38400">38400</option>
+                  <option value="57600">57600</option>
+                  <option value="115200" selected>115200</option>
+                  <option value="230400">230400</option>
+                  <option value="460800">460800</option>
+                  <option value="921600">921600</option>
+                </select>
+              </div>
+              <div class="connection-control">
+                <label>Data bits</label>
+                <select id="dataBits">
+                  <option value="7">7</option>
+                  <option value="8" selected>8</option>
+                </select>
+              </div>
+              <div class="connection-control">
+                <label>Stop bits</label>
+                <select id="stopBits">
+                  <option value="1" selected>1</option>
+                  <option value="2">2</option>
+                </select>
+              </div>
+              <div class="connection-control">
+                <label>Parity</label>
+                <select id="parity">
+                  <option value="none" selected>None</option>
+                  <option value="even">Even</option>
+                  <option value="odd">Odd</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
-
-    <footer class="site-footer">
-      <p>
-        © 2025 uartdebug.com — All rights reserved. Support -
-        uartdebug@gmail.com
-      </p>
-      <p>Author - Kabarukhin David, Telegram - @K1LLERV1P</p>
+    <footer
+      style="
+        margin: 40px auto;
+        max-width: 980px;
+        padding: 16px;
+        opacity: 0.7;
+        text-align: center;
+        font:
+          14px/1.4 system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Ubuntu,
+          Cantarell,
+          &quot;Helvetica Neue&quot;,
+          Arial,
+          &quot;Noto Sans&quot;,
+          &quot;Apple Color Emoji&quot;,
+          &quot;Segoe UI Emoji&quot;;
+      "
+    >
+      Contact: <a href="mailto:uartdebug@gmail.com">uartdebug@gmail.com</a>
     </footer>
   </body>
 </html>

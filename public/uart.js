@@ -26,6 +26,7 @@ let rxBuffer = new Uint8Array(0);
 let rxFlushTimer = null;
 let rxSilenceMs = 5;
 let generatorStream = null;
+let oscilloscopeInfoTooltipEl = null;
 const TX_GENERATOR_INTERVAL_MS = 10;
 const TX_TEXT_INTERVAL_MS = 1000;
 const TX_INTERVAL_MIN_MS = 10;
@@ -934,6 +935,7 @@ function initOscilloscope() {
     console.error("Chart.js is not loaded");
     return;
   }
+  ensureOscilloscopeInfoTooltipElement();
 
   const ctx = oscilloscopeCanvas.getContext("2d");
 
@@ -990,8 +992,8 @@ function initOscilloscope() {
         {
           label: "RxD Signal",
           data: buildOscilloscopeViewportData(yMin, yMax),
-          borderColor: "#2ecc71",
-          backgroundColor: "rgba(46, 204, 113, 0.1)",
+          borderColor: "rgba(0, 0, 0, 0)",
+          backgroundColor: "rgba(0, 0, 0, 0)",
           borderWidth: 2,
           tension: 0,
           pointRadius: function (context) {
@@ -1024,44 +1026,8 @@ function initOscilloscope() {
       plugins: {
         legend: { display: false },
         tooltip: {
-          enabled: true,
-          callbacks: {
-            label: function (context) {
-              const value = Number.isFinite(context.raw?.rawY)
-                ? context.raw.rawY
-                : context.parsed.y;
-              // Format tooltip based on current mode
-              if (byteSize === "1") {
-                if (signMode === "unsigned") {
-                  return `Value: ${value} (0x${value
-                    .toString(16)
-                    .toUpperCase()
-                    .padStart(2, "0")})`;
-                } else {
-                  const hexValue =
-                    value < 0 ? (256 + value).toString(16) : value.toString(16);
-                  return `Value: ${value} (0x${hexValue
-                    .toUpperCase()
-                    .padStart(2, "0")})`;
-                }
-              } else {
-                if (signMode === "unsigned") {
-                  return `Value: ${value} (0x${value
-                    .toString(16)
-                    .toUpperCase()
-                    .padStart(4, "0")})`;
-                } else {
-                  const hexValue =
-                    value < 0
-                      ? (65536 + value).toString(16)
-                      : value.toString(16);
-                  return `Value: ${value} (0x${hexValue
-                    .toUpperCase()
-                    .padStart(4, "0")})`;
-                }
-              }
-            },
-          },
+          enabled: false,
+          external: renderOscilloscopeInfoTooltip,
         },
       },
       scales: {
@@ -1136,6 +1102,82 @@ function initOscilloscope() {
 function byteToHex(v) {
   const n = Math.max(0, Math.min(255, Math.round(v)));
   return n.toString(16).padStart(2, "0").toUpperCase();
+}
+
+function ensureOscilloscopeInfoTooltipElement() {
+  if (oscilloscopeInfoTooltipEl && oscilloscopeInfoTooltipEl.isConnected) {
+    return oscilloscopeInfoTooltipEl;
+  }
+  if (!oscilloscopeContainer) {
+    return null;
+  }
+
+  const el = document.createElement("div");
+  el.className = "oscilloscope-info-tooltip";
+  el.style.opacity = "0";
+  oscilloscopeContainer.appendChild(el);
+  oscilloscopeInfoTooltipEl = el;
+  return el;
+}
+
+function formatOscilloscopeValueLabel(value, byteSize, signMode) {
+  const numeric = Number(value) || 0;
+  if (byteSize === "1") {
+    if (signMode === "unsigned") {
+      return `Value: ${numeric} (0x${numeric
+        .toString(16)
+        .toUpperCase()
+        .padStart(2, "0")})`;
+    }
+    const hexValue = numeric < 0 ? (256 + numeric).toString(16) : numeric.toString(16);
+    return `Value: ${numeric} (0x${hexValue.toUpperCase().padStart(2, "0")})`;
+  }
+
+  if (signMode === "unsigned") {
+    return `Value: ${numeric} (0x${numeric
+      .toString(16)
+      .toUpperCase()
+      .padStart(4, "0")})`;
+  }
+  const hexValue = numeric < 0 ? (65536 + numeric).toString(16) : numeric.toString(16);
+  return `Value: ${numeric} (0x${hexValue.toUpperCase().padStart(4, "0")})`;
+}
+
+function renderOscilloscopeInfoTooltip(context) {
+  const el = ensureOscilloscopeInfoTooltipElement();
+  if (!el) return;
+
+  const tooltip = context?.tooltip;
+  const chart = context?.chart;
+  const point = tooltip?.dataPoints?.[0];
+  const xScale = chart?.scales?.x;
+  const chartArea = chart?.chartArea;
+
+  if (!tooltip || tooltip.opacity === 0 || !point || !xScale || !chartArea) {
+    el.style.opacity = "0";
+    return;
+  }
+
+  const rawValue = Number.isFinite(point.raw?.rawY)
+    ? point.raw.rawY
+    : point.parsed?.y;
+  const byteSize =
+    document.querySelector('input[name="byteSize"]:checked')?.value || "1";
+  const signMode =
+    document.querySelector('input[name="signMode"]:checked')?.value ||
+    "unsigned";
+  el.textContent = formatOscilloscopeValueLabel(rawValue, byteSize, signMode);
+
+  const x = chartArea.left + 10;
+
+  const axisBandTop = xScale.top;
+  const axisBandBottom = xScale.bottom;
+  const axisBandHeight = Math.max(0, axisBandBottom - axisBandTop);
+  const y = axisBandTop + axisBandHeight * 0.78;
+
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  el.style.opacity = "1";
 }
 
 function clampToRange(value, minValue, maxValue) {
@@ -1595,6 +1637,7 @@ function initChartControls() {
 
   // Remove existing listeners to prevent duplicates
   oscilloscopeCanvas.removeEventListener("wheel", handleChartZoom);
+  oscilloscopeCanvas.removeEventListener("contextmenu", handleChartContextMenu);
   oscilloscopeCanvas.removeEventListener("mousedown", handleChartMouseDown);
   oscilloscopeCanvas.removeEventListener("mousemove", handleChartMouseMove);
   oscilloscopeCanvas.removeEventListener("mouseup", handleChartMouseUp);
@@ -1604,10 +1647,15 @@ function initChartControls() {
   oscilloscopeCanvas.addEventListener("wheel", handleChartZoom, {
     passive: false,
   });
+  oscilloscopeCanvas.addEventListener("contextmenu", handleChartContextMenu);
   oscilloscopeCanvas.addEventListener("mousedown", handleChartMouseDown);
   oscilloscopeCanvas.addEventListener("mousemove", handleChartMouseMove);
   oscilloscopeCanvas.addEventListener("mouseup", handleChartMouseUp);
   oscilloscopeCanvas.addEventListener("mouseleave", handleChartMouseUp);
+}
+
+function handleChartContextMenu(e) {
+  e.preventDefault();
 }
 
 function getMousePos(e) {
@@ -1670,9 +1718,19 @@ function handleChartZoom(e) {
 
   if (!oscilloscopeChart) return;
 
+  const chartArea = oscilloscopeChart.chartArea;
+  if (!chartArea) return;
+
   const rect = oscilloscopeCanvas.getBoundingClientRect();
   const mouseX = e.clientX - rect.left;
   const mouseY = e.clientY - rect.top;
+  const insidePlotArea =
+    mouseX >= chartArea.left &&
+    mouseX <= chartArea.right &&
+    mouseY >= chartArea.top &&
+    mouseY <= chartArea.bottom;
+
+  if (!insidePlotArea) return;
 
   // Zoom factor
   const zoomIntensity = 0.1;
@@ -1688,37 +1746,57 @@ function handleChartZoom(e) {
   const maxZoom = 10;
 
   if (newZoomX >= minZoom && newZoomX <= maxZoom) {
-    // Calculate zoom center point
-    const chartArea = oscilloscopeChart.chartArea;
-    if (!chartArea) return;
-
-    const xRelative = (mouseX - chartArea.left) / chartArea.width;
-    const yRelative = (mouseY - chartArea.top) / chartArea.height;
-
     // Update zoom
     chartZoom.x = newZoomX;
     chartZoom.y = newZoomY;
 
-    // Adjust pan to keep mouse position stable
+    // Keep cursor position anchored during zoom
     const xScale = oscilloscopeChart.scales.x;
     const yScale = oscilloscopeChart.scales.y;
 
     if (xScale && yScale) {
-      const xRange = xScale.max - xScale.min;
-      const yRange = yScale.max - yScale.min;
+      const xCurrentMin = Number.isFinite(xScale.options.min)
+        ? Number(xScale.options.min)
+        : Number(xScale.min);
+      const xCurrentMax = Number.isFinite(xScale.options.max)
+        ? Number(xScale.options.max)
+        : Number(xScale.max);
+      const yCurrentMin = Number.isFinite(yScale.options.min)
+        ? Number(yScale.options.min)
+        : Number(yScale.min);
+      const yCurrentMax = Number.isFinite(yScale.options.max)
+        ? Number(yScale.options.max)
+        : Number(yScale.max);
 
-      // Calculate new ranges
-      const newXRange = xRange / zoomFactor;
-      const newYRange = yRange / zoomFactor;
+      const xAnchor = Number(xScale.getValueForPixel(mouseX));
+      const yAnchor = Number(yScale.getValueForPixel(mouseY));
+      if (!Number.isFinite(xAnchor) || !Number.isFinite(yAnchor)) return;
 
-      // Calculate new min/max to keep mouse position stable
-      const xValue = xScale.min + xRelative * xRange;
-      const yValue = yScale.min + yRelative * yRange;
+      let newXMin = xAnchor - (xAnchor - xCurrentMin) / zoomFactor;
+      let newXMax = xAnchor + (xCurrentMax - xAnchor) / zoomFactor;
+      const newYMin = yAnchor - (yAnchor - yCurrentMin) / zoomFactor;
+      const newYMax = yAnchor + (yCurrentMax - yAnchor) / zoomFactor;
 
-      const newXMin = xValue - xRelative * newXRange;
-      const newXMax = newXMin + newXRange;
-      const newYMin = yValue - yRelative * newYRange;
-      const newYMax = newYMin + newYRange;
+      // Keep X range within available samples
+      const xDataMin = 0;
+      const xDataMax =
+        oscilloscopeData.length > 0 ? oscilloscopeData.length - 1 : 0;
+      const xRange = newXMax - newXMin;
+      const xFullRange = xDataMax - xDataMin;
+
+      if (xFullRange <= 0 || xRange >= xFullRange) {
+        newXMin = xDataMin;
+        newXMax = xDataMax;
+      } else {
+        if (newXMin < xDataMin) {
+          newXMax += xDataMin - newXMin;
+          newXMin = xDataMin;
+        }
+        if (newXMax > xDataMax) {
+          newXMin -= newXMax - xDataMax;
+          newXMax = xDataMax;
+        }
+      }
 
       // Update chart scales
       xScale.options.min = newXMin;
@@ -1762,8 +1840,8 @@ function handleChartMouseDown(e) {
     }
   }
 
-  // Pan with left mouse button when not dragging axes
-  if (e.button === 0) {
+  // Pan with left or right mouse button
+  if (e.button === 0 || e.button === 2) {
     e.preventDefault();
     isPanningChart = true;
     setAxisHoverMode(null);
@@ -1920,7 +1998,7 @@ function handleChartMouseMove(e) {
  * Handle mouse up to stop panning
  */
 function handleChartMouseUp(e) {
-  if (e.button === 0 || isPanningChart) {
+  if (e.button === 0 || e.button === 2 || isPanningChart) {
     isPanningChart = false;
   }
 
