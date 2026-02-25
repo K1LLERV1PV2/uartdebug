@@ -25,12 +25,23 @@ let panStartOffset = { x: 0, y: 0 };
 let rxBuffer = new Uint8Array(0);
 let rxFlushTimer = null;
 let rxSilenceMs = 5;
+let pendingReceiveStop = false;
+let rxPausedByteParity = 0;
+let rxResumeDiscardBytes = 0;
+let oscilloscopeAutoAlignPending = false;
+let oscilloscopeAutoAlignBuffer = [];
 let generatorStream = null;
 let oscilloscopeInfoTooltipEl = null;
 const TX_GENERATOR_INTERVAL_MS = 10;
 const TX_TEXT_INTERVAL_MS = 1000;
 const TX_INTERVAL_MIN_MS = 10;
 const TX_INTERVAL_MAX_MS = 10000;
+const GEN_DEFAULT_AMPLITUDE_1BYTE = 100;
+const GEN_DEFAULT_AMPLITUDE_2BYTE = 20000;
+const GEN_DEFAULT_OFFSET_SIGNED = 0;
+const GEN_DEFAULT_OFFSET_UNSIGNED_1BYTE = 128;
+const GEN_DEFAULT_OFFSET_UNSIGNED_2BYTE = 32768;
+const OSCILLOSCOPE_ALIGN_PROBE_BYTES = 16;
 
 // DOM elements cache
 let terminalSent = null;
@@ -58,6 +69,7 @@ document.addEventListener("DOMContentLoaded", function () {
   initializeEventListeners();
   updateTxInputPlaceholder();
   updateGeneratorUi();
+  applyGeneratorOffsetDefaults();
   updateRunButtonState();
   updateReceiveButtonState();
   updateConnectionStatus(false);
@@ -194,6 +206,15 @@ function initializeEventListeners() {
   document.getElementById("genWaveform")?.addEventListener("change", () => {
     updateGeneratorUi();
   });
+  document.querySelectorAll('input[name="genByteSize"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      applyGeneratorByteSizeDefaults();
+      applyGeneratorOffsetDefaults();
+    });
+  });
+  document.querySelectorAll('input[name="genSignMode"]').forEach((radio) => {
+    radio.addEventListener("change", applyGeneratorOffsetDefaults);
+  });
 
   document.addEventListener(
     "fullscreenchange",
@@ -301,6 +322,10 @@ async function disconnectSerial() {
     stopLoopSend();
 
     // Reset RX coalescing buffer/timer
+    pendingReceiveStop = false;
+    rxPausedByteParity = 0;
+    rxResumeDiscardBytes = 0;
+    resetOscilloscopeAutoAlignState();
     rxBuffer = new Uint8Array(0);
     if (rxFlushTimer) {
       clearTimeout(rxFlushTimer);
@@ -467,17 +492,27 @@ async function readLoop() {
  */
 function handleReceivedData(data) {
   if (!isReceiving) {
+    if (isOscilloscopeTwoByteMode()) {
+      rxPausedByteParity = (rxPausedByteParity + (data.length % 2)) % 2;
+    }
     return;
   }
 
   if (currentView === "oscilloscope") {
-    updateOscilloscopeData(data);
+    const oscilloscopeDataChunk = getOscilloscopeChunkForUpdate(data);
+    if (oscilloscopeDataChunk && oscilloscopeDataChunk.length > 0) {
+      updateOscilloscopeData(oscilloscopeDataChunk);
+    }
   }
 
   rxAppend(data);
 
   if (rxFlushTimer) clearTimeout(rxFlushTimer);
   rxFlushTimer = setTimeout(flushRxBufferToTerminal, rxSilenceMs);
+
+  if (pendingReceiveStop && shouldFinalizePendingReceiveStop()) {
+    stopReceivingImmediately(false);
+  }
 }
 
 function rxAppend(chunk) {
@@ -658,6 +693,50 @@ function updateGeneratorUi() {
   }
 }
 
+function getGeneratorSelectedByteSize() {
+  return document.querySelector('input[name="genByteSize"]:checked')?.value || "1";
+}
+
+function getGeneratorSelectedSignMode() {
+  return (
+    document.querySelector('input[name="genSignMode"]:checked')?.value ||
+    "unsigned"
+  );
+}
+
+function getGeneratorDefaultAmplitudeByByteSize(byteSize) {
+  return byteSize === "1"
+    ? GEN_DEFAULT_AMPLITUDE_1BYTE
+    : GEN_DEFAULT_AMPLITUDE_2BYTE;
+}
+
+function applyGeneratorByteSizeDefaults() {
+  const amplitudeInput = document.getElementById("genAmplitude");
+  if (!amplitudeInput) return;
+
+  const byteSize = getGeneratorSelectedByteSize();
+  amplitudeInput.value = String(getGeneratorDefaultAmplitudeByByteSize(byteSize));
+}
+
+function getGeneratorDefaultOffset(signMode, byteSize) {
+  if (signMode !== "unsigned") {
+    return GEN_DEFAULT_OFFSET_SIGNED;
+  }
+
+  return byteSize === "1"
+    ? GEN_DEFAULT_OFFSET_UNSIGNED_1BYTE
+    : GEN_DEFAULT_OFFSET_UNSIGNED_2BYTE;
+}
+
+function applyGeneratorOffsetDefaults() {
+  const offsetInput = document.getElementById("genOffset");
+  if (!offsetInput) return;
+
+  const signMode = getGeneratorSelectedSignMode();
+  const byteSize = getGeneratorSelectedByteSize();
+  offsetInput.value = String(getGeneratorDefaultOffset(signMode, byteSize));
+}
+
 function getNormalizedLoopIntervalMs(defaultValue = TX_TEXT_INTERVAL_MS) {
   const parsed = parseInt(loopIntervalInput?.value, 10);
   const fallback = Number.isFinite(defaultValue)
@@ -721,24 +800,199 @@ function updateRunButtonState() {
   sendBtn.title = running ? "Stop cycle" : "Run";
 }
 
+function getOscilloscopeByteSizeMode() {
+  return document.querySelector('input[name="byteSize"]:checked')?.value || "1";
+}
+
+function isOscilloscopeTwoByteMode() {
+  const byteSizeMode = getOscilloscopeByteSizeMode();
+  return byteSizeMode === "2BE" || byteSizeMode === "2LE";
+}
+
+function resetOscilloscopeAutoAlignState() {
+  oscilloscopeAutoAlignPending = false;
+  oscilloscopeAutoAlignBuffer = [];
+}
+
+function requestOscilloscopeAutoAlign() {
+  if (!isOscilloscopeTwoByteMode()) {
+    resetOscilloscopeAutoAlignState();
+    return;
+  }
+
+  oscilloscopeAutoAlignPending = true;
+  oscilloscopeAutoAlignBuffer = [];
+  byteBuffer = [];
+}
+
+function decodeOscilloscopePairValue(bytes, index, byteSizeMode) {
+  if (byteSizeMode === "2LE") {
+    const low = bytes[index];
+    const high = bytes[index + 1];
+    return ((high << 8) | low) & 0xffff;
+  }
+
+  const high = bytes[index];
+  const low = bytes[index + 1];
+  return ((high << 8) | low) & 0xffff;
+}
+
+function calculateOscilloscopeAlignmentScore(bytes, startIndex, byteSizeMode) {
+  let prev = null;
+  let steps = 0;
+  let totalDelta = 0;
+
+  for (let i = startIndex; i + 1 < bytes.length; i += 2) {
+    const value = decodeOscilloscopePairValue(bytes, i, byteSizeMode);
+    if (prev !== null) {
+      totalDelta += Math.abs(value - prev);
+      steps += 1;
+    }
+    prev = value;
+  }
+
+  return steps > 0 ? totalDelta / steps : Number.POSITIVE_INFINITY;
+}
+
+function resolveOscilloscopeAutoAlignment(data) {
+  if (!oscilloscopeAutoAlignPending) {
+    return data;
+  }
+
+  oscilloscopeAutoAlignBuffer.push(...data);
+  if (oscilloscopeAutoAlignBuffer.length < 8) {
+    return null;
+  }
+
+  const byteSizeMode = getOscilloscopeByteSizeMode();
+  const probe = oscilloscopeAutoAlignBuffer.slice(
+    0,
+    Math.min(oscilloscopeAutoAlignBuffer.length, OSCILLOSCOPE_ALIGN_PROBE_BYTES)
+  );
+
+  const scoreAligned = calculateOscilloscopeAlignmentScore(
+    probe,
+    0,
+    byteSizeMode
+  );
+  const scoreShifted = calculateOscilloscopeAlignmentScore(
+    probe,
+    1,
+    byteSizeMode
+  );
+  const useShifted = scoreShifted < scoreAligned;
+
+  const out = new Uint8Array(oscilloscopeAutoAlignBuffer.slice(useShifted ? 1 : 0));
+  resetOscilloscopeAutoAlignState();
+  return out;
+}
+
+function getOscilloscopeChunkForUpdate(data) {
+  let chunk = data;
+
+  if (rxResumeDiscardBytes > 0) {
+    const discardCount = Math.min(rxResumeDiscardBytes, chunk.length);
+    rxResumeDiscardBytes -= discardCount;
+    if (discardCount >= chunk.length) {
+      return null;
+    }
+    chunk = chunk.slice(discardCount);
+  }
+
+  if (!isOscilloscopeTwoByteMode()) {
+    resetOscilloscopeAutoAlignState();
+    return chunk;
+  }
+
+  return resolveOscilloscopeAutoAlignment(chunk);
+}
+
+function dropDanglingOscilloscopePairByte() {
+  if (!isOscilloscopeTwoByteMode()) return;
+
+  // If processing was stopped in the middle of a 2-byte sample, discard
+  // the tail byte to prevent permanent pair shift after restart.
+  resetOscilloscopeAutoAlignState();
+  if (byteBuffer.length % 2 !== 0) {
+    byteBuffer = [];
+  }
+}
+
 function updateReceiveButtonState() {
   if (!receiveToggleBtn) return;
+  if (pendingReceiveStop) {
+    receiveToggleBtn.textContent = "Stopping...";
+    receiveToggleBtn.classList.add("receiving");
+    receiveToggleBtn.title =
+      "Waiting for full 2-byte sample (click again to force stop)";
+    return;
+  }
+
   const receiving = !!isReceiving;
   receiveToggleBtn.textContent = receiving ? "Stop" : "Get";
   receiveToggleBtn.classList.toggle("receiving", receiving);
   receiveToggleBtn.title = receiving ? "Stop receiving" : "Get data";
 }
 
-function toggleReceiving() {
-  isReceiving = !isReceiving;
-  if (!isReceiving) {
-    rxBuffer = new Uint8Array(0);
-    if (rxFlushTimer) {
-      clearTimeout(rxFlushTimer);
-      rxFlushTimer = null;
-    }
+function stopReceivingImmediately(forcePairRealignment = false) {
+  if (forcePairRealignment) {
+    dropDanglingOscilloscopePairByte();
+  }
+
+  isReceiving = false;
+  pendingReceiveStop = false;
+  rxPausedByteParity = 0;
+  rxResumeDiscardBytes = 0;
+  resetOscilloscopeAutoAlignState();
+  rxBuffer = new Uint8Array(0);
+  if (rxFlushTimer) {
+    clearTimeout(rxFlushTimer);
+    rxFlushTimer = null;
   }
   updateReceiveButtonState();
+}
+
+function shouldDeferReceivingStop() {
+  if (currentView !== "oscilloscope") return false;
+  if (!isOscilloscopeTwoByteMode()) return false;
+
+  const pendingBytes = byteBuffer.length + oscilloscopeAutoAlignBuffer.length;
+  return pendingBytes % 2 !== 0;
+}
+
+function shouldFinalizePendingReceiveStop() {
+  return !shouldDeferReceivingStop();
+}
+
+function toggleReceiving() {
+  if (!isReceiving) {
+    pendingReceiveStop = false;
+    if (isOscilloscopeTwoByteMode()) {
+      // Start from a clean local state and re-align with ongoing stream phase.
+      byteBuffer = [];
+      rxResumeDiscardBytes = rxPausedByteParity;
+    } else {
+      rxPausedByteParity = 0;
+      rxResumeDiscardBytes = 0;
+      resetOscilloscopeAutoAlignState();
+    }
+    isReceiving = true;
+    updateReceiveButtonState();
+    return;
+  }
+
+  if (pendingReceiveStop) {
+    stopReceivingImmediately(true);
+    return;
+  }
+
+  if (shouldDeferReceivingStop()) {
+    pendingReceiveStop = true;
+    updateReceiveButtonState();
+    return;
+  }
+
+  stopReceivingImmediately(false);
 }
 
 function handleRunAction() {
@@ -787,6 +1041,10 @@ function handleViewChange(event) {
   const rxModeControls = document.querySelectorAll(
     "#uartRxSession .mode-controls"
   );
+
+  if (pendingReceiveStop && view !== "oscilloscope") {
+    stopReceivingImmediately(true);
+  }
 
   if (view === "oscilloscope") {
     // Show oscilloscope
@@ -956,6 +1214,12 @@ function initOscilloscope() {
   // Initialize data array
   oscilloscopeData = new Array(points).fill(0);
   byteBuffer = []; // Clear byte buffer
+  rxPausedByteParity = 0;
+  rxResumeDiscardBytes = 0;
+  resetOscilloscopeAutoAlignState();
+  if (byteSize !== "1") {
+    requestOscilloscopeAutoAlign();
+  }
   axisHoverMode = null;
 
   // Determine Y axis range based on mode
@@ -1309,6 +1573,12 @@ function clearOscilloscope() {
     const points = 500;
     oscilloscopeData = new Array(points).fill(0);
     byteBuffer = []; // Clear byte buffer
+    rxPausedByteParity = 0;
+    rxResumeDiscardBytes = 0;
+    resetOscilloscopeAutoAlignState();
+    if (isOscilloscopeTwoByteMode()) {
+      requestOscilloscopeAutoAlign();
+    }
     syncOscilloscopeViewportData("none");
   }
 }
@@ -1319,6 +1589,10 @@ function clearOscilloscope() {
 function updateOscilloscopeSettings() {
   if (oscilloscopeChart) {
     initOscilloscope();
+  }
+
+  if (pendingReceiveStop && shouldFinalizePendingReceiveStop()) {
+    stopReceivingImmediately(false);
   }
 }
 
@@ -1409,6 +1683,10 @@ function startLoopSend() {
  * Stop loop sending
  */
 function stopLoopSend() {
+  if (generatorStream) {
+    dropDanglingOscilloscopePairByte();
+  }
+
   if (loopInterval) {
     clearInterval(loopInterval);
     loopInterval = null;
@@ -1521,6 +1799,7 @@ function buildGeneratorStream(looping) {
 function startGeneratorStream(looping) {
   if (!writer) return;
 
+  dropDanglingOscilloscopePairByte();
   generatorStream = buildGeneratorStream(looping);
   if (!generatorStream.payload || generatorStream.payload.length === 0) {
     generatorStream = null;
