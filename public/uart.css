@@ -208,13 +208,14 @@ body {
   margin-left: 10px;
 }
 
-
 /* Terminal split container */
 .uart-sessions-split {
   display: flex;
   gap: 15px;
-  margin: 10px 20px 20px 20px;
-  height: 480px;
+  margin: 10px 20px 0 20px;
+  flex: 1 1 auto;
+  min-height: 320px;
+  height: auto;
   box-sizing: border-box;
 }
 
@@ -351,7 +352,6 @@ body {
   box-sizing: border-box;
 }
 
-
 .generator-panel {
   background: #2c3e50;
   border: 1px solid #7f8c8d;
@@ -406,10 +406,9 @@ body {
 }
 
 .generator-field select {
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  background-image: none;
+  appearance: auto;
+  -webkit-appearance: menulist;
+  -moz-appearance: menulist;
 }
 
 .generator-options {
@@ -1021,7 +1020,7 @@ body {
 
 main {
   height: 100vh;
-  overflow-y: auto;
+  overflow-y: hidden;
   overflow-x: hidden;
 }
 
@@ -1029,6 +1028,8 @@ main {
   height: 100vh;
   overflow-y: auto;
   padding: 0;
+  padding-bottom: max(10vh, 60px);
+  box-sizing: border-box;
 }
 
 /* Compact mode for laptop screens */
@@ -1065,9 +1066,7 @@ main {
   }
 
   .uart-sessions-split {
-    height: calc(100vh - 250px);
-    max-height: 400px;
-    margin: 8px 15px 15px 15px;
+    margin: 8px 15px 0 15px;
   }
 
   .terminal-header {
@@ -1153,9 +1152,7 @@ main {
   }
 
   .uart-sessions-split {
-    height: calc(100vh - 280px);
-    max-height: 320px;
-    margin: 5px 12px 12px 12px;
+    margin: 5px 12px 0 12px;
   }
 
   .terminal-container,
@@ -1257,7 +1254,7 @@ body {
 /* Make sure terminals container is flexible */
 @media (max-height: 800px) {
   .feature-panel {
-    padding-bottom: 10px;
+    padding-bottom: max(10vh, 60px);
   }
 
   /* Ensure send container stays at bottom */

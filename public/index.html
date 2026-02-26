@@ -108,6 +108,46 @@
                     </label>
                   </div>
                 </div>
+                <div
+                  class="data-mode-controls"
+                  id="txGeneratorOptionsControls"
+                  style="display: none"
+                >
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="genSignMode"
+                        value="unsigned"
+                        checked
+                      />
+                      <span>Unsigned</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="genSignMode" value="signed" />
+                      <span>Signed</span>
+                    </label>
+                  </div>
+                  <div class="radio-group">
+                    <label class="radio-label-inline">
+                      <input
+                        type="radio"
+                        name="genByteSize"
+                        value="1"
+                        checked
+                      />
+                      <span>1 byte</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="genByteSize" value="2BE" />
+                      <span>2 byte (BE)</span>
+                    </label>
+                    <label class="radio-label-inline">
+                      <input type="radio" name="genByteSize" value="2LE" />
+                      <span>2 byte (LE)</span>
+                    </label>
+                  </div>
+                </div>
                 <div class="log-controls" id="txLogControls">
                   <label class="checkbox-label">
                     <input type="checkbox" id="autoScrollCheckbox" checked />
@@ -229,42 +269,6 @@
                       step="1"
                       value="50"
                     />
-                  </div>
-                </div>
-                <div class="generator-options">
-                  <div class="radio-group">
-                    <label class="radio-label-inline">
-                      <input
-                        type="radio"
-                        name="genSignMode"
-                        value="unsigned"
-                        checked
-                      />
-                      <span>Unsigned</span>
-                    </label>
-                    <label class="radio-label-inline">
-                      <input type="radio" name="genSignMode" value="signed" />
-                      <span>Signed</span>
-                    </label>
-                  </div>
-                  <div class="radio-group">
-                    <label class="radio-label-inline">
-                      <input
-                        type="radio"
-                        name="genByteSize"
-                        value="1"
-                        checked
-                      />
-                      <span>1 byte</span>
-                    </label>
-                    <label class="radio-label-inline">
-                      <input type="radio" name="genByteSize" value="2BE" />
-                      <span>2 byte (BE)</span>
-                    </label>
-                    <label class="radio-label-inline">
-                      <input type="radio" name="genByteSize" value="2LE" />
-                      <span>2 byte (LE)</span>
-                    </label>
                   </div>
                 </div>
               </div>

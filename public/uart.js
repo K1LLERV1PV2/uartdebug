@@ -52,6 +52,7 @@ let terminalInput = null;
 let txGeneratorPanel = null;
 let txLogControls = null;
 let txModeControls = null;
+let txGeneratorOptionsControls = null;
 let connectBtn = null;
 let sendBtn = null;
 let receiveToggleBtn = null;
@@ -88,6 +89,9 @@ function initializeElements() {
   txGeneratorPanel = document.getElementById("txGeneratorPanel");
   txLogControls = document.getElementById("txLogControls");
   txModeControls = document.getElementById("txModeControls");
+  txGeneratorOptionsControls = document.getElementById(
+    "txGeneratorOptionsControls"
+  );
   connectBtn = document.getElementById("connectBtn");
   sendBtn = document.getElementById("sendBtn");
   receiveToggleBtn = document.getElementById("receiveToggleBtn");
@@ -778,11 +782,15 @@ function handleTxViewChange(event) {
     if (txGeneratorPanel) txGeneratorPanel.style.display = "flex";
     if (txLogControls) txLogControls.style.display = "none";
     if (txModeControls) txModeControls.style.display = "none";
+    if (txGeneratorOptionsControls)
+      txGeneratorOptionsControls.style.display = "flex";
   } else {
     if (txTerminalShell) txTerminalShell.style.display = "flex";
     if (txGeneratorPanel) txGeneratorPanel.style.display = "none";
     if (txLogControls) txLogControls.style.display = "flex";
     if (txModeControls) txModeControls.style.display = "flex";
+    if (txGeneratorOptionsControls)
+      txGeneratorOptionsControls.style.display = "none";
   }
 
   if (loopInterval) {
