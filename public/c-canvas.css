@@ -354,13 +354,31 @@ body.editor-resizing {
 /* 1) Запрет скролла у страницы (перебиваем uart.css) */
 html,
 body {
-  height: 100%;
-  overflow: hidden;
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto !important;
 }
+
+body::-webkit-scrollbar {
+  display: block;
+  width: 10px;
+}
+
+body {
+  -ms-overflow-style: auto;
+  scrollbar-width: auto;
+}
+
 main,
 .feature-panel {
-  height: 100vh;
-  overflow: hidden !important;
+  height: auto !important;
+  min-height: 100vh;
+  overflow: visible !important;
+}
+
+.feature-panel {
+  max-height: none;
 }
 
 /* 2) Стили скролла как у .terminal-container (uart.html) */
