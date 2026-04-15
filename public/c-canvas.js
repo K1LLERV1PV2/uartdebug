@@ -1068,10 +1068,55 @@ int main(void) {
   let lastHexContent = null;
   let lastHexName = null;
 
+  function getUpdiHexArtifact() {
+    return {
+      hexText: lastHexContent || "",
+      fileName: lastHexName || "",
+      source: "compiled",
+    };
+  }
+
+  function dispatchUpdiHexArtifact() {
+    if (typeof window === "undefined" || typeof CustomEvent !== "function") {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("ud-updi-hex-artifact", {
+        detail: getUpdiHexArtifact(),
+      })
+    );
+  }
+
+  function dispatchCanvasSerialState() {
+    if (typeof window === "undefined" || typeof CustomEvent !== "function") {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("ud-canvas-serial-state", {
+        detail: {
+          connected: !!canvasPort,
+          label: canvasPort ? getPortLabel(canvasPort.getInfo?.()) : "",
+        },
+      })
+    );
+  }
+
+  function initUpdiBridge() {
+    if (typeof window === "undefined") return;
+
+    window.__UARTDEBUG_CANVAS_UPDI_BRIDGE__ = {
+      getHexArtifact: getUpdiHexArtifact,
+      isCanvasSerialConnected: () => !!canvasPort,
+    };
+  }
+
   function resetHexArtifact() {
     lastHexContent = null;
     lastHexName = null;
     setHexStatus("idle");
+    dispatchUpdiHexArtifact();
   }
 
   function downloadHex() {
@@ -1149,6 +1194,7 @@ int main(void) {
       lastHexContent = null;
       lastHexName = null;
     } catch {}
+    dispatchUpdiHexArtifact();
 
     // Request compile
     let resp;
@@ -1246,6 +1292,7 @@ int main(void) {
       if (typeof setHexStatus === "function")
         setHexStatus("ready", lastHexName);
     } catch {}
+    dispatchUpdiHexArtifact();
 
     // Show warnings if any
     if (data.stderr && String(data.stderr).trim()) {
@@ -1347,6 +1394,8 @@ int main(void) {
       status.classList.add("disconnected");
       btn.textContent = "Connect";
     }
+
+    dispatchCanvasSerialState();
   }
 
   async function toggleConnectionCanvas() {
@@ -1368,6 +1417,7 @@ int main(void) {
     ensureAtLeastOneFile();
     renderOutliner();
     if (!current) current = Object.keys(files)[0];
+    initUpdiBridge();
 
     bindUI();
     initEditor();
@@ -1377,6 +1427,8 @@ int main(void) {
     initSerialUI();
 
     updateHexUI(false);
+    dispatchCanvasSerialState();
+    dispatchUpdiHexArtifact();
     selectFile(current);
   }
 

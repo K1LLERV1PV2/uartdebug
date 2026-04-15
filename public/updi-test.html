@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#2c3e50" />
+    <title>UPDI Flash Test - Uart Debug</title>
+    <link rel="stylesheet" href="uart.css" />
+    <link rel="stylesheet" href="updi-test.css" />
+    <script defer src="updi-test.js"></script>
+  </head>
+  <body>
+    <main>
+      <div class="feature-panel">
+        <div class="api-support-warning" id="apiWarning">
+          <strong>Attention:</strong> This page needs a Chromium-based browser
+          with Web Serial API support.
+        </div>
+
+        <section class="uart-section">
+          <h2 class="status-indicator disconnected" id="probeStatus">
+            HEX not loaded
+          </h2>
+
+          <div class="connection-panel">
+            <div class="connection-control">
+              <label for="mcuSelect">Target MCU</label>
+              <select id="mcuSelect">
+                <option value="attiny1624" selected>ATtiny1624</option>
+              </select>
+            </div>
+
+            <button class="connect-btn" id="probeBtn" disabled type="button">
+              Probe UPDI
+            </button>
+
+            <button class="connect-btn" id="readSignatureBtn" disabled type="button">
+              Read Signature
+            </button>
+
+            <button
+              class="connect-btn warning-btn"
+              id="programHexBtn"
+              disabled
+              type="button"
+            >
+              Program HEX
+            </button>
+
+            <button
+              class="connect-btn secondary-btn"
+              id="clearLogBtn"
+              type="button"
+            >
+              Clear Log
+            </button>
+
+            <span class="connection-note warning-note">
+              Program HEX erases flash and writes application memory.
+            </span>
+          </div>
+        </section>
+
+        <section class="uart-section">
+          <div class="updi-grid">
+            <div class="updi-card">
+              <h3 class="card-title">HEX Input</h3>
+
+              <label class="upload-label" for="hexFileInput">
+                Load a `.hex` file
+              </label>
+              <input id="hexFileInput" type="file" accept=".hex,.txt" />
+
+              <div class="divider-label">or paste Intel HEX</div>
+              <textarea
+                id="hexTextarea"
+                class="hex-textarea"
+                spellcheck="false"
+                placeholder=":020000040000FA&#10;:100000000C945C000C946E000C946E000C946E00A6&#10;:00000001FF"
+              ></textarea>
+
+              <div class="inline-actions">
+                <button class="action-btn" id="useTextareaBtn" type="button">
+                  Use Text
+                </button>
+                <button class="action-btn ghost-btn" id="clearHexBtn" type="button">
+                  Clear HEX
+                </button>
+              </div>
+            </div>
+
+            <div class="updi-card">
+              <h3 class="card-title">Image Summary</h3>
+
+              <dl class="summary-grid">
+                <div>
+                  <dt>Source</dt>
+                  <dd id="summarySource">-</dd>
+                </div>
+                <div>
+                  <dt>Bytes</dt>
+                  <dd id="summaryBytes">-</dd>
+                </div>
+                <div>
+                  <dt>Segments</dt>
+                  <dd id="summarySegments">-</dd>
+                </div>
+                <div>
+                  <dt>Range</dt>
+                  <dd id="summaryRange">-</dd>
+                </div>
+                <div>
+                  <dt>Records</dt>
+                  <dd id="summaryRecords">-</dd>
+                </div>
+                <div>
+                  <dt>Target</dt>
+                  <dd id="summaryTarget">ATtiny1624</dd>
+                </div>
+                <div>
+                  <dt>Signature</dt>
+                  <dd id="summarySignature">-</dd>
+                </div>
+                <div>
+                  <dt>Revision</dt>
+                  <dd id="summaryRevision">-</dd>
+                </div>
+                <div>
+                  <dt>Serial</dt>
+                  <dd id="summarySerial">-</dd>
+                </div>
+              </dl>
+
+              <div class="sib-box" id="summarySib">SIB: -</div>
+              <p class="summary-note" id="summaryNote">
+                Load a valid Intel HEX image to inspect it. Probe and signature read
+                are available anytime; Program HEX requires a loaded image.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="uart-section">
+          <div class="log-header">
+            <h3 class="card-title">UPDI Log</h3>
+          </div>
+          <pre class="probe-log" id="probeLog"></pre>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

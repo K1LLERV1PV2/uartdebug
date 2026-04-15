@@ -17,6 +17,9 @@ const LEGACY_PATHS = new Set([
   "/c-canvas.html",
   "/c-canvas.js",
   "/c-canvas.css",
+  "/updi-test.html",
+  "/updi-test.js",
+  "/updi-test.css",
 ]);
 
 const CACHEABLE_DESTINATIONS = new Set(["style", "script", "image", "font"]);

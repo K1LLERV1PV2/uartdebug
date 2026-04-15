@@ -39,6 +39,28 @@
 
           <div class="connection-panel">
             <button class="connect-btn" id="connectBtn">Connect</button>
+            <button class="connect-btn" id="probeBtn" type="button">
+              Probe UPDI
+            </button>
+            <button class="connect-btn" id="readSignatureBtn" type="button">
+              Read Signature
+            </button>
+            <button
+              class="connect-btn warning-btn"
+              id="programHexBtn"
+              type="button"
+            >
+              Program HEX
+            </button>
+            <div class="connection-control canvas-updi-target">
+              <label for="mcuSelect">Target MCU</label>
+              <select id="mcuSelect">
+                <option value="attiny1624" selected>ATtiny1624</option>
+              </select>
+            </div>
+            <span class="connection-note canvas-updi-note">
+              Disconnect UART before using UPDI programming.
+            </span>
           </div>
         </section>
 
@@ -136,6 +158,105 @@
             <button type="button" data-action="compile">Compile</button>
           </div>
         </section>
+
+        <section class="uart-section canvas-updi-section">
+          <div class="api-support-warning" id="apiWarning">
+            <strong>Attention:</strong> This page needs a Chromium-based browser
+            with Web Serial API support.
+          </div>
+
+          <h2 class="status-indicator disconnected" id="probeStatus">
+            Target ready
+          </h2>
+
+          <div class="updi-grid">
+            <div class="updi-card">
+              <h3 class="card-title">HEX Input</h3>
+
+              <label class="upload-label" for="hexFileInput">
+                Load a `.hex` file
+              </label>
+              <input id="hexFileInput" type="file" accept=".hex,.txt" />
+
+              <div class="divider-label">or paste Intel HEX</div>
+              <textarea
+                id="hexTextarea"
+                class="hex-textarea"
+                spellcheck="false"
+                placeholder="Compile current code or load your Intel HEX here."
+              ></textarea>
+
+              <div class="inline-actions">
+                <button class="action-btn" id="useTextareaBtn" type="button">
+                  Use Text
+                </button>
+                <button class="action-btn ghost-btn" id="clearHexBtn" type="button">
+                  Clear HEX
+                </button>
+              </div>
+            </div>
+
+            <div class="updi-card">
+              <h3 class="card-title">Image Summary</h3>
+
+              <dl class="summary-grid">
+                <div>
+                  <dt>Source</dt>
+                  <dd id="summarySource">-</dd>
+                </div>
+                <div>
+                  <dt>Bytes</dt>
+                  <dd id="summaryBytes">-</dd>
+                </div>
+                <div>
+                  <dt>Segments</dt>
+                  <dd id="summarySegments">-</dd>
+                </div>
+                <div>
+                  <dt>Range</dt>
+                  <dd id="summaryRange">-</dd>
+                </div>
+                <div>
+                  <dt>Records</dt>
+                  <dd id="summaryRecords">-</dd>
+                </div>
+                <div>
+                  <dt>Target</dt>
+                  <dd id="summaryTarget">ATtiny1624</dd>
+                </div>
+                <div>
+                  <dt>Signature</dt>
+                  <dd id="summarySignature">-</dd>
+                </div>
+                <div>
+                  <dt>Revision</dt>
+                  <dd id="summaryRevision">-</dd>
+                </div>
+                <div>
+                  <dt>Serial</dt>
+                  <dd id="summarySerial">-</dd>
+                </div>
+              </dl>
+
+              <div class="sib-box" id="summarySib">SIB: -</div>
+              <p class="summary-note" id="summaryNote">
+                Compile a file or load a valid Intel HEX image to inspect it.
+              </p>
+            </div>
+          </div>
+
+          <div class="log-header">
+            <h3 class="card-title">UPDI Log</h3>
+            <button
+              class="connect-btn secondary-btn"
+              id="clearLogBtn"
+              type="button"
+            >
+              Clear Log
+            </button>
+          </div>
+          <pre class="probe-log" id="probeLog"></pre>
+        </section>
       </div>
     </main>
 
@@ -155,5 +276,6 @@
     </footer>
 
     <script defer src="c-canvas.js"></script>
+    <script defer src="updi-test.js"></script>
   </body>
 </html>

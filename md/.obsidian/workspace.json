@@ -20,8 +20,21 @@
               "icon": "lucide-file",
               "title": "шаблоны"
             }
+          },
+          {
+            "id": "8ad6a273087ccf16",
+            "type": "leaf",
+            "state": {
+              "type": "release-notes",
+              "state": {
+                "currentVersion": "1.11.4"
+              },
+              "icon": "lucide-book-up",
+              "title": "примечания к выпуску 1.11.4"
+            }
           }
-        ]
+        ],
+        "currentTab": 1
       }
     ],
     "direction": "vertical"
@@ -183,7 +196,7 @@
       "bases:Создать новую базу": false
     }
   },
-  "active": "4346bafe0fbf71e8",
+  "active": "8ad6a273087ccf16",
   "lastOpenFiles": [
     "Добро пожаловать.md",
     "шаблоны.md",
