@@ -917,7 +917,7 @@ main,
   padding: 10px 12px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  background: rgba(18, 29, 39, 0.85);
+  background: var(--dark-bg);
 }
 
 #hexFileInput::file-selector-button {
@@ -966,7 +966,7 @@ main,
   resize: vertical;
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  background: rgba(18, 29, 39, 0.85);
+  background: var(--dark-bg);
   color: var(--text-color);
   padding: 14px;
   font:
@@ -1104,7 +1104,7 @@ main,
   padding: 12px 14px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(18, 29, 39, 0.65);
+  background: var(--dark-bg);
   color: #d7f4ff;
   font:
     13px/1.5 ui-monospace,
@@ -1131,7 +1131,7 @@ main,
   overflow: auto;
   padding: 14px;
   border-radius: 10px;
-  background: rgba(14, 22, 29, 0.92);
+  background: var(--dark-bg);
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: #d7f4ff;
   font:
