@@ -867,6 +867,13 @@ main,
   gap: 18px;
 }
 
+.updi-pane-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
 .updi-pane {
   min-width: 0;
 }
@@ -970,7 +977,7 @@ main,
 .hex-textarea {
   width: 100%;
   min-height: 260px;
-  resize: vertical;
+  resize: none;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background: var(--dark-bg);

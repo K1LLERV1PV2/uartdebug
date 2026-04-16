@@ -166,36 +166,42 @@
           </div>
 
           <div class="updi-layout">
-            <div class="updi-pane">
-              <div class="editor-header updi-pane-header">
-                <h3 class="editor-title">HEX Input</h3>
+            <div class="updi-pane-stack">
+              <div class="updi-pane">
+                <div class="editor-header updi-pane-header">
+                  <h3 class="editor-title">Load a `.hex` file</h3>
+                </div>
+
+                <div class="updi-pane-body">
+                  <input id="hexFileInput" type="file" accept=".hex,.txt" />
+                </div>
               </div>
 
-              <div class="updi-pane-body">
-                <label class="upload-label" for="hexFileInput">
-                  Load a `.hex` file
-                </label>
-                <input id="hexFileInput" type="file" accept=".hex,.txt" />
+              <div class="updi-pane">
+                <div class="editor-header updi-pane-header">
+                  <h3 class="editor-title">Paste Intel HEX</h3>
+                </div>
 
-                <div class="divider-label">or paste Intel HEX</div>
-                <textarea
-                  id="hexTextarea"
-                  class="hex-textarea"
-                  spellcheck="false"
-                  placeholder="Compile current code or load your Intel HEX here."
-                ></textarea>
+                <div class="updi-pane-body">
+                  <textarea
+                    id="hexTextarea"
+                    class="hex-textarea"
+                    spellcheck="false"
+                    placeholder="Compile current code or load your Intel HEX here."
+                  ></textarea>
 
-                <div class="inline-actions">
-                  <button class="action-btn" id="useTextareaBtn" type="button">
-                    Use Text
-                  </button>
-                  <button
-                    class="action-btn ghost-btn"
-                    id="clearHexBtn"
-                    type="button"
-                  >
-                    Clear HEX
-                  </button>
+                  <div class="inline-actions">
+                    <button class="action-btn" id="useTextareaBtn" type="button">
+                      Use Text
+                    </button>
+                    <button
+                      class="action-btn ghost-btn"
+                      id="clearHexBtn"
+                      type="button"
+                    >
+                      Clear HEX
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
