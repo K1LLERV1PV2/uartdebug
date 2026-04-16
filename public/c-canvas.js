@@ -1067,6 +1067,7 @@ int main(void) {
   // --- HEX artifact state ---
   let lastHexContent = null;
   let lastHexName = null;
+  let lastDetectedUpdiTargetKey = "";
 
   function getUpdiHexArtifact() {
     return {
@@ -1109,6 +1110,11 @@ int main(void) {
     window.__UARTDEBUG_CANVAS_UPDI_BRIDGE__ = {
       getHexArtifact: getUpdiHexArtifact,
       isCanvasSerialConnected: () => !!canvasPort,
+      getDetectedTargetKey: () => lastDetectedUpdiTargetKey || "",
+      setDetectedTargetKey: (targetKey) => {
+        lastDetectedUpdiTargetKey =
+          typeof targetKey === "string" ? targetKey.trim() : "";
+      },
     };
   }
 
@@ -1164,11 +1170,38 @@ int main(void) {
     const mcuEl = document.getElementById("mcuSelect");
     const fcpuEl = document.getElementById("fCpuInput");
     const optEl = document.getElementById("optimizeSelect");
+    let selectedMcu = mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624";
+
+    if (selectedMcu === "auto") {
+      const bridge =
+        typeof window !== "undefined"
+          ? window.__UARTDEBUG_CANVAS_UPDI_BRIDGE__
+          : null;
+      const detectedMcu =
+        bridge && typeof bridge.getDetectedTargetKey === "function"
+          ? String(bridge.getDetectedTargetKey() || "").trim()
+          : "";
+
+      if (!detectedMcu) {
+        alert(
+          "Auto detect mode needs a known chip signature. Read Signature first or choose a concrete MCU before compiling."
+        );
+        try {
+          if (typeof setHexStatus === "function") setHexStatus("error");
+        } catch {}
+        try {
+          updateHexUI(false);
+        } catch {}
+        return;
+      }
+
+      selectedMcu = detectedMcu;
+    }
 
     const payload = {
       filename: current,
       code: files[current],
-      mcu: mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624",
+      mcu: selectedMcu,
       f_cpu: fcpuEl && Number(fcpuEl.value) ? Number(fcpuEl.value) : 20000000,
       optimize: optEl && optEl.value ? optEl.value.trim() : "Os",
     };

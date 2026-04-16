@@ -64,18 +64,71 @@
     STATUS_FLASH_BUSY_BIT: 0,
   };
 
-  const SUPPORTED_TARGETS = {
-    attiny1624: {
-      flashSize: 16 * 1024,
-      flashStart: 0x8000,
-      flashPageSize: 0x40,
-      label: "ATtiny1624",
-      nvmctrlBase: 0x1000,
-      sigrowAddress: 0x1100,
-      syscfgBase: 0x0f00,
-      deviceId: 0x1e942a,
-    },
-  };
+  const COMMON_TARGET_LAYOUT = Object.freeze({
+    flashStart: 0x8000,
+    nvmctrlBase: 0x1000,
+    sigrowAddress: 0x1100,
+    syscfgBase: 0x0f00,
+  });
+
+  const SUPPORTED_TARGETS = Object.freeze(
+    [
+      ["attiny402", "ATtiny402", 0x1e9227, 4 * 1024, 0x40],
+      ["attiny404", "ATtiny404", 0x1e9226, 4 * 1024, 0x40],
+      ["attiny406", "ATtiny406", 0x1e9225, 4 * 1024, 0x40],
+      ["attiny412", "ATtiny412", 0x1e9223, 4 * 1024, 0x40],
+      ["attiny414", "ATtiny414", 0x1e9222, 4 * 1024, 0x40],
+      ["attiny416", "ATtiny416", 0x1e9221, 4 * 1024, 0x40],
+      ["attiny417", "ATtiny417", 0x1e9220, 4 * 1024, 0x40],
+      ["attiny424", "ATtiny424", 0x1e922c, 4 * 1024, 0x40],
+      ["attiny426", "ATtiny426", 0x1e922b, 4 * 1024, 0x40],
+      ["attiny427", "ATtiny427", 0x1e922a, 4 * 1024, 0x40],
+      ["attiny804", "ATtiny804", 0x1e9325, 8 * 1024, 0x40],
+      ["attiny806", "ATtiny806", 0x1e9324, 8 * 1024, 0x40],
+      ["attiny807", "ATtiny807", 0x1e9323, 8 * 1024, 0x40],
+      ["attiny814", "ATtiny814", 0x1e9322, 8 * 1024, 0x40],
+      ["attiny816", "ATtiny816", 0x1e9321, 8 * 1024, 0x40],
+      ["attiny817", "ATtiny817", 0x1e9320, 8 * 1024, 0x40],
+      ["attiny824", "ATtiny824", 0x1e9329, 8 * 1024, 0x40],
+      ["attiny826", "ATtiny826", 0x1e9328, 8 * 1024, 0x40],
+      ["attiny827", "ATtiny827", 0x1e9327, 8 * 1024, 0x40],
+      ["attiny1604", "ATtiny1604", 0x1e9425, 16 * 1024, 0x40],
+      ["attiny1606", "ATtiny1606", 0x1e9424, 16 * 1024, 0x40],
+      ["attiny1607", "ATtiny1607", 0x1e9423, 16 * 1024, 0x40],
+      ["attiny1614", "ATtiny1614", 0x1e9422, 16 * 1024, 0x40],
+      ["attiny1616", "ATtiny1616", 0x1e9421, 16 * 1024, 0x40],
+      ["attiny1617", "ATtiny1617", 0x1e9420, 16 * 1024, 0x40],
+      ["attiny1624", "ATtiny1624", 0x1e942a, 16 * 1024, 0x40],
+      ["attiny1626", "ATtiny1626", 0x1e9429, 16 * 1024, 0x40],
+      ["attiny1627", "ATtiny1627", 0x1e9428, 16 * 1024, 0x40],
+      ["attiny3216", "ATtiny3216", 0x1e9521, 32 * 1024, 0x80],
+      ["attiny3217", "ATtiny3217", 0x1e9522, 32 * 1024, 0x80],
+      ["attiny3224", "ATtiny3224", 0x1e9528, 32 * 1024, 0x80],
+      ["attiny3226", "ATtiny3226", 0x1e9527, 32 * 1024, 0x80],
+      ["attiny3227", "ATtiny3227", 0x1e9526, 32 * 1024, 0x80],
+    ].reduce((acc, [key, label, deviceId, flashSize, flashPageSize]) => {
+      acc[key] = {
+        key,
+        label,
+        deviceId,
+        flashSize,
+        flashPageSize,
+        ...COMMON_TARGET_LAYOUT,
+      };
+      return acc;
+    }, {})
+  );
+
+  const TARGET_KEYS = Object.freeze(Object.keys(SUPPORTED_TARGETS));
+  const TARGETS_BY_DEVICE_ID = Object.freeze(
+    Object.values(SUPPORTED_TARGETS).reduce((acc, target) => {
+      acc[target.deviceId] = target;
+      return acc;
+    }, {})
+  );
+  const MAX_SUPPORTED_FLASH_SIZE = Math.max(
+    ...Object.values(SUPPORTED_TARGETS).map((target) => target.flashSize)
+  );
 
   const state = {
     fileName: "",
@@ -110,8 +163,111 @@
       .join(separator);
   }
 
-  function getTargetConfig() {
-    return SUPPORTED_TARGETS[els.mcuSelect.value] || SUPPORTED_TARGETS.attiny1624;
+  function getSelectedTargetKey() {
+    const value =
+      els.mcuSelect && typeof els.mcuSelect.value === "string"
+        ? els.mcuSelect.value.trim()
+        : "";
+
+    if (value === "auto") return "auto";
+    if (value && SUPPORTED_TARGETS[value]) return value;
+    return "attiny1624";
+  }
+
+  function getSelectedTargetConfig() {
+    const key = getSelectedTargetKey();
+    return key === "auto" ? null : SUPPORTED_TARGETS[key] || SUPPORTED_TARGETS.attiny1624;
+  }
+
+  function getDetectedTargetConfig() {
+    const key = state.signatureInfo?.matchedTargetKey;
+    return key && SUPPORTED_TARGETS[key] ? SUPPORTED_TARGETS[key] : null;
+  }
+
+  function getDisplayTargetLabel() {
+    const selectedKey = getSelectedTargetKey();
+    const selectedTarget = getSelectedTargetConfig();
+    const detectedTarget = getDetectedTargetConfig();
+
+    if (selectedKey === "auto") {
+      return detectedTarget ? `${detectedTarget.label} (auto)` : "Auto detect";
+    }
+
+    if (
+      selectedTarget &&
+      detectedTarget &&
+      detectedTarget.key !== selectedTarget.key
+    ) {
+      return `${selectedTarget.label} (detected ${detectedTarget.label})`;
+    }
+
+    return selectedTarget ? selectedTarget.label : "ATtiny1624";
+  }
+
+  function getTargetByDeviceId(deviceId) {
+    return TARGETS_BY_DEVICE_ID[deviceId] || null;
+  }
+
+  function syncDetectedTarget(targetKey = "") {
+    const bridge = getCanvasUpdiBridge();
+    if (!bridge || typeof bridge.setDetectedTargetKey !== "function") {
+      return;
+    }
+
+    try {
+      bridge.setDetectedTargetKey(targetKey);
+    } catch {}
+  }
+
+  function populateTargetOptions() {
+    if (!els.mcuSelect) return;
+
+    const previousValue =
+      els.mcuSelect.value === "auto" || SUPPORTED_TARGETS[els.mcuSelect.value]
+        ? els.mcuSelect.value
+        : "attiny1624";
+
+    els.mcuSelect.innerHTML = "";
+
+    const autoOption = document.createElement("option");
+    autoOption.value = "auto";
+    autoOption.textContent = "Auto detect (from signature)";
+    els.mcuSelect.appendChild(autoOption);
+
+    const flashGroups = new Map();
+    for (const key of TARGET_KEYS) {
+      const target = SUPPORTED_TARGETS[key];
+      const groupKey = target.flashSize;
+      if (!flashGroups.has(groupKey)) {
+        flashGroups.set(groupKey, []);
+      }
+      flashGroups.get(groupKey).push(target);
+    }
+
+    const sortedGroupKeys = Array.from(flashGroups.keys()).sort((a, b) => a - b);
+    for (const flashSize of sortedGroupKeys) {
+      const group = document.createElement("optgroup");
+      group.label = `${flashSize / 1024} KB flash`;
+
+      const targets = flashGroups
+        .get(flashSize)
+        .slice()
+        .sort((a, b) => a.label.localeCompare(b.label));
+
+      for (const target of targets) {
+        const option = document.createElement("option");
+        option.value = target.key;
+        option.textContent = target.label;
+        group.appendChild(option);
+      }
+
+      els.mcuSelect.appendChild(group);
+    }
+
+    els.mcuSelect.value =
+      previousValue === "auto" || SUPPORTED_TARGETS[previousValue]
+        ? previousValue
+        : "attiny1624";
   }
 
   function getCanvasUpdiBridge() {
@@ -184,7 +340,7 @@
     els.summarySegments.textContent = "-";
     els.summaryRange.textContent = "-";
     els.summaryRecords.textContent = "-";
-    els.summaryTarget.textContent = getTargetConfig().label;
+    els.summaryTarget.textContent = getDisplayTargetLabel();
     els.summarySignature.textContent = "-";
     els.summaryRevision.textContent = "-";
     els.summarySerial.textContent = "-";
@@ -216,9 +372,7 @@
   }
 
   function updateView() {
-    const target = getTargetConfig();
-
-    els.summaryTarget.textContent = target.label;
+    els.summaryTarget.textContent = getDisplayTargetLabel();
     els.summarySource.textContent = state.image ? state.fileName || "textarea" : "-";
     els.summaryBytes.textContent = state.image ? String(state.image.bytesTotal) : "-";
     els.summarySegments.textContent = state.image
@@ -437,16 +591,20 @@
     };
   }
 
-  function validateImageForTarget(image) {
-    const target = getTargetConfig();
-
+  function validateImageForTarget(image, target = getSelectedTargetConfig()) {
     if (image.minAddress < 0) {
       throw new Error("HEX image contains a negative address.");
     }
 
-    if (image.maxAddressExclusive > target.flashSize) {
+    if (target && image.maxAddressExclusive > target.flashSize) {
       throw new Error(
         `HEX exceeds ${target.label} flash size (${target.flashSize} bytes).`
+      );
+    }
+
+    if (!target && image.maxAddressExclusive > MAX_SUPPORTED_FLASH_SIZE) {
+      throw new Error(
+        `HEX exceeds the largest supported tinyAVR flash size (${MAX_SUPPORTED_FLASH_SIZE} bytes).`
       );
     }
 
@@ -501,6 +659,11 @@
   function loadHexText(hexText, sourceName) {
     const image = parseIntelHex(hexText);
     const target = validateImageForTarget(image);
+    const targetLabel =
+      target?.label ||
+      (getSelectedTargetKey() === "auto"
+        ? "Auto detect (signature required)"
+        : getDisplayTargetLabel());
 
     state.hexText = hexText.replace(/\r\n/g, "\n");
     state.fileName = sourceName || "textarea";
@@ -511,7 +674,7 @@
     appendLog(
       `HEX loaded: ${state.fileName}, ${image.bytesTotal} B, ${image.segments.length} segment${
         image.segments.length === 1 ? "" : "s"
-      }, target ${target.label}.`
+      }, target ${targetLabel}.`
     );
 
     setSummaryNote("HEX image parsed and validated.", "ok");
@@ -531,6 +694,68 @@
       "HEX input cleared. Probe and signature read are still available."
     );
     if (logMessage) appendLog("HEX state cleared.");
+  }
+
+  function describeSignatureResult(info) {
+    const selectedTarget = getSelectedTargetConfig();
+
+    if (!info.matchedTarget) {
+      return {
+        kind: "error",
+        text: `Unknown device signature ${formatHex(
+          info.deviceId,
+          6
+        )}. Programming is blocked until this chip profile is added.`,
+      };
+    }
+
+    if (!selectedTarget) {
+      return {
+        kind: "ok",
+        text: `Detected ${info.matchedTarget.label} from signature ${formatHex(
+          info.deviceId,
+          6
+        )}.`,
+      };
+    }
+
+    if (selectedTarget.key === info.matchedTarget.key) {
+      return {
+        kind: "ok",
+        text: `Device signature matches ${selectedTarget.label}: ${formatHex(
+          info.deviceId,
+          6
+        )}.`,
+      };
+    }
+
+    return {
+      kind: "error",
+      text: `Detected ${info.matchedTarget.label}, but selected target is ${selectedTarget.label}. Switch target or use Auto detect before programming.`,
+    };
+  }
+
+  function resolveProgrammingTarget(info, image) {
+    const actualTarget = info.matchedTarget;
+    const selectedTarget = getSelectedTargetConfig();
+
+    if (!actualTarget) {
+      throw new Error(
+        `Unsupported device signature ${formatHex(
+          info.deviceId,
+          6
+        )}. Add a profile before programming.`
+      );
+    }
+
+    if (selectedTarget && selectedTarget.key !== actualTarget.key) {
+      throw new Error(
+        `Connected device is ${actualTarget.label}, but selected target is ${selectedTarget.label}. Switch target or use Auto detect.`
+      );
+    }
+
+    validateImageForTarget(image, actualTarget);
+    return actualTarget;
   }
 
   function applyExternalHexArtifact(detail) {
@@ -1178,33 +1403,46 @@
     }
   }
 
-  async function readDeviceSignatureInfo(session, target) {
-    const signatureBytes = await updiReadData16(session, target.sigrowAddress, 3);
+  async function readDeviceSignatureInfo(session) {
+    const signatureBytes = await updiReadData16(
+      session,
+      COMMON_TARGET_LAYOUT.sigrowAddress,
+      3
+    );
     const deviceId =
       (signatureBytes[0] << 16) | (signatureBytes[1] << 8) | signatureBytes[2];
 
-    const revisionByte = (await updiReadData16(session, target.syscfgBase + 1, 1))[0];
-    const serialBytes = await updiReadData16(session, target.sigrowAddress + 3, 10);
+    const revisionByte = (
+      await updiReadData16(session, COMMON_TARGET_LAYOUT.syscfgBase + 1, 1)
+    )[0];
+    const serialBytes = await updiReadData16(
+      session,
+      COMMON_TARGET_LAYOUT.sigrowAddress + 3,
+      10
+    );
+    const matchedTarget = getTargetByDeviceId(deviceId);
 
     const info = {
       deviceId,
       revisionByte,
       revisionText: `${revisionByte >> 4}.${revisionByte & 0x0f}`,
       serialHex: bytesToHex(serialBytes),
+      matchedTargetKey: matchedTarget ? matchedTarget.key : "",
+      matchedTargetLabel: matchedTarget ? matchedTarget.label : "",
+      matchedTarget,
     };
 
     state.signatureInfo = info;
+    syncDetectedTarget(info.matchedTargetKey);
 
     appendLog(`Signature: ${formatHex(deviceId, 6)}`);
     appendLog(`Revision byte: ${formatHex(revisionByte, 2)}`);
     appendLog(`Serial: ${info.serialHex}`);
-
-    if (deviceId !== target.deviceId) {
-      throw new Error(
-        `Device ID mismatch: read ${formatHex(deviceId, 6)}, expected ${formatHex(
-          target.deviceId,
-          6
-        )}.`
+    if (matchedTarget) {
+      appendLog(`Detected target: ${matchedTarget.label}`);
+    } else {
+      appendLog(
+        `Detected target: unsupported signature ${formatHex(deviceId, 6)}`
       );
     }
 
@@ -1276,22 +1514,16 @@
   async function readSignature() {
     try {
       await runUpdiAction("Reading signature...", async (session) => {
-        const target = getTargetConfig();
         let progModeEntered = false;
 
         await handshakeAndReadSib(session);
         try {
           await enterNvmProgMode(session);
           progModeEntered = true;
-          const info = await readDeviceSignatureInfo(session, target);
+          const info = await readDeviceSignatureInfo(session);
+          const description = describeSignatureResult(info);
 
-          setSummaryNote(
-            `Device signature matches ${target.label}: ${formatHex(
-              info.deviceId,
-              6
-            )}.`,
-            "ok"
-          );
+          setSummaryNote(description.text, description.kind);
         } finally {
           if (progModeEntered) {
             await leaveNvmProgMode(session);
@@ -1306,13 +1538,7 @@
   async function programHex() {
     try {
       const image = requireLoadedImage();
-      const target = validateImageForTarget(image);
-      const pages = buildFlashPages(image, target);
       state.programInfo = null;
-
-      if (!pages.length) {
-        throw new Error("HEX image does not contain any flash pages to program.");
-      }
 
       await runUpdiAction("Programming flash...", async (session) => {
         let progModeEntered = false;
@@ -1322,7 +1548,16 @@
           await enterNvmProgMode(session);
           progModeEntered = true;
 
-          const info = await readDeviceSignatureInfo(session, target);
+          const info = await readDeviceSignatureInfo(session);
+          const target = resolveProgrammingTarget(info, image);
+          const pages = buildFlashPages(image, target);
+
+          if (!pages.length) {
+            throw new Error(
+              "HEX image does not contain any flash pages to program."
+            );
+          }
+
           appendLog(
             `Programming ${pages.length} page(s) to ${target.label} from ${state.fileName || "textarea"}.`
           );
@@ -1502,6 +1737,7 @@
       return;
     }
 
+    populateTargetOptions();
     bind();
     resetSummary();
     checkSupport();
