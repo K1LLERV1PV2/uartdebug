@@ -159,98 +159,105 @@
           </div>
         </section>
 
-        <section class="uart-section canvas-updi-section">
+        <section class="canvas-section canvas-updi-section">
           <div class="api-support-warning" id="apiWarning">
             <strong>Attention:</strong> This page needs a Chromium-based browser
             with Web Serial API support.
           </div>
 
-          <h2 class="status-indicator disconnected" id="probeStatus">
-            Target ready
-          </h2>
+          <div class="updi-layout">
+            <div class="updi-pane">
+              <div class="editor-header updi-pane-header">
+                <h3 class="editor-title">HEX Input</h3>
+              </div>
 
-          <div class="updi-grid">
-            <div class="updi-card">
-              <h3 class="card-title">HEX Input</h3>
+              <div class="updi-pane-body">
+                <label class="upload-label" for="hexFileInput">
+                  Load a `.hex` file
+                </label>
+                <input id="hexFileInput" type="file" accept=".hex,.txt" />
 
-              <label class="upload-label" for="hexFileInput">
-                Load a `.hex` file
-              </label>
-              <input id="hexFileInput" type="file" accept=".hex,.txt" />
+                <div class="divider-label">or paste Intel HEX</div>
+                <textarea
+                  id="hexTextarea"
+                  class="hex-textarea"
+                  spellcheck="false"
+                  placeholder="Compile current code or load your Intel HEX here."
+                ></textarea>
 
-              <div class="divider-label">or paste Intel HEX</div>
-              <textarea
-                id="hexTextarea"
-                class="hex-textarea"
-                spellcheck="false"
-                placeholder="Compile current code or load your Intel HEX here."
-              ></textarea>
-
-              <div class="inline-actions">
-                <button class="action-btn" id="useTextareaBtn" type="button">
-                  Use Text
-                </button>
-                <button
-                  class="action-btn ghost-btn"
-                  id="clearHexBtn"
-                  type="button"
-                >
-                  Clear HEX
-                </button>
+                <div class="inline-actions">
+                  <button class="action-btn" id="useTextareaBtn" type="button">
+                    Use Text
+                  </button>
+                  <button
+                    class="action-btn ghost-btn"
+                    id="clearHexBtn"
+                    type="button"
+                  >
+                    Clear HEX
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div class="updi-card">
-              <h3 class="card-title">Summary</h3>
+            <div class="updi-pane">
+              <div class="editor-header updi-pane-header">
+                <h3 class="editor-title">Summary</h3>
+                <div class="updi-status-inline disconnected" id="probeStatus">
+                  Target ready
+                </div>
+              </div>
 
-              <dl class="summary-grid">
-                <div>
-                  <dt>Source</dt>
-                  <dd id="summarySource">-</dd>
-                </div>
-                <div>
-                  <dt>Bytes</dt>
-                  <dd id="summaryBytes">-</dd>
-                </div>
-                <div>
-                  <dt>Segments</dt>
-                  <dd id="summarySegments">-</dd>
-                </div>
-                <div>
-                  <dt>Range</dt>
-                  <dd id="summaryRange">-</dd>
-                </div>
-                <div>
-                  <dt>Records</dt>
-                  <dd id="summaryRecords">-</dd>
-                </div>
-                <div>
-                  <dt>Target</dt>
-                  <dd id="summaryTarget">ATtiny1624</dd>
-                </div>
-                <div>
-                  <dt>Signature</dt>
-                  <dd id="summarySignature">-</dd>
-                </div>
-                <div>
-                  <dt>Revision</dt>
-                  <dd id="summaryRevision">-</dd>
-                </div>
-                <div>
-                  <dt>Serial</dt>
-                  <dd id="summarySerial">-</dd>
-                </div>
-              </dl>
+              <div class="updi-pane-body">
+                <dl class="summary-grid">
+                  <div>
+                    <dt>Source</dt>
+                    <dd id="summarySource">-</dd>
+                  </div>
+                  <div>
+                    <dt>Bytes</dt>
+                    <dd id="summaryBytes">-</dd>
+                  </div>
+                  <div>
+                    <dt>Segments</dt>
+                    <dd id="summarySegments">-</dd>
+                  </div>
+                  <div>
+                    <dt>Range</dt>
+                    <dd id="summaryRange">-</dd>
+                  </div>
+                  <div>
+                    <dt>Records</dt>
+                    <dd id="summaryRecords">-</dd>
+                  </div>
+                  <div>
+                    <dt>Target</dt>
+                    <dd id="summaryTarget">ATtiny1624</dd>
+                  </div>
+                  <div>
+                    <dt>Signature</dt>
+                    <dd id="summarySignature">-</dd>
+                  </div>
+                  <div>
+                    <dt>Revision</dt>
+                    <dd id="summaryRevision">-</dd>
+                  </div>
+                  <div>
+                    <dt>Serial</dt>
+                    <dd id="summarySerial">-</dd>
+                  </div>
+                </dl>
 
-              <div class="sib-box" id="summarySib">SIB: -</div>
-              <p class="summary-note" id="summaryNote">
-                Compile a file or load a valid Intel HEX image to inspect it.
-              </p>
+                <div class="sib-box" id="summarySib">SIB: -</div>
+                <p class="summary-note" id="summaryNote">
+                  Compile a file or load a valid Intel HEX image to inspect it.
+                </p>
+              </div>
             </div>
           </div>
 
-          <div class="log-header">
-            <h3 class="card-title">UPDI Log</h3>
+          <div class="editor-header updi-log-header">
+            <h3 class="editor-title">UPDI Log</h3>
             <button
               class="connect-btn secondary-btn"
               id="clearLogBtn"

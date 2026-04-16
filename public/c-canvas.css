@@ -861,44 +861,51 @@ main,
   margin-top: 0;
 }
 
-.uart-section h2.status-indicator.working {
-  color: var(--warning-color);
-  border-bottom-color: var(--warning-color);
-}
-
-.uart-section h2.status-indicator.working::before {
-  background: var(--warning-color);
-}
-
-.uart-section h2.status-indicator.error {
-  color: var(--danger-color);
-  border-bottom-color: var(--danger-color);
-}
-
-.uart-section h2.status-indicator.error::before {
-  background: var(--danger-color);
-}
-
-.updi-grid {
+.updi-layout {
   display: grid;
   grid-template-columns: minmax(300px, 1.25fr) minmax(260px, 1fr);
   gap: 18px;
-  margin-top: 12px;
 }
 
-.updi-card {
-  background: rgba(0, 0, 0, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 18px;
+.updi-pane {
+  min-width: 0;
 }
 
-.card-title {
-  margin: 0 0 14px;
-  font-size: 15px;
+.updi-pane-header {
+  margin-bottom: 8px;
+  gap: 12px;
+}
+
+.updi-pane-body {
+  background: var(--dark-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 14px;
+}
+
+.updi-status-inline {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
   letter-spacing: 0.4px;
   text-transform: uppercase;
-  color: var(--primary-hover);
+  color: var(--muted-text);
+}
+
+.updi-status-inline.disconnected {
+  color: var(--muted-text);
+}
+
+.updi-status-inline.connected {
+  color: var(--success-color);
+}
+
+.updi-status-inline.working {
+  color: var(--warning-color);
+}
+
+.updi-status-inline.error {
+  color: var(--danger-color);
 }
 
 .upload-label,
@@ -1116,7 +1123,7 @@ main,
   word-break: break-word;
 }
 
-.log-header {
+.updi-log-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1130,9 +1137,9 @@ main,
   max-height: 420px;
   overflow: auto;
   padding: 14px;
-  border-radius: 10px;
+  border-radius: 4px;
   background: var(--dark-bg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-color);
   color: #d7f4ff;
   font:
     13px/1.5 ui-monospace,
@@ -1145,7 +1152,7 @@ main,
 }
 
 @media (max-width: 980px) {
-  .updi-grid {
+  .updi-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -1160,7 +1167,7 @@ main,
     margin-left: 0;
   }
 
-  .log-header {
+  .updi-log-header {
     align-items: stretch;
     flex-direction: column;
   }
