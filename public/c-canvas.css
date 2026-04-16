@@ -502,7 +502,10 @@ main,
   border: 1px solid var(--border-color);
   font-weight: 600;
   text-align: center;
-  transition: background 0.2s, border-color 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    border-color 0.2s,
+    color 0.2s;
 }
 .action-item:hover {
   background: rgba(255, 255, 255, 0.06);
@@ -560,8 +563,9 @@ main,
   gap: 8px;
 }
 .hex-status {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 12px;
   opacity: 0.85;
 }
@@ -577,8 +581,11 @@ main,
   background: var(--ud-btn-bg, #1f1f1f);
   color: var(--ud-btn-fg, #e6e6e6);
   cursor: pointer;
-  transition: transform 120ms ease, background 120ms ease,
-    border-color 120ms ease, opacity 120ms ease;
+  transition:
+    transform 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
   user-select: none;
   padding: 0;
   line-height: 1;
@@ -671,12 +678,21 @@ main,
   border: 1px solid var(--ud-border, #3a3a3a);
   background: var(--ud-btn-bg, #1f1f1f);
   color: var(--ud-btn-fg, #e6e6e6);
-  font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas,
-    "Liberation Mono", monospace;
+  font:
+    600 12px/1 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    "Liberation Mono",
+    monospace;
   opacity: 0;
   transform: translateY(-4px) scale(0.98);
-  transition: opacity 0.2s ease, transform 0.2s ease, background 0.3s ease,
-    border-color 0.3s ease, color 0.3s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease,
+    background 0.3s ease,
+    border-color 0.3s ease,
+    color 0.3s ease;
 }
 
 .hex-status .dot {
@@ -897,6 +913,11 @@ main,
   padding: 14px;
 }
 
+.updi-pane-body-textarea {
+  overflow: hidden;
+  padding: 0;
+}
+
 .updi-pane-body:focus-within {
   border-color: var(--primary-hover);
 }
@@ -986,6 +1007,8 @@ main,
 }
 
 .hex-textarea {
+  box-sizing: border-box;
+  display: block;
   width: 100%;
   min-height: 260px;
   resize: none;
@@ -993,7 +1016,7 @@ main,
   border-radius: 0;
   background: transparent;
   color: var(--text-color);
-  padding: 0;
+  padding: 14px;
   font:
     13px/1.45 ui-monospace,
     SFMono-Regular,
