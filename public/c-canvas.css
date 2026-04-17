@@ -148,6 +148,15 @@
   min-height: 0;
 }
 
+.compile-wrap {
+  width: 340px;
+  flex: 0 0 340px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .editor-header {
   display: flex;
   align-items: center;
@@ -172,160 +181,101 @@
   min-height: 0;
 }
 
-/* Два равноправных слота */
-.editor-main,
-.compact-pane {
-  flex: 1 1 0;
+.editor-surface {
+  flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Хедер над каждым окном с Full/Compact */
-.pane-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border-color);
-  gap: 8px;
-}
-
-.pane-title {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--muted-text);
-}
-
-.pane-body {
-  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-/* Тогглы Full / Compact (радио) */
-.pane-mode-toggle {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.pane-mode-option {
-  display: inline-flex;
-  align-items: center;
-  font-size: 11px;
-  cursor: pointer;
-  color: var(--muted-text);
-  user-select: none;
-}
-
-.pane-mode-option input[type="radio"] {
-  display: none;
-}
-
-.pane-mode-option span {
-  padding: 2px 6px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  transition: all 0.15s ease;
-}
-
-.pane-mode-option input[type="radio"]:checked + span {
-  background: var(--primary-color);
-  border-color: var(--primary-hover);
-  color: #fff;
-}
-
-.pane-mode-option:hover span {
-  border-color: var(--primary-color);
-  color: var(--text-color);
-}
-
-/* Контент слотов */
-.editor-main #editorHost {
-  flex: 1;
-  height: 100%;
-}
-
-.compact-pane {
-  background: var(--dark-bg);
-}
-
-/* Обёртка компактного вида, которая мигрирует между слотами */
-#compactWrapper {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.compact-body {
-  flex: 1;
+.compile-container {
+  flex: 1 1 auto;
   min-height: 0;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
-/* Перегородка между окнами */
-.editor-divider {
-  width: 6px;
-  background: var(--border-color);
-  cursor: col-resize;
+.compile-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.compile-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+#compileBtn {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compile-toolbar .hex-status {
   flex: 0 0 auto;
+  margin-left: auto;
+  opacity: 1;
+  transform: translateY(0) scale(1);
 }
 
-.editor-divider:hover,
-body.editor-resizing .editor-divider {
-  background: var(--primary-color);
+.compile-toolbar .hex-status.download-ready {
+  cursor: pointer;
 }
 
-/* Когда тащим разделитель — отключаем выделение и ставим курсор */
-body.editor-resizing {
-  cursor: col-resize;
-  user-select: none;
+.compile-toolbar .hex-status.download-ready:hover {
+  background: rgba(26, 188, 156, 0.15);
 }
 
-.compact-half {
+.compile-log {
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 4px;
+  background: var(--dark-bg);
+  border: 1px solid var(--border-color);
+  color: #d7f4ff;
+  font:
+    13px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    "Liberation Mono",
+    monospace;
+  white-space: pre-wrap;
 }
 
-.compact-subtitle {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--muted-text);
-  margin: 0 0 4px 0;
+.compile-log::-webkit-scrollbar {
+  width: 8px;
 }
 
-.compact-half .CodeMirror {
+.compile-log::-webkit-scrollbar-track {
+  background: #2c3e50;
+}
+
+.compile-log::-webkit-scrollbar-thumb {
+  background: #16a085;
+  border-radius: 4px;
+}
+
+.compile-log {
+  scrollbar-width: thin;
+  scrollbar-color: #16a085 #2c3e50;
+}
+
+#editorHost {
   flex: 1;
+  min-height: 0;
 }
-
-@media (max-width: 1100px) {
-  .editor-container {
-    flex-direction: column;
-  }
-
-  .editor-main {
-    border-right: none;
-    border-bottom: 1px solid var(--border-color);
-  }
-
-  .compact-pane {
-    border-top: none;
-  }
-
-  .editor-divider {
-    display: none;
-  }
-}
-
 .CodeMirror {
   height: 100%;
   width: 100%;
@@ -349,6 +299,15 @@ body.editor-resizing {
   .outliner {
     width: 100%;
     flex: 0 0 auto;
+  }
+
+  .compile-wrap {
+    width: 100%;
+    flex: 0 0 auto;
+  }
+
+  .compile-container {
+    min-height: 260px;
   }
 }
 /* 1) Запрет скролла у страницы (перебиваем uart.css) */
@@ -374,11 +333,22 @@ main,
 .feature-panel {
   height: auto !important;
   min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
   overflow: visible !important;
 }
 
 .feature-panel {
   max-height: none;
+}
+
+.feature-panel > .uart-section,
+.feature-panel > .canvas-section {
+  width: calc(100% - 40px);
+  max-width: calc(100% - 40px);
+  min-width: 0;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* 2) Стили скролла как у .terminal-container (uart.html) */
@@ -860,17 +830,27 @@ main,
   background: #e67e22;
 }
 
+.uart-section .connection-panel {
+  min-width: 0;
+}
+
 .canvas-updi-target {
-  min-width: 150px;
+  min-width: 240px;
 }
 
 .canvas-updi-target select {
-  min-width: 150px;
-  max-width: 180px;
+  min-width: 240px;
+  max-width: 240px;
 }
 
 .canvas-updi-note {
   color: #ffd28c;
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+  margin-left: auto;
+  white-space: normal;
+  text-align: right;
 }
 
 .canvas-updi-section {

@@ -31,17 +31,14 @@
   <body>
     <main>
       <div class="feature-panel">
-        <!-- UART section (duplicated & trimmed) -->
         <section class="uart-section">
-          <h2 class="status-indicator disconnected" id="statusIndicator">
-            Disconnected
-          </h2>
-
           <div class="connection-panel">
-            <button class="connect-btn" id="connectBtn">Connect</button>
-            <button class="connect-btn" id="probeBtn" type="button">
-              Probe UPDI
-            </button>
+            <div class="connection-control canvas-updi-target">
+              <label for="mcuSelect">Target MCU</label>
+              <select id="mcuSelect">
+                <option value="auto" selected>Auto detect</option>
+              </select>
+            </div>
             <button class="connect-btn" id="readSignatureBtn" type="button">
               Read Signature
             </button>
@@ -50,23 +47,16 @@
               id="programHexBtn"
               type="button"
             >
-              Program HEX
+              Flash MCU
             </button>
-            <div class="connection-control canvas-updi-target">
-              <label for="mcuSelect">Target MCU</label>
-              <select id="mcuSelect">
-                <option value="attiny1624" selected>ATtiny1624</option>
-              </select>
-            </div>
             <span class="connection-note canvas-updi-note">
-              Disconnect UART before using UPDI programming.
+              Read Signature auto-detects the connected chip.
             </span>
           </div>
         </section>
 
         <section class="canvas-section">
           <div class="canvas-split-container">
-            <!-- Files (left) -->
             <aside class="outliner">
               <div class="outliner-header">
                 <h3 class="outliner-title">Files</h3>
@@ -74,83 +64,48 @@
               <div class="outliner-list" id="fileList"></div>
             </aside>
 
-            <!-- Editor (right) -->
             <div class="editor-wrap">
               <div class="editor-header">
                 <h3 class="editor-title" id="editorTitle">Editor</h3>
               </div>
 
               <div class="editor-container">
-                <!-- Левый слот -->
-                <div class="editor-main editor-pane" data-pane="left">
-                  <div class="pane-header">
-                    <span class="pane-title">View 1</span>
-                    <div class="pane-mode-toggle">
-                      <label class="pane-mode-option">
-                        <input
-                          type="radio"
-                          name="leftMode"
-                          value="full"
-                          checked
-                        />
-                        <span>Full</span>
-                      </label>
-                      <label class="pane-mode-option">
-                        <input type="radio" name="leftMode" value="compact" />
-                        <span>Compact</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div class="pane-body" data-pane-body="left">
-                    <!-- сюда будет перемещаться обычный CodeMirror -->
-                    <div id="editorHost"></div>
-                  </div>
+                <div class="editor-surface">
+                  <div id="editorHost"></div>
                 </div>
-
-                <!-- Перегородка между слотами -->
-                <div class="editor-divider" id="editorDivider"></div>
-
-                <!-- Правый слот -->
-                <aside class="compact-pane editor-pane" data-pane="right">
-                  <div class="pane-header">
-                    <span class="pane-title">View 2</span>
-                    <div class="pane-mode-toggle">
-                      <label class="pane-mode-option">
-                        <input type="radio" name="rightMode" value="full" />
-                        <span>Full</span>
-                      </label>
-                      <label class="pane-mode-option">
-                        <input
-                          type="radio"
-                          name="rightMode"
-                          value="compact"
-                          checked
-                        />
-                        <span>Compact</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div class="pane-body" data-pane-body="right">
-                    <!-- компактный режим обёрнут в отдельный контейнер -->
-                    <div class="compact-body" id="compactWrapper">
-                      <div class="compact-half">
-                        <div class="compact-subtitle">Init</div>
-                        <textarea id="compactInit"></textarea>
-                      </div>
-                      <div class="compact-half">
-                        <div class="compact-subtitle">Loop</div>
-                        <textarea id="compactLoop"></textarea>
-                      </div>
-                    </div>
-                  </div>
-                </aside>
               </div>
             </div>
+
+            <aside class="compile-wrap">
+              <div class="editor-header">
+                <h3 class="editor-title">Compile</h3>
+              </div>
+
+              <div class="editor-container compile-container">
+                <div class="compile-surface">
+                  <div class="compile-toolbar">
+                    <button class="connect-btn" id="compileBtn" type="button">
+                      Compile current file
+                    </button>
+
+                    <div
+                      id="hexStatus"
+                      class="hex-status"
+                      aria-live="polite"
+                      aria-disabled="true"
+                      title="HEX not ready"
+                    >
+                      <span class="dot" aria-hidden="true"></span>
+                      <span class="label">HEX: idle</span>
+                    </div>
+                  </div>
+
+                  <pre class="compile-log" id="compileLog"></pre>
+                </div>
+              </div>
+            </aside>
           </div>
 
-          <!-- Shared context menu for file actions (opened by "⋯" or right-click) -->
           <div id="fileContextMenu" class="file-context-menu">
             <button type="button" data-action="rename">Rename</button>
             <button type="button" data-action="delete">Delete</button>
@@ -181,7 +136,11 @@
                 <div class="editor-header updi-pane-header">
                   <h3 class="editor-title">Paste Intel HEX</h3>
                   <div class="updi-pane-actions">
-                    <button class="action-btn" id="useTextareaBtn" type="button">
+                    <button
+                      class="action-btn"
+                      id="useTextareaBtn"
+                      type="button"
+                    >
                       Use Text
                     </button>
                     <button

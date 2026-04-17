@@ -219,13 +219,26 @@
     } catch {}
   }
 
+  function applySelectedTarget(targetKey) {
+    if (!els.mcuSelect || !targetKey || !SUPPORTED_TARGETS[targetKey]) {
+      return;
+    }
+
+    if (els.mcuSelect.value === targetKey) {
+      return;
+    }
+
+    els.mcuSelect.value = targetKey;
+    els.mcuSelect.dispatchEvent(new Event("change"));
+  }
+
   function populateTargetOptions() {
     if (!els.mcuSelect) return;
 
     const previousValue =
       els.mcuSelect.value === "auto" || SUPPORTED_TARGETS[els.mcuSelect.value]
         ? els.mcuSelect.value
-        : "attiny1624";
+        : "auto";
 
     els.mcuSelect.innerHTML = "";
 
@@ -267,7 +280,7 @@
     els.mcuSelect.value =
       previousValue === "auto" || SUPPORTED_TARGETS[previousValue]
         ? previousValue
-        : "attiny1624";
+        : "auto";
   }
 
   function getCanvasUpdiBridge() {
@@ -357,7 +370,9 @@
       ? "Disconnect UART before using UPDI."
       : "";
 
-    els.probeBtn.disabled = !canUseSerial || blockedByCanvasSerial;
+    if (els.probeBtn) {
+      els.probeBtn.disabled = !canUseSerial || blockedByCanvasSerial;
+    }
     els.readSignatureBtn.disabled = !canUseSerial || blockedByCanvasSerial;
     els.programHexBtn.disabled =
       !canUseSerial || blockedByCanvasSerial || !state.image;
@@ -1434,6 +1449,9 @@
 
     state.signatureInfo = info;
     syncDetectedTarget(info.matchedTargetKey);
+    if (info.matchedTargetKey) {
+      applySelectedTarget(info.matchedTargetKey);
+    }
 
     appendLog(`Signature: ${formatHex(deviceId, 6)}`);
     appendLog(`Revision byte: ${formatHex(revisionByte, 2)}`);
@@ -1651,7 +1669,9 @@
     els.useTextareaBtn.addEventListener("click", handleTextareaLoad);
     els.clearHexBtn.addEventListener("click", () => clearHexState());
     els.clearLogBtn.addEventListener("click", clearLog);
-    els.probeBtn.addEventListener("click", probeUpdi);
+    if (els.probeBtn) {
+      els.probeBtn.addEventListener("click", probeUpdi);
+    }
     els.readSignatureBtn.addEventListener("click", readSignature);
     els.programHexBtn.addEventListener("click", programHex);
     els.mcuSelect.addEventListener("change", () => {
@@ -1685,7 +1705,6 @@
     return !!(
       els.probeStatus &&
       els.mcuSelect &&
-      els.probeBtn &&
       els.readSignatureBtn &&
       els.programHexBtn &&
       els.clearLogBtn &&

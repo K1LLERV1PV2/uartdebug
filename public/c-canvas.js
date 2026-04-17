@@ -10,12 +10,6 @@
   let current = null;
   let saveTimer = null;
   let contextMenuFile = null;
-  let compactInitEditor = null;
-  let compactLoopEditor = null;
-  let isUpdatingFromMainToCompact = false;
-  let isUpdatingFromCompactToMain = false;
-  let compactSyncTimer = null;
-  let currentFullPane = "left";
 
   function setHexStatus(state, filename) {
     setHexStatus._state = state;
@@ -71,6 +65,72 @@
 
   function updateHexUI(hasHex) {
     markHexDownloadReady(!!hasHex);
+  }
+
+  function formatCompileLogTime() {
+    return new Date().toLocaleTimeString("ru-RU", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
+
+  function setCompileLogText(text) {
+    const el = $("compileLog");
+    if (!el) return;
+    el.textContent = String(text || "").replace(/\r\n/g, "\n");
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function appendCompileLog(message) {
+    const el = $("compileLog");
+    if (!el) return;
+    const text = String(message || "").replace(/\r\n/g, "\n");
+    el.textContent += `[${formatCompileLogTime()}] ${text}\n`;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function appendCompileBlock(title, text) {
+    const el = $("compileLog");
+    if (!el) return;
+    const normalized = String(text || "").replace(/\r\n/g, "\n").trim();
+    if (!normalized) return;
+    appendCompileLog(title);
+    el.textContent += `${normalized}\n`;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function updateCompilePanelState(resetLog = false) {
+    const btn = $("compileBtn");
+    const hasCurrent = !!current;
+    const canCompile = hasCurrent && /\.c$/i.test(current);
+    const buttonLabel = hasCurrent
+      ? `Compile "${current}"`
+      : "Compile current file";
+
+    if (btn) {
+      btn.textContent = buttonLabel;
+      btn.title = buttonLabel;
+      btn.disabled = !canCompile;
+    }
+
+    if (!resetLog) return;
+
+    if (!hasCurrent) {
+      setCompileLogText("Create or select a C source file to compile.");
+      return;
+    }
+
+    if (!canCompile) {
+      setCompileLogText(
+        `"${current}" is not a C source file.\nSelect a *.c file to compile.`
+      );
+      return;
+    }
+
+    setCompileLogText(
+      `Ready to compile "${current}".\nCompiler messages and HEX status will appear here.`
+    );
   }
 
   function defaultTemplate(name = "main.c") {
@@ -171,23 +231,6 @@ int main(void) {
       const acts = document.createElement("div");
       acts.className = "file-actions";
 
-      if (name === current) {
-        const hex = document.createElement("div");
-        hex.id = "hexStatus";
-        hex.className = "hex-status";
-        hex.setAttribute("aria-live", "polite");
-        hex.innerHTML =
-          '<span class="dot" aria-hidden="true"></span>' +
-          '<span class="label">HEX: idle</span>';
-
-        hex.addEventListener("click", (e) => {
-          e.stopPropagation();
-          downloadHex();
-        });
-
-        acts.appendChild(hex);
-      }
-
       const menuBtn = document.createElement("button");
       menuBtn.className = "file-menu-btn";
       menuBtn.title = "File actions";
@@ -218,6 +261,7 @@ int main(void) {
     setHexStatus(state, state === "ready" ? lastHexName : undefined);
 
     updateToolbarState();
+    updateCompilePanelState(false);
   }
 
   function openFileContextMenu(fileName, clientX, clientY) {
@@ -301,15 +345,13 @@ int main(void) {
     }
 
     resetHexArtifact();
+    updateCompilePanelState(true);
 
     $("editorTitle").textContent = `Editor — ${name}`;
     persistState();
     renderOutliner();
     if (editor) setTimeout(() => editor.refresh(), 0);
 
-    if (compactInitEditor && compactLoopEditor) {
-      updateCompactFromMain(files[name]);
-    }
   }
 
   function newCanvas() {
@@ -326,6 +368,8 @@ int main(void) {
     persistState();
     renderOutliner();
     if (editor) editor.setValue(files[name]);
+    resetHexArtifact();
+    updateCompilePanelState(true);
   }
 
   function renameFile(oldName) {
@@ -340,16 +384,22 @@ int main(void) {
     }
     files[newName] = files[oldName];
     delete files[oldName];
-    if (current === oldName) current = newName;
+    const renamedCurrent = current === oldName;
+    if (renamedCurrent) current = newName;
     persistState();
     renderOutliner();
+    if (renamedCurrent) {
+      resetHexArtifact();
+      updateCompilePanelState(true);
+    }
   }
 
   function deleteFile(name) {
     if (!files[name]) return;
     if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    const deletedCurrent = current === name;
     delete files[name];
-    if (current === name) current = null;
+    if (deletedCurrent) current = null;
     persistState();
     if (!current) {
       try {
@@ -368,6 +418,10 @@ int main(void) {
       $("editorTitle").textContent = `Editor — ${current}`;
     }
     renderOutliner();
+    if (deletedCurrent) {
+      resetHexArtifact();
+      updateCompilePanelState(true);
+    }
   }
 
   function downloadFile(name) {
@@ -513,332 +567,6 @@ int main(void) {
     };
   });
 
-  function parseMainSections(source) {
-    const mainRegex = /\bint\s+main\s*\([^)]*\)\s*{/m;
-    const match = mainRegex.exec(source);
-    if (!match) {
-      throw new Error("main() not found");
-    }
-
-    // Открывающая { у main()
-    const braceIndex = source.indexOf("{", match.index);
-    if (braceIndex === -1) {
-      throw new Error("main() opening brace not found");
-    }
-
-    // Находим соответствующую закрывающую } main()
-    let depth = 0;
-    let bodyEndBraceIndex = -1;
-    for (let i = braceIndex; i < source.length; i++) {
-      const ch = source[i];
-      if (ch === "{") depth++;
-      else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          bodyEndBraceIndex = i;
-          break;
-        }
-      }
-    }
-    if (bodyEndBraceIndex === -1) {
-      throw new Error("main() closing brace not found");
-    }
-
-    const bodyStartIndex = braceIndex + 1;
-    const beforeMain = source.slice(0, bodyStartIndex);
-    const body = source.slice(bodyStartIndex, bodyEndBraceIndex);
-    const afterMain = source.slice(bodyEndBraceIndex);
-
-    const loopRegex = /\bwhile\s*\([^)]*\)|\bfor\s*\([^)]*\)/g;
-    const loopMatch = loopRegex.exec(body);
-
-    // main() без цикла — всё это init-часть
-    if (!loopMatch) {
-      return {
-        beforeMain,
-        afterMain,
-        body,
-        initSection: body,
-        loopSection: "",
-        loopHeader: "",
-        loopBody: "",
-        tailSection: "",
-      };
-    }
-
-    const loopKeywordIndex = loopMatch.index;
-
-    // ВАЖНО: тащим отступ строки целиком, а не только слово while/for
-    let loopHeaderStart = loopKeywordIndex;
-    for (let i = loopKeywordIndex - 1; i >= 0; i--) {
-      const ch = body[i];
-      if (ch === "\n") {
-        loopHeaderStart = i + 1;
-        break;
-      }
-    }
-
-    // Ищем { после while/for
-    let blockStartIndex = -1;
-    for (let j = loopKeywordIndex; j < body.length; j++) {
-      const ch = body[j];
-      if (ch === "{") {
-        blockStartIndex = j;
-        break;
-      }
-      if (ch === ";") {
-        // цикл без { } — одна строка
-        break;
-      }
-    }
-
-    // Вариант без блока: while (...) stmt;
-    if (blockStartIndex === -1) {
-      const semiIndex = body.indexOf(";", loopKeywordIndex);
-      if (semiIndex === -1) {
-        throw new Error("Loop without ';'");
-      }
-
-      const initSection = body.slice(0, loopHeaderStart);
-      const loopSection = body.slice(loopHeaderStart, semiIndex + 1);
-      const tailSection = body.slice(semiIndex + 1);
-
-      return {
-        beforeMain,
-        afterMain,
-        body,
-        initSection,
-        loopSection,
-        loopHeader: "",
-        loopBody: "",
-        tailSection,
-      };
-    }
-
-    // Вариант с блоком: while (...) { ... }
-    let depth2 = 0;
-    let blockEndIndex = -1;
-    for (let k = blockStartIndex; k < body.length; k++) {
-      const ch = body[k];
-      if (ch === "{") depth2++;
-      else if (ch === "}") {
-        depth2--;
-        if (depth2 === 0) {
-          blockEndIndex = k;
-          break;
-        }
-      }
-    }
-    if (blockEndIndex === -1) {
-      throw new Error("Cannot find end of main loop block");
-    }
-
-    const initSection = body.slice(0, loopHeaderStart);
-    const loopSection = body.slice(loopHeaderStart, blockEndIndex + 1);
-    const tailSection = body.slice(blockEndIndex + 1);
-
-    const loopHeader = body.slice(loopHeaderStart, blockStartIndex + 1);
-    const loopBody = body.slice(blockStartIndex + 1, blockEndIndex);
-
-    return {
-      beforeMain,
-      afterMain,
-      body,
-      initSection,
-      loopSection,
-      loopHeader,
-      loopBody,
-      tailSection,
-    };
-  }
-
-  function detectBodyIndent(body) {
-    const lines = body.split(/\r?\n/);
-    for (const line of lines) {
-      const m = line.match(/^(\s+)\S/);
-      if (m) return m[1];
-    }
-    return "  ";
-  }
-
-  function rebuildSourceFromCompact(source, newInit, newLoop) {
-    const sections = parseMainSections(source);
-
-    // Берём исходное тело main() целиком
-    let body = sections.body;
-
-    // --- 1. Подменяем init-часть (всё до первой строки цикла) ---
-    const initText =
-      typeof newInit === "string" ? newInit.replace(/\r\n/g, "\n") : "";
-    const initEnd = sections.initSection.length;
-
-    // Заменяем старый init-блок на то, что в compactInit
-    body = initText + body.slice(initEnd);
-
-    // --- 2. Подменяем тело цикла ---
-    // Если удалось выделить чистое тело { ... } — меняем только его,
-    // иначе (цикл без фигурных скобок) – весь loopSection.
-    const loopSegment =
-      sections.loopBody && sections.loopBody.length
-        ? sections.loopBody
-        : sections.loopSection;
-
-    const loopText =
-      typeof newLoop === "string" ? newLoop.replace(/\r\n/g, "\n") : "";
-
-    if (loopSegment && loopSegment.length) {
-      // Ищем только ПОСЛЕ init-блока, чтобы не попасть в совпадения в init
-      const searchFrom = initText.length;
-      const idx = body.indexOf(loopSegment, searchFrom);
-      if (idx !== -1) {
-        body =
-          body.slice(0, idx) + loopText + body.slice(idx + loopSegment.length);
-      }
-    }
-
-    // Небольшой safety: если тело не пустое и не заканчивается \n,
-    // добавим перевод строки перед закрывающей скобкой main().
-    if (body && !body.endsWith("\n")) {
-      body += "\n";
-    }
-
-    return sections.beforeMain + body + sections.afterMain;
-  }
-
-  function updateCompactFromMain(source) {
-    if (!compactInitEditor || !compactLoopEditor) return;
-
-    let sections;
-    try {
-      sections = parseMainSections(source);
-    } catch (e) {
-      // Если main() не нашли — просто очищаем компакт-панель
-      isUpdatingFromMainToCompact = true;
-      try {
-        compactInitEditor.setValue("");
-        compactLoopEditor.setValue("");
-      } finally {
-        isUpdatingFromMainToCompact = false;
-      }
-      return;
-    }
-
-    // Никаких "умных" отступов/обрезания — только нормализация \r\n -> \n
-    const normalize = (segment) =>
-      segment ? segment.replace(/\r\n/g, "\n") : "";
-
-    // Всё, что до первого цикла — как есть в compactInit
-    const initText = normalize(sections.initSection);
-
-    // Тело цикла: либо чистое тело { ... }, либо весь loopSection
-    const loopSource =
-      (sections.loopBody && sections.loopBody.length
-        ? sections.loopBody
-        : sections.loopSection) || "";
-    const loopText = normalize(loopSource);
-
-    // Обновляем компакт-редакторы, помечая, что это "слева направо"
-    isUpdatingFromMainToCompact = true;
-    try {
-      compactInitEditor.setValue(initText);
-      compactLoopEditor.setValue(loopText);
-    } finally {
-      isUpdatingFromMainToCompact = false;
-    }
-  }
-
-  function layoutEditorsForModes() {
-    const leftBody = document.querySelector(".editor-main .pane-body");
-    const rightBody = document.querySelector(".compact-pane .pane-body");
-    const fullHost = document.getElementById("editorHost");
-    const compactWrapper = document.getElementById("compactWrapper");
-
-    if (!leftBody || !rightBody || !fullHost || !compactWrapper) return;
-
-    if (currentFullPane === "left") {
-      if (fullHost.parentNode !== leftBody) {
-        leftBody.appendChild(fullHost);
-      }
-      if (compactWrapper.parentNode !== rightBody) {
-        rightBody.appendChild(compactWrapper);
-      }
-    } else {
-      if (fullHost.parentNode !== rightBody) {
-        rightBody.appendChild(fullHost);
-      }
-      if (compactWrapper.parentNode !== leftBody) {
-        leftBody.appendChild(compactWrapper);
-      }
-    }
-
-    // После перестановки обязательно рефрешим редакторы
-    if (editor) {
-      setTimeout(() => editor.refresh(), 0);
-    }
-    if (compactInitEditor) {
-      setTimeout(() => compactInitEditor.refresh(), 0);
-    }
-    if (compactLoopEditor) {
-      setTimeout(() => compactLoopEditor.refresh(), 0);
-    }
-  }
-
-  function initPaneModeControls() {
-    const leftFull = document.querySelector(
-      'input[name="leftMode"][value="full"]'
-    );
-    const leftCompact = document.querySelector(
-      'input[name="leftMode"][value="compact"]'
-    );
-    const rightFull = document.querySelector(
-      'input[name="rightMode"][value="full"]'
-    );
-    const rightCompact = document.querySelector(
-      'input[name="rightMode"][value="compact"]'
-    );
-
-    if (!leftFull || !leftCompact || !rightFull || !rightCompact) {
-      return;
-    }
-
-    function setFullPane(pane) {
-      currentFullPane = pane === "right" ? "right" : "left";
-
-      if (currentFullPane === "left") {
-        leftFull.checked = true;
-        leftCompact.checked = false;
-        rightFull.checked = false;
-        rightCompact.checked = true;
-      } else {
-        rightFull.checked = true;
-        rightCompact.checked = false;
-        leftFull.checked = false;
-        leftCompact.checked = true;
-      }
-
-      layoutEditorsForModes();
-    }
-
-    // Левый слот: выбор Full/Compact
-    leftFull.addEventListener("change", (e) => {
-      if (e.target.checked) setFullPane("left");
-    });
-    leftCompact.addEventListener("change", (e) => {
-      if (e.target.checked) setFullPane("right");
-    });
-
-    // Правый слот: выбор Full/Compact
-    rightFull.addEventListener("change", (e) => {
-      if (e.target.checked) setFullPane("right");
-    });
-    rightCompact.addEventListener("change", (e) => {
-      if (e.target.checked) setFullPane("left");
-    });
-
-    // Стартовое состояние: Full слева, Compact справа
-    setFullPane("left");
-  }
-
   function initEditor() {
     editor = CodeMirror($("editorHost"), {
       value: current && files[current] ? files[current] : "",
@@ -878,15 +606,10 @@ int main(void) {
       if (saveTimer) clearTimeout(saveTimer);
 
       const codeSnapshot = editor.getValue();
-      const fromCompact = isUpdatingFromCompactToMain;
 
       saveTimer = setTimeout(() => {
         files[current] = codeSnapshot;
         persistState();
-
-        if (!fromCompact) {
-          updateCompactFromMain(codeSnapshot);
-        }
       }, 250);
     });
     editor.addKeyMap({
@@ -899,122 +622,13 @@ int main(void) {
     });
   }
 
-  function initCompactEditors() {
-    const initTextarea = document.getElementById("compactInit");
-    const loopTextarea = document.getElementById("compactLoop");
-    if (!initTextarea || !loopTextarea || !window.CodeMirror) return;
-
-    compactInitEditor = CodeMirror.fromTextArea(initTextarea, {
-      mode: "text/x-csrc",
-      theme: "material-darker",
-      lineNumbers: false,
-      matchBrackets: false,
-      autoCloseBrackets: false,
-    });
-
-    compactLoopEditor = CodeMirror.fromTextArea(loopTextarea, {
-      mode: "text/x-csrc",
-      theme: "material-darker",
-      lineNumbers: false,
-      matchBrackets: false,
-      autoCloseBrackets: false,
-    });
-
-    compactInitEditor.setSize("100%", "100%");
-    compactLoopEditor.setSize("100%", "100%");
-    setTimeout(() => {
-      compactInitEditor.refresh();
-      compactLoopEditor.refresh();
-    }, 0);
-
-    const handleCompactChange = () => {
-      if (!current) return;
-      if (isUpdatingFromMainToCompact) return;
-
-      if (compactSyncTimer) clearTimeout(compactSyncTimer);
-      compactSyncTimer = setTimeout(() => {
-        try {
-          const newInit = compactInitEditor.getValue();
-          const newLoop = compactLoopEditor.getValue();
-          const origin = (editor && editor.getValue()) || files[current] || "";
-
-          const rebuilt = rebuildSourceFromCompact(origin, newInit, newLoop);
-
-          isUpdatingFromCompactToMain = true;
-          try {
-            if (editor) {
-              const cursor = editor.getCursor();
-              editor.setValue(rebuilt);
-              editor.setCursor(cursor);
-            }
-            files[current] = rebuilt;
-            persistState();
-          } finally {
-            isUpdatingFromCompactToMain = false;
-          }
-        } catch (e) {
-          console.error("[compact] apply error:", e);
-        }
-      }, 250);
-    };
-
-    compactInitEditor.on("change", handleCompactChange);
-    compactLoopEditor.on("change", handleCompactChange);
-  }
-
-  function initResizableSplit() {
-    const container = document.querySelector(".editor-container");
-    const leftPane = document.querySelector(".editor-main");
-    const rightPane = document.querySelector(".compact-pane");
-    const divider = document.getElementById("editorDivider");
-
-    if (!container || !leftPane || !rightPane || !divider) return;
-
-    let isDragging = false;
-    let containerRect = null;
-
-    divider.addEventListener("mousedown", (event) => {
-      if (event.button !== 0) return; // только ЛКМ
-      isDragging = true;
-      containerRect = container.getBoundingClientRect();
-      document.body.classList.add("editor-resizing");
-      event.preventDefault();
-    });
-
-    window.addEventListener("mousemove", (event) => {
-      if (!isDragging) return;
-      if (!containerRect) return;
-
-      const relX = event.clientX - containerRect.left;
-      const minWidth = containerRect.width * 0.15; // минимум 15% на каждую панель
-      const maxWidth = containerRect.width - minWidth;
-
-      let clampedX = Math.min(Math.max(relX, minWidth), maxWidth);
-      const leftPercent = (clampedX / containerRect.width) * 100;
-      const rightPercent = 100 - leftPercent;
-
-      leftPane.style.flex = `0 0 ${leftPercent}%`;
-      rightPane.style.flex = `0 0 ${rightPercent}%`;
-
-      if (editor) editor.refresh();
-      if (compactInitEditor) compactInitEditor.refresh();
-      if (compactLoopEditor) compactLoopEditor.refresh();
-    });
-
-    window.addEventListener("mouseup", () => {
-      if (!isDragging) return;
-      isDragging = false;
-      containerRect = null;
-      document.body.classList.remove("editor-resizing");
-    });
-  }
-
   function bindUI() {
     const newBtn = $("newBtn");
     const renameBtn = $("renameBtn");
     const deleteBtn = $("deleteBtn");
     const downloadBtn = $("downloadBtn");
     const compileBtn = $("compileBtn");
+    const hexStatus = $("hexStatus");
     const fileContextMenu = $("fileContextMenu");
 
     newBtn && newBtn.addEventListener("click", newCanvas);
@@ -1024,6 +638,11 @@ int main(void) {
       deleteBtn.addEventListener("click", () => current && deleteFile(current));
     downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
     compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
+    hexStatus &&
+      hexStatus.addEventListener("click", (event) => {
+        event.stopPropagation();
+        downloadHex();
+      });
 
     // Shared file context menu: click on items
     if (fileContextMenu) {
@@ -1053,14 +672,11 @@ int main(void) {
       }
     });
 
-    window.addEventListener("beforeunload", async () => {
+    window.addEventListener("beforeunload", () => {
       if (editor && current) {
         files[current] = editor.getValue();
         persistState();
       }
-      try {
-        await disconnectSerialCanvas();
-      } catch {}
     });
   }
 
@@ -1097,8 +713,8 @@ int main(void) {
     window.dispatchEvent(
       new CustomEvent("ud-canvas-serial-state", {
         detail: {
-          connected: !!canvasPort,
-          label: canvasPort ? getPortLabel(canvasPort.getInfo?.()) : "",
+          connected: false,
+          label: "",
         },
       })
     );
@@ -1109,7 +725,7 @@ int main(void) {
 
     window.__UARTDEBUG_CANVAS_UPDI_BRIDGE__ = {
       getHexArtifact: getUpdiHexArtifact,
-      isCanvasSerialConnected: () => !!canvasPort,
+      isCanvasSerialConnected: () => false,
       getDetectedTargetKey: () => lastDetectedUpdiTargetKey || "",
       setDetectedTargetKey: (targetKey) => {
         lastDetectedUpdiTargetKey =
@@ -1339,110 +955,195 @@ int main(void) {
     }
   }
 
-  // ------------- Minimal UART connect (Microchip defaults) -------------
-  let canvasPort = null;
-  let canvasReader = null;
-  let canvasWriter = null;
+  async function compileCurrentFile() {
+    const compileFileName = current;
+    const compileSource = compileFileName ? files[compileFileName] : "";
+    const btn = $("compileBtn");
+    const restoreButton = () => updateCompilePanelState(false);
 
-  function getPortLabel(info) {
-    if (!info) return "Unknown device";
-    const hex = (n) => Number(n).toString(16).padStart(4, "0").toUpperCase();
-    if (info.usbVendorId != null && info.usbProductId != null) {
-      return `USB ${hex(info.usbVendorId)}:${hex(info.usbProductId)}`;
+    if (!compileFileName || !compileSource) {
+      setCompileLogText("");
+      appendCompileLog("No open file to compile.");
+      setHexStatus("error");
+      updateHexUI(false);
+      restoreButton();
+      return;
     }
-    if (info.usbVendorId != null) return `USB ${hex(info.usbVendorId)}`;
-    return "Unknown device";
-  }
 
-  async function connectSerialCanvas() {
+    if (!/\.c$/i.test(compileFileName)) {
+      setCompileLogText("");
+      appendCompileLog(
+        `"${compileFileName}" is not a C source file. Only *.c files can be compiled.`
+      );
+      setHexStatus("error");
+      updateHexUI(false);
+      restoreButton();
+      return;
+    }
+
     try {
-      if (!("serial" in navigator)) {
-        updateConnectionStatusCanvas(false);
-        const btn = $("connectBtn");
-        if (btn) btn.disabled = true;
+      if (editor && current === compileFileName) {
+        files[compileFileName] = editor.getValue();
+      }
+    } catch {}
+
+    const mcuEl = $("mcuSelect");
+    const fcpuEl = $("fCpuInput");
+    const optEl = $("optimizeSelect");
+    let selectedMcu = mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624";
+
+    if (selectedMcu === "auto") {
+      const bridge =
+        typeof window !== "undefined"
+          ? window.__UARTDEBUG_CANVAS_UPDI_BRIDGE__
+          : null;
+      const detectedMcu =
+        bridge && typeof bridge.getDetectedTargetKey === "function"
+          ? String(bridge.getDetectedTargetKey() || "").trim()
+          : "";
+
+      if (!detectedMcu) {
+        setCompileLogText("");
+        appendCompileLog(
+          "Auto detect mode needs a known chip signature. Read Signature first or choose a concrete MCU before compiling."
+        );
+        setHexStatus("error");
+        updateHexUI(false);
+        restoreButton();
         return;
       }
 
-      canvasPort = await navigator.serial.requestPort();
-      await canvasPort.open({
-        baudRate: 230400,
-        dataBits: 8,
-        parity: "even",
-        stopBits: 2,
-        bufferSize: 4096,
-      });
-
-      canvasReader = canvasPort.readable.getReader();
-      canvasWriter = canvasPort.writable.getWriter();
-
-      const label = getPortLabel(canvasPort.getInfo?.());
-      updateConnectionStatusCanvas(true, label || "");
-    } catch (e) {
-      console.error("[canvas] connect error:", e);
-      updateConnectionStatusCanvas(false);
+      selectedMcu = detectedMcu;
     }
-  }
 
-  async function disconnectSerialCanvas() {
+    const payload = {
+      filename: compileFileName,
+      code: files[compileFileName],
+      mcu: selectedMcu,
+      f_cpu: fcpuEl && Number(fcpuEl.value) ? Number(fcpuEl.value) : 20000000,
+      optimize: optEl && optEl.value ? optEl.value.trim() : "Os",
+    };
+
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = `Compiling "${compileFileName}"...`;
+      btn.title = btn.textContent;
+    }
+
+    setHexStatus("building");
+    updateHexUI(false);
+
+    lastHexContent = null;
+    lastHexName = null;
+    dispatchUpdiHexArtifact();
+
+    setCompileLogText("");
+    appendCompileLog(`Compiling "${compileFileName}" for ${selectedMcu}...`);
+    appendCompileLog(
+      `Options: F_CPU=${payload.f_cpu}, optimize=${payload.optimize}.`
+    );
+
+    let resp;
     try {
-      if (canvasReader) {
-        try {
-          await canvasReader.cancel();
-        } catch {}
-        try {
-          canvasReader.releaseLock();
-        } catch {}
-      }
-      if (canvasWriter) {
-        try {
-          canvasWriter.releaseLock();
-        } catch {}
-      }
-      if (canvasPort) {
-        try {
-          await canvasPort.close();
-        } catch {}
-      }
-    } finally {
-      canvasReader = null;
-      canvasWriter = null;
-      canvasPort = null;
-      updateConnectionStatusCanvas(false);
-    }
-  }
-
-  function updateConnectionStatusCanvas(connected, label = "") {
-    const status = $("statusIndicator");
-    const btn = $("connectBtn");
-    if (!status || !btn) return;
-
-    if (connected) {
-      status.textContent = label ? `Connected: ${label}` : "Connected";
-      status.classList.remove("disconnected");
-      status.classList.add("connected");
-      btn.textContent = "Disconnect";
-    } else {
-      status.textContent = "Disconnected";
-      status.classList.remove("connected");
-      status.classList.add("disconnected");
-      btn.textContent = "Connect";
+      resp = await fetch("/api/avr/compile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (error) {
+      console.error("Network error:", error);
+      appendCompileLog(
+        `Failed to reach the compile server: ${error.message || String(error)}`
+      );
+      setHexStatus("error");
+      updateHexUI(false);
+      restoreButton();
+      return;
     }
 
-    dispatchCanvasSerialState();
-  }
+    if (!resp.ok) {
+      const rawText = await resp.text().catch(() => "");
+      let errorData = null;
+      try {
+        errorData = rawText ? JSON.parse(rawText) : null;
+      } catch {}
 
-  async function toggleConnectionCanvas() {
-    if (canvasPort) await disconnectSerialCanvas();
-    else await connectSerialCanvas();
-  }
-
-  function initSerialUI() {
-    const btn = $("connectBtn");
-    if (btn) btn.addEventListener("click", toggleConnectionCanvas);
-    if (!("serial" in navigator)) {
-      updateConnectionStatusCanvas(false);
-      if (btn) btn.disabled = true;
+      console.error("Compile server error:", resp.status, errorData || rawText);
+      appendCompileLog(
+        errorData && errorData.stage
+          ? `Compilation failed during ${errorData.stage}.`
+          : `Compile server error ${resp.status}.`
+      );
+      if (errorData && errorData.cmd) {
+        appendCompileBlock("Command", errorData.cmd);
+      }
+      appendCompileBlock("Stdout", errorData && errorData.stdout);
+      appendCompileBlock("Stderr", errorData && errorData.stderr);
+      if (!errorData && rawText.trim()) {
+        appendCompileBlock("Server response", rawText);
+      }
+      setHexStatus("error");
+      updateHexUI(false);
+      restoreButton();
+      return;
     }
+
+    let data;
+    try {
+      data = await resp.json();
+    } catch (error) {
+      console.error("Bad JSON:", error);
+      appendCompileLog("Invalid JSON response from compile server.");
+      appendCompileBlock("Parse error", error.message || String(error));
+      setHexStatus("error");
+      updateHexUI(false);
+      restoreButton();
+      return;
+    }
+
+    if (!data || data.ok !== true || !data.hex) {
+      console.error("Compilation failed:", data);
+      appendCompileLog("Compilation failed.");
+      if (data && data.cmd) {
+        appendCompileBlock("Command", data.cmd);
+      }
+      appendCompileBlock("Stdout", data && data.stdout);
+      appendCompileBlock("Stderr", data && data.stderr);
+      appendCompileBlock("Compiler stdout", data && data.compile_stdout);
+      appendCompileBlock("Compiler stderr", data && data.compile_stderr);
+      setHexStatus("error");
+      updateHexUI(false);
+      restoreButton();
+      return;
+    }
+
+    lastHexContent = data.hex;
+    {
+      const base = compileFileName.replace(/\.c$/i, "");
+      lastHexName = (data.hex_name && data.hex_name.trim()) || base + ".hex";
+    }
+
+    updateHexUI(true);
+    setHexStatus("ready", lastHexName);
+    dispatchUpdiHexArtifact();
+
+    appendCompileLog(`Compilation succeeded for "${compileFileName}".`);
+    appendCompileLog(
+      `HEX ready: ${lastHexName} (${selectedMcu}, F_CPU=${payload.f_cpu}, ${payload.optimize}).`
+    );
+
+    const hasCompilerOutput =
+      (data.compile_stdout && String(data.compile_stdout).trim()) ||
+      (data.compile_stderr && String(data.compile_stderr).trim());
+
+    if (!hasCompilerOutput) {
+      appendCompileLog("Compiler returned no additional messages.");
+    }
+
+    appendCompileBlock("Compiler stdout", data.compile_stdout);
+    appendCompileBlock("Compiler stderr", data.compile_stderr);
+
+    restoreButton();
   }
 
   function boot() {
@@ -1454,10 +1155,6 @@ int main(void) {
 
     bindUI();
     initEditor();
-    initCompactEditors();
-    initPaneModeControls(); // радиокнопки Full/Compact + раскладка
-    initResizableSplit(); // движущийся разделитель
-    initSerialUI();
 
     updateHexUI(false);
     dispatchCanvasSerialState();
