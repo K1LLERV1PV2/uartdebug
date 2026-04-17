@@ -155,6 +155,18 @@
       return;
     }
 
+    if (typeof updi.preparePortPermission === "function") {
+      try {
+        appendCompileLog("Preparing UPDI port access...");
+        await updi.preparePortPermission();
+      } catch (error) {
+        appendCompileLog(
+          `UPDI port access failed: ${error.message || String(error)}`
+        );
+        return;
+      }
+    }
+
     if (!updi.hasLoadedImage || !updi.hasLoadedImage()) {
       await compileCurrentFile();
       if (!updi.hasLoadedImage || !updi.hasLoadedImage()) {
@@ -162,7 +174,11 @@
       }
     }
 
-    await updi.programHex();
+    try {
+      await updi.programHex();
+    } catch (error) {
+      appendCompileLog(`Flash failed: ${error.message || String(error)}`);
+    }
   }
 
   function updateCompilePanelState(resetLog = false) {

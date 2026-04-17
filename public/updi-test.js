@@ -141,6 +141,7 @@
     sibText: "",
     signatureInfo: null,
     programInfo: null,
+    preferredPort: null,
   };
 
   const els = {};
@@ -296,6 +297,49 @@
   function getCanvasUpdiBridge() {
     if (typeof window === "undefined") return null;
     return window.__UARTDEBUG_CANVAS_UPDI_BRIDGE__ || null;
+  }
+
+  function getPortFingerprint(port) {
+    if (!port || typeof port.getInfo !== "function") return "";
+    const info = port.getInfo() || {};
+    return `${info.usbVendorId || ""}:${info.usbProductId || ""}`;
+  }
+
+  async function ensureUpdiPortPermission(options = {}) {
+    const allowPrompt = options.allowPrompt !== false;
+
+    if (state.preferredPort) {
+      return {
+        port: state.preferredPort,
+        source: "cached",
+      };
+    }
+
+    const grantedPorts =
+      typeof navigator.serial?.getPorts === "function"
+        ? await navigator.serial.getPorts()
+        : [];
+
+    if (grantedPorts.length) {
+      state.preferredPort = grantedPorts[0];
+      return {
+        port: state.preferredPort,
+        source: "granted",
+      };
+    }
+
+    if (!allowPrompt) {
+      throw new Error(
+        "Serial port permission is required. Click Flash again and allow access to the UPDI adapter."
+      );
+    }
+
+    const port = await navigator.serial.requestPort();
+    state.preferredPort = port;
+    return {
+      port,
+      source: "prompt",
+    };
   }
 
   function isCanvasSerialConnected() {
@@ -914,8 +958,7 @@
     }
   }
 
-  async function openUpdiSession() {
-    const port = await navigator.serial.requestPort();
+  async function openUpdiSession(port) {
     await port.open(SERIAL_OPTIONS);
 
     const session = {
@@ -1503,8 +1546,13 @@
     updateView();
 
     try {
-      appendLog("Requesting serial port...");
-      session = await openUpdiSession();
+      const portSelection = await ensureUpdiPortPermission();
+      appendLog(
+        portSelection.source === "prompt"
+          ? "Requesting serial port..."
+          : `Using selected serial port${getPortFingerprint(portSelection.port) ? `: ${getPortFingerprint(portSelection.port)}` : "."}`
+      );
+      session = await openUpdiSession(portSelection.port);
       appendLog(`Opening port with ${SERIAL_BAUD} / 8E2...`);
       appendLog(`Port selected: ${formatPortInfo(session.port.getInfo?.())}`);
 
@@ -1803,13 +1851,14 @@
     updateView();
     appendLog("UPDI test page is ready.");
 
-    if (typeof window !== "undefined") {
-      window.__UARTDEBUG_CANVAS_UPDI__ = {
-        ensureSignature,
-        readSignature,
-        programHex,
-        hasLoadedImage: () => !!state.image,
-      };
+      if (typeof window !== "undefined") {
+        window.__UARTDEBUG_CANVAS_UPDI__ = {
+          preparePortPermission: ensureUpdiPortPermission,
+          ensureSignature,
+          readSignature,
+          programHex,
+          hasLoadedImage: () => !!state.image,
+        };
     }
 
     window.addEventListener("ud-updi-hex-artifact", handleExternalHexArtifactEvent);
