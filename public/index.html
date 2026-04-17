@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#112431" />
+    <meta name="theme-color" content="#2c3e50" />
     <title>Uart Debug</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -14,367 +14,322 @@
       href="/icons/favicon-192.png"
     />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
     <style>
-      :root {
-        --bg-top: #112431;
-        --bg-bottom: #081118;
-        --panel: rgba(10, 24, 32, 0.72);
-        --panel-strong: rgba(16, 37, 47, 0.94);
-        --line: rgba(111, 214, 197, 0.2);
-        --line-strong: rgba(111, 214, 197, 0.38);
-        --text: #eef6f5;
-        --muted: rgba(238, 246, 245, 0.72);
-        --accent: #77f0da;
-        --accent-deep: #33b7c8;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      html,
       body {
-        min-height: 100%;
-      }
-
-      body {
+        background-color: #2c3e50;
+        color: #ecf0f1;
         margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
         min-height: 100vh;
         display: flex;
         flex-direction: column;
-        font-family:
-          "Segoe UI",
-          Tahoma,
-          Geneva,
-          Verdana,
-          sans-serif;
-        color: var(--text);
-        background:
-          radial-gradient(circle at 15% 20%, rgba(83, 232, 201, 0.18), transparent 28%),
-          radial-gradient(circle at 85% 18%, rgba(54, 161, 214, 0.16), transparent 24%),
-          radial-gradient(circle at 50% 100%, rgba(20, 63, 94, 0.24), transparent 45%),
-          linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
         overflow-x: hidden;
       }
 
       body::before {
         content: "";
         position: fixed;
-        inset: 0;
-        background:
-          linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-        background-size: 140px 140px;
-        mask-image: radial-gradient(circle at center, black 45%, transparent 92%);
-        pointer-events: none;
-        opacity: 0.45;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: radial-gradient(
+            circle at 20% 80%,
+            rgba(26, 188, 156, 0.1) 0%,
+            transparent 50%
+          ),
+          radial-gradient(
+            circle at 80% 20%,
+            rgba(22, 160, 133, 0.08) 0%,
+            transparent 50%
+          ),
+          radial-gradient(
+            circle at 40% 60%,
+            rgba(52, 152, 219, 0.05) 0%,
+            transparent 50%
+          );
+        animation: backgroundFloat 20s ease-in-out infinite;
+        z-index: -1;
+      }
+
+      @keyframes backgroundFloat {
+        0%,
+        100% {
+          transform: scale(1) rotate(0deg);
+        }
+        50% {
+          transform: scale(1.1) rotate(1deg);
+        }
       }
 
       main {
         flex: 1;
-        width: min(1200px, calc(100% - 32px));
-        margin: 0 auto;
-        padding: clamp(22px, 4vh, 44px) 0 clamp(18px, 3vh, 30px);
         display: flex;
         flex-direction: column;
-        justify-content: center;
-        gap: clamp(20px, 4vh, 36px);
       }
 
       .hero-section {
-        position: relative;
-        padding: clamp(18px, 3vw, 28px);
-        border: 1px solid var(--line);
-        border-radius: 28px;
-        background:
-          linear-gradient(135deg, rgba(20, 44, 57, 0.92), rgba(9, 17, 24, 0.78)),
-          var(--panel);
-        box-shadow:
-          0 20px 80px rgba(0, 0, 0, 0.28),
-          inset 0 1px 0 rgba(255, 255, 255, 0.04);
-        overflow: hidden;
-      }
-
-      .hero-section::after {
-        content: "";
-        position: absolute;
-        inset: 0;
+        padding: clamp(20px, 6vh, 42px) clamp(15px, 4vw, 25px)
+          clamp(14px, 3vh, 24px);
+        text-align: center;
         background: linear-gradient(
-          110deg,
-          transparent 28%,
-          rgba(119, 240, 218, 0.09) 44%,
-          transparent 60%
+          135deg,
+          rgba(26, 188, 156, 0.1) 0%,
+          rgba(22, 160, 133, 0.05) 100%
         );
-        transform: translateX(-55%);
-        animation: heroShimmer 7s ease-in-out infinite;
-        pointer-events: none;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: clamp(150px, 22vh, 230px);
       }
 
       .hero-content {
-        position: relative;
-        z-index: 1;
-        display: grid;
-        gap: 14px;
-        max-width: 980px;
+        width: 100%;
+        max-width: 90vw;
       }
 
-      .hero-kicker {
-        margin: 0;
-        color: var(--accent);
-        font-size: 0.82rem;
-        font-weight: 700;
-        letter-spacing: 0.22em;
-        text-transform: uppercase;
-      }
-
-      .hero-title {
-        margin: 0;
-        display: grid;
+      .hero-content h1 {
+        margin: 0 auto 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
         gap: 0;
-        font-weight: 800;
+        max-width: 1100px;
+        font-weight: 700;
       }
 
-      .hero-title-line {
+      .hero-line {
         display: block;
-        transform: scaleY(0.72);
-        transform-origin: left top;
-        line-height: 0.84;
-        letter-spacing: -0.08em;
-        background: linear-gradient(135deg, #f3fffd 0%, var(--accent) 52%, #69b8ff 100%);
+        line-height: 0.78;
+        transform: scaleY(0.7);
+        transform-origin: center top;
+        background: linear-gradient(135deg, #1abc9c, #16a085, #3498db);
         -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
         background-clip: text;
-        color: transparent;
+        animation: titleGlow 3s ease-in-out infinite alternate;
       }
 
-      .hero-title-line:first-child {
-        font-size: clamp(2.8rem, 8vw, 6.4rem);
+      .hero-line-main {
+        font-size: clamp(2.3rem, 5vw, 4rem);
       }
 
-      .hero-title-line:last-child {
-        margin-top: -0.5em;
-        font-size: clamp(1.45rem, 4vw, 3rem);
+      .hero-line-sub {
+        margin-top: -0.42em;
+        font-size: clamp(1.2rem, 3vw, 2rem);
       }
 
-      .hero-copy {
-        margin: 0;
-        max-width: 760px;
-        color: var(--muted);
-        font-size: clamp(0.98rem, 1.8vw, 1.14rem);
-        line-height: 1.55;
+      @keyframes titleGlow {
+        0% {
+          filter: brightness(1) drop-shadow(0 0 5px rgba(26, 188, 156, 0.3));
+        }
+        100% {
+          filter: brightness(1.1) drop-shadow(0 0 20px rgba(26, 188, 156, 0.6));
+        }
+      }
+
+      .hero-content p {
+        font-size: clamp(0.95rem, 2.4vw, 1.15rem);
+        margin: 0 auto;
+        opacity: 0.9;
+        max-width: clamp(320px, 82vw, 760px);
+        line-height: 1.45;
+        padding: 0 clamp(10px, 2vw, 20px);
       }
 
       .navigation-section {
-        display: grid;
-        gap: 14px;
-      }
-
-      .navigation-caption {
-        margin: 0;
-        color: rgba(238, 246, 245, 0.64);
-        font-size: 0.9rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
+        padding: clamp(24px, 4vh, 40px) clamp(15px, 4vw, 32px);
+        margin: 0 auto;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex: 1;
+        width: 100%;
       }
 
       .nav-grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: clamp(14px, 2vw, 22px);
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: clamp(18px, 3vw, 28px);
+        width: min(100%, 980px);
       }
 
       .nav-card {
-        position: relative;
-        display: grid;
-        gap: 14px;
-        min-height: 220px;
-        padding: clamp(20px, 3vw, 28px);
-        border-radius: 24px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background:
-          linear-gradient(180deg, rgba(19, 42, 56, 0.94), rgba(8, 16, 22, 0.94)),
-          var(--panel-strong);
-        color: inherit;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: clamp(15px, 3vw, 25px);
+        padding: clamp(20px, 5vw, 42px) clamp(15px, 4vw, 32px);
         text-decoration: none;
-        box-shadow: 0 16px 52px rgba(0, 0, 0, 0.22);
-        transition:
-          transform 0.28s ease,
-          border-color 0.28s ease,
-          box-shadow 0.28s ease,
-          background 0.28s ease;
+        color: #ecf0f1;
+        transition: all 0.4s ease;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        text-align: center;
+        min-height: clamp(200px, 28vh, 280px);
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
       }
 
       .nav-card::before {
         content: "";
         position: absolute;
-        inset: 0;
-        border-radius: inherit;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
         background: linear-gradient(
-          135deg,
-          rgba(119, 240, 218, 0.14),
-          transparent 45%,
-          rgba(78, 134, 255, 0.1)
+          90deg,
+          transparent,
+          rgba(26, 188, 156, 0.1),
+          transparent
         );
-        opacity: 0;
-        transition: opacity 0.28s ease;
+        transition: left 0.6s ease;
       }
 
-      .nav-card:hover,
-      .nav-card:focus-visible {
-        transform: translateY(-6px);
-        border-color: var(--line-strong);
-        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3);
-        outline: none;
+      .nav-card:hover::before {
+        left: 100%;
       }
 
-      .nav-card:hover::before,
-      .nav-card:focus-visible::before {
-        opacity: 1;
+      .nav-card:hover {
+        transform: translateY(-10px);
+        background: rgba(255, 255, 255, 0.08);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3),
+          0 0 30px rgba(26, 188, 156, 0.2);
+        border-color: rgba(26, 188, 156, 0.3);
       }
 
-      .card-badge,
-      .card-title,
-      .card-description,
-      .card-link {
-        position: relative;
-        z-index: 1;
-      }
-
-      .card-badge {
-        display: inline-flex;
-        width: fit-content;
-        padding: 7px 10px;
-        border-radius: 999px;
-        background: rgba(119, 240, 218, 0.12);
-        color: var(--accent);
-        font-size: 0.77rem;
+      .card-icon {
+        font-size: clamp(1.5rem, 5vw, 2.2rem);
         font-weight: 700;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: clamp(14px, 2vh, 20px);
+        color: #a7fff0;
+        opacity: 0.95;
+        transition: transform 0.3s ease;
+      }
+
+      .nav-card:hover .card-icon {
+        transform: scale(1.08);
       }
 
       .card-title {
-        margin: 0;
-        font-size: clamp(1.5rem, 2.4vw, 2.05rem);
-        line-height: 1;
-        letter-spacing: -0.05em;
+        font-size: clamp(1.2rem, 4vw, 2rem);
+        font-weight: 600;
+        margin: 0 0 clamp(10px, 2vh, 18px);
+        color: #1abc9c;
       }
 
       .card-description {
-        margin: 0;
-        max-width: 34ch;
-        color: rgba(238, 246, 245, 0.76);
-        font-size: 1rem;
+        font-size: clamp(0.9rem, 2.5vw, 1.1rem);
+        opacity: 0.82;
         line-height: 1.5;
-      }
-
-      .card-link {
-        margin-top: auto;
-        color: #9cd8ff;
-        font-weight: 700;
-        letter-spacing: 0.04em;
+        margin: 0;
+        text-align: center;
+        max-width: 100%;
       }
 
       .site-footer {
-        width: min(1200px, calc(100% - 32px));
-        margin: 0 auto;
-        padding: 12px 0 20px;
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-        color: rgba(238, 246, 245, 0.62);
-        font-size: 0.88rem;
+        background: rgba(44, 62, 80, 0.9);
+        text-align: center;
+        padding: clamp(10px, 2vh, 18px) clamp(15px, 3vw, 25px);
+        backdrop-filter: blur(10px);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        margin-top: auto;
       }
 
       .site-footer p {
         margin: 0;
+        opacity: 0.72;
+        font-size: clamp(0.74rem, 2vw, 0.9rem);
       }
 
-      .site-footer a {
-        color: #b7efff;
+      .site-footer p + p {
+        margin-top: 4px;
       }
 
-      @keyframes heroShimmer {
-        0%,
-        100% {
-          transform: translateX(-55%);
-        }
-        50% {
-          transform: translateX(30%);
-        }
+      ::selection {
+        background: #16a085;
+        color: #ecf0f1;
       }
 
-      @media (max-width: 860px) {
-        main {
-          width: min(100%, calc(100% - 20px));
-          padding-top: 18px;
-        }
-
-        .nav-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .hero-title-line {
-          transform: scaleY(0.78);
-        }
-
-        .hero-title-line:last-child {
-          margin-top: -0.34em;
-        }
-
-        .site-footer {
-          width: min(100%, calc(100% - 20px));
-          padding-bottom: 16px;
-          flex-direction: column;
-        }
+      ::-moz-selection {
+        background: #16a085;
+        color: #ecf0f1;
       }
 
-      @media (max-height: 900px) {
-        main {
-          justify-content: flex-start;
-          gap: 18px;
-          padding-top: 16px;
-        }
-
+      @media (max-width: 768px) {
         .hero-section {
-          padding: 16px 18px;
+          padding: 22px 15px 16px;
+          min-height: 140px;
         }
 
-        .hero-copy {
-          font-size: 0.98rem;
+        .hero-line-main {
+          font-size: clamp(2rem, 8vw, 3rem);
+        }
+
+        .hero-line-sub {
+          font-size: clamp(1rem, 4.6vw, 1.45rem);
+          margin-top: -0.36em;
+        }
+
+        .hero-content p {
+          font-size: clamp(0.95rem, 3.5vw, 1.05rem);
+          padding: 0 10px;
+        }
+
+        .navigation-section {
+          padding: 16px;
         }
 
         .nav-card {
-          min-height: 190px;
+          min-height: 180px;
+          padding: clamp(15px, 4vw, 30px) clamp(12px, 3vw, 24px);
         }
       }
 
-      @media (max-height: 760px) {
-        .hero-kicker {
-          font-size: 0.72rem;
+      @media (max-height: 840px) {
+        .hero-section {
+          min-height: 130px;
+          padding-top: 18px;
+          padding-bottom: 12px;
         }
 
-        .hero-title-line:first-child {
-          font-size: clamp(2.35rem, 6vw, 4.8rem);
-        }
-
-        .hero-title-line:last-child {
-          font-size: clamp(1.2rem, 3vw, 2.2rem);
-        }
-
-        .hero-copy {
-          line-height: 1.45;
+        .navigation-section {
+          padding-top: 16px;
+          padding-bottom: 16px;
         }
 
         .nav-card {
-          min-height: 176px;
+          min-height: 170px;
+        }
+      }
+
+      @media (max-height: 700px) {
+        .hero-content p {
+          font-size: 0.92rem;
+        }
+
+        .card-icon {
+          margin-bottom: 10px;
+        }
+
+        .card-title {
+          margin-bottom: 8px;
         }
 
         .site-footer {
-          font-size: 0.82rem;
+          padding-top: 8px;
+          padding-bottom: 8px;
         }
       }
     </style>
+
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -389,49 +344,44 @@
     <main>
       <section class="hero-section">
         <div class="hero-content">
-          <p class="hero-kicker">Browser AVR toolkit</p>
-          <h1 class="hero-title">
-            <span class="hero-title-line">Uart Debug -</span>
-            <span class="hero-title-line"
+          <h1>
+            <span class="hero-line hero-line-main">Uart Debug -</span>
+            <span class="hero-line hero-line-sub"
               >Programming, flashing, and debugging AVR</span
             >
           </h1>
-          <p class="hero-copy">
-            Bring-up, serial diagnostics, and UPDI workflows in one browser
-            workspace, without installing extra desktop tools.
+          <p>
+            Browser-based UART diagnostics, chip programming, and AVR flashing
+            without installing extra desktop tools.
           </p>
         </div>
       </section>
 
-      <section class="navigation-section" aria-label="Main tools">
-        <p class="navigation-caption">Choose your workspace</p>
+      <section class="navigation-section">
         <div class="nav-grid">
           <a href="/terminal.html" class="nav-card">
-            <span class="card-badge">UART</span>
-            <h2 class="card-title">UART Terminal</h2>
+            <div class="card-icon">UART</div>
+            <h3 class="card-title">UART Terminal</h3>
             <p class="card-description">
-              Monitor and debug serial links with text, HEX, generators, and a
-              live oscilloscope view.
+              Real-time monitoring, logging, and debugging of UART connections.
             </p>
-            <span class="card-link">Open terminal</span>
           </a>
 
           <a href="/AVR-Programming.html" class="nav-card">
-            <span class="card-badge">UPDI</span>
-            <h2 class="card-title">Chip Programming</h2>
+            <div class="card-icon">AVR</div>
+            <h3 class="card-title">Chip Programming</h3>
             <p class="card-description">
-              Compile C code, inspect Intel HEX, and flash supported AVR chips
+              Compile firmware, inspect HEX files, and flash supported AVR chips
               directly from the browser.
             </p>
-            <span class="card-link">Open AVR programming</span>
           </a>
         </div>
       </section>
     </main>
 
     <footer class="site-footer">
-      <p>(c) 2025 uartdebug.com. Support: uartdebug@gmail.com</p>
-      <p>Author: Kabarukhin David. Telegram: @K1LLERV1P</p>
+      <p>(c) 2025 uartdebug.com - All rights reserved. Support - uartdebug@gmail.com</p>
+      <p>Author - Kabarukhin David, Telegram - @K1LLERV1P</p>
     </footer>
 
     <script>
