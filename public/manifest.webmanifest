@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Uart Debug UART Terminal",
+  "name": "Uart Debug AVR Tools",
   "short_name": "Uart Debug",
-  "description": "UART terminal and oscilloscope in your browser.",
+  "description": "UART terminal, AVR programming, flashing, and debugging in your browser.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

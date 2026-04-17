@@ -1,9 +1,19 @@
-const CACHE_NAME = "uartdebug-shell-v1";
+const CACHE_NAME = "uartdebug-shell-v2";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
+  "/terminal.html",
+  "/terminal/",
+  "/AVR-Programming.html",
+  "/AVR-Programming/",
+  "/uart/",
+  "/manifest.webmanifest",
   "/uart.css",
   "/uart.js",
+  "/AVR-Programming.css",
+  "/AVR-Programming.js",
+  "/updi-test.js",
+  "/updi-test.css",
   "/vendor/chart.umd.js",
   "/favicon.ico",
   "/icons/favicon-192.png",
@@ -68,15 +78,17 @@ self.addEventListener("fetch", (event) => {
 
 async function handleNavigationRequest(request) {
   const cache = await caches.open(CACHE_NAME);
+  const url = new URL(request.url);
+  const cacheKey = APP_SHELL_PATHS.has(url.pathname) ? url.pathname : "/index.html";
+
   try {
     const freshResponse = await fetch(request);
-    if (freshResponse && freshResponse.ok) {
-      cache.put("/index.html", freshResponse.clone());
+    if (freshResponse && freshResponse.ok && APP_SHELL_PATHS.has(url.pathname)) {
+      cache.put(cacheKey, freshResponse.clone());
     }
     return freshResponse;
   } catch (error) {
-    const cachedPage =
-      (await cache.match(request)) || (await cache.match("/index.html"));
+    const cachedPage = (await cache.match(cacheKey)) || (await cache.match("/index.html"));
     if (cachedPage) return cachedPage;
 
     return new Response("Offline", {

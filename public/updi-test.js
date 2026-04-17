@@ -144,6 +144,13 @@
     preferredPort: null,
   };
 
+  const AVR_UPDI_RUNTIME_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI__";
+  const LEGACY_UPDI_RUNTIME_KEY = "__UARTDEBUG_CANVAS_UPDI__";
+  const AVR_UPDI_BRIDGE_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI_BRIDGE__";
+  const LEGACY_UPDI_BRIDGE_KEY = "__UARTDEBUG_CANVAS_UPDI_BRIDGE__";
+  const AVR_SERIAL_STATE_EVENT = "ud-avr-programming-serial-state";
+  const LEGACY_SERIAL_STATE_EVENT = "ud-canvas-serial-state";
+
   const els = {};
 
   function $(id) {
@@ -296,7 +303,11 @@
 
   function getCanvasUpdiBridge() {
     if (typeof window === "undefined") return null;
-    return window.__UARTDEBUG_CANVAS_UPDI_BRIDGE__ || null;
+    return (
+      window[AVR_UPDI_BRIDGE_KEY] ||
+      window[LEGACY_UPDI_BRIDGE_KEY] ||
+      null
+    );
   }
 
   function getPortFingerprint(port) {
@@ -1876,19 +1887,23 @@
     updateView();
     appendLog("UPDI test page is ready.");
 
-      if (typeof window !== "undefined") {
-        window.__UARTDEBUG_CANVAS_UPDI__ = {
-          preparePortPermission: ensureUpdiPortPermission,
-          ensureSignature,
-          readSignature,
-          programHex,
-          hasLoadedImage: () => !!state.image,
-        };
+    if (typeof window !== "undefined") {
+      const runtime = {
+        preparePortPermission: ensureUpdiPortPermission,
+        ensureSignature,
+        readSignature,
+        programHex,
+        hasLoadedImage: () => !!state.image,
+      };
+
+      window[AVR_UPDI_RUNTIME_KEY] = runtime;
+      window[LEGACY_UPDI_RUNTIME_KEY] = runtime;
     }
 
     window.addEventListener("ud-updi-hex-artifact", handleExternalHexArtifactEvent);
+    window.addEventListener(AVR_SERIAL_STATE_EVENT, handleCanvasSerialStateEvent);
     window.addEventListener(
-      "ud-canvas-serial-state",
+      LEGACY_SERIAL_STATE_EVENT,
       handleCanvasSerialStateEvent
     );
 

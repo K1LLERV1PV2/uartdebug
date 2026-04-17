@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AVR Programming - Uart Debug</title>
+
+    <link rel="stylesheet" href="uart.css" />
+    <link rel="stylesheet" href="AVR-Programming.css" />
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/anyword-hint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  </head>
+
+  <body>
+    <main>
+      <div class="feature-panel">
+        <section class="canvas-section">
+          <div class="canvas-split-container">
+            <aside class="outliner">
+              <div class="outliner-header">
+                <h3 class="outliner-title">Files</h3>
+              </div>
+              <div class="outliner-list" id="fileList"></div>
+            </aside>
+
+            <div class="editor-wrap">
+              <div class="editor-header">
+                <h3 class="editor-title" id="editorTitle">Editor</h3>
+              </div>
+
+              <div class="editor-container">
+                <div class="editor-surface">
+                  <div id="editorHost"></div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="compile-wrap">
+              <div class="compile-panel">
+                <div class="editor-header">
+                  <h3 class="editor-title">Compile</h3>
+                </div>
+
+                <div class="compile-body">
+                  <div class="compile-target-row">
+                    <div class="connection-control canvas-updi-target compile-updi-target">
+                      <label for="mcuSelect">Target MCU</label>
+                      <select id="mcuSelect">
+                        <option value="auto" selected>Auto detect</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="compile-toolbar">
+                    <button class="connect-btn" id="compileBtn" type="button">
+                      Compile current file
+                    </button>
+
+                    <div
+                      id="hexStatus"
+                      class="hex-status"
+                      aria-live="polite"
+                      aria-disabled="true"
+                      title="HEX not ready"
+                    >
+                      <span class="dot" aria-hidden="true"></span>
+                      <span class="label">HEX: idle</span>
+                    </div>
+                  </div>
+
+                  <pre class="compile-log" id="compileLog"></pre>
+                </div>
+              </div>
+
+              <div class="flash-wrap">
+                <div class="editor-header">
+                  <h3 class="editor-title">Flash</h3>
+                </div>
+
+                <div class="flash-panel">
+                  <div class="flash-toolbar">
+                    <button
+                      class="connect-btn warning-btn"
+                      id="programHexBtn"
+                      data-external-handler="true"
+                      type="button"
+                    >
+                      Flash MCU
+                    </button>
+
+                    <button
+                      class="connect-btn secondary-btn"
+                      id="moreOptionsBtn"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="canvasUpdiSection"
+                    >
+                      More options
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+
+          <div id="fileContextMenu" class="file-context-menu">
+            <button type="button" data-action="rename">Rename</button>
+            <button type="button" data-action="delete">Delete</button>
+            <button type="button" data-action="download">Download</button>
+            <button type="button" data-action="compile">Compile</button>
+          </div>
+        </section>
+
+        <section
+          class="canvas-section canvas-updi-section"
+          id="canvasUpdiSection"
+          hidden
+        >
+          <div class="api-support-warning" id="apiWarning">
+            <strong>Attention:</strong> This page needs a Chromium-based browser
+            with Web Serial API support.
+          </div>
+
+          <div class="updi-layout">
+            <div class="updi-pane-stack">
+              <div class="updi-pane">
+                <div class="editor-header updi-pane-header">
+                  <h3 class="editor-title">Load a `.hex` file</h3>
+                </div>
+
+                <div class="updi-pane-body">
+                  <input id="hexFileInput" type="file" accept=".hex,.txt" />
+                </div>
+              </div>
+
+              <div class="updi-pane">
+                <div class="editor-header updi-pane-header">
+                  <h3 class="editor-title">Paste Intel HEX</h3>
+                  <div class="updi-pane-actions">
+                    <button
+                      class="action-btn"
+                      id="useTextareaBtn"
+                      type="button"
+                    >
+                      Use Text
+                    </button>
+                    <button
+                      class="action-btn ghost-btn"
+                      id="clearHexBtn"
+                      type="button"
+                    >
+                      Clear HEX
+                    </button>
+                  </div>
+                </div>
+
+                <div class="updi-pane-body updi-pane-body-textarea">
+                  <textarea
+                    id="hexTextarea"
+                    class="hex-textarea"
+                    spellcheck="false"
+                    placeholder="Compile current code or load your Intel HEX here."
+                  ></textarea>
+                </div>
+              </div>
+            </div>
+
+            <div class="updi-pane">
+              <div class="editor-header updi-pane-header">
+                <h3 class="editor-title">Summary</h3>
+                <div class="updi-status-inline disconnected" id="probeStatus">
+                  Target ready
+                </div>
+              </div>
+
+              <div class="updi-pane-body">
+                <dl class="summary-grid">
+                  <div>
+                    <dt>Source</dt>
+                    <dd id="summarySource">-</dd>
+                  </div>
+                  <div>
+                    <dt>Bytes</dt>
+                    <dd id="summaryBytes">-</dd>
+                  </div>
+                  <div>
+                    <dt>Segments</dt>
+                    <dd id="summarySegments">-</dd>
+                  </div>
+                  <div>
+                    <dt>Range</dt>
+                    <dd id="summaryRange">-</dd>
+                  </div>
+                  <div>
+                    <dt>Records</dt>
+                    <dd id="summaryRecords">-</dd>
+                  </div>
+                  <div>
+                    <dt>Target</dt>
+                    <dd id="summaryTarget">ATtiny1624</dd>
+                  </div>
+                  <div>
+                    <dt>Signature</dt>
+                    <dd id="summarySignature">-</dd>
+                  </div>
+                  <div>
+                    <dt>Revision</dt>
+                    <dd id="summaryRevision">-</dd>
+                  </div>
+                  <div>
+                    <dt>Serial</dt>
+                    <dd id="summarySerial">-</dd>
+                  </div>
+                </dl>
+
+                <div class="sib-box" id="summarySib">SIB: -</div>
+                <p class="summary-note" id="summaryNote">
+                  Compile a file or load a valid Intel HEX image to inspect it.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="editor-header updi-log-header">
+            <h3 class="editor-title">UPDI Log</h3>
+            <button
+              class="connect-btn secondary-btn"
+              id="clearLogBtn"
+              type="button"
+            >
+              Clear Log
+            </button>
+          </div>
+          <pre class="probe-log" id="probeLog"></pre>
+        </section>
+      </div>
+    </main>
+    <script defer src="AVR-Programming.js"></script>
+    <script defer src="updi-test.js"></script>
+  </body>
+</html>
