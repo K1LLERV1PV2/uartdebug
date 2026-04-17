@@ -1,16 +1,17 @@
 name: Deploy uartdebug
+
 on:
   push:
     branches: ["main"]
   workflow_dispatch:
     inputs:
       rollback:
-        description: "Откатиться на предыдущий релиз (без загрузки новых файлов)"
+        description: "Rollback to previous release without uploading new files"
         required: false
         type: boolean
         default: false
       to_release:
-        description: "Откат к релизу с меткой (например, 20240810-153000). Пусто — к предыдущему"
+        description: "Rollback to a specific release tag, e.g. 20240810-153000"
         required: false
         type: string
 
@@ -20,6 +21,7 @@ jobs:
     env:
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN || '' }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID || '' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,7 +78,7 @@ jobs:
           strip_components: 1
           rm: true
 
-      - name: Run remote deploy / rollback (fixed bootstrap + versions + retention)
+      - name: Run remote deploy / rollback
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -87,7 +89,6 @@ jobs:
           script: |
             set -euo pipefail
 
-            # ===== Params =====
             SHA="${{ github.sha }}"
             REF_NAME="${{ github.ref_name }}"
             RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -95,10 +96,11 @@ jobs:
             ROOT="/var/www/uartdebug"
             PUB_DIR="${ROOT}/public"
             BE_DIR="${ROOT}/backend"
+            PY_DIR="${ROOT}/python"
+
             RLS="${ROOT}/releases"
             PUB_RLS="${RLS}/public"
             BE_RLS="${RLS}/backend"
-            PY_DIR="${ROOT}/python"
             PY_RLS="${RLS}/python"
 
             PM2_NAME="${{ secrets.PM2_NAME }}"
@@ -107,15 +109,13 @@ jobs:
             HC_URL="${{ secrets.HC_URL || '' }}"
             [ -z "${HC_URL:-}" ] && HC_URL="http://68.183.170.241/health"
 
-            KEEP="${{ secrets.RELEASES_KEEP || '10' }}"   # сколько релизов хранить
+            KEEP="${{ secrets.RELEASES_KEEP || '10' }}"
             ROLLBACK="${{ inputs.rollback && '1' || '' }}"
             TO_RELEASE="${{ inputs.to_release || '' }}"
 
-            # ===== Prepare dirs =====
             sudo mkdir -p "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
             sudo chown -R "$USER":"$USER" "${ROOT}" "${RLS}" "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
 
-            # ===== Fixed bootstrap: если public/backend — каталоги, превращаем в симлинки на релизы =====
             ts_bootstrap="$(date +%Y%m%d-%H%M%S)-bootstrap"
             for X in public backend python; do
               DIR="${ROOT}/${X}"
@@ -124,21 +124,18 @@ jobs:
               if [ ! -L "$DIR" ] && [ -d "$DIR" ]; then
                 mkdir -p "${RLS_DIR}/${ts_bootstrap}"
                 rsync -a --delete "${DIR}/" "${RLS_DIR}/${ts_bootstrap}/"
-                rm -rf "${DIR}"                          # важный момент: убираем каталог
+                rm -rf "${DIR}"
                 ln -sfn "${RLS_DIR}/${ts_bootstrap}" "${DIR}"
               fi
             done
 
-            # ===== Rollback or Deploy =====
             if [ -n "${ROLLBACK}" ]; then
               echo "== Rollback mode =="
               if [ -n "${TO_RELEASE}" ]; then
-                # откат к конкретному релизу (если есть)
                 [ -d "${PUB_RLS}/${TO_RELEASE}" ] && ln -sfn "${PUB_RLS}/${TO_RELEASE}" "${PUB_DIR}" || echo "No public release ${TO_RELEASE}"
-                [ -d "${BE_RLS}/${TO_RELEASE}" ]  && ln -sfn "${BE_RLS}/${TO_RELEASE}"  "${BE_DIR}"  || echo "No backend release ${TO_RELEASE}"
-                [ -d "${PY_RLS}/${TO_RELEASE}" ]  && ln -sfn "${PY_RLS}/${TO_RELEASE}"  "${PY_DIR}"  || echo "No python release ${TO_RELEASE}"
+                [ -d "${BE_RLS}/${TO_RELEASE}" ] && ln -sfn "${BE_RLS}/${TO_RELEASE}" "${BE_DIR}" || echo "No backend release ${TO_RELEASE}"
+                [ -d "${PY_RLS}/${TO_RELEASE}" ] && ln -sfn "${PY_RLS}/${TO_RELEASE}" "${PY_DIR}" || echo "No python release ${TO_RELEASE}"
               else
-                # откат на предыдущий (не текущий)
                 if [ -d "${PUB_RLS}" ]; then
                   last_pub="$(ls -1 "${PUB_RLS}" | sort | tail -n 2 | head -n 1 || true)"
                   [ -n "${last_pub}" ] && ln -sfn "${PUB_RLS}/${last_pub}" "${PUB_DIR}" || echo "No previous public release"
@@ -147,26 +144,25 @@ jobs:
                   last_be="$(ls -1 "${BE_RLS}" | sort | tail -n 2 | head -n 1 || true)"
                   [ -n "${last_be}" ] && ln -sfn "${BE_RLS}/${last_be}" "${BE_DIR}" || echo "No previous backend release"
                 fi
-
                 if [ -d "${PY_RLS}" ]; then
                   last_py="$(ls -1 "${PY_RLS}" | sort | tail -n 2 | head -n 1 || true)"
                   [ -n "${last_py}" ] && ln -sfn "${PY_RLS}/${last_py}" "${PY_DIR}" || echo "No previous python release"
                 fi
               fi
-
             else
               echo "== Deploy new build =="
               PUB_SRC="/tmp/deploy/${SHA}/public"
               BE_SRC="/tmp/deploy/${SHA}/backend"
               PY_SRC="/tmp/deploy/${SHA}/python"
+
               NOW="$(date +%Y%m%d-%H%M%S)-${SHA:0:7}"
               PUB_NEW="${PUB_RLS}/${NOW}"
               BE_NEW="${BE_RLS}/${NOW}"
               PY_NEW="${PY_RLS}/${NOW}"
 
-              # Копируем артефакты, пишем метаданные, переключаем симлинки
               if [ -d "$PUB_SRC" ]; then
-                rm -rf "$PUB_NEW"; mkdir -p "$PUB_NEW"
+                rm -rf "$PUB_NEW"
+                mkdir -p "$PUB_NEW"
                 rsync -a --delete "$PUB_SRC"/ "$PUB_NEW"/
                 printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$PUB_NEW/RELEASE.txt"
                 ln -sfn "$PUB_NEW" "$PUB_DIR"
@@ -175,15 +171,18 @@ jobs:
               fi
 
               if [ -d "$BE_SRC" ]; then
-                rm -rf "$BE_NEW"; mkdir -p "$BE_NEW"
+                rm -rf "$BE_NEW"
+                mkdir -p "$BE_NEW"
                 rsync -a --delete "$BE_SRC"/ "$BE_NEW"/
                 printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$BE_NEW/RELEASE.txt"
                 ln -sfn "$BE_NEW" "$BE_DIR"
               else
                 echo "No backend artifacts at $BE_SRC (skip)"
               fi
+
               if [ -d "$PY_SRC" ]; then
-                rm -rf "$PY_NEW"; mkdir -p "$PY_NEW"
+                rm -rf "$PY_NEW"
+                mkdir -p "$PY_NEW"
                 rsync -a --delete "$PY_SRC"/ "$PY_NEW"/
                 printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$PY_NEW/RELEASE.txt"
                 ln -sfn "$PY_NEW" "$PY_DIR"
@@ -192,24 +191,35 @@ jobs:
               fi
             fi
 
-            # ===== Nginx reload (optional) =====
             if command -v nginx >/dev/null 2>&1; then
               sudo nginx -t && sudo systemctl reload nginx || true
             fi
 
-            # ===== Backend deps & PM2 =====
-            if [ -f "${BE_DIR}/package.json" ]; then
-              cd "${BE_DIR}"
-              npm ci --omit=dev || npm install --omit=dev
+            if [ -d "${BE_DIR}" ]; then
+              if [ -f "${BE_DIR}/package.json" ]; then
+                cd "${BE_DIR}"
+                npm ci --omit=dev || npm install --omit=dev
+              fi
+
               if command -v pm2 >/dev/null 2>&1; then
-                pm2 startOrReload ecosystem.config.js --only "${PM2_NAME}" || pm2 restart "${PM2_NAME}" || true
+                if [ -f "${BE_DIR}/ecosystem.config.js" ]; then
+                  cd "${BE_DIR}"
+                  pm2 startOrReload ecosystem.config.js --only "${PM2_NAME}" || pm2 restart "${PM2_NAME}" --update-env || true
+                elif [ -f "${BE_DIR}/compile-server.js" ]; then
+                  if pm2 describe "${PM2_NAME}" >/dev/null 2>&1; then
+                    pm2 restart "${PM2_NAME}" --update-env || true
+                  else
+                    pm2 start "${BE_DIR}/compile-server.js" --name "${PM2_NAME}" --cwd "${BE_DIR}" || true
+                  fi
+                else
+                  echo "No backend entrypoint found in ${BE_DIR} - skipping PM2 restart"
+                fi
                 pm2 save || true
               else
-                echo "pm2 not found — skipping"
+                echo "pm2 not found - skipping"
               fi
             fi
 
-            # ===== Healthcheck =====
             if [ -n "${HC_URL}" ]; then
               echo "Healthcheck: ${HC_URL}"
               code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "${HC_URL}" || echo 000)"
@@ -217,7 +227,6 @@ jobs:
               [ "${code}" = "200" ] || { echo "Healthcheck failed"; exit 1; }
             fi
 
-            # ===== Retention (keep last N) — skip on rollback =====
             if [ -z "${ROLLBACK}" ]; then
               for BASE in "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"; do
                 [ -d "$BASE" ] || continue
@@ -250,7 +259,7 @@ jobs:
           curl -sS -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TG_CHAT_ID}" \
             -d parse_mode=HTML \
-            -d text="<b>✅ Deploy success</b>%0Arepo: ${{ github.repository }}%0Asha: ${{ github.sha }}%0A<code>${{ github.ref_name }}</code>%0A<a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">Open run</a>" \
+            -d text="<b>Deploy success</b>%0Arepo: ${{ github.repository }}%0Asha: ${{ github.sha }}%0A<code>${{ github.ref_name }}</code>%0A<a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">Open run</a>" \
             >/dev/null || true
 
       - name: Notify Telegram (failure)
@@ -259,5 +268,5 @@ jobs:
           curl -sS -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
             -d chat_id="${TG_CHAT_ID}" \
             -d parse_mode=HTML \
-            -d text="<b>❌ Deploy failed</b>%0Arepo: ${{ github.repository }}%0Asha: ${{ github.sha }}%0A<code>${{ github.ref_name }}</code>%0A<a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">Open run</a>" \
+            -d text="<b>Deploy failed</b>%0Arepo: ${{ github.repository }}%0Asha: ${{ github.sha }}%0A<code>${{ github.ref_name }}</code>%0A<a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">Open run</a>" \
             >/dev/null || true

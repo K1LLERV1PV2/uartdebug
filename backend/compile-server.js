@@ -9,6 +9,15 @@ const os = require("os");
 const { execFile } = require("child_process");
 
 const app = express();
+const SERVER_CWD = __dirname;
+
+try {
+  process.chdir(SERVER_CWD);
+} catch (error) {
+  console.warn(
+    `[xc8-compile] failed to switch cwd to ${SERVER_CWD}: ${error.message}`
+  );
+}
 
 // Порт как в старой версии, чтобы совпало с nginx-конфигом
 const PORT = process.env.PORT || 8082;
@@ -24,7 +33,18 @@ app.use(express.json({ limit: "512kb" }));
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, opts, (err, stdout, stderr) => {
+    const childCwd = opts.cwd || process.cwd();
+    const execOpts = {
+      ...opts,
+      env: {
+        ...process.env,
+        ...opts.env,
+        PWD: childCwd,
+        OLDPWD: childCwd,
+      },
+    };
+
+    execFile(cmd, args, execOpts, (err, stdout, stderr) => {
       if (err) {
         err.stdout = stdout;
         err.stderr = stderr;
