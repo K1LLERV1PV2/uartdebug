@@ -819,7 +819,7 @@ int main(void) {
       code: files[current],
       mcu: selectedMcu,
       f_cpu: fcpuEl && Number(fcpuEl.value) ? Number(fcpuEl.value) : 20000000,
-      optimize: optEl && optEl.value ? optEl.value.trim() : "Os",
+      optimize: optEl && optEl.value ? optEl.value.trim() : "O1",
     };
 
     // UI: button state + HEX status: building
@@ -1021,7 +1021,7 @@ int main(void) {
       code: files[compileFileName],
       mcu: selectedMcu,
       f_cpu: fcpuEl && Number(fcpuEl.value) ? Number(fcpuEl.value) : 20000000,
-      optimize: optEl && optEl.value ? optEl.value.trim() : "Os",
+      optimize: optEl && optEl.value ? optEl.value.trim() : "O1",
     };
 
     if (btn) {

@@ -59,9 +59,11 @@ app.post("/api/avr/compile", async (req, res) => {
     const fCpuNum = Number(f_cpu);
     const F_CPU = Number.isFinite(fCpuNum) && fCpuNum > 0 ? fCpuNum : 20000000;
 
-    const OPT = ["O0", "O1", "O2", "O3", "Os"].includes(optimize)
-      ? optimize
-      : "Os";
+    const requestedOptimize =
+      typeof optimize === "string" ? optimize.trim() : "";
+    const OPT = ["O0", "O1", "O2", "O3"].includes(requestedOptimize)
+      ? requestedOptimize
+      : "O1";
 
     const tmp = await mkdtemp(path.join(os.tmpdir(), "xc8-"));
     const srcPath = path.join(tmp, safeName);
@@ -89,6 +91,7 @@ app.post("/api/avr/compile", async (req, res) => {
     try {
       compileResult = await run(XC8_CC, compileArgs, {
         timeout: 20000,
+        cwd: tmp,
       });
     } catch (err) {
       await rm(tmp, { recursive: true, force: true });
@@ -106,7 +109,7 @@ app.post("/api/avr/compile", async (req, res) => {
     const objcopyArgs = ["-O", "ihex", elfPath, hexPath];
 
     try {
-      await run(AVR_OBJCOPY, objcopyArgs, { timeout: 10000 });
+      await run(AVR_OBJCOPY, objcopyArgs, { timeout: 10000, cwd: tmp });
     } catch (err) {
       await rm(tmp, { recursive: true, force: true });
       return res.status(400).json({
