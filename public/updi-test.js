@@ -302,30 +302,35 @@
   function getPortFingerprint(port) {
     if (!port || typeof port.getInfo !== "function") return "";
     const info = port.getInfo() || {};
-    return `${info.usbVendorId || ""}:${info.usbProductId || ""}`;
+    const hasUsbIds = info.usbVendorId != null || info.usbProductId != null;
+    return hasUsbIds ? formatPortInfo(info) : "";
   }
 
   async function ensureUpdiPortPermission(options = {}) {
     const allowPrompt = options.allowPrompt !== false;
+    const useCached = options.useCached !== false;
+    const preferPrompt = options.preferPrompt !== false;
 
-    if (state.preferredPort) {
+    if (useCached && state.preferredPort) {
       return {
         port: state.preferredPort,
         source: "cached",
       };
     }
 
-    const grantedPorts =
-      typeof navigator.serial?.getPorts === "function"
-        ? await navigator.serial.getPorts()
-        : [];
+    if (!preferPrompt) {
+      const grantedPorts =
+        typeof navigator.serial?.getPorts === "function"
+          ? await navigator.serial.getPorts()
+          : [];
 
-    if (grantedPorts.length) {
-      state.preferredPort = grantedPorts[0];
-      return {
-        port: state.preferredPort,
-        source: "granted",
-      };
+      if (grantedPorts.length) {
+        state.preferredPort = grantedPorts[0];
+        return {
+          port: state.preferredPort,
+          source: "granted",
+        };
+      }
     }
 
     if (!allowPrompt) {
@@ -1546,13 +1551,33 @@
     updateView();
 
     try {
-      const portSelection = await ensureUpdiPortPermission();
+      let portSelection = await ensureUpdiPortPermission();
       appendLog(
         portSelection.source === "prompt"
           ? "Requesting serial port..."
-          : `Using selected serial port${getPortFingerprint(portSelection.port) ? `: ${getPortFingerprint(portSelection.port)}` : "."}`
+          : `Using selected serial port${getPortFingerprint(portSelection.port) ? `: ${getPortFingerprint(portSelection.port)}` : "..."}`
       );
-      session = await openUpdiSession(portSelection.port);
+
+      try {
+        session = await openUpdiSession(portSelection.port);
+      } catch (openError) {
+        if (portSelection.source === "prompt") {
+          throw openError;
+        }
+
+        state.preferredPort = null;
+        appendLog(
+          "Saved serial port could not be opened. Requesting port again..."
+        );
+        portSelection = await ensureUpdiPortPermission({
+          allowPrompt: true,
+          useCached: false,
+          preferPrompt: true,
+        });
+        appendLog("Requesting serial port...");
+        session = await openUpdiSession(portSelection.port);
+      }
+
       appendLog(`Opening port with ${SERIAL_BAUD} / 8E2...`);
       appendLog(`Port selected: ${formatPortInfo(session.port.getInfo?.())}`);
 
