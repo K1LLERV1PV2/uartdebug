@@ -154,7 +154,44 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 18px;
   min-height: 0;
+}
+
+.compile-panel {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.compile-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--dark-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.compile-target-row {
+  min-width: 0;
+}
+
+.compile-target-row .compile-updi-target {
+  min-width: 0;
+}
+
+.compile-target-row .compile-updi-target select {
+  width: 100% !important;
+  min-width: 0;
+  max-width: none;
 }
 
 .editor-header {
@@ -187,21 +224,6 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.compile-container {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.compile-surface {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
 }
 
 .compile-toolbar {
@@ -239,10 +261,10 @@
   min-height: 0;
   margin: 0;
   overflow: auto;
-  padding: 14px;
-  border-radius: 4px;
-  background: var(--dark-bg);
-  border: 1px solid var(--border-color);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: #d7f4ff;
   font:
     13px/1.5 ui-monospace,
@@ -270,6 +292,42 @@
 .compile-log {
   scrollbar-width: thin;
   scrollbar-color: #16a085 #2c3e50;
+}
+
+.flash-panel {
+  background: var(--dark-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.flash-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.flash-toolbar {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.flash-toolbar .connect-btn {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.flash-note {
+  margin: 0;
+  color: #ffd28c;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 #editorHost {
@@ -306,7 +364,7 @@
     flex: 0 0 auto;
   }
 
-  .compile-container {
+  .compile-panel {
     min-height: 260px;
   }
 }
@@ -855,6 +913,10 @@ main,
 
 .canvas-updi-section {
   margin-top: 0;
+}
+
+.canvas-updi-section[hidden] {
+  display: none !important;
 }
 
 .updi-layout {

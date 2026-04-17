@@ -204,6 +204,16 @@
     return selectedTarget ? selectedTarget.label : "ATtiny1624";
   }
 
+  function getProgramButtonLabel() {
+    const selectedKey = getSelectedTargetKey();
+    const selectedTarget = getSelectedTargetConfig();
+    const detectedTarget = getDetectedTargetConfig();
+    const target =
+      selectedKey !== "auto" ? selectedTarget : detectedTarget || null;
+
+    return target ? `Flash ${target.label}` : "Flash MCU";
+  }
+
   function getTargetByDeviceId(deviceId) {
     return TARGETS_BY_DEVICE_ID[deviceId] || null;
   }
@@ -359,13 +369,17 @@
     els.summarySerial.textContent = "-";
     els.summarySib.textContent = "SIB: -";
     setSummaryNote(
-      "Load a valid Intel HEX image to inspect it. Probe and signature read are available anytime; Program HEX requires a loaded image."
+      "Load a valid Intel HEX image to inspect it. Auto detect reads the chip signature when compile or flash needs it."
     );
   }
 
   function updateButtons() {
     const canUseSerial = "serial" in navigator && !state.busy;
     const blockedByCanvasSerial = isCanvasSerialConnected();
+    const usesExternalProgramHandler =
+      !!els.programHexBtn &&
+      els.programHexBtn.hasAttribute("data-external-handler");
+    const programButtonLabel = getProgramButtonLabel();
     const disabledReason = blockedByCanvasSerial
       ? "Disconnect UART before using UPDI."
       : "";
@@ -373,16 +387,25 @@
     if (els.probeBtn) {
       els.probeBtn.disabled = !canUseSerial || blockedByCanvasSerial;
     }
-    els.readSignatureBtn.disabled = !canUseSerial || blockedByCanvasSerial;
+    if (els.readSignatureBtn) {
+      els.readSignatureBtn.disabled = !canUseSerial || blockedByCanvasSerial;
+    }
     els.programHexBtn.disabled =
-      !canUseSerial || blockedByCanvasSerial || !state.image;
+      !canUseSerial ||
+      blockedByCanvasSerial ||
+      (!usesExternalProgramHandler && !state.image);
 
     if (els.probeBtn) els.probeBtn.title = disabledReason || "Probe UPDI";
     if (els.readSignatureBtn) {
       els.readSignatureBtn.title = disabledReason || "Read Signature";
     }
     if (els.programHexBtn) {
-      els.programHexBtn.title = disabledReason || "Program HEX";
+      els.programHexBtn.textContent = programButtonLabel;
+      els.programHexBtn.title =
+        disabledReason ||
+        (!usesExternalProgramHandler && !state.image
+          ? "Load or compile a HEX image first"
+          : programButtonLabel);
     }
   }
 
@@ -706,7 +729,7 @@
     els.hexFileInput.value = "";
     updateView();
     setSummaryNote(
-      "HEX input cleared. Probe and signature read are still available."
+      "HEX input cleared. Compile can regenerate a HEX image when needed."
     );
     if (logMessage) appendLog("HEX state cleared.");
   }
@@ -1531,7 +1554,7 @@
 
   async function readSignature() {
     try {
-      await runUpdiAction("Reading signature...", async (session) => {
+      return await runUpdiAction("Reading signature...", async (session) => {
         let progModeEntered = false;
 
         await handshakeAndReadSib(session);
@@ -1542,6 +1565,7 @@
           const description = describeSignatureResult(info);
 
           setSummaryNote(description.text, description.kind);
+          return info;
         } finally {
           if (progModeEntered) {
             await leaveNvmProgMode(session);
@@ -1551,6 +1575,16 @@
     } catch (error) {
       setSummaryNote(error.message || "Signature read failed.", "error");
     }
+  }
+
+  async function ensureSignature(options = {}) {
+    const force = !!options.force;
+
+    if (!force && state.signatureInfo) {
+      return state.signatureInfo;
+    }
+
+    return await readSignature();
   }
 
   async function programHex() {
@@ -1655,7 +1689,7 @@
       if (els.apiWarning) els.apiWarning.classList.add("show");
       appendLog("Web Serial API is not available in this browser.");
       setSummaryNote(
-        "Web Serial API is required for probe, signature read, and flash programming.",
+        "Web Serial API is required for signature read and flash programming.",
         "error"
       );
     } else {
@@ -1672,8 +1706,15 @@
     if (els.probeBtn) {
       els.probeBtn.addEventListener("click", probeUpdi);
     }
-    els.readSignatureBtn.addEventListener("click", readSignature);
-    els.programHexBtn.addEventListener("click", programHex);
+    if (els.readSignatureBtn) {
+      els.readSignatureBtn.addEventListener("click", readSignature);
+    }
+    if (
+      els.programHexBtn &&
+      !els.programHexBtn.hasAttribute("data-external-handler")
+    ) {
+      els.programHexBtn.addEventListener("click", programHex);
+    }
     els.mcuSelect.addEventListener("change", () => {
       state.programInfo = null;
       if (state.hexText) {
@@ -1705,7 +1746,6 @@
     return !!(
       els.probeStatus &&
       els.mcuSelect &&
-      els.readSignatureBtn &&
       els.programHexBtn &&
       els.clearLogBtn &&
       els.hexFileInput &&
@@ -1762,6 +1802,15 @@
     checkSupport();
     updateView();
     appendLog("UPDI test page is ready.");
+
+    if (typeof window !== "undefined") {
+      window.__UARTDEBUG_CANVAS_UPDI__ = {
+        ensureSignature,
+        readSignature,
+        programHex,
+        hasLoadedImage: () => !!state.image,
+      };
+    }
 
     window.addEventListener("ud-updi-hex-artifact", handleExternalHexArtifactEvent);
     window.addEventListener(

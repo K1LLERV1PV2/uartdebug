@@ -31,30 +31,6 @@
   <body>
     <main>
       <div class="feature-panel">
-        <section class="uart-section">
-          <div class="connection-panel">
-            <div class="connection-control canvas-updi-target">
-              <label for="mcuSelect">Target MCU</label>
-              <select id="mcuSelect">
-                <option value="auto" selected>Auto detect</option>
-              </select>
-            </div>
-            <button class="connect-btn" id="readSignatureBtn" type="button">
-              Read Signature
-            </button>
-            <button
-              class="connect-btn warning-btn"
-              id="programHexBtn"
-              type="button"
-            >
-              Flash MCU
-            </button>
-            <span class="connection-note canvas-updi-note">
-              Read Signature auto-detects the connected chip.
-            </span>
-          </div>
-        </section>
-
         <section class="canvas-section">
           <div class="canvas-split-container">
             <aside class="outliner">
@@ -77,12 +53,21 @@
             </div>
 
             <aside class="compile-wrap">
-              <div class="editor-header">
-                <h3 class="editor-title">Compile</h3>
-              </div>
+              <div class="compile-panel">
+                <div class="editor-header">
+                  <h3 class="editor-title">Compile</h3>
+                </div>
 
-              <div class="editor-container compile-container">
-                <div class="compile-surface">
+                <div class="compile-body">
+                  <div class="compile-target-row">
+                    <div class="connection-control canvas-updi-target compile-updi-target">
+                      <label for="mcuSelect">Target MCU</label>
+                      <select id="mcuSelect">
+                        <option value="auto" selected>Auto detect</option>
+                      </select>
+                    </div>
+                  </div>
+
                   <div class="compile-toolbar">
                     <button class="connect-btn" id="compileBtn" type="button">
                       Compile current file
@@ -103,6 +88,35 @@
                   <pre class="compile-log" id="compileLog"></pre>
                 </div>
               </div>
+
+              <div class="flash-wrap">
+                <div class="editor-header">
+                  <h3 class="editor-title">Flash</h3>
+                </div>
+
+                <div class="flash-panel">
+                  <div class="flash-toolbar">
+                    <button
+                      class="connect-btn warning-btn"
+                      id="programHexBtn"
+                      data-external-handler="true"
+                      type="button"
+                    >
+                      Flash MCU
+                    </button>
+
+                    <button
+                      class="connect-btn secondary-btn"
+                      id="moreOptionsBtn"
+                      type="button"
+                      aria-expanded="false"
+                      aria-controls="canvasUpdiSection"
+                    >
+                      More options
+                    </button>
+                  </div>
+                </div>
+              </div>
             </aside>
           </div>
 
@@ -114,7 +128,11 @@
           </div>
         </section>
 
-        <section class="canvas-section canvas-updi-section">
+        <section
+          class="canvas-section canvas-updi-section"
+          id="canvasUpdiSection"
+          hidden
+        >
           <div class="api-support-warning" id="apiWarning">
             <strong>Attention:</strong> This page needs a Chromium-based browser
             with Web Serial API support.

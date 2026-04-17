@@ -93,11 +93,76 @@
   function appendCompileBlock(title, text) {
     const el = $("compileLog");
     if (!el) return;
-    const normalized = String(text || "").replace(/\r\n/g, "\n").trim();
+    const normalized = sanitizeCompilerOutput(text);
     if (!normalized) return;
     appendCompileLog(title);
     el.textContent += `${normalized}\n`;
     el.scrollTop = el.scrollHeight;
+  }
+
+  function sanitizeCompilerOutput(text) {
+    return String(text || "")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .filter(
+        (line) =>
+          !/^\s*sh:\s*0:\s*getcwd\(\)\s*failed:\s*No such file or directory\s*$/.test(
+            line
+          )
+      )
+      .join("\n")
+      .trim();
+  }
+
+  function setMoreOptionsExpanded(expanded) {
+    const section = $("canvasUpdiSection");
+    const btn = $("moreOptionsBtn");
+    if (!section || !btn) return;
+
+    const isExpanded = !!expanded;
+    section.hidden = !isExpanded;
+    btn.setAttribute("aria-expanded", String(isExpanded));
+    btn.textContent = isExpanded ? "Hide options" : "More options";
+    btn.title = isExpanded
+      ? "Hide advanced UPDI tools"
+      : "Show advanced UPDI tools";
+  }
+
+  function toggleMoreOptions() {
+    const section = $("canvasUpdiSection");
+    if (!section) return;
+    setMoreOptionsExpanded(section.hidden);
+  }
+
+  function getCanvasUpdiRuntime() {
+    if (typeof window === "undefined") return null;
+    return window.__UARTDEBUG_CANVAS_UPDI__ || null;
+  }
+
+  async function ensureAutoDetectedTarget() {
+    const updi = getCanvasUpdiRuntime();
+    if (!updi || typeof updi.ensureSignature !== "function") {
+      throw new Error("UPDI auto detect is unavailable on this page.");
+    }
+
+    return await updi.ensureSignature({ force: true });
+  }
+
+  async function handleFlashCurrent() {
+    const updi = getCanvasUpdiRuntime();
+    if (!updi || typeof updi.programHex !== "function") {
+      appendCompileLog("Flash tools are not ready yet.");
+      return;
+    }
+
+    if (!updi.hasLoadedImage || !updi.hasLoadedImage()) {
+      await compileCurrentFile();
+      if (!updi.hasLoadedImage || !updi.hasLoadedImage()) {
+        return;
+      }
+    }
+
+    await updi.programHex();
   }
 
   function updateCompilePanelState(resetLog = false) {
@@ -623,25 +688,29 @@ int main(void) {
   }
 
   function bindUI() {
-    const newBtn = $("newBtn");
-    const renameBtn = $("renameBtn");
-    const deleteBtn = $("deleteBtn");
-    const downloadBtn = $("downloadBtn");
-    const compileBtn = $("compileBtn");
-    const hexStatus = $("hexStatus");
-    const fileContextMenu = $("fileContextMenu");
+      const newBtn = $("newBtn");
+      const renameBtn = $("renameBtn");
+      const deleteBtn = $("deleteBtn");
+      const downloadBtn = $("downloadBtn");
+      const compileBtn = $("compileBtn");
+      const hexStatus = $("hexStatus");
+      const programHexBtn = $("programHexBtn");
+      const moreOptionsBtn = $("moreOptionsBtn");
+      const fileContextMenu = $("fileContextMenu");
 
     newBtn && newBtn.addEventListener("click", newCanvas);
     renameBtn &&
       renameBtn.addEventListener("click", () => current && renameFile(current));
     deleteBtn &&
       deleteBtn.addEventListener("click", () => current && deleteFile(current));
-    downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
-    compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
-    hexStatus &&
-      hexStatus.addEventListener("click", (event) => {
-        event.stopPropagation();
-        downloadHex();
+      downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
+      compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
+      programHexBtn && programHexBtn.addEventListener("click", handleFlashCurrent);
+      moreOptionsBtn && moreOptionsBtn.addEventListener("click", toggleMoreOptions);
+      hexStatus &&
+        hexStatus.addEventListener("click", (event) => {
+          event.stopPropagation();
+          downloadHex();
       });
 
     // Shared file context menu: click on items
@@ -798,10 +867,10 @@ int main(void) {
           ? String(bridge.getDetectedTargetKey() || "").trim()
           : "";
 
-      if (!detectedMcu) {
-        alert(
-          "Auto detect mode needs a known chip signature. Read Signature first or choose a concrete MCU before compiling."
-        );
+        if (!detectedMcu) {
+          alert(
+            "Auto detect could not resolve a supported chip. Check the UPDI connection or choose a concrete MCU before compiling."
+          );
         try {
           if (typeof setHexStatus === "function") setHexStatus("error");
         } catch {}
@@ -987,33 +1056,45 @@ int main(void) {
       }
     } catch {}
 
+    setCompileLogText("");
+
     const mcuEl = $("mcuSelect");
     const fcpuEl = $("fCpuInput");
     const optEl = $("optimizeSelect");
     let selectedMcu = mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624";
 
     if (selectedMcu === "auto") {
-      const bridge =
-        typeof window !== "undefined"
-          ? window.__UARTDEBUG_CANVAS_UPDI_BRIDGE__
-          : null;
-      const detectedMcu =
-        bridge && typeof bridge.getDetectedTargetKey === "function"
-          ? String(bridge.getDetectedTargetKey() || "").trim()
-          : "";
+      appendCompileLog("Auto detect is enabled. Reading chip signature...");
 
-      if (!detectedMcu) {
-        setCompileLogText("");
+      try {
+        const signatureInfo = await ensureAutoDetectedTarget();
+        const detectedMcu =
+          signatureInfo && signatureInfo.matchedTargetKey
+            ? String(signatureInfo.matchedTargetKey).trim()
+            : "";
+        const detectedLabel =
+          signatureInfo && signatureInfo.matchedTargetLabel
+            ? String(signatureInfo.matchedTargetLabel).trim()
+            : detectedMcu;
+
+        if (!detectedMcu) {
+          throw new Error(
+            "Auto detect could not resolve a supported chip. Check the UPDI connection or choose a concrete MCU before compiling."
+          );
+        }
+
+        selectedMcu = detectedMcu;
+        appendCompileLog(`Detected target: ${detectedLabel}.`);
+      } catch (error) {
         appendCompileLog(
-          "Auto detect mode needs a known chip signature. Read Signature first or choose a concrete MCU before compiling."
+          error.message ||
+            "Auto detect could not resolve a supported chip. Check the UPDI connection or choose a concrete MCU before compiling."
         );
         setHexStatus("error");
         updateHexUI(false);
         restoreButton();
         return;
       }
-
-      selectedMcu = detectedMcu;
     }
 
     const payload = {
@@ -1037,7 +1118,6 @@ int main(void) {
     lastHexName = null;
     dispatchUpdiHexArtifact();
 
-    setCompileLogText("");
     appendCompileLog(`Compiling "${compileFileName}" for ${selectedMcu}...`);
     appendCompileLog(
       `Options: F_CPU=${payload.f_cpu}, optimize=${payload.optimize}.`
@@ -1132,16 +1212,17 @@ int main(void) {
       `HEX ready: ${lastHexName} (${selectedMcu}, F_CPU=${payload.f_cpu}, ${payload.optimize}).`
     );
 
+    const filteredCompileStdout = sanitizeCompilerOutput(data.compile_stdout);
+    const filteredCompileStderr = sanitizeCompilerOutput(data.compile_stderr);
     const hasCompilerOutput =
-      (data.compile_stdout && String(data.compile_stdout).trim()) ||
-      (data.compile_stderr && String(data.compile_stderr).trim());
+      !!filteredCompileStdout || !!filteredCompileStderr;
 
     if (!hasCompilerOutput) {
       appendCompileLog("Compiler returned no additional messages.");
     }
 
-    appendCompileBlock("Compiler stdout", data.compile_stdout);
-    appendCompileBlock("Compiler stderr", data.compile_stderr);
+    appendCompileBlock("Compiler stdout", filteredCompileStdout);
+    appendCompileBlock("Compiler stderr", filteredCompileStderr);
 
     restoreButton();
   }
@@ -1153,6 +1234,7 @@ int main(void) {
     if (!current) current = Object.keys(files)[0];
     initUpdiBridge();
 
+    setMoreOptionsExpanded(false);
     bindUI();
     initEditor();
 
