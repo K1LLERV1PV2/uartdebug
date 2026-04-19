@@ -133,6 +133,7 @@
   const state = {
     fileName: "",
     hexText: "",
+    imageSource: "",
     image: null,
     busy: false,
     busyLabel: "",
@@ -391,6 +392,8 @@
   }
 
   function setStatus(kind, text) {
+    if (!els.probeStatus) return;
+
     els.probeStatus.classList.remove(
       "connected",
       "disconnected",
@@ -429,7 +432,7 @@
     els.summarySerial.textContent = "-";
     els.summarySib.textContent = "SIB: -";
     setSummaryNote(
-      "Load a valid Intel HEX image to inspect it. Auto detect reads the chip signature when compile or flash needs it."
+      "Compile a file or upload a valid Intel HEX image to inspect it. Auto detect reads the chip signature when compile or flash needs it."
     );
   }
 
@@ -471,7 +474,9 @@
 
   function updateView() {
     els.summaryTarget.textContent = getDisplayTargetLabel();
-    els.summarySource.textContent = state.image ? state.fileName || "textarea" : "-";
+    els.summarySource.textContent = state.image
+      ? state.fileName || "firmware.hex"
+      : "-";
     els.summaryBytes.textContent = state.image ? String(state.image.bytesTotal) : "-";
     els.summarySegments.textContent = state.image
       ? String(state.image.segments.length)
@@ -754,7 +759,7 @@
     return -1;
   }
 
-  function loadHexText(hexText, sourceName) {
+  function loadHexText(hexText, sourceName, sourceKind = "external") {
     const image = parseIntelHex(hexText);
     const target = validateImageForTarget(image);
     const targetLabel =
@@ -764,7 +769,8 @@
         : getDisplayTargetLabel());
 
     state.hexText = hexText.replace(/\r\n/g, "\n");
-    state.fileName = sourceName || "textarea";
+    state.fileName = sourceName || "firmware.hex";
+    state.imageSource = sourceKind;
     state.image = image;
     state.programInfo = null;
     state.lastProbeError = "";
@@ -782,14 +788,13 @@
   function clearHexState(logMessage = true) {
     state.fileName = "";
     state.hexText = "";
+    state.imageSource = "";
     state.image = null;
     state.programInfo = null;
     state.lastProbeError = "";
-    els.hexTextarea.value = "";
-    els.hexFileInput.value = "";
     updateView();
     setSummaryNote(
-      "HEX input cleared. Compile can regenerate a HEX image when needed."
+      "HEX image cleared. Compile can regenerate one when needed."
     );
     if (logMessage) appendLog("HEX state cleared.");
   }
@@ -863,41 +868,80 @@
       detail && typeof detail.fileName === "string" && detail.fileName.trim()
         ? detail.fileName.trim()
         : "compiled.hex";
+    const source =
+      detail && typeof detail.source === "string" && detail.source.trim()
+        ? detail.source.trim()
+        : "compiled";
 
     if (!hexText.trim()) {
+      if (source === "compiled" && state.imageSource && state.imageSource !== "compiled") {
+        updateView();
+        return;
+      }
+
       clearHexState(false);
       setSummaryNote(
-        "Compile a file or load a HEX image to enable UPDI programming."
+        "Compile a file or upload a HEX image to enable UPDI programming."
       );
       updateView();
       return;
     }
 
     try {
-      els.hexTextarea.value = hexText;
-      loadHexText(hexText, fileName);
-      appendLog(`HEX synced from canvas: ${fileName}.`);
-      setSummaryNote("Compiled HEX synced from the current canvas.", "ok");
+      loadExternalHexFile(hexText, fileName, source);
     } catch (error) {
+      state.fileName = "";
+      state.hexText = "";
+      state.imageSource = "";
       state.image = null;
       state.programInfo = null;
       updateView();
       setSummaryNote(
-        error.message || "Failed to sync compiled HEX from canvas.",
+        error.message ||
+          (source === "uploaded"
+            ? "Failed to load HEX file."
+            : "Failed to sync compiled HEX from canvas."),
         "error"
       );
-      appendLog(`Compiled HEX sync failed: ${error.message || error}`);
+      appendLog(
+        `${
+          source === "uploaded" ? "HEX load failed" : "Compiled HEX sync failed"
+        }: ${error.message || error}`
+      );
     }
   }
 
-  async function readFileText(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () =>
-        reject(reader.error || new Error("File read failed."));
-      reader.readAsText(file);
-    });
+  function loadExternalHexFile(hexText, fileName, source = "external") {
+    loadHexText(hexText, fileName, source);
+
+    if (source === "uploaded") {
+      appendLog(`HEX loaded from file: ${fileName}.`);
+      setSummaryNote("HEX image loaded from file.", "ok");
+    } else {
+      appendLog(`HEX synced from canvas: ${fileName}.`);
+      setSummaryNote("Compiled HEX synced from the current canvas.", "ok");
+    }
+  }
+
+  function loadHexFileWithFeedback(hexText, fileName, source = "uploaded") {
+    try {
+      loadExternalHexFile(hexText, fileName, source);
+    } catch (error) {
+      setSummaryNote(
+        error.message ||
+          (source === "uploaded"
+            ? "Failed to load HEX file."
+            : "Failed to sync compiled HEX from canvas."),
+        "error"
+      );
+      appendLog(
+        `${source === "uploaded" ? "HEX load failed" : "HEX sync failed"}: ${
+          error.message || error
+        }`
+      );
+      updateView();
+      throw error;
+    }
   }
 
   function formatPortInfo(info) {
@@ -1695,7 +1739,7 @@
           }
 
           appendLog(
-            `Programming ${pages.length} page(s) to ${target.label} from ${state.fileName || "textarea"}.`
+            `Programming ${pages.length} page(s) to ${target.label} from ${state.fileName || "firmware.hex"}.`
           );
 
           await chipErase(session, target);
@@ -1713,7 +1757,7 @@
           }
 
           state.programInfo = {
-            fileName: state.fileName || "textarea",
+            fileName: state.fileName || "firmware.hex",
             pagesWritten: pages.length,
             bytesProgrammed: image.bytesTotal,
             deviceId: info.deviceId,
@@ -1737,37 +1781,6 @@
     }
   }
 
-  async function handleFileLoad() {
-    const file = els.hexFileInput.files && els.hexFileInput.files[0];
-    if (!file) return;
-
-    try {
-      const text = await readFileText(file);
-      els.hexTextarea.value = text;
-      loadHexText(text, file.name);
-    } catch (error) {
-      state.image = null;
-      state.programInfo = null;
-      updateView();
-      setSummaryNote(error.message || "Failed to load HEX file.", "error");
-      setStatus("error", "HEX invalid");
-      appendLog(`File load failed: ${error.message || error}`);
-    }
-  }
-
-  function handleTextareaLoad() {
-    try {
-      loadHexText(els.hexTextarea.value, "textarea");
-    } catch (error) {
-      state.image = null;
-      state.programInfo = null;
-      updateView();
-      setSummaryNote(error.message || "HEX parse failed.", "error");
-      setStatus("error", "HEX invalid");
-      appendLog(`HEX parse failed: ${error.message || error}`);
-    }
-  }
-
   function checkSupport() {
     if (!("serial" in navigator)) {
       if (els.apiWarning) els.apiWarning.classList.add("show");
@@ -1783,8 +1796,6 @@
   }
 
   function bind() {
-    els.hexFileInput.addEventListener("change", handleFileLoad);
-    els.useTextareaBtn.addEventListener("click", handleTextareaLoad);
     els.clearHexBtn.addEventListener("click", () => clearHexState());
     els.clearLogBtn.addEventListener("click", clearLog);
     if (els.probeBtn) {
@@ -1803,8 +1814,15 @@
       state.programInfo = null;
       if (state.hexText) {
         try {
-          loadHexText(state.hexText, state.fileName || "textarea");
+          loadHexText(
+            state.hexText,
+            state.fileName || "firmware.hex",
+            state.imageSource || "external"
+          );
         } catch (error) {
+          state.fileName = "";
+          state.hexText = "";
+          state.imageSource = "";
           state.image = null;
           state.programInfo = null;
           updateView();
@@ -1828,13 +1846,9 @@
 
   function hasRequiredElements() {
     return !!(
-      els.probeStatus &&
       els.mcuSelect &&
       els.programHexBtn &&
       els.clearLogBtn &&
-      els.hexFileInput &&
-      els.hexTextarea &&
-      els.useTextareaBtn &&
       els.clearHexBtn &&
       els.summarySource &&
       els.summaryBytes &&
@@ -1859,9 +1873,6 @@
     els.readSignatureBtn = $("readSignatureBtn");
     els.programHexBtn = $("programHexBtn");
     els.clearLogBtn = $("clearLogBtn");
-    els.hexFileInput = $("hexFileInput");
-    els.hexTextarea = $("hexTextarea");
-    els.useTextareaBtn = $("useTextareaBtn");
     els.clearHexBtn = $("clearHexBtn");
     els.summarySource = $("summarySource");
     els.summaryBytes = $("summaryBytes");
@@ -1893,6 +1904,9 @@
         ensureSignature,
         readSignature,
         programHex,
+        loadHexFile: (hexText, fileName, source = "uploaded") =>
+          loadHexFileWithFeedback(hexText, fileName, source),
+        clearLoadedHex: () => clearHexState(false),
         hasLoadedImage: () => !!state.image,
       };
 

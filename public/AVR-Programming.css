@@ -480,6 +480,114 @@ main,
 .file-item.new-item .file-name {
   flex: 0 0 auto;
 }
+
+.file-add-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.file-add-modal[hidden] {
+  display: none !important;
+}
+
+.file-add-dialog {
+  position: relative;
+  width: min(100%, 500px);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: #34495e;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.file-add-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px;
+  border-bottom: 1px solid #7f8c8d;
+}
+
+.file-add-close {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: #ecf0f1;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.file-add-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.file-add-body {
+  padding: 20px;
+}
+
+.file-add-intro {
+  margin: 0 0 16px;
+  color: var(--muted-text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.file-add-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.file-add-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 118px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--dark-bg);
+  color: var(--text-color);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 120ms ease;
+}
+
+.file-add-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+.file-add-card-title {
+  display: block;
+  color: var(--text-color);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.file-add-card-copy {
+  display: block;
+  color: var(--muted-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
 /* GAP for file list items */
 .outliner-list {
   display: flex;
@@ -913,6 +1021,7 @@ main,
 
 .canvas-updi-section {
   margin-top: 0;
+  --updi-pane-surface-height: 440px;
 }
 
 .canvas-updi-section[hidden] {
@@ -921,8 +1030,9 @@ main,
 
 .updi-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 1.25fr) minmax(260px, 1fr);
+  grid-template-columns: 305px minmax(0, 1fr);
   gap: 18px;
+  align-items: start;
 }
 
 .updi-pane-stack {
@@ -934,6 +1044,8 @@ main,
 
 .updi-pane {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .updi-pane-header {
@@ -941,14 +1053,25 @@ main,
   gap: 12px;
 }
 
+.updi-pane-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
 .updi-pane-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+  justify-content: flex-end;
 }
 
 .updi-pane-body {
+  box-sizing: border-box;
+  height: var(--updi-pane-surface-height);
+  overflow: auto;
   background: var(--dark-bg);
   border: 1px solid var(--border-color);
   border-radius: 4px;
@@ -1072,23 +1195,27 @@ main,
   outline: none;
 }
 
+.updi-pane-body::-webkit-scrollbar,
 .hex-textarea::-webkit-scrollbar,
 .probe-log::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
+.updi-pane-body::-webkit-scrollbar-track,
 .hex-textarea::-webkit-scrollbar-track,
 .probe-log::-webkit-scrollbar-track {
   background: var(--dark-bg);
 }
 
+.updi-pane-body::-webkit-scrollbar-thumb,
 .hex-textarea::-webkit-scrollbar-thumb,
 .probe-log::-webkit-scrollbar-thumb {
   background: var(--primary-color);
   border-radius: 4px;
 }
 
+.updi-pane-body,
 .hex-textarea,
 .probe-log {
   scrollbar-width: thin;
@@ -1202,14 +1329,14 @@ main,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 18px 0 12px;
+  margin: 0 0 8px;
   gap: 12px;
 }
 
 .probe-log {
+  box-sizing: border-box;
   margin: 0;
-  min-height: 240px;
-  max-height: 420px;
+  height: var(--updi-pane-surface-height);
   overflow: auto;
   padding: 14px;
   border-radius: 4px;
@@ -1230,9 +1357,19 @@ main,
   .updi-layout {
     grid-template-columns: 1fr;
   }
+
+  .updi-pane-body,
+  .probe-log {
+    height: auto;
+    min-height: 240px;
+  }
 }
 
 @media (max-width: 860px) {
+  .file-add-options {
+    grid-template-columns: 1fr;
+  }
+
   .summary-grid {
     grid-template-columns: 1fr;
   }

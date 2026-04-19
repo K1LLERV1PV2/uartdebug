@@ -18,6 +18,18 @@
   let current = null;
   let saveTimer = null;
   let contextMenuFile = null;
+  const EDITOR_FILE_EXTENSIONS = new Set([
+    "c",
+    "h",
+    "cpp",
+    "cc",
+    "hpp",
+    "ino",
+    "s",
+    "asm",
+    "txt",
+  ]);
+  const HEX_FILE_EXTENSIONS = new Set(["hex", "ihex"]);
 
   function setHexStatus(state, filename) {
     setHexStatus._state = state;
@@ -288,6 +300,151 @@ int main(void) {
     return `${stem}_${i}${ext}`;
   }
 
+  function uniqueImportedName(base) {
+    if (!base || !files[base]) return base;
+
+    const lastDot = base.lastIndexOf(".");
+    const hasExtension = lastDot > 0;
+    const stem = hasExtension ? base.slice(0, lastDot) : base;
+    const ext = hasExtension ? base.slice(lastDot) : "";
+    let index = 2;
+    let candidate = `${stem}_${index}${ext}`;
+
+    while (files[candidate]) {
+      index += 1;
+      candidate = `${stem}_${index}${ext}`;
+    }
+
+    return candidate;
+  }
+
+  function getFileExtension(name) {
+    const lastDot = typeof name === "string" ? name.lastIndexOf(".") : -1;
+    return lastDot > -1 ? name.slice(lastDot + 1).toLowerCase() : "";
+  }
+
+  function looksLikeIntelHex(text) {
+    const firstContentLine = String(text || "")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean);
+
+    return !!firstContentLine && firstContentLine.startsWith(":");
+  }
+
+  function resolveUploadedFileKind(fileName, text) {
+    const ext = getFileExtension(fileName);
+
+    if (HEX_FILE_EXTENSIONS.has(ext)) return "hex";
+    if (ext === "txt" && looksLikeIntelHex(text)) return "hex";
+    if (!ext || EDITOR_FILE_EXTENSIONS.has(ext)) return "editor";
+    return "unsupported";
+  }
+
+  async function readLocalFileText(file) {
+    if (!file) return "";
+    if (typeof file.text === "function") {
+      return await file.text();
+    }
+
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () =>
+        reject(reader.error || new Error("File read failed."));
+      reader.readAsText(file);
+    });
+  }
+
+  function openAddFileModal() {
+    const modal = $("fileAddModal");
+    if (!modal) return;
+
+    closeFileContextMenu();
+    modal.hidden = false;
+
+    requestAnimationFrame(() => {
+      const primaryAction = $("createNewFileCard");
+      primaryAction && primaryAction.focus();
+    });
+  }
+
+  function closeAddFileModal() {
+    const modal = $("fileAddModal");
+    if (!modal) return;
+    modal.hidden = true;
+  }
+
+  function dispatchHexArtifact(detail) {
+    if (typeof window === "undefined" || typeof CustomEvent !== "function") {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("ud-updi-hex-artifact", {
+        detail,
+      })
+    );
+  }
+
+  function importEditorFile(fileName, content) {
+    const normalizedName =
+      uniqueImportedName((fileName || "").trim()) || uniqueName("main.c");
+
+    files[normalizedName] = String(content || "").replace(/\r\n/g, "\n");
+    selectFile(normalizedName);
+
+    if (normalizedName !== fileName) {
+      appendCompileLog(
+        `Imported "${fileName}" as "${normalizedName}" because that name was already in use.`
+      );
+      return;
+    }
+
+    appendCompileLog(`Imported "${normalizedName}" into the editor.`);
+  }
+
+  function loadUploadedHexFile(fileName, hexText) {
+    const updi = getCanvasUpdiRuntime();
+
+    setMoreOptionsExpanded(true);
+
+    if (updi && typeof updi.loadHexFile === "function") {
+      updi.loadHexFile(hexText, fileName, "uploaded");
+    } else {
+      dispatchHexArtifact({
+        hexText,
+        fileName,
+        source: "uploaded",
+      });
+    }
+
+    appendCompileLog(`Loaded firmware image "${fileName}" for UPDI flashing.`);
+  }
+
+  async function handleUploadedFile(file) {
+    if (!file) return;
+
+    const text = await readLocalFileText(file);
+    const fileKind = resolveUploadedFileKind(file.name, text);
+
+    if (fileKind === "hex") {
+      loadUploadedHexFile(file.name, text);
+      return;
+    }
+
+    if (fileKind === "editor") {
+      importEditorFile(file.name, text);
+      return;
+    }
+
+    const message =
+      'Unsupported file type. Upload a source file (.c, .h, .cpp, .hpp, .ino, .s, .asm, .txt) or a firmware file (.hex).';
+    alert(message);
+    appendCompileLog(`Import rejected: "${file.name}" has an unsupported extension.`);
+  }
+
   function ensureAtLeastOneFile() {
     if (Object.keys(files).length === 0) {
       const name = "main.c";
@@ -312,7 +469,7 @@ int main(void) {
     newRow.appendChild(plus);
     newRow.addEventListener("click", (e) => {
       e.stopPropagation();
-      newCanvas();
+      openAddFileModal();
     });
 
     list.appendChild(newRow);
@@ -738,8 +895,13 @@ int main(void) {
       const programHexBtn = $("programHexBtn");
       const moreOptionsBtn = $("moreOptionsBtn");
       const fileContextMenu = $("fileContextMenu");
+      const fileUploadInput = $("fileUploadInput");
+      const fileAddModal = $("fileAddModal");
+      const fileAddCloseBtn = $("fileAddCloseBtn");
+      const createNewFileCard = $("createNewFileCard");
+      const uploadExistingFileCard = $("uploadExistingFileCard");
 
-    newBtn && newBtn.addEventListener("click", newCanvas);
+    newBtn && newBtn.addEventListener("click", openAddFileModal);
     renameBtn &&
       renameBtn.addEventListener("click", () => current && renameFile(current));
     deleteBtn &&
@@ -752,6 +914,46 @@ int main(void) {
         hexStatus.addEventListener("click", (event) => {
           event.stopPropagation();
           downloadHex();
+      });
+    fileAddCloseBtn && fileAddCloseBtn.addEventListener("click", closeAddFileModal);
+    createNewFileCard &&
+      createNewFileCard.addEventListener("click", () => {
+        closeAddFileModal();
+        newCanvas();
+      });
+    uploadExistingFileCard &&
+      uploadExistingFileCard.addEventListener("click", () => {
+        closeAddFileModal();
+        if (!fileUploadInput) return;
+        fileUploadInput.value = "";
+        fileUploadInput.click();
+      });
+    fileAddModal &&
+      fileAddModal.addEventListener("click", (event) => {
+        const target = event.target;
+        if (target === fileAddModal) {
+          closeAddFileModal();
+        }
+      });
+    fileUploadInput &&
+      fileUploadInput.addEventListener("change", async (event) => {
+        const input = event.target;
+        const file =
+          input instanceof HTMLInputElement && input.files
+            ? input.files[0]
+            : null;
+
+        try {
+          await handleUploadedFile(file);
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          alert(`Failed to import file.\n${message}`);
+          appendCompileLog(`Import failed: ${message}`);
+        } finally {
+          if (input instanceof HTMLInputElement) {
+            input.value = "";
+          }
+        }
       });
 
     // Shared file context menu: click on items
@@ -779,6 +981,7 @@ int main(void) {
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         closeFileContextMenu();
+        closeAddFileModal();
       }
     });
 
@@ -804,15 +1007,7 @@ int main(void) {
   }
 
   function dispatchUpdiHexArtifact() {
-    if (typeof window === "undefined" || typeof CustomEvent !== "function") {
-      return;
-    }
-
-    window.dispatchEvent(
-      new CustomEvent("ud-updi-hex-artifact", {
-        detail: getUpdiHexArtifact(),
-      })
-    );
+    dispatchHexArtifact(getUpdiHexArtifact());
   }
 
   function dispatchCanvasSerialState() {

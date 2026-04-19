@@ -60,7 +60,9 @@
 
                 <div class="compile-body">
                   <div class="compile-target-row">
-                    <div class="connection-control canvas-updi-target compile-updi-target">
+                    <div
+                      class="connection-control canvas-updi-target compile-updi-target"
+                    >
                       <label for="mcuSelect">Target MCU</label>
                       <select id="mcuSelect">
                         <option value="auto" selected>Auto detect</option>
@@ -126,6 +128,68 @@
             <button type="button" data-action="download">Download</button>
             <button type="button" data-action="compile">Compile</button>
           </div>
+
+          <input
+            id="fileUploadInput"
+            type="file"
+            accept=".c,.h,.cpp,.cc,.hpp,.ino,.s,.S,.asm,.txt,.hex,.ihex"
+            hidden
+          />
+
+          <div
+            id="fileAddModal"
+            class="file-add-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="fileAddModalTitle"
+            hidden
+          >
+            <div class="file-add-dialog">
+              <div class="file-add-header">
+                <h3 class="editor-title" id="fileAddModalTitle">Add file</h3>
+                <button
+                  class="file-add-close"
+                  id="fileAddCloseBtn"
+                  type="button"
+                  aria-label="Close"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div class="file-add-body">
+                <p class="file-add-intro">
+                  Choose how you want to add a file to this workspace.
+                </p>
+
+                <div class="file-add-options">
+                  <button
+                    class="file-add-card"
+                    id="createNewFileCard"
+                    type="button"
+                  >
+                    <span class="file-add-card-title">Create new file</span>
+                    <span class="file-add-card-copy">
+                      Start a fresh editor file.
+                    </span>
+                  </button>
+
+                  <button
+                    class="file-add-card"
+                    id="uploadExistingFileCard"
+                    type="button"
+                  >
+                    <span class="file-add-card-title"
+                      >Upload existing file</span
+                    >
+                    <span class="file-add-card-copy">
+                      Import source code or load firmware.
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section
@@ -139,54 +203,20 @@
           </div>
 
           <div class="updi-layout">
-            <div class="updi-pane-stack">
-              <div class="updi-pane">
-                <div class="editor-header updi-pane-header">
-                  <h3 class="editor-title">Load a `.hex` file</h3>
-                </div>
-
-                <div class="updi-pane-body">
-                  <input id="hexFileInput" type="file" accept=".hex,.txt" />
-                </div>
-              </div>
-
-              <div class="updi-pane">
-                <div class="editor-header updi-pane-header">
-                  <h3 class="editor-title">Paste Intel HEX</h3>
-                  <div class="updi-pane-actions">
-                    <button
-                      class="action-btn"
-                      id="useTextareaBtn"
-                      type="button"
-                    >
-                      Use Text
-                    </button>
-                    <button
-                      class="action-btn ghost-btn"
-                      id="clearHexBtn"
-                      type="button"
-                    >
-                      Clear HEX
-                    </button>
-                  </div>
-                </div>
-
-                <div class="updi-pane-body updi-pane-body-textarea">
-                  <textarea
-                    id="hexTextarea"
-                    class="hex-textarea"
-                    spellcheck="false"
-                    placeholder="Compile current code or load your Intel HEX here."
-                  ></textarea>
-                </div>
-              </div>
-            </div>
-
             <div class="updi-pane">
               <div class="editor-header updi-pane-header">
-                <h3 class="editor-title">Summary</h3>
-                <div class="updi-status-inline disconnected" id="probeStatus">
-                  Target ready
+                <div class="updi-pane-heading">
+                  <h3 class="editor-title">Summary</h3>
+                </div>
+
+                <div class="updi-pane-actions">
+                  <button
+                    class="connect-btn secondary-btn"
+                    id="clearHexBtn"
+                    type="button"
+                  >
+                    Clear HEX
+                  </button>
                 </div>
               </div>
 
@@ -232,23 +262,26 @@
 
                 <div class="sib-box" id="summarySib">SIB: -</div>
                 <p class="summary-note" id="summaryNote">
-                  Compile a file or load a valid Intel HEX image to inspect it.
+                  Compile a file or upload a valid Intel HEX image to inspect
+                  it.
                 </p>
               </div>
             </div>
-          </div>
 
-          <div class="editor-header updi-log-header">
-            <h3 class="editor-title">UPDI Log</h3>
-            <button
-              class="connect-btn secondary-btn"
-              id="clearLogBtn"
-              type="button"
-            >
-              Clear Log
-            </button>
+            <div class="updi-pane">
+              <div class="editor-header updi-pane-header updi-log-header">
+                <h3 class="editor-title">UPDI Log</h3>
+                <button
+                  class="connect-btn secondary-btn"
+                  id="clearLogBtn"
+                  type="button"
+                >
+                  Clear Log
+                </button>
+              </div>
+              <pre class="probe-log" id="probeLog"></pre>
+            </div>
           </div>
-          <pre class="probe-log" id="probeLog"></pre>
         </section>
       </div>
     </main>
