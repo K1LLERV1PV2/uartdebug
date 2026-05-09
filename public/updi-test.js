@@ -130,6 +130,24 @@
     ...Object.values(SUPPORTED_TARGETS).map((target) => target.flashSize)
   );
 
+  const USB_FRIENDLY_NAMES = Object.freeze({
+    "1A86:55D3": "WCH CH343 USB-Serial",
+    "1A86:7523": "WCH CH340/CH341 USB-Serial",
+    "10C4:EA60": "Silicon Labs CP210x USB-Serial",
+    "0403:6001": "FTDI FT232R USB-Serial",
+    "067B:2303": "Prolific PL2303 USB-Serial",
+    "303A:1001": "Espressif USB JTAG/Serial",
+  });
+
+  const USB_VENDOR_NAMES = Object.freeze({
+    0x1a86: "WCH (QinHeng)",
+    0x10c4: "Silicon Labs",
+    0x0403: "FTDI",
+    0x067b: "Prolific",
+    0x303a: "Espressif",
+    0x2341: "Arduino",
+  });
+
   const state = {
     fileName: "",
     hexText: "",
@@ -170,6 +188,119 @@
     return Array.from(bytes || [])
       .map((value) => value.toString(16).toUpperCase().padStart(2, "0"))
       .join(separator);
+  }
+
+  function hex4(value) {
+    return Number(value).toString(16).padStart(4, "0").toUpperCase();
+  }
+
+  function getPortLabelFromInfo(info) {
+    if (!info) return "";
+
+    const vid = info.usbVendorId;
+    const pid = info.usbProductId;
+
+    if (vid != null && pid != null) {
+      const key = `${hex4(vid)}:${hex4(pid)}`;
+      if (USB_FRIENDLY_NAMES[key]) return USB_FRIENDLY_NAMES[key];
+
+      const vendor = USB_VENDOR_NAMES[vid] || `USB ${hex4(vid)}`;
+      return `${vendor} (${key})`;
+    }
+
+    if (vid != null) {
+      return USB_VENDOR_NAMES[vid] || `USB ${hex4(vid)}`;
+    }
+
+    return "Unknown device";
+  }
+
+  function getPortLabel(port = state.preferredPort) {
+    if (!port || typeof port.getInfo !== "function") return "";
+
+    try {
+      return getPortLabelFromInfo(port.getInfo() || {});
+    } catch {
+      return "";
+    }
+  }
+
+  function getSignaturePanelText() {
+    if (state.signatureInfo) {
+      const signature = formatHex(state.signatureInfo.deviceId, 6);
+      const targetLabel = state.signatureInfo.matchedTargetLabel || "";
+
+      if (targetLabel) return `${targetLabel} (${signature})`;
+      return `Unsupported signature ${signature}`;
+    }
+
+    if (state.busy) return state.busyLabel || "Reading signature...";
+    if (state.lastProbeError) return "No chip detected";
+    return "No chip detected";
+  }
+
+  function updateTextNode(id, text) {
+    const element = $(id);
+    if (!element) return;
+    element.textContent = text;
+  }
+
+  function updateDevicePanelState() {
+    const portText = getPortLabel() || "No port selection";
+    const chipText = getSignaturePanelText();
+    const hasDetectedChip = !!state.signatureInfo?.matchedTargetKey;
+    const hasSignature = !!state.signatureInfo;
+    const hasError = !!state.lastProbeError && !state.busy;
+    const serialAvailable = "serial" in navigator;
+    const blockedByCanvasSerial = isCanvasSerialConnected();
+    const button = $("detectChipBtn");
+
+    updateTextNode("adapterStatusText", portText);
+    updateTextNode("chipStatusText", chipText);
+
+    const adapterValue = $("adapterStatusText");
+    if (adapterValue) {
+      adapterValue.classList.toggle("is-muted", !getPortLabel());
+    }
+
+    const chipValue = $("chipStatusText");
+    if (chipValue) {
+      chipValue.classList.toggle("is-muted", !hasSignature && !hasError);
+      chipValue.classList.toggle("is-error", hasError);
+    }
+
+    if (button) {
+      const defaultLabel = button.querySelector("[data-detect-default]");
+      const hoverLabel = button.querySelector("[data-detect-hover]");
+      const unavailable = !serialAvailable || blockedByCanvasSerial;
+
+      button.classList.toggle("is-connected", hasDetectedChip);
+      button.classList.toggle("is-working", state.busy);
+      button.disabled = state.busy || unavailable;
+
+      if (defaultLabel) {
+        defaultLabel.textContent = state.busy
+          ? state.busyLabel || "Working..."
+          : hasDetectedChip
+            ? "Connected"
+            : "Disconnected";
+      }
+
+      if (hoverLabel) {
+        hoverLabel.textContent = hasDetectedChip
+          ? "Click to redetect the chip"
+          : "Click to detect the chip";
+      }
+
+      button.title = unavailable
+        ? blockedByCanvasSerial
+          ? "Disconnect UART before using UPDI."
+          : "Web Serial API is unavailable."
+        : hasDetectedChip
+          ? "Read chip signature again"
+          : "Read chip signature";
+      button.setAttribute("aria-label", button.title);
+    }
   }
 
   function getSelectedTargetKey() {
@@ -324,6 +455,7 @@
     const preferPrompt = options.preferPrompt !== false;
 
     if (useCached && state.preferredPort) {
+      updateDevicePanelState();
       return {
         port: state.preferredPort,
         source: "cached",
@@ -338,6 +470,7 @@
 
       if (grantedPorts.length) {
         state.preferredPort = grantedPorts[0];
+        updateDevicePanelState();
         return {
           port: state.preferredPort,
           source: "granted",
@@ -353,6 +486,7 @@
 
     const port = await navigator.serial.requestPort();
     state.preferredPort = port;
+    updateDevicePanelState();
     return {
       port,
       source: "prompt",
@@ -470,6 +604,8 @@
           ? "Load or compile a HEX image first"
           : programButtonLabel);
     }
+
+    updateDevicePanelState();
   }
 
   function updateView() {
@@ -945,15 +1081,7 @@
   }
 
   function formatPortInfo(info) {
-    if (!info) return "Unknown device";
-    const vid = info.usbVendorId;
-    const pid = info.usbProductId;
-
-    if (vid != null && pid != null) {
-      return `${formatHex(vid)}:${formatHex(pid)}`;
-    }
-    if (vid != null) return `${formatHex(vid)}`;
-    return "Unknown device";
+    return getPortLabelFromInfo(info) || "Unknown device";
   }
 
   function concatBytes(a, b) {

@@ -87,6 +87,12 @@
     markHexDownloadReady(!!hasHex);
   }
 
+  function updateEditorFileWatermark(fileName) {
+    const el = $("editorFileWatermark");
+    if (!el) return;
+    el.textContent = fileName || "";
+  }
+
   function formatCompileLogTime() {
     return new Date().toLocaleTimeString("ru-RU", {
       hour: "2-digit",
@@ -146,6 +152,12 @@
     btn.title = isExpanded
       ? "Hide advanced UPDI tools"
       : "Show advanced UPDI tools";
+
+    if (isExpanded) {
+      requestAnimationFrame(() => {
+        section.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    }
   }
 
   function toggleMoreOptions() {
@@ -170,6 +182,47 @@
     }
 
     return await updi.ensureSignature({ force: true });
+  }
+
+  function formatDeviceId(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "";
+    return `0x${numeric.toString(16).toUpperCase().padStart(6, "0")}`;
+  }
+
+  function describeSignatureInfo(signatureInfo) {
+    if (!signatureInfo) return "";
+
+    const signature = formatDeviceId(signatureInfo.deviceId);
+    const targetLabel =
+      signatureInfo && signatureInfo.matchedTargetLabel
+        ? String(signatureInfo.matchedTargetLabel).trim()
+        : "";
+
+    if (targetLabel && signature) return `${targetLabel} (${signature})`;
+    if (signature) return `unsupported signature ${signature}`;
+    return "";
+  }
+
+  async function handleDetectChip() {
+    appendCompileLog("Reading chip signature...");
+
+    try {
+      const signatureInfo = await ensureAutoDetectedTarget();
+      const description = describeSignatureInfo(signatureInfo);
+
+      if (description) {
+        appendCompileLog(`Detected chip: ${description}.`);
+      } else {
+        appendCompileLog(
+          "Chip signature was not detected. Check the UPDI wiring and selected serial adapter."
+        );
+      }
+    } catch (error) {
+      appendCompileLog(
+        `Chip detection failed: ${error.message || String(error)}`
+      );
+    }
   }
 
   async function handleFlashCurrent() {
@@ -519,9 +572,6 @@ int main(void) {
       list.appendChild(row);
     }
 
-    const state = setHexStatus._state || "idle";
-    setHexStatus(state, state === "ready" ? lastHexName : undefined);
-
     updateToolbarState();
     updateCompilePanelState(false);
   }
@@ -536,6 +586,17 @@ int main(void) {
     const compileBtn = menu.querySelector('button[data-action="compile"]');
     if (compileBtn) {
       compileBtn.disabled = !/\.c$/i.test(fileName);
+    }
+
+    const downloadHexBtn = menu.querySelector(
+      'button[data-action="download-hex"]'
+    );
+    if (downloadHexBtn) {
+      const canDownloadHex = /\.c$/i.test(fileName);
+      downloadHexBtn.disabled = !canDownloadHex;
+      downloadHexBtn.title = canDownloadHex
+        ? "Compile and download HEX"
+        : "HEX can only be built from .c files";
     }
 
     // First make it visible to measure size
@@ -567,7 +628,7 @@ int main(void) {
     contextMenuFile = null;
   }
 
-  function handleFileContextAction(action) {
+  async function handleFileContextAction(action) {
     if (!contextMenuFile || !files[contextMenuFile]) {
       closeFileContextMenu();
       return;
@@ -591,7 +652,10 @@ int main(void) {
         if (current !== targetName) {
           selectFile(targetName);
         }
-        compileCurrentFile();
+        await compileCurrentFile();
+        break;
+      case "download-hex":
+        await downloadHexForFile(targetName);
         break;
       default:
         break;
@@ -609,7 +673,7 @@ int main(void) {
     resetHexArtifact();
     updateCompilePanelState(true);
 
-    $("editorTitle").textContent = `Editor — ${name}`;
+    updateEditorFileWatermark(name);
     persistState();
     renderOutliner();
     if (editor) setTimeout(() => editor.refresh(), 0);
@@ -646,6 +710,10 @@ int main(void) {
     }
     files[newName] = files[oldName];
     delete files[oldName];
+    if (hexArtifactsBySource.has(oldName)) {
+      hexArtifactsBySource.set(newName, hexArtifactsBySource.get(oldName));
+      hexArtifactsBySource.delete(oldName);
+    }
     const renamedCurrent = current === oldName;
     if (renamedCurrent) current = newName;
     persistState();
@@ -661,6 +729,7 @@ int main(void) {
     if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
     const deletedCurrent = current === name;
     delete files[name];
+    hexArtifactsBySource.delete(name);
     if (deletedCurrent) current = null;
     persistState();
     if (!current) {
@@ -672,13 +741,13 @@ int main(void) {
         editor.setValue("");
         editor.setOption("readOnly", "nocursor");
       }
-      $("editorTitle").textContent = "Editor";
+      updateEditorFileWatermark("");
     } else {
       if (editor) {
         editor.setOption("readOnly", false);
         editor.setValue(files[current] || "");
       }
-      $("editorTitle").textContent = `Editor — ${current}`;
+      updateEditorFileWatermark(current);
     }
     renderOutliner();
     if (deletedCurrent) {
@@ -891,9 +960,9 @@ int main(void) {
       const deleteBtn = $("deleteBtn");
       const downloadBtn = $("downloadBtn");
       const compileBtn = $("compileBtn");
-      const hexStatus = $("hexStatus");
       const programHexBtn = $("programHexBtn");
       const moreOptionsBtn = $("moreOptionsBtn");
+      const detectChipBtn = $("detectChipBtn");
       const fileContextMenu = $("fileContextMenu");
       const fileUploadInput = $("fileUploadInput");
       const fileAddModal = $("fileAddModal");
@@ -908,13 +977,9 @@ int main(void) {
       deleteBtn.addEventListener("click", () => current && deleteFile(current));
       downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
       compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
+      detectChipBtn && detectChipBtn.addEventListener("click", handleDetectChip);
       programHexBtn && programHexBtn.addEventListener("click", handleFlashCurrent);
       moreOptionsBtn && moreOptionsBtn.addEventListener("click", toggleMoreOptions);
-      hexStatus &&
-        hexStatus.addEventListener("click", (event) => {
-          event.stopPropagation();
-          downloadHex();
-      });
     fileAddCloseBtn && fileAddCloseBtn.addEventListener("click", closeAddFileModal);
     createNewFileCard &&
       createNewFileCard.addEventListener("click", () => {
@@ -963,7 +1028,11 @@ int main(void) {
         if (!btn) return;
         const action = btn.dataset.action;
         if (!action) return;
-        handleFileContextAction(action);
+        handleFileContextAction(action).catch((error) => {
+          appendCompileLog(
+            `File action failed: ${error.message || String(error)}`
+          );
+        });
       });
     }
 
@@ -996,6 +1065,7 @@ int main(void) {
   // --- HEX artifact state ---
   let lastHexContent = null;
   let lastHexName = null;
+  const hexArtifactsBySource = new Map();
   let lastDetectedUpdiTargetKey = "";
 
   function getUpdiHexArtifact() {
@@ -1056,16 +1126,68 @@ int main(void) {
     dispatchUpdiHexArtifact();
   }
 
-  function downloadHex() {
-    if (!lastHexContent || !lastHexName) return;
-    const blob = new Blob([lastHexContent], { type: "text/plain" });
+  function getHexArtifactForFile(fileName) {
+    return hexArtifactsBySource.get(fileName) || null;
+  }
+
+  function storeHexArtifact(fileName, hexText, hexName, sourceText) {
+    if (!fileName || !hexText || !hexName) return;
+    hexArtifactsBySource.set(fileName, {
+      hexText,
+      hexName,
+      sourceText: String(sourceText || ""),
+    });
+  }
+
+  function downloadHexArtifact(artifact) {
+    if (!artifact || !artifact.hexText || !artifact.hexName) return false;
+    const blob = new Blob([artifact.hexText], { type: "text/plain" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = lastHexName;
+    a.download = artifact.hexName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(a.href);
+    return true;
+  }
+
+  function downloadHex(fileName = current) {
+    const artifact =
+      getHexArtifactForFile(fileName) ||
+      (fileName === current && lastHexContent && lastHexName
+        ? { hexText: lastHexContent, hexName: lastHexName }
+        : null);
+
+    return downloadHexArtifact(artifact);
+  }
+
+  async function downloadHexForFile(fileName) {
+    if (!fileName || !/\.c$/i.test(fileName)) return;
+
+    if (current === fileName && editor) {
+      try {
+        files[fileName] = editor.getValue();
+        persistState();
+      } catch {}
+    }
+
+    const sourceText = String(files[fileName] || "");
+    const artifact = getHexArtifactForFile(fileName);
+    if (artifact && artifact.sourceText === sourceText) {
+      downloadHexArtifact(artifact);
+      appendCompileLog(`Downloaded cached HEX for "${fileName}".`);
+      return;
+    }
+
+    if (current !== fileName) {
+      selectFile(fileName);
+    }
+
+    const compiled = await compileCurrentFile();
+    if (compiled) {
+      downloadHex(fileName);
+    }
   }
 
   async function legacyCompileCurrentFile() {
@@ -1272,9 +1394,16 @@ int main(void) {
 
   async function compileCurrentFile() {
     const compileFileName = current;
-    const compileSource = compileFileName ? files[compileFileName] : "";
     const btn = $("compileBtn");
     const restoreButton = () => updateCompilePanelState(false);
+
+    try {
+      if (compileFileName && editor && current === compileFileName) {
+        files[compileFileName] = editor.getValue();
+      }
+    } catch {}
+
+    const compileSource = compileFileName ? files[compileFileName] : "";
 
     if (!compileFileName || !compileSource) {
       setCompileLogText("");
@@ -1282,7 +1411,7 @@ int main(void) {
       setHexStatus("error");
       updateHexUI(false);
       restoreButton();
-      return;
+      return false;
     }
 
     if (!/\.c$/i.test(compileFileName)) {
@@ -1293,14 +1422,8 @@ int main(void) {
       setHexStatus("error");
       updateHexUI(false);
       restoreButton();
-      return;
+      return false;
     }
-
-    try {
-      if (editor && current === compileFileName) {
-        files[compileFileName] = editor.getValue();
-      }
-    } catch {}
 
     setCompileLogText("");
 
@@ -1339,7 +1462,7 @@ int main(void) {
         setHexStatus("error");
         updateHexUI(false);
         restoreButton();
-        return;
+        return false;
       }
     }
 
@@ -1384,7 +1507,7 @@ int main(void) {
       setHexStatus("error");
       updateHexUI(false);
       restoreButton();
-      return;
+      return false;
     }
 
     if (!resp.ok) {
@@ -1411,7 +1534,7 @@ int main(void) {
       setHexStatus("error");
       updateHexUI(false);
       restoreButton();
-      return;
+      return false;
     }
 
     let data;
@@ -1424,7 +1547,7 @@ int main(void) {
       setHexStatus("error");
       updateHexUI(false);
       restoreButton();
-      return;
+      return false;
     }
 
     if (!data || data.ok !== true || !data.hex) {
@@ -1440,7 +1563,7 @@ int main(void) {
       setHexStatus("error");
       updateHexUI(false);
       restoreButton();
-      return;
+      return false;
     }
 
     lastHexContent = data.hex;
@@ -1448,6 +1571,12 @@ int main(void) {
       const base = compileFileName.replace(/\.c$/i, "");
       lastHexName = (data.hex_name && data.hex_name.trim()) || base + ".hex";
     }
+    storeHexArtifact(
+      compileFileName,
+      lastHexContent,
+      lastHexName,
+      files[compileFileName]
+    );
 
     updateHexUI(true);
     setHexStatus("ready", lastHexName);
@@ -1471,6 +1600,7 @@ int main(void) {
     appendCompileBlock("Compiler stderr", filteredCompileStderr);
 
     restoreButton();
+    return true;
   }
 
   function boot() {

@@ -32,94 +32,104 @@
     <main>
       <div class="feature-panel">
         <section class="canvas-section">
-          <div class="canvas-split-container">
-            <aside class="outliner">
-              <div class="outliner-header">
-                <h3 class="outliner-title">Files</h3>
-              </div>
-              <div class="outliner-list" id="fileList"></div>
-            </aside>
+          <section class="avr-device-section">
+            <div class="avr-device-panel" aria-label="UPDI adapter and chip">
+              <button
+                class="detect-chip-btn"
+                id="detectChipBtn"
+                type="button"
+                aria-label="Detect chip"
+              >
+                <span
+                  class="detect-chip-label detect-chip-default"
+                  data-detect-default
+                >
+                  Disconnected
+                </span>
+                <span
+                  class="detect-chip-label detect-chip-hover"
+                  data-detect-hover
+                >
+                  Click to detect the chip
+                </span>
+              </button>
 
-            <div class="editor-wrap">
-              <div class="editor-header">
-                <h3 class="editor-title" id="editorTitle">Editor</h3>
-              </div>
+              <div class="avr-status-lines">
+                <span class="avr-status-label">Port:</span>
+                <div class="avr-status-value" id="adapterStatusText">
+                  No port selection
+                </div>
 
-              <div class="editor-container">
-                <div class="editor-surface">
-                  <div id="editorHost"></div>
+                <span class="avr-status-label">Chip:</span>
+                <div class="avr-status-value" id="chipStatusText">
+                  No chip detected
                 </div>
               </div>
             </div>
+          </section>
 
-            <aside class="compile-wrap">
-              <div class="compile-panel">
-                <div class="editor-header">
-                  <h3 class="editor-title">Compile</h3>
+          <div class="canvas-split-container">
+            <aside class="outliner">
+              <div class="outliner-list" id="fileList"></div>
+            </aside>
+
+            <div class="editor-workspace">
+              <section class="avr-action-section">
+                <div
+                  class="avr-action-strip"
+                  aria-label="Build and flash controls"
+                >
+                  <div
+                    class="connection-control canvas-updi-target compile-updi-target"
+                  >
+                    <label class="sr-only" for="mcuSelect">Target MCU</label>
+                    <select id="mcuSelect">
+                      <option value="auto" selected>Auto detect</option>
+                    </select>
+                  </div>
+
+                  <button class="connect-btn" id="compileBtn" type="button">
+                    Compile current file
+                  </button>
+
+                  <button
+                    class="connect-btn warning-btn"
+                    id="programHexBtn"
+                    data-external-handler="true"
+                    type="button"
+                  >
+                    Flash MCU
+                  </button>
+
+                  <button
+                    class="connect-btn secondary-btn"
+                    id="moreOptionsBtn"
+                    type="button"
+                    aria-expanded="false"
+                    aria-controls="canvasUpdiSection"
+                  >
+                    More options
+                  </button>
+                </div>
+              </section>
+
+              <div class="editor-wrap">
+                <div class="editor-container">
+                  <div
+                    class="editor-file-watermark"
+                    id="editorFileWatermark"
+                    aria-hidden="true"
+                  ></div>
+                  <div class="editor-surface">
+                    <div id="editorHost"></div>
+                  </div>
                 </div>
 
-                <div class="compile-body">
-                  <div class="compile-target-row">
-                    <div
-                      class="connection-control canvas-updi-target compile-updi-target"
-                    >
-                      <label for="mcuSelect">Target MCU</label>
-                      <select id="mcuSelect">
-                        <option value="auto" selected>Auto detect</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div class="compile-toolbar">
-                    <button class="connect-btn" id="compileBtn" type="button">
-                      Compile current file
-                    </button>
-
-                    <div
-                      id="hexStatus"
-                      class="hex-status"
-                      aria-live="polite"
-                      aria-disabled="true"
-                      title="HEX not ready"
-                    >
-                      <span class="dot" aria-hidden="true"></span>
-                      <span class="label">HEX: idle</span>
-                    </div>
-                  </div>
-
+                <div class="compile-log-section">
                   <pre class="compile-log" id="compileLog"></pre>
                 </div>
               </div>
-
-              <div class="flash-wrap">
-                <div class="editor-header">
-                  <h3 class="editor-title">Flash</h3>
-                </div>
-
-                <div class="flash-panel">
-                  <div class="flash-toolbar">
-                    <button
-                      class="connect-btn warning-btn"
-                      id="programHexBtn"
-                      data-external-handler="true"
-                      type="button"
-                    >
-                      Flash MCU
-                    </button>
-
-                    <button
-                      class="connect-btn secondary-btn"
-                      id="moreOptionsBtn"
-                      type="button"
-                      aria-expanded="false"
-                      aria-controls="canvasUpdiSection"
-                    >
-                      More options
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </aside>
+            </div>
           </div>
 
           <div id="fileContextMenu" class="file-context-menu">
@@ -127,6 +137,9 @@
             <button type="button" data-action="delete">Delete</button>
             <button type="button" data-action="download">Download</button>
             <button type="button" data-action="compile">Compile</button>
+            <button type="button" data-action="download-hex">
+              Download HEX
+            </button>
           </div>
 
           <input
