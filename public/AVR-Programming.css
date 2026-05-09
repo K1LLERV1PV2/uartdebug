@@ -139,7 +139,7 @@ main,
   display: grid;
   grid-template-columns: 148px max-content;
   align-items: center;
-  gap: 6px;
+  gap: 18px;
   min-height: 104px;
   padding: 14px 16px;
   border: 1px solid rgba(129, 159, 141, 0.24);
@@ -1246,7 +1246,7 @@ main,
 @media (max-width: 1100px) {
   .avr-device-panel {
     grid-template-columns: 136px minmax(0, max-content);
-    gap: 6px;
+    gap: 18px;
   }
 
   .detect-chip-btn {
@@ -1291,7 +1291,7 @@ main,
 
   .avr-device-panel {
     grid-template-columns: 136px minmax(0, max-content);
-    gap: 6px;
+    gap: 18px;
   }
 
   .detect-chip-btn {
@@ -1343,7 +1343,7 @@ main,
 
   .avr-device-panel {
     grid-template-columns: 112px minmax(0, 1fr);
-    gap: 6px;
+    gap: 18px;
   }
 
   .detect-chip-btn {

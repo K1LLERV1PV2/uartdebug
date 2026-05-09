@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-v2";
+const CACHE_NAME = "uartdebug-shell-v3";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -36,7 +36,10 @@ const CACHEABLE_DESTINATIONS = new Set(["style", "script", "image", "font"]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL_ASSETS))
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL_ASSETS))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -48,7 +51,7 @@ self.addEventListener("activate", (event) => {
           .filter((key) => key.startsWith("uartdebug-shell-") && key !== CACHE_NAME)
           .map((key) => caches.delete(key))
       )
-    )
+    ).then(() => self.clients.claim())
   );
 });
 
@@ -71,10 +74,19 @@ self.addEventListener("fetch", (event) => {
     APP_SHELL_PATHS.has(url.pathname) &&
     CACHEABLE_DESTINATIONS.has(request.destination);
 
+  if (shouldUseShellCache && shouldUseNetworkFirstForAsset(request)) {
+    event.respondWith(networkFirstWithCacheFallback(request));
+    return;
+  }
+
   if (shouldUseShellCache) {
     event.respondWith(cacheFirstWithBackgroundUpdate(event, request));
   }
 });
+
+function shouldUseNetworkFirstForAsset(request) {
+  return request.destination === "style" || request.destination === "script";
+}
 
 async function handleNavigationRequest(request) {
   const cache = await caches.open(CACHE_NAME);
@@ -113,6 +125,22 @@ async function cacheFirstWithBackgroundUpdate(event, request) {
     cache.put(request, networkResponse.clone());
   }
   return networkResponse;
+}
+
+async function networkFirstWithCacheFallback(request) {
+  const cache = await caches.open(CACHE_NAME);
+
+  try {
+    const freshResponse = await fetch(request);
+    if (freshResponse && freshResponse.ok) {
+      await cache.put(request, freshResponse.clone());
+    }
+    return freshResponse;
+  } catch (error) {
+    const cachedResponse = await cache.match(request);
+    if (cachedResponse) return cachedResponse;
+    throw error;
+  }
 }
 
 async function updateCachedAsset(cache, request) {
