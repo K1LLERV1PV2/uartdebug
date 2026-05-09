@@ -18,6 +18,8 @@
   let current = null;
   let saveTimer = null;
   let contextMenuFile = null;
+  let inlineFileEdit = null;
+  let siteDialogResolve = null;
   const EDITOR_FILE_EXTENSIONS = new Set([
     "c",
     "h",
@@ -28,6 +30,8 @@
     "s",
     "asm",
     "txt",
+    "hex",
+    "ihex",
   ]);
   const HEX_FILE_EXTENSIONS = new Set(["hex", "ihex"]);
 
@@ -112,6 +116,9 @@
     const el = $("compileLog");
     if (!el) return;
     const text = String(message || "").replace(/\r\n/g, "\n");
+    if (el.textContent && !el.textContent.endsWith("\n")) {
+      el.textContent += "\n";
+    }
     el.textContent += `[${formatCompileLogTime()}] ${text}\n`;
     el.scrollTop = el.scrollHeight;
   }
@@ -138,6 +145,78 @@
       )
       .join("\n")
       .trim();
+  }
+
+  function resolveSiteDialog(value) {
+    const modal = $("siteDialog");
+    if (modal) modal.hidden = true;
+
+    const resolve = siteDialogResolve;
+    siteDialogResolve = null;
+    if (resolve) resolve(value);
+  }
+
+  function showSiteDialog({
+    title = "Notice",
+    message = "",
+    confirmText = "OK",
+    cancelText = "",
+    danger = false,
+  } = {}) {
+    const modal = $("siteDialog");
+    const titleEl = $("siteDialogTitle");
+    const messageEl = $("siteDialogMessage");
+    const confirmBtn = $("siteDialogConfirmBtn");
+    const cancelBtn = $("siteDialogCancelBtn");
+
+    if (!modal || !titleEl || !messageEl || !confirmBtn || !cancelBtn) {
+      return Promise.resolve(true);
+    }
+
+    if (siteDialogResolve) {
+      resolveSiteDialog(false);
+    }
+
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    confirmBtn.textContent = confirmText;
+    cancelBtn.textContent = cancelText || "Cancel";
+    cancelBtn.hidden = !cancelText;
+    confirmBtn.classList.toggle("warning-btn", !!danger);
+
+    modal.hidden = false;
+
+    requestAnimationFrame(() => {
+      (cancelText ? cancelBtn : confirmBtn).focus();
+    });
+
+    return new Promise((resolve) => {
+      siteDialogResolve = resolve;
+    });
+  }
+
+  async function showSiteAlert(message, title = "Notice") {
+    await showSiteDialog({
+      title,
+      message,
+      confirmText: "OK",
+    });
+  }
+
+  function showSiteConfirm({
+    title = "Confirm",
+    message = "",
+    confirmText = "OK",
+    cancelText = "Cancel",
+    danger = false,
+  } = {}) {
+    return showSiteDialog({
+      title,
+      message,
+      confirmText,
+      cancelText,
+      danger,
+    });
   }
 
   function setMoreOptionsExpanded(expanded) {
@@ -175,13 +254,18 @@
     );
   }
 
-  async function ensureAutoDetectedTarget() {
+  async function ensureAutoDetectedTarget(options = {}) {
     const updi = getCanvasUpdiRuntime();
     if (!updi || typeof updi.ensureSignature !== "function") {
       throw new Error("UPDI auto detect is unavailable on this page.");
     }
 
-    return await updi.ensureSignature({ force: true });
+    return await updi.ensureSignature({
+      force: true,
+      allowPrompt: true,
+      useCached: !options.reselectPort,
+      preferPrompt: true,
+    });
   }
 
   function formatDeviceId(value) {
@@ -208,7 +292,9 @@
     appendCompileLog("Reading chip signature...");
 
     try {
-      const signatureInfo = await ensureAutoDetectedTarget();
+      const signatureInfo = await ensureAutoDetectedTarget({
+        reselectPort: true,
+      });
       const description = describeSignatureInfo(signatureInfo);
 
       if (description) {
@@ -232,6 +318,23 @@
       return;
     }
 
+    if (isHexFileName(current)) {
+      const hexText = syncCurrentFileFromEditor();
+
+      try {
+        loadHexIntoUpdiRuntime(updi, current, hexText, "editor");
+        appendCompileLog(`Using HEX text from "${current}" for flashing.`);
+      } catch (error) {
+        appendCompileLog(`HEX load failed: ${error.message || String(error)}`);
+        return;
+      }
+    } else if (!updi.hasLoadedImage || !updi.hasLoadedImage()) {
+      const compiled = await compileCurrentFile();
+      if (!compiled || !updi.hasLoadedImage || !updi.hasLoadedImage()) {
+        return;
+      }
+    }
+
     if (typeof updi.preparePortPermission === "function") {
       try {
         appendCompileLog("Preparing UPDI port access...");
@@ -240,13 +343,6 @@
         appendCompileLog(
           `UPDI port access failed: ${error.message || String(error)}`
         );
-        return;
-      }
-    }
-
-    if (!updi.hasLoadedImage || !updi.hasLoadedImage()) {
-      await compileCurrentFile();
-      if (!updi.hasLoadedImage || !updi.hasLoadedImage()) {
         return;
       }
     }
@@ -276,6 +372,13 @@
 
     if (!hasCurrent) {
       setCompileLogText("Create or select a C source file to compile.");
+      return;
+    }
+
+    if (isHexFileName(current)) {
+      setCompileLogText(
+        `"${current}" is a HEX firmware file.\nPress Flash MCU to program this editor text.`
+      );
       return;
     }
 
@@ -344,17 +447,17 @@ int main(void) {
   }
 
   function uniqueName(base) {
-    if (!files[base]) return base;
+    if (!hasFile(base)) return base;
     const m = base.match(/^(.*?)(\.(c|h))?$/i);
     const stem = (m && m[1]) || base;
     const ext = (m && m[2]) || ".c";
     let i = 2;
-    while (files[`${stem}_${i}${ext}`]) i++;
+    while (hasFile(`${stem}_${i}${ext}`)) i++;
     return `${stem}_${i}${ext}`;
   }
 
   function uniqueImportedName(base) {
-    if (!base || !files[base]) return base;
+    if (!base || !hasFile(base)) return base;
 
     const lastDot = base.lastIndexOf(".");
     const hasExtension = lastDot > 0;
@@ -363,7 +466,7 @@ int main(void) {
     let index = 2;
     let candidate = `${stem}_${index}${ext}`;
 
-    while (files[candidate]) {
+    while (hasFile(candidate)) {
       index += 1;
       candidate = `${stem}_${index}${ext}`;
     }
@@ -376,21 +479,40 @@ int main(void) {
     return lastDot > -1 ? name.slice(lastDot + 1).toLowerCase() : "";
   }
 
-  function looksLikeIntelHex(text) {
-    const firstContentLine = String(text || "")
-      .replace(/\r\n/g, "\n")
-      .split("\n")
-      .map((line) => line.trim())
-      .find(Boolean);
-
-    return !!firstContentLine && firstContentLine.startsWith(":");
+  function hasFile(name) {
+    return Object.prototype.hasOwnProperty.call(files, name);
   }
 
-  function resolveUploadedFileKind(fileName, text) {
+  function isCFileName(fileName) {
+    return /\.c$/i.test(fileName || "");
+  }
+
+  function getEditorModeForFile(fileName) {
+    return isCFileName(fileName) ? "text/x-csrc" : "text/plain";
+  }
+
+  function getNewFileContent(fileName) {
+    return isCFileName(fileName) ? defaultTemplate(fileName) : "";
+  }
+
+  function isHexFileName(fileName) {
+    return HEX_FILE_EXTENSIONS.has(getFileExtension(fileName));
+  }
+
+  function syncCurrentFileFromEditor() {
+    if (!current) return "";
+
+    if (editor) {
+      files[current] = editor.getValue();
+      persistState();
+    }
+
+    return files[current] || "";
+  }
+
+  function resolveUploadedFileKind(fileName) {
     const ext = getFileExtension(fileName);
 
-    if (HEX_FILE_EXTENSIONS.has(ext)) return "hex";
-    if (ext === "txt" && looksLikeIntelHex(text)) return "hex";
     if (!ext || EDITOR_FILE_EXTENSIONS.has(ext)) return "editor";
     return "unsupported";
   }
@@ -458,34 +580,30 @@ int main(void) {
     appendCompileLog(`Imported "${normalizedName}" into the editor.`);
   }
 
-  function loadUploadedHexFile(fileName, hexText) {
-    const updi = getCanvasUpdiRuntime();
+  function loadHexIntoUpdiRuntime(updi, fileName, hexText, source = "uploaded") {
+    const normalizedHex = String(hexText || "").replace(/\r\n/g, "\n");
 
-    setMoreOptionsExpanded(true);
-
-    if (updi && typeof updi.loadHexFile === "function") {
-      updi.loadHexFile(hexText, fileName, "uploaded");
-    } else {
-      dispatchHexArtifact({
-        hexText,
-        fileName,
-        source: "uploaded",
-      });
+    if (!normalizedHex.trim()) {
+      throw new Error("HEX file is empty.");
     }
 
-    appendCompileLog(`Loaded firmware image "${fileName}" for UPDI flashing.`);
+    if (updi && typeof updi.loadHexFile === "function") {
+      updi.loadHexFile(normalizedHex, fileName, source);
+      return;
+    }
+
+    dispatchHexArtifact({
+      hexText: normalizedHex,
+      fileName,
+      source,
+    });
   }
 
   async function handleUploadedFile(file) {
     if (!file) return;
 
     const text = await readLocalFileText(file);
-    const fileKind = resolveUploadedFileKind(file.name, text);
-
-    if (fileKind === "hex") {
-      loadUploadedHexFile(file.name, text);
-      return;
-    }
+    const fileKind = resolveUploadedFileKind(file.name);
 
     if (fileKind === "editor") {
       importEditorFile(file.name, text);
@@ -494,7 +612,7 @@ int main(void) {
 
     const message =
       'Unsupported file type. Upload a source file (.c, .h, .cpp, .hpp, .ino, .s, .asm, .txt) or a firmware file (.hex).';
-    alert(message);
+    await showSiteAlert(message, "Unsupported file");
     appendCompileLog(`Import rejected: "${file.name}" has an unsupported extension.`);
   }
 
@@ -507,23 +625,172 @@ int main(void) {
     }
   }
 
+  function validateInlineFileName(fileName, originalName = "") {
+    const name = String(fileName || "").trim();
+
+    if (!name) return "Enter a file name.";
+    if (name === "." || name === "..") return "Use a regular file name.";
+    if (/[\\/:*?"<>|\x00-\x1f]/.test(name)) {
+      return 'Do not use path separators or these characters: \\ / : * ? " < > |';
+    }
+    if (name.length > 96) return "Keep the file name under 96 characters.";
+    if (name !== originalName && hasFile(name)) {
+      return "A file with this name already exists.";
+    }
+
+    return "";
+  }
+
+  function focusInlineFileInput() {
+    requestAnimationFrame(() => {
+      const input = document.querySelector(".file-inline-input");
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+  }
+
+  function renderInlineFileInput(row, edit) {
+    const editorWrap = document.createElement("div");
+    editorWrap.className = "file-inline-editor";
+
+    const input = document.createElement("input");
+    input.className = "file-inline-input";
+    input.type = "text";
+    input.value = edit.value || "";
+    input.spellcheck = false;
+    input.setAttribute("aria-label", edit.mode === "rename" ? "Rename file" : "New file name");
+
+    const error = document.createElement("div");
+    error.className = "file-inline-error";
+    error.textContent = edit.error || "";
+
+    input.addEventListener("click", (event) => event.stopPropagation());
+    input.addEventListener("input", () => {
+      if (!inlineFileEdit) return;
+      inlineFileEdit.value = input.value;
+      inlineFileEdit.error = "";
+      error.textContent = "";
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitInlineFileEdit();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancelInlineFileEdit();
+      }
+    });
+    input.addEventListener("blur", () => {
+      window.setTimeout(() => {
+        if (inlineFileEdit && document.querySelector(".file-inline-input") === input) {
+          commitInlineFileEdit();
+        }
+      }, 0);
+    });
+
+    editorWrap.appendChild(input);
+    editorWrap.appendChild(error);
+    row.appendChild(editorWrap);
+  }
+
+  function startInlineCreate() {
+    closeFileContextMenu();
+    closeAddFileModal();
+    inlineFileEdit = {
+      mode: "create",
+      value: uniqueName("main.c"),
+      error: "",
+    };
+    renderOutliner();
+    focusInlineFileInput();
+  }
+
+  function startInlineRename(fileName) {
+    if (!hasFile(fileName)) return;
+    closeFileContextMenu();
+    closeAddFileModal();
+    inlineFileEdit = {
+      mode: "rename",
+      originalName: fileName,
+      value: fileName,
+      error: "",
+    };
+    renderOutliner();
+    focusInlineFileInput();
+  }
+
+  function cancelInlineFileEdit() {
+    inlineFileEdit = null;
+    renderOutliner();
+  }
+
+  function commitInlineFileEdit() {
+    if (!inlineFileEdit) return false;
+
+    const input = document.querySelector(".file-inline-input");
+    const nextName = String(input ? input.value : inlineFileEdit.value || "").trim();
+    const originalName = inlineFileEdit.originalName || "";
+    const error = validateInlineFileName(nextName, originalName);
+
+    if (error) {
+      inlineFileEdit.value = nextName;
+      inlineFileEdit.error = error;
+      renderOutliner();
+      focusInlineFileInput();
+      return false;
+    }
+
+    if (inlineFileEdit.mode === "create") {
+      files[nextName] = getNewFileContent(nextName);
+      current = nextName;
+      inlineFileEdit = null;
+      persistState();
+      renderOutliner();
+      if (editor) {
+        editor.setOption("readOnly", false);
+        editor.setOption("mode", getEditorModeForFile(nextName));
+        editor.setValue(files[nextName]);
+      }
+      updateEditorFileWatermark(nextName);
+      resetHexArtifact();
+      updateCompilePanelState(true);
+      return true;
+    }
+
+    if (inlineFileEdit.mode === "rename") {
+      inlineFileEdit = null;
+      applyFileRename(originalName, nextName);
+      return true;
+    }
+
+    inlineFileEdit = null;
+    renderOutliner();
+    return false;
+  }
+
   function renderOutliner() {
     const list = $("fileList");
     list.innerHTML = "";
 
     const newRow = document.createElement("div");
-    newRow.className = "file-item active new-item";
+    newRow.className = "file-item new-item";
     newRow.title = "Create new file";
 
-    const plus = document.createElement("div");
-    plus.className = "file-name";
-    plus.textContent = "+";
+    if (inlineFileEdit && inlineFileEdit.mode === "create") {
+      newRow.classList.add("active", "editing");
+      renderInlineFileInput(newRow, inlineFileEdit);
+    } else {
+      const plus = document.createElement("div");
+      plus.className = "file-name";
+      plus.textContent = "+";
 
-    newRow.appendChild(plus);
-    newRow.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openAddFileModal();
-    });
+      newRow.appendChild(plus);
+      newRow.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openAddFileModal();
+      });
+    }
 
     list.appendChild(newRow);
 
@@ -533,9 +800,22 @@ int main(void) {
       const row = document.createElement("div");
       row.className = "file-item";
       row.dataset.file = name;
+      if (isCFileName(name)) row.classList.add("file-c");
 
       if (name === current) {
         row.classList.add("active");
+      }
+
+      const editingThisFile =
+        inlineFileEdit &&
+        inlineFileEdit.mode === "rename" &&
+        inlineFileEdit.originalName === name;
+
+      if (editingThisFile) {
+        row.classList.add("editing");
+        renderInlineFileInput(row, inlineFileEdit);
+        list.appendChild(row);
+        continue;
       }
 
       const label = document.createElement("div");
@@ -561,6 +841,7 @@ int main(void) {
       row.appendChild(acts);
 
       row.addEventListener("click", () => {
+        if (inlineFileEdit && !commitInlineFileEdit()) return;
         selectFile(name);
       });
 
@@ -581,12 +862,6 @@ int main(void) {
     if (!menu) return;
 
     contextMenuFile = fileName;
-
-    // Enable/disable actions based on file
-    const compileBtn = menu.querySelector('button[data-action="compile"]');
-    if (compileBtn) {
-      compileBtn.disabled = !/\.c$/i.test(fileName);
-    }
 
     const downloadHexBtn = menu.querySelector(
       'button[data-action="download-hex"]'
@@ -629,7 +904,7 @@ int main(void) {
   }
 
   async function handleFileContextAction(action) {
-    if (!contextMenuFile || !files[contextMenuFile]) {
+    if (!contextMenuFile || !hasFile(contextMenuFile)) {
       closeFileContextMenu();
       return;
     }
@@ -643,16 +918,10 @@ int main(void) {
         renameFile(targetName);
         break;
       case "delete":
-        deleteFile(targetName);
+        await deleteFile(targetName);
         break;
       case "download":
         downloadFile(targetName);
-        break;
-      case "compile":
-        if (current !== targetName) {
-          selectFile(targetName);
-        }
-        await compileCurrentFile();
         break;
       case "download-hex":
         await downloadHexForFile(targetName);
@@ -663,10 +932,11 @@ int main(void) {
   }
 
   function selectFile(name) {
-    if (!files[name]) return;
+    if (!hasFile(name)) return;
     current = name;
     if (editor) {
       editor.setOption("readOnly", false);
+      editor.setOption("mode", getEditorModeForFile(name));
       editor.setValue(files[name]);
     }
 
@@ -681,33 +951,20 @@ int main(void) {
   }
 
   function newCanvas() {
-    let name = prompt("New canvas name:", uniqueName("main.c"));
-    if (!name) return;
-    name = name.trim();
-    if (!name) return;
-    if (files[name]) {
-      alert("A file with this name already exists.");
-      return;
-    }
-    files[name] = defaultTemplate(name);
-    current = name;
-    persistState();
-    renderOutliner();
-    if (editor) editor.setValue(files[name]);
-    resetHexArtifact();
-    updateCompilePanelState(true);
+    startInlineCreate();
   }
 
   function renameFile(oldName) {
-    if (!files[oldName]) return;
-    const proposed = prompt("Rename to:", oldName);
-    if (!proposed || proposed === oldName) return;
-    const newName = proposed.trim();
-    if (!newName) return;
-    if (files[newName]) {
-      alert("A file with this name already exists.");
+    startInlineRename(oldName);
+  }
+
+  function applyFileRename(oldName, newName) {
+    if (!hasFile(oldName)) return;
+    if (oldName === newName) {
+      renderOutliner();
       return;
     }
+
     files[newName] = files[oldName];
     delete files[oldName];
     if (hexArtifactsBySource.has(oldName)) {
@@ -719,18 +976,32 @@ int main(void) {
     persistState();
     renderOutliner();
     if (renamedCurrent) {
+      if (editor) {
+        editor.setOption("mode", getEditorModeForFile(newName));
+      }
+      updateEditorFileWatermark(newName);
       resetHexArtifact();
       updateCompilePanelState(true);
     }
   }
 
-  function deleteFile(name) {
-    if (!files[name]) return;
-    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  async function deleteFile(name) {
+    if (!hasFile(name)) return;
+    const confirmed = await showSiteConfirm({
+      title: "Delete file",
+      message: `Delete "${name}"? This cannot be undone.`,
+      confirmText: "Delete",
+      cancelText: "Cancel",
+      danger: true,
+    });
+    if (!confirmed) return;
+
     const deletedCurrent = current === name;
     delete files[name];
     hexArtifactsBySource.delete(name);
-    if (deletedCurrent) current = null;
+    if (deletedCurrent) {
+      current = Object.keys(files).sort((a, b) => a.localeCompare(b))[0] || null;
+    }
     persistState();
     if (!current) {
       try {
@@ -745,6 +1016,7 @@ int main(void) {
     } else {
       if (editor) {
         editor.setOption("readOnly", false);
+        editor.setOption("mode", getEditorModeForFile(current));
         editor.setValue(files[current] || "");
       }
       updateEditorFileWatermark(current);
@@ -757,7 +1029,7 @@ int main(void) {
   }
 
   function downloadFile(name) {
-    if (!name || !files[name]) return;
+    if (!name || !hasFile(name)) return;
     const blob = new Blob([files[name]], { type: "text/x-c" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -769,7 +1041,7 @@ int main(void) {
   }
 
   function downloadCurrent() {
-    if (!current || !files[current]) return;
+    if (!current || !hasFile(current)) return;
     const blob = new Blob([files[current]], { type: "text/x-c" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -901,8 +1173,8 @@ int main(void) {
 
   function initEditor() {
     editor = CodeMirror($("editorHost"), {
-      value: current && files[current] ? files[current] : "",
-      mode: "text/x-csrc",
+      value: current && hasFile(current) ? files[current] : "",
+      mode: getEditorModeForFile(current),
       theme: "material-darker",
       lineNumbers: true,
       indentUnit: 2,
@@ -917,6 +1189,7 @@ int main(void) {
       },
     });
     editor.on("inputRead", function (cm, change) {
+      if (!isCFileName(current)) return;
       if (!change || !change.text || !change.text.length) return;
       const ch = change.text.join("");
       if (/\w|_/.test(ch)) {
@@ -954,6 +1227,157 @@ int main(void) {
     });
   }
 
+  function getSelectDisplayText(select) {
+    if (!select) return "";
+    const selected = select.selectedOptions && select.selectedOptions[0];
+    return selected ? selected.textContent.trim() : "";
+  }
+
+  function renderCustomSelectOptions(select, custom) {
+    const list = custom.querySelector(".custom-select-list");
+    const label = custom.querySelector(".custom-select-value");
+    if (!list || !label) return;
+
+    list.innerHTML = "";
+    label.textContent = getSelectDisplayText(select) || "Select MCU";
+
+    const addOption = (option) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "custom-select-option";
+      item.dataset.value = option.value;
+      item.setAttribute("role", "option");
+      item.setAttribute("aria-selected", String(option.value === select.value));
+      item.textContent = option.textContent.trim();
+
+      item.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (select.value !== option.value) {
+          select.value = option.value;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        } else {
+          updateCustomSelect(select, custom);
+        }
+        closeCustomSelect(custom);
+      });
+
+      list.appendChild(item);
+    };
+
+    for (const child of Array.from(select.children)) {
+      if (child.tagName === "OPTGROUP") {
+        const group = document.createElement("div");
+        group.className = "custom-select-group";
+
+        const groupLabel = document.createElement("div");
+        groupLabel.className = "custom-select-group-label";
+        groupLabel.textContent = child.label || "";
+        group.appendChild(groupLabel);
+        list.appendChild(group);
+
+        for (const option of Array.from(child.children)) {
+          addOption(option);
+        }
+      } else if (child.tagName === "OPTION") {
+        addOption(child);
+      }
+    }
+  }
+
+  function updateCustomSelect(select, custom) {
+    if (!select || !custom) return;
+    custom.classList.toggle("is-disabled", !!select.disabled);
+    custom.setAttribute("aria-disabled", String(!!select.disabled));
+    renderCustomSelectOptions(select, custom);
+  }
+
+  function closeCustomSelect(custom) {
+    if (!custom) return;
+    custom.classList.remove("is-open");
+    const trigger = custom.querySelector(".custom-select-trigger");
+    if (trigger) trigger.setAttribute("aria-expanded", "false");
+  }
+
+  function openCustomSelect(select, custom) {
+    if (!select || !custom || select.disabled) return;
+    updateCustomSelect(select, custom);
+    custom.classList.add("is-open");
+    const trigger = custom.querySelector(".custom-select-trigger");
+    if (trigger) trigger.setAttribute("aria-expanded", "true");
+
+    requestAnimationFrame(() => {
+      const active = custom.querySelector('.custom-select-option[aria-selected="true"]');
+      active && active.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function initCustomSelect(select) {
+    if (!select || select.dataset.customized === "true") return;
+
+    select.dataset.customized = "true";
+    select.classList.add("native-select-hidden");
+
+    const custom = document.createElement("div");
+    custom.className = "custom-select";
+    custom.setAttribute("aria-hidden", "false");
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "custom-select-trigger";
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+
+    const value = document.createElement("span");
+    value.className = "custom-select-value";
+    trigger.appendChild(value);
+
+    const menu = document.createElement("div");
+    menu.className = "custom-select-menu";
+
+    const list = document.createElement("div");
+    list.className = "custom-select-list";
+    list.setAttribute("role", "listbox");
+    menu.appendChild(list);
+
+    custom.appendChild(trigger);
+    custom.appendChild(menu);
+    select.insertAdjacentElement("afterend", custom);
+
+    trigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (custom.classList.contains("is-open")) {
+        closeCustomSelect(custom);
+      } else {
+        openCustomSelect(select, custom);
+      }
+    });
+
+    trigger.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openCustomSelect(select, custom);
+      }
+    });
+
+    custom.addEventListener("click", (event) => event.stopPropagation());
+    select.addEventListener("change", () => updateCustomSelect(select, custom));
+
+    const observer = new MutationObserver(() => updateCustomSelect(select, custom));
+    observer.observe(select, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      attributeFilter: ["disabled", "label", "selected", "value"],
+    });
+
+    document.addEventListener("click", () => closeCustomSelect(custom));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeCustomSelect(custom);
+    });
+
+    updateCustomSelect(select, custom);
+  }
+
   function bindUI() {
       const newBtn = $("newBtn");
       const renameBtn = $("renameBtn");
@@ -969,12 +1393,23 @@ int main(void) {
       const fileAddCloseBtn = $("fileAddCloseBtn");
       const createNewFileCard = $("createNewFileCard");
       const uploadExistingFileCard = $("uploadExistingFileCard");
+      const siteDialog = $("siteDialog");
+      const siteDialogCloseBtn = $("siteDialogCloseBtn");
+      const siteDialogCancelBtn = $("siteDialogCancelBtn");
+      const siteDialogConfirmBtn = $("siteDialogConfirmBtn");
+      const mcuSelect = $("mcuSelect");
 
-    newBtn && newBtn.addEventListener("click", openAddFileModal);
+    initCustomSelect(mcuSelect);
+    newBtn && newBtn.addEventListener("click", startInlineCreate);
     renameBtn &&
       renameBtn.addEventListener("click", () => current && renameFile(current));
     deleteBtn &&
-      deleteBtn.addEventListener("click", () => current && deleteFile(current));
+      deleteBtn.addEventListener("click", () => {
+        if (!current) return;
+        deleteFile(current).catch((error) => {
+          appendCompileLog(`Delete failed: ${error.message || String(error)}`);
+        });
+      });
       downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
       compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
       detectChipBtn && detectChipBtn.addEventListener("click", handleDetectChip);
@@ -1012,7 +1447,7 @@ int main(void) {
           await handleUploadedFile(file);
         } catch (error) {
           const message = error && error.message ? error.message : String(error);
-          alert(`Failed to import file.\n${message}`);
+          await showSiteAlert(`Failed to import file.\n${message}`, "Import failed");
           appendCompileLog(`Import failed: ${message}`);
         } finally {
           if (input instanceof HTMLInputElement) {
@@ -1036,6 +1471,25 @@ int main(void) {
       });
     }
 
+    siteDialogConfirmBtn &&
+      siteDialogConfirmBtn.addEventListener("click", () =>
+        resolveSiteDialog(true)
+      );
+    siteDialogCancelBtn &&
+      siteDialogCancelBtn.addEventListener("click", () =>
+        resolveSiteDialog(false)
+      );
+    siteDialogCloseBtn &&
+      siteDialogCloseBtn.addEventListener("click", () =>
+        resolveSiteDialog(false)
+      );
+    siteDialog &&
+      siteDialog.addEventListener("click", (event) => {
+        if (event.target === siteDialog) {
+          resolveSiteDialog(false);
+        }
+      });
+
     // Close context menu on click outside of it / trigger
     document.addEventListener("click", (e) => {
       const menu = $("fileContextMenu");
@@ -1049,6 +1503,14 @@ int main(void) {
     // Close context menu on Escape
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
+        if (siteDialog && !siteDialog.hidden) {
+          resolveSiteDialog(false);
+          return;
+        }
+        if (inlineFileEdit) {
+          cancelInlineFileEdit();
+          return;
+        }
         closeFileContextMenu();
         closeAddFileModal();
       }
@@ -1192,8 +1654,8 @@ int main(void) {
 
   async function legacyCompileCurrentFile() {
     // Ensure we have a .c file open
-    if (!current || !files[current]) {
-      alert("No open file.");
+    if (!current || !hasFile(current)) {
+      await showSiteAlert("No open file.", "Compile");
       // индикатор ошибки
       try {
         if (typeof setHexStatus === "function") setHexStatus("error");
@@ -1204,7 +1666,10 @@ int main(void) {
       return;
     }
     if (!/\.c$/i.test(current)) {
-      alert("Only *.c files can be compiled. Select a .c file.");
+      await showSiteAlert(
+        "Only *.c files can be compiled. Select a .c file.",
+        "Compile"
+      );
       try {
         if (typeof setHexStatus === "function") setHexStatus("error");
       } catch {}
@@ -1236,8 +1701,9 @@ int main(void) {
           : "";
 
         if (!detectedMcu) {
-          alert(
-            "Auto detect could not resolve a supported chip. Check the UPDI connection or choose a concrete MCU before compiling."
+          await showSiteAlert(
+            "Auto detect could not resolve a supported chip. Check the UPDI connection or choose a concrete MCU before compiling.",
+            "Auto detect failed"
           );
         try {
           if (typeof setHexStatus === "function") setHexStatus("error");
@@ -1292,7 +1758,10 @@ int main(void) {
       });
     } catch (e) {
       console.error("Network error:", e);
-      alert("Failed to send code for compilation (network error).");
+      await showSiteAlert(
+        "Failed to send code for compilation (network error).",
+        "Compile failed"
+      );
       try {
         if (typeof setHexStatus === "function") setHexStatus("error");
       } catch {}
@@ -1309,7 +1778,10 @@ int main(void) {
     if (!resp.ok) {
       const txt = await resp.text().catch(() => "");
       console.error("Server error:", resp.status, txt);
-      alert("Compile server error: " + resp.status + (txt ? "\n" + txt : ""));
+      await showSiteAlert(
+        "Compile server error: " + resp.status + (txt ? "\n" + txt : ""),
+        "Compile failed"
+      );
       try {
         if (typeof setHexStatus === "function") setHexStatus("error");
       } catch {}
@@ -1329,7 +1801,7 @@ int main(void) {
       data = await resp.json();
     } catch (e) {
       console.error("Bad JSON:", e);
-      alert("Invalid response from compile server.");
+      await showSiteAlert("Invalid response from compile server.", "Compile failed");
       try {
         if (typeof setHexStatus === "function") setHexStatus("error");
       } catch {}
@@ -1348,7 +1820,7 @@ int main(void) {
       const stderr =
         data && data.stderr ? String(data.stderr) : "unknown error";
       console.error("Compile failed:", stderr, data);
-      alert("Compilation failed.\n" + stderr);
+      await showSiteAlert("Compilation failed.\n" + stderr, "Compile failed");
       try {
         if (typeof setHexStatus === "function") setHexStatus("error");
       } catch {}

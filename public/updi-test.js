@@ -1721,7 +1721,7 @@
     return info;
   }
 
-  async function runUpdiAction(actionName, handler) {
+  async function runUpdiAction(actionName, handler, portOptions = {}) {
     if (state.busy) return;
     if (isCanvasSerialConnected()) {
       throw new Error("Disconnect UART before using UPDI programming tools.");
@@ -1734,7 +1734,7 @@
     updateView();
 
     try {
-      let portSelection = await ensureUpdiPortPermission();
+      let portSelection = await ensureUpdiPortPermission(portOptions);
       appendLog(
         portSelection.source === "prompt"
           ? "Requesting serial port..."
@@ -1808,7 +1808,7 @@
     }
   }
 
-  async function readSignature() {
+  async function readSignature(options = {}) {
     try {
       return await runUpdiAction("Reading signature...", async (session) => {
         let progModeEntered = false;
@@ -1827,7 +1827,7 @@
             await leaveNvmProgMode(session);
           }
         }
-      });
+      }, options);
     } catch (error) {
       setSummaryNote(error.message || "Signature read failed.", "error");
     }
@@ -1840,7 +1840,7 @@
       return state.signatureInfo;
     }
 
-    return await readSignature();
+    return await readSignature(options);
   }
 
   async function programHex() {
@@ -1930,7 +1930,7 @@
       els.probeBtn.addEventListener("click", probeUpdi);
     }
     if (els.readSignatureBtn) {
-      els.readSignatureBtn.addEventListener("click", readSignature);
+      els.readSignatureBtn.addEventListener("click", () => readSignature());
     }
     if (
       els.programHexBtn &&
