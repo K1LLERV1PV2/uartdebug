@@ -493,7 +493,7 @@ main,
   border-color: rgba(129, 159, 141, 0.22);
 }
 
-.file-item.file-c:hover {
+.file-item[data-file]:hover {
   background: rgba(39, 174, 96, 0.11);
   border-color: rgba(129, 159, 141, 0.28);
 }
@@ -503,9 +503,34 @@ main,
   border-color: rgba(129, 159, 141, 0.24);
 }
 
-.file-item.active.file-c {
+.file-item[data-file].active {
   background: rgba(39, 174, 96, 0.18);
   border-color: rgba(70, 255, 120, 0.34);
+}
+
+.file-group-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  outline: 1px solid rgba(129, 159, 141, 0.34);
+  outline-offset: -1px;
+  border-radius: 12px;
+}
+
+.file-item.group-member {
+  background: transparent;
+  border-color: transparent;
+}
+
+.file-item.dragging {
+  opacity: 0.56;
+}
+
+.file-item.file-group.drop-target {
+  border-color: var(--avr-border-hot);
+  background: rgba(39, 174, 96, 0.22);
 }
 
 .file-item.new-item {
@@ -1251,6 +1276,10 @@ main,
   cursor: pointer;
 }
 
+.file-context-menu button[hidden] {
+  display: none !important;
+}
+
 .file-context-menu button:hover:not(:disabled) {
   background: rgba(39, 174, 96, 0.16);
 }
@@ -1276,7 +1305,7 @@ main,
 }
 
 .file-add-dialog {
-  width: min(100%, 500px);
+  width: min(100%, 640px);
   overflow: hidden;
   border: 1px solid rgba(129, 159, 141, 0.32);
   border-radius: var(--avr-radius);
@@ -1327,7 +1356,7 @@ main,
 
 .file-add-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
 }
 

@@ -2,6 +2,7 @@
 (function () {
   const STORAGE_KEY = "ud_avr_programming_files_v1";
   const STORAGE_CURRENT = "ud_avr_programming_current_v1";
+  const STORAGE_GROUPS = "ud_avr_programming_file_groups_v1";
   const LEGACY_STORAGE_KEY = "ud_c_canvas_files_v1";
   const LEGACY_STORAGE_CURRENT = "ud_c_canvas_current_v1";
   const AVR_UPDI_RUNTIME_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI__";
@@ -15,9 +16,11 @@
 
   let editor = null;
   let files = {};
+  let fileGroups = {};
   let current = null;
   let saveTimer = null;
   let contextMenuFile = null;
+  let contextMenuGroup = null;
   let inlineFileEdit = null;
   let siteDialogResolve = null;
   const EDITOR_FILE_EXTENSIONS = new Set([
@@ -421,20 +424,25 @@ int main(void) {
         localStorage.getItem(LEGACY_STORAGE_KEY) ??
         "{}";
       files = JSON.parse(storedFiles || "{}");
+      fileGroups = JSON.parse(localStorage.getItem(STORAGE_GROUPS) || "{}");
       current =
         localStorage.getItem(STORAGE_CURRENT) ??
         localStorage.getItem(LEGACY_STORAGE_CURRENT) ??
         null;
     } catch {
       files = {};
+      fileGroups = {};
       current = null;
     }
+
+    normalizeFileGroups();
   }
 
   function persistState() {
     const serializedFiles = JSON.stringify(files);
     localStorage.setItem(STORAGE_KEY, serializedFiles);
     localStorage.setItem(LEGACY_STORAGE_KEY, serializedFiles);
+    localStorage.setItem(STORAGE_GROUPS, JSON.stringify(fileGroups));
     if (current) {
       localStorage.setItem(STORAGE_CURRENT, current);
       localStorage.setItem(LEGACY_STORAGE_CURRENT, current);
@@ -444,6 +452,47 @@ int main(void) {
         localStorage.removeItem(LEGACY_STORAGE_CURRENT);
       } catch {}
     }
+  }
+
+  function normalizeFileGroups() {
+    const normalized = {};
+    const assignedFiles = new Set();
+
+    if (!fileGroups || typeof fileGroups !== "object") {
+      fileGroups = {};
+      return;
+    }
+
+    for (const [rawName, rawGroup] of Object.entries(fileGroups)) {
+      const name = String(rawName || "").trim();
+      if (!name || normalized[name]) continue;
+
+      const rawFiles = Array.isArray(rawGroup?.files)
+        ? rawGroup.files
+        : [];
+      const groupFiles = [];
+
+      for (const fileName of rawFiles) {
+        const normalizedFile = String(fileName || "").trim();
+        if (
+          !normalizedFile ||
+          !hasFile(normalizedFile) ||
+          assignedFiles.has(normalizedFile)
+        ) {
+          continue;
+        }
+
+        groupFiles.push(normalizedFile);
+        assignedFiles.add(normalizedFile);
+      }
+
+      normalized[name] = {
+        files: groupFiles,
+        expanded: !!rawGroup?.expanded,
+      };
+    }
+
+    fileGroups = normalized;
   }
 
   function uniqueName(base) {
@@ -481,6 +530,32 @@ int main(void) {
 
   function hasFile(name) {
     return Object.prototype.hasOwnProperty.call(files, name);
+  }
+
+  function hasGroup(name) {
+    return Object.prototype.hasOwnProperty.call(fileGroups, name);
+  }
+
+  function uniqueGroupName(base = "New group") {
+    if (!hasGroup(base) && !hasFile(base)) return base;
+
+    let index = 2;
+    let candidate = `${base} ${index}`;
+    while (hasGroup(candidate) || hasFile(candidate)) {
+      index += 1;
+      candidate = `${base} ${index}`;
+    }
+    return candidate;
+  }
+
+  function getGroupedFileSet() {
+    const grouped = new Set();
+    for (const group of Object.values(fileGroups)) {
+      for (const fileName of group.files || []) {
+        if (hasFile(fileName)) grouped.add(fileName);
+      }
+    }
+    return grouped;
   }
 
   function isCFileName(fileName) {
@@ -634,8 +709,23 @@ int main(void) {
       return 'Do not use path separators or these characters: \\ / : * ? " < > |';
     }
     if (name.length > 96) return "Keep the file name under 96 characters.";
-    if (name !== originalName && hasFile(name)) {
-      return "A file with this name already exists.";
+    if (name !== originalName && (hasFile(name) || hasGroup(name))) {
+      return "A file or group with this name already exists.";
+    }
+
+    return "";
+  }
+
+  function validateInlineGroupName(groupName, originalName = "") {
+    const name = String(groupName || "").trim();
+
+    if (!name) return "Enter a group name.";
+    if (name.length > 64) return "Keep the group name under 64 characters.";
+    if (/[\\/:*?"<>|\x00-\x1f]/.test(name)) {
+      return 'Do not use path separators or these characters: \\ / : * ? " < > |';
+    }
+    if (name !== originalName && (hasGroup(name) || hasFile(name))) {
+      return "A file or group with this name already exists.";
     }
 
     return "";
@@ -659,7 +749,16 @@ int main(void) {
     input.type = "text";
     input.value = edit.value || "";
     input.spellcheck = false;
-    input.setAttribute("aria-label", edit.mode === "rename" ? "Rename file" : "New file name");
+    input.setAttribute(
+      "aria-label",
+      edit.mode === "rename-group"
+        ? "Rename group"
+        : edit.mode === "create-group"
+          ? "New group name"
+          : edit.mode === "rename"
+            ? "Rename file"
+            : "New file name"
+    );
 
     const error = document.createElement("div");
     error.className = "file-inline-error";
@@ -706,6 +805,18 @@ int main(void) {
     focusInlineFileInput();
   }
 
+  function startInlineCreateGroup() {
+    closeFileContextMenu();
+    closeAddFileModal();
+    inlineFileEdit = {
+      mode: "create-group",
+      value: uniqueGroupName("New group"),
+      error: "",
+    };
+    renderOutliner();
+    focusInlineFileInput();
+  }
+
   function startInlineRename(fileName) {
     if (!hasFile(fileName)) return;
     closeFileContextMenu();
@@ -714,6 +825,20 @@ int main(void) {
       mode: "rename",
       originalName: fileName,
       value: fileName,
+      error: "",
+    };
+    renderOutliner();
+    focusInlineFileInput();
+  }
+
+  function startInlineRenameGroup(groupName) {
+    if (!hasGroup(groupName)) return;
+    closeFileContextMenu();
+    closeAddFileModal();
+    inlineFileEdit = {
+      mode: "rename-group",
+      originalName: groupName,
+      value: groupName,
       error: "",
     };
     renderOutliner();
@@ -731,7 +856,12 @@ int main(void) {
     const input = document.querySelector(".file-inline-input");
     const nextName = String(input ? input.value : inlineFileEdit.value || "").trim();
     const originalName = inlineFileEdit.originalName || "";
-    const error = validateInlineFileName(nextName, originalName);
+    const isGroupEdit =
+      inlineFileEdit.mode === "create-group" ||
+      inlineFileEdit.mode === "rename-group";
+    const error = isGroupEdit
+      ? validateInlineGroupName(nextName, originalName)
+      : validateInlineFileName(nextName, originalName);
 
     if (error) {
       inlineFileEdit.value = nextName;
@@ -758,9 +888,26 @@ int main(void) {
       return true;
     }
 
+    if (inlineFileEdit.mode === "create-group") {
+      fileGroups[nextName] = {
+        files: [],
+        expanded: false,
+      };
+      inlineFileEdit = null;
+      persistState();
+      renderOutliner();
+      return true;
+    }
+
     if (inlineFileEdit.mode === "rename") {
       inlineFileEdit = null;
       applyFileRename(originalName, nextName);
+      return true;
+    }
+
+    if (inlineFileEdit.mode === "rename-group") {
+      inlineFileEdit = null;
+      applyGroupRename(originalName, nextName);
       return true;
     }
 
@@ -769,7 +916,178 @@ int main(void) {
     return false;
   }
 
-  function renderOutliner() {
+  function removeFileFromGroups(fileName) {
+    for (const group of Object.values(fileGroups)) {
+      group.files = (group.files || []).filter((name) => name !== fileName);
+    }
+  }
+
+  function assignFileToGroup(fileName, groupName) {
+    if (!hasFile(fileName) || !hasGroup(groupName)) return;
+
+    removeFileFromGroups(fileName);
+    fileGroups[groupName].files = fileGroups[groupName].files || [];
+    fileGroups[groupName].files.push(fileName);
+    fileGroups[groupName].expanded = true;
+    persistState();
+    renderOutliner();
+  }
+
+  function renderFileRow(list, name, groupName = "") {
+    const row = document.createElement("div");
+    row.className = "file-item";
+    row.dataset.file = name;
+    row.draggable = true;
+
+    if (groupName) {
+      row.dataset.groupMemberOf = groupName;
+      row.classList.add("group-member");
+    }
+    if (isCFileName(name)) row.classList.add("file-c");
+
+    if (name === current) {
+      row.classList.add("active");
+    }
+
+    const editingThisFile =
+      inlineFileEdit &&
+      inlineFileEdit.mode === "rename" &&
+      inlineFileEdit.originalName === name;
+
+    if (editingThisFile) {
+      row.classList.add("editing");
+      renderInlineFileInput(row, inlineFileEdit);
+      list.appendChild(row);
+      return;
+    }
+
+    const label = document.createElement("div");
+    label.className = "file-name";
+    label.textContent = name;
+    row.appendChild(label);
+
+    const acts = document.createElement("div");
+    acts.className = "file-actions";
+
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "file-menu-btn";
+    menuBtn.title = "File actions";
+    menuBtn.textContent = "\u22ef";
+
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const rect = menuBtn.getBoundingClientRect();
+      openFileContextMenu(name, rect.left + rect.width / 2, rect.bottom + 4);
+    });
+
+    acts.appendChild(menuBtn);
+    row.appendChild(acts);
+
+    row.addEventListener("click", () => {
+      if (inlineFileEdit && !commitInlineFileEdit()) return;
+      selectFile(name);
+    });
+
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openFileContextMenu(name, e.clientX, e.clientY);
+    });
+
+    row.addEventListener("dragstart", (e) => {
+      row.classList.add("dragging");
+      e.dataTransfer?.setData("text/x-ud-file", name);
+      e.dataTransfer?.setData("text/plain", name);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    });
+
+    row.addEventListener("dragend", () => {
+      row.classList.remove("dragging");
+    });
+
+    list.appendChild(row);
+  }
+
+  function renderGroupRow(list, groupName) {
+    const row = document.createElement("div");
+    row.className = "file-item file-group";
+    row.dataset.group = groupName;
+
+    const group = fileGroups[groupName];
+    if (group?.expanded) row.classList.add("expanded");
+
+    const editingThisGroup =
+      inlineFileEdit &&
+      inlineFileEdit.mode === "rename-group" &&
+      inlineFileEdit.originalName === groupName;
+
+    if (editingThisGroup) {
+      row.classList.add("editing");
+      renderInlineFileInput(row, inlineFileEdit);
+      list.appendChild(row);
+      return;
+    }
+
+    const label = document.createElement("div");
+    label.className = "file-name";
+    label.textContent = groupName;
+    row.appendChild(label);
+
+    const acts = document.createElement("div");
+    acts.className = "file-actions";
+
+    const menuBtn = document.createElement("button");
+    menuBtn.className = "file-menu-btn";
+    menuBtn.title = "Group actions";
+    menuBtn.textContent = "\u22ef";
+
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const rect = menuBtn.getBoundingClientRect();
+      openGroupContextMenu(groupName, rect.left + rect.width / 2, rect.bottom + 4);
+    });
+
+    acts.appendChild(menuBtn);
+    row.appendChild(acts);
+
+    row.addEventListener("click", () => {
+      if (inlineFileEdit && !commitInlineFileEdit()) return;
+      fileGroups[groupName].expanded = !fileGroups[groupName].expanded;
+      persistState();
+      renderOutliner();
+    });
+
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openGroupContextMenu(groupName, e.clientX, e.clientY);
+    });
+
+    row.addEventListener("dragover", (e) => {
+      const fileName = e.dataTransfer?.getData("text/x-ud-file");
+      if (!fileName && e.dataTransfer?.types?.includes("text/x-ud-file") === false) {
+        return;
+      }
+      e.preventDefault();
+      row.classList.add("drop-target");
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    });
+
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("drop-target");
+    });
+
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      row.classList.remove("drop-target");
+      const fileName =
+        e.dataTransfer?.getData("text/x-ud-file") ||
+        e.dataTransfer?.getData("text/plain");
+      assignFileToGroup(fileName, groupName);
+    });
+
+    list.appendChild(row);
+  }
+
+  function renderOutlinerLegacy() {
     const list = $("fileList");
     list.innerHTML = "";
 
@@ -829,7 +1147,7 @@ int main(void) {
       const menuBtn = document.createElement("button");
       menuBtn.className = "file-menu-btn";
       menuBtn.title = "File actions";
-      menuBtn.innerHTML = "⋯";
+      menuBtn.textContent = "\u22ef";
 
       menuBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -857,16 +1175,105 @@ int main(void) {
     updateCompilePanelState(false);
   }
 
+  function renderOutliner() {
+    const list = $("fileList");
+    list.innerHTML = "";
+
+    const newRow = document.createElement("div");
+    newRow.className = "file-item new-item";
+    newRow.title = "Create new file";
+
+    if (inlineFileEdit && inlineFileEdit.mode === "create") {
+      newRow.classList.add("active", "editing");
+      renderInlineFileInput(newRow, inlineFileEdit);
+    } else {
+      const plus = document.createElement("div");
+      plus.className = "file-name";
+      plus.textContent = "+";
+
+      newRow.appendChild(plus);
+      newRow.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openAddFileModal();
+      });
+    }
+
+    list.appendChild(newRow);
+
+    if (inlineFileEdit && inlineFileEdit.mode === "create-group") {
+      const groupRow = document.createElement("div");
+      groupRow.className = "file-item file-group editing";
+      renderInlineFileInput(groupRow, inlineFileEdit);
+      list.appendChild(groupRow);
+    }
+
+    const groupedFiles = getGroupedFileSet();
+    const entries = [
+      ...Object.keys(fileGroups).map((name) => ({
+        type: "group",
+        name,
+      })),
+      ...Object.keys(files)
+        .filter((name) => !groupedFiles.has(name))
+        .map((name) => ({
+          type: "file",
+          name,
+        })),
+    ].sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of entries) {
+      if (entry.type === "group") {
+        const group = fileGroups[entry.name];
+        if (group?.expanded) {
+          const groupFiles = (group.files || [])
+            .filter((name) => hasFile(name))
+            .sort((a, b) => a.localeCompare(b));
+
+          const groupBlock = document.createElement("div");
+          groupBlock.className = "file-group-block";
+          groupBlock.dataset.groupFiles = entry.name;
+
+          renderGroupRow(groupBlock, entry.name);
+
+          for (const fileName of groupFiles) {
+            renderFileRow(groupBlock, fileName, entry.name);
+          }
+
+          list.appendChild(groupBlock);
+        } else {
+          renderGroupRow(list, entry.name);
+        }
+      } else {
+        renderFileRow(list, entry.name);
+      }
+    }
+
+    updateToolbarState();
+    updateCompilePanelState(false);
+  }
+
   function openFileContextMenu(fileName, clientX, clientY) {
     const menu = $("fileContextMenu");
     if (!menu) return;
 
     contextMenuFile = fileName;
+    contextMenuGroup = null;
+
+    const renameBtn = menu.querySelector('button[data-action="rename"]');
+    const deleteBtn = menu.querySelector('button[data-action="delete"]');
+    const downloadBtn = menu.querySelector('button[data-action="download"]');
+    if (renameBtn) renameBtn.hidden = false;
+    if (deleteBtn) {
+      deleteBtn.hidden = false;
+      deleteBtn.textContent = "Delete";
+    }
+    if (downloadBtn) downloadBtn.hidden = false;
 
     const downloadHexBtn = menu.querySelector(
       'button[data-action="download-hex"]'
     );
     if (downloadHexBtn) {
+      downloadHexBtn.hidden = false;
       const canDownloadHex = /\.c$/i.test(fileName);
       downloadHexBtn.disabled = !canDownloadHex;
       downloadHexBtn.title = canDownloadHex
@@ -896,14 +1303,74 @@ int main(void) {
     menu.style.top = y + "px";
   }
 
+  function openGroupContextMenu(groupName, clientX, clientY) {
+    const menu = $("fileContextMenu");
+    if (!menu) return;
+
+    contextMenuFile = null;
+    contextMenuGroup = groupName;
+
+    const renameBtn = menu.querySelector('button[data-action="rename"]');
+    const deleteBtn = menu.querySelector('button[data-action="delete"]');
+    const downloadBtn = menu.querySelector('button[data-action="download"]');
+    const downloadHexBtn = menu.querySelector(
+      'button[data-action="download-hex"]'
+    );
+
+    if (renameBtn) renameBtn.hidden = false;
+    if (deleteBtn) {
+      deleteBtn.hidden = false;
+      deleteBtn.textContent = "Delete group";
+    }
+    if (downloadBtn) downloadBtn.hidden = true;
+    if (downloadHexBtn) downloadHexBtn.hidden = true;
+
+    menu.style.display = "block";
+
+    const menuRect = menu.getBoundingClientRect();
+    const margin = 4;
+    let x = clientX;
+    let y = clientY;
+
+    if (x + menuRect.width + margin > window.innerWidth) {
+      x = window.innerWidth - menuRect.width - margin;
+    }
+    if (y + menuRect.height + margin > window.innerHeight) {
+      y = window.innerHeight - menuRect.height - margin;
+    }
+    if (x < margin) x = margin;
+    if (y < margin) y = margin;
+
+    menu.style.left = x + "px";
+    menu.style.top = y + "px";
+  }
+
   function closeFileContextMenu() {
     const menu = $("fileContextMenu");
     if (!menu) return;
     menu.style.display = "none";
     contextMenuFile = null;
+    contextMenuGroup = null;
   }
 
   async function handleFileContextAction(action) {
+    if (contextMenuGroup && hasGroup(contextMenuGroup)) {
+      const targetGroup = contextMenuGroup;
+      closeFileContextMenu();
+
+      switch (action) {
+        case "rename":
+          startInlineRenameGroup(targetGroup);
+          break;
+        case "delete":
+          await deleteGroup(targetGroup);
+          break;
+        default:
+          break;
+      }
+      return;
+    }
+
     if (!contextMenuFile || !hasFile(contextMenuFile)) {
       closeFileContextMenu();
       return;
@@ -971,6 +1438,11 @@ int main(void) {
       hexArtifactsBySource.set(newName, hexArtifactsBySource.get(oldName));
       hexArtifactsBySource.delete(oldName);
     }
+    for (const group of Object.values(fileGroups)) {
+      group.files = (group.files || []).map((fileName) =>
+        fileName === oldName ? newName : fileName
+      );
+    }
     const renamedCurrent = current === oldName;
     if (renamedCurrent) current = newName;
     persistState();
@@ -983,6 +1455,36 @@ int main(void) {
       resetHexArtifact();
       updateCompilePanelState(true);
     }
+  }
+
+  function applyGroupRename(oldName, newName) {
+    if (!hasGroup(oldName)) return;
+    if (oldName === newName) {
+      renderOutliner();
+      return;
+    }
+
+    fileGroups[newName] = fileGroups[oldName];
+    delete fileGroups[oldName];
+    persistState();
+    renderOutliner();
+  }
+
+  async function deleteGroup(groupName) {
+    if (!hasGroup(groupName)) return;
+
+    const confirmed = await showSiteConfirm({
+      title: "Delete group",
+      message: `Delete group "${groupName}"? Files inside it will stay in Files.`,
+      confirmText: "Delete group",
+      cancelText: "Cancel",
+      danger: true,
+    });
+    if (!confirmed) return;
+
+    delete fileGroups[groupName];
+    persistState();
+    renderOutliner();
   }
 
   async function deleteFile(name) {
@@ -999,6 +1501,7 @@ int main(void) {
     const deletedCurrent = current === name;
     delete files[name];
     hexArtifactsBySource.delete(name);
+    removeFileFromGroups(name);
     if (deletedCurrent) {
       current = Object.keys(files).sort((a, b) => a.localeCompare(b))[0] || null;
     }
@@ -1393,6 +1896,7 @@ int main(void) {
       const fileAddCloseBtn = $("fileAddCloseBtn");
       const createNewFileCard = $("createNewFileCard");
       const uploadExistingFileCard = $("uploadExistingFileCard");
+      const createNewGroupCard = $("createNewGroupCard");
       const siteDialog = $("siteDialog");
       const siteDialogCloseBtn = $("siteDialogCloseBtn");
       const siteDialogCancelBtn = $("siteDialogCancelBtn");
@@ -1420,6 +1924,11 @@ int main(void) {
       createNewFileCard.addEventListener("click", () => {
         closeAddFileModal();
         newCanvas();
+      });
+    createNewGroupCard &&
+      createNewGroupCard.addEventListener("click", () => {
+        closeAddFileModal();
+        startInlineCreateGroup();
       });
     uploadExistingFileCard &&
       uploadExistingFileCard.addEventListener("click", () => {
