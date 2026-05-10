@@ -558,6 +558,64 @@ int main(void) {
     return grouped;
   }
 
+  function getFileGroup(fileName) {
+    for (const [groupName, group] of Object.entries(fileGroups)) {
+      if ((group.files || []).includes(fileName)) return groupName;
+    }
+    return "";
+  }
+
+  function insertFileName(names, fileName, targetName = "", placement = "after") {
+    const next = names.filter((name) => name !== fileName);
+    const targetIndex = targetName ? next.indexOf(targetName) : -1;
+
+    if (targetIndex === -1) {
+      next.push(fileName);
+      return next;
+    }
+
+    next.splice(placement === "before" ? targetIndex : targetIndex + 1, 0, fileName);
+    return next;
+  }
+
+  function setFilesInOrder(names) {
+    const nextFiles = {};
+    const seen = new Set();
+
+    for (const name of names) {
+      if (!hasFile(name) || seen.has(name)) continue;
+      nextFiles[name] = files[name];
+      seen.add(name);
+    }
+
+    for (const name of Object.keys(files)) {
+      if (seen.has(name)) continue;
+      nextFiles[name] = files[name];
+    }
+
+    files = nextFiles;
+  }
+
+  function renameFileKey(oldName, newName) {
+    const nextFiles = {};
+
+    for (const name of Object.keys(files)) {
+      nextFiles[name === oldName ? newName : name] = files[name];
+    }
+
+    files = nextFiles;
+  }
+
+  function renameGroupKey(oldName, newName) {
+    const nextGroups = {};
+
+    for (const name of Object.keys(fileGroups)) {
+      nextGroups[name === oldName ? newName : name] = fileGroups[name];
+    }
+
+    fileGroups = nextGroups;
+  }
+
   function isCFileName(fileName) {
     return /\.c$/i.test(fileName || "");
   }
@@ -922,15 +980,101 @@ int main(void) {
     }
   }
 
-  function assignFileToGroup(fileName, groupName) {
+  function moveFileToRoot(fileName, targetName = "", placement = "after") {
+    if (!hasFile(fileName)) return false;
+
+    removeFileFromGroups(fileName);
+    setFilesInOrder(
+      insertFileName(Object.keys(files), fileName, targetName, placement)
+    );
+    persistState();
+    renderOutliner();
+    return true;
+  }
+
+  function moveFileToGroup(fileName, groupName, targetName = "", placement = "after") {
     if (!hasFile(fileName) || !hasGroup(groupName)) return;
 
     removeFileFromGroups(fileName);
-    fileGroups[groupName].files = fileGroups[groupName].files || [];
-    fileGroups[groupName].files.push(fileName);
-    fileGroups[groupName].expanded = true;
+    const group = fileGroups[groupName];
+    const groupFiles = (group.files || []).filter((name) => hasFile(name));
+    group.files = insertFileName(groupFiles, fileName, targetName, placement);
+    group.expanded = true;
     persistState();
     renderOutliner();
+    return true;
+  }
+
+  function assignFileToGroup(fileName, groupName) {
+    moveFileToGroup(fileName, groupName);
+  }
+
+  function eventHasDraggedFile(event) {
+    const types = Array.from(event.dataTransfer?.types || []);
+    return types.includes("text/x-ud-file") || types.includes("text/plain");
+  }
+
+  function getDraggedFileName(event) {
+    return (
+      event.dataTransfer?.getData("text/x-ud-file") ||
+      event.dataTransfer?.getData("text/plain") ||
+      ""
+    );
+  }
+
+  function getDropPlacement(event, row) {
+    const rect = row.getBoundingClientRect();
+    return event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+  }
+
+  function clearOutlinerDropMarkers() {
+    document
+      .querySelectorAll(".file-item.drop-before, .file-item.drop-after, .file-item.drop-target")
+      .forEach((row) => {
+        row.classList.remove("drop-before", "drop-after", "drop-target");
+      });
+    $("fileList")?.classList.remove("root-drop-target");
+  }
+
+  function markRowDrop(row, placement) {
+    clearOutlinerDropMarkers();
+    row.classList.add(placement === "before" ? "drop-before" : "drop-after");
+  }
+
+  function bindOutlinerDropZone() {
+    const list = $("fileList");
+    if (!list) return;
+
+    list.addEventListener("dragover", (event) => {
+      if (!eventHasDraggedFile(event)) return;
+      const handledTarget = event.target.closest(
+        ".file-item[data-file], .file-item.file-group, .file-group-block"
+      );
+      if (handledTarget) return;
+
+      event.preventDefault();
+      clearOutlinerDropMarkers();
+      list.classList.add("root-drop-target");
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    });
+
+    list.addEventListener("dragleave", (event) => {
+      if (list.contains(event.relatedTarget)) return;
+      list.classList.remove("root-drop-target");
+    });
+
+    list.addEventListener("drop", (event) => {
+      if (!eventHasDraggedFile(event)) return;
+      const handledTarget = event.target.closest(
+        ".file-item[data-file], .file-item.file-group, .file-group-block"
+      );
+      if (handledTarget) return;
+
+      event.preventDefault();
+      clearOutlinerDropMarkers();
+      const fileName = getDraggedFileName(event);
+      moveFileToRoot(fileName);
+    });
   }
 
   function renderFileRow(list, name, groupName = "") {
@@ -996,12 +1140,46 @@ int main(void) {
     row.addEventListener("dragstart", (e) => {
       row.classList.add("dragging");
       e.dataTransfer?.setData("text/x-ud-file", name);
+      e.dataTransfer?.setData("text/x-ud-source-group", groupName || "");
       e.dataTransfer?.setData("text/plain", name);
       if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
     });
 
     row.addEventListener("dragend", () => {
       row.classList.remove("dragging");
+      clearOutlinerDropMarkers();
+    });
+
+    row.addEventListener("dragover", (e) => {
+      if (!eventHasDraggedFile(e)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      markRowDrop(row, getDropPlacement(e, row));
+    });
+
+    row.addEventListener("dragleave", (e) => {
+      if (row.contains(e.relatedTarget)) return;
+      row.classList.remove("drop-before", "drop-after");
+    });
+
+    row.addEventListener("drop", (e) => {
+      if (!eventHasDraggedFile(e)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+      clearOutlinerDropMarkers();
+
+      const fileName = getDraggedFileName(e);
+      if (!fileName || fileName === name) return;
+
+      const placement = getDropPlacement(e, row);
+      if (groupName) {
+        moveFileToGroup(fileName, groupName, name, placement);
+      } else {
+        moveFileToRoot(fileName, name, placement);
+      }
     });
 
     list.appendChild(row);
@@ -1062,25 +1240,25 @@ int main(void) {
     });
 
     row.addEventListener("dragover", (e) => {
-      const fileName = e.dataTransfer?.getData("text/x-ud-file");
-      if (!fileName && e.dataTransfer?.types?.includes("text/x-ud-file") === false) {
-        return;
-      }
+      if (!eventHasDraggedFile(e)) return;
       e.preventDefault();
+      e.stopPropagation();
+      clearOutlinerDropMarkers();
       row.classList.add("drop-target");
       if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
     });
 
-    row.addEventListener("dragleave", () => {
+    row.addEventListener("dragleave", (e) => {
+      if (row.contains(e.relatedTarget)) return;
       row.classList.remove("drop-target");
     });
 
     row.addEventListener("drop", (e) => {
+      if (!eventHasDraggedFile(e)) return;
       e.preventDefault();
-      row.classList.remove("drop-target");
-      const fileName =
-        e.dataTransfer?.getData("text/x-ud-file") ||
-        e.dataTransfer?.getData("text/plain");
+      e.stopPropagation();
+      clearOutlinerDropMarkers();
+      const fileName = getDraggedFileName(e);
       assignFileToGroup(fileName, groupName);
     });
 
@@ -1112,7 +1290,7 @@ int main(void) {
 
     list.appendChild(newRow);
 
-    const names = Object.keys(files).sort((a, b) => a.localeCompare(b));
+    const names = Object.keys(files);
 
     for (const name of names) {
       const row = document.createElement("div");
@@ -1219,15 +1397,13 @@ int main(void) {
           type: "file",
           name,
         })),
-    ].sort((a, b) => a.name.localeCompare(b.name));
+    ];
 
     for (const entry of entries) {
       if (entry.type === "group") {
         const group = fileGroups[entry.name];
         if (group?.expanded) {
-          const groupFiles = (group.files || [])
-            .filter((name) => hasFile(name))
-            .sort((a, b) => a.localeCompare(b));
+          const groupFiles = (group.files || []).filter((name) => hasFile(name));
 
           const groupBlock = document.createElement("div");
           groupBlock.className = "file-group-block";
@@ -1261,12 +1437,16 @@ int main(void) {
 
     const renameBtn = menu.querySelector('button[data-action="rename"]');
     const deleteBtn = menu.querySelector('button[data-action="delete"]');
+    const leaveGroupBtn = menu.querySelector('button[data-action="leave-group"]');
     const downloadBtn = menu.querySelector('button[data-action="download"]');
+    const groupName = getFileGroup(fileName);
+
     if (renameBtn) renameBtn.hidden = false;
     if (deleteBtn) {
       deleteBtn.hidden = false;
       deleteBtn.textContent = "Delete";
     }
+    if (leaveGroupBtn) leaveGroupBtn.hidden = !groupName;
     if (downloadBtn) downloadBtn.hidden = false;
 
     const downloadHexBtn = menu.querySelector(
@@ -1312,6 +1492,7 @@ int main(void) {
 
     const renameBtn = menu.querySelector('button[data-action="rename"]');
     const deleteBtn = menu.querySelector('button[data-action="delete"]');
+    const leaveGroupBtn = menu.querySelector('button[data-action="leave-group"]');
     const downloadBtn = menu.querySelector('button[data-action="download"]');
     const downloadHexBtn = menu.querySelector(
       'button[data-action="download-hex"]'
@@ -1322,6 +1503,7 @@ int main(void) {
       deleteBtn.hidden = false;
       deleteBtn.textContent = "Delete group";
     }
+    if (leaveGroupBtn) leaveGroupBtn.hidden = true;
     if (downloadBtn) downloadBtn.hidden = true;
     if (downloadHexBtn) downloadHexBtn.hidden = true;
 
@@ -1387,6 +1569,9 @@ int main(void) {
       case "delete":
         await deleteFile(targetName);
         break;
+      case "leave-group":
+        moveFileToRoot(targetName);
+        break;
       case "download":
         downloadFile(targetName);
         break;
@@ -1432,8 +1617,7 @@ int main(void) {
       return;
     }
 
-    files[newName] = files[oldName];
-    delete files[oldName];
+    renameFileKey(oldName, newName);
     if (hexArtifactsBySource.has(oldName)) {
       hexArtifactsBySource.set(newName, hexArtifactsBySource.get(oldName));
       hexArtifactsBySource.delete(oldName);
@@ -1464,8 +1648,7 @@ int main(void) {
       return;
     }
 
-    fileGroups[newName] = fileGroups[oldName];
-    delete fileGroups[oldName];
+    renameGroupKey(oldName, newName);
     persistState();
     renderOutliner();
   }
@@ -1503,7 +1686,7 @@ int main(void) {
     hexArtifactsBySource.delete(name);
     removeFileFromGroups(name);
     if (deletedCurrent) {
-      current = Object.keys(files).sort((a, b) => a.localeCompare(b))[0] || null;
+      current = Object.keys(files)[0] || null;
     }
     persistState();
     if (!current) {
@@ -1904,6 +2087,7 @@ int main(void) {
       const mcuSelect = $("mcuSelect");
 
     initCustomSelect(mcuSelect);
+    bindOutlinerDropZone();
     newBtn && newBtn.addEventListener("click", startInlineCreate);
     renameBtn &&
       renameBtn.addEventListener("click", () => current && renameFile(current));

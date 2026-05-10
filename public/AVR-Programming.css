@@ -533,6 +533,14 @@ main,
   background: rgba(39, 174, 96, 0.22);
 }
 
+.file-item.drop-before {
+  box-shadow: inset 0 2px 0 rgba(129, 159, 141, 0.42);
+}
+
+.file-item.drop-after {
+  box-shadow: inset 0 -2px 0 rgba(129, 159, 141, 0.42);
+}
+
 .file-item.new-item {
   justify-content: center;
   color: var(--avr-text);
@@ -621,9 +629,7 @@ main,
   width: 28px !important;
   height: 28px;
   padding: 0;
-  border: 1px solid rgba(129, 159, 141, 0.28);
   border-radius: 8px;
-  background: rgba(23, 35, 46, 0.62);
   color: var(--avr-text-soft);
   font-size: 16px;
   line-height: 1;
@@ -634,7 +640,22 @@ main,
     color 140ms ease;
 }
 
-.file-actions button:hover,
+.file-actions button {
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.hex-panel .hex-download {
+  border: 1px solid rgba(129, 159, 141, 0.28);
+  background: rgba(23, 35, 46, 0.62);
+}
+
+.file-actions button:hover {
+  border-color: rgba(129, 159, 141, 0.22);
+  background: rgba(129, 159, 141, 0.08);
+  color: var(--avr-text);
+}
+
 .hex-panel .hex-download:hover {
   border-color: var(--avr-border-hover);
   background: rgba(39, 174, 96, 0.18);
@@ -643,6 +664,10 @@ main,
 
 .file-menu-btn {
   padding-bottom: 2px;
+}
+
+.outliner-list.root-drop-target {
+  background: rgba(129, 159, 141, 0.05);
 }
 
 .editor-workspace {
