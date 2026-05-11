@@ -571,6 +571,19 @@ main,
   white-space: nowrap;
 }
 
+.file-group-count {
+  flex: 0 0 auto;
+  min-width: 32px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--avr-text-soft);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
 .file-inline-editor {
   display: flex;
   flex: 1 1 auto;

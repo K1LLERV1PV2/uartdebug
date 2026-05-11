@@ -245,12 +245,22 @@
     element.textContent = text;
   }
 
+  function isPortSelectionError(message) {
+    const text = String(message || "");
+    return (
+      /requestPort/i.test(text) ||
+      /No port selected by the user/i.test(text)
+    );
+  }
+
   function updateDevicePanelState() {
     const portText = getPortLabel() || "No port selection";
     const chipText = getSignaturePanelText();
     const hasDetectedChip = !!state.signatureInfo?.matchedTargetKey;
     const hasSignature = !!state.signatureInfo;
     const hasError = !!state.lastProbeError && !state.busy;
+    const hasPortSelectionError =
+      hasError && isPortSelectionError(state.lastProbeError);
     const serialAvailable = "serial" in navigator;
     const blockedByCanvasSerial = isCanvasSerialConnected();
     const button = $("detectChipBtn");
@@ -261,6 +271,7 @@
     const adapterValue = $("adapterStatusText");
     if (adapterValue) {
       adapterValue.classList.toggle("is-muted", !getPortLabel());
+      adapterValue.classList.toggle("is-error", hasPortSelectionError);
     }
 
     const chipValue = $("chipStatusText");

@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-v17";
+const CACHE_NAME = "uartdebug-shell-v20";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -14,6 +14,15 @@ const APP_SHELL_ASSETS = [
   "/AVR-Programming.js",
   "/updi-test.js",
   "/updi-test.css",
+  "/vendor/codemirror/5.65.16/codemirror.min.css",
+  "/vendor/codemirror/5.65.16/theme/material-darker.min.css",
+  "/vendor/codemirror/5.65.16/addon/hint/show-hint.min.css",
+  "/vendor/codemirror/5.65.16/codemirror.min.js",
+  "/vendor/codemirror/5.65.16/mode/clike/clike.min.js",
+  "/vendor/codemirror/5.65.16/addon/edit/matchbrackets.min.js",
+  "/vendor/codemirror/5.65.16/addon/hint/show-hint.min.js",
+  "/vendor/codemirror/5.65.16/addon/hint/anyword-hint.min.js",
+  "/vendor/codemirror/5.65.16/addon/edit/closebrackets.min.js",
   "/vendor/chart.umd.js",
   "/favicon.ico",
   "/icons/favicon-192.png",
@@ -129,15 +138,16 @@ async function cacheFirstWithBackgroundUpdate(event, request) {
 
 async function networkFirstWithCacheFallback(request) {
   const cache = await caches.open(CACHE_NAME);
+  const cacheKey = new URL(request.url).pathname;
 
   try {
     const freshResponse = await fetch(request);
     if (freshResponse && freshResponse.ok) {
-      await cache.put(request, freshResponse.clone());
+      await cache.put(cacheKey, freshResponse.clone());
     }
     return freshResponse;
   } catch (error) {
-    const cachedResponse = await cache.match(request);
+    const cachedResponse = await cache.match(cacheKey);
     if (cachedResponse) return cachedResponse;
     throw error;
   }

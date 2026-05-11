@@ -37,6 +37,19 @@
     "ihex",
   ]);
   const HEX_FILE_EXTENSIONS = new Set(["hex", "ihex"]);
+  const COMPILE_PROJECT_FILE_EXTENSIONS = new Set([
+    "c",
+    "h",
+    "cpp",
+    "cc",
+    "hpp",
+    "ino",
+    "s",
+    "asm",
+    "txt",
+  ]);
+  const COMPILE_C_SOURCE_EXTENSIONS = new Set(["c"]);
+  const COMPILE_HEADER_EXTENSIONS = new Set(["h", "hpp"]);
 
   function setHexStatus(state, filename) {
     setHexStatus._state = state;
@@ -134,6 +147,12 @@
     appendCompileLog(title);
     el.textContent += `${normalized}\n`;
     el.scrollTop = el.scrollHeight;
+  }
+
+  function formatCompileFileList(names) {
+    return Array.isArray(names)
+      ? names.filter(Boolean).map(String).join(", ")
+      : "";
   }
 
   function sanitizeCompilerOutput(text) {
@@ -292,8 +311,6 @@
   }
 
   async function handleDetectChip() {
-    appendCompileLog("Reading chip signature...");
-
     try {
       const signatureInfo = await ensureAutoDetectedTarget({
         reselectPort: true,
@@ -301,14 +318,14 @@
       const description = describeSignatureInfo(signatureInfo);
 
       if (description) {
-        appendCompileLog(`Detected chip: ${description}.`);
+        console.info(`Detected chip: ${description}.`);
       } else {
-        appendCompileLog(
+        console.warn(
           "Chip signature was not detected. Check the UPDI wiring and selected serial adapter."
         );
       }
     } catch (error) {
-      appendCompileLog(
+      console.warn(
         `Chip detection failed: ${error.message || String(error)}`
       );
     }
@@ -317,7 +334,7 @@
   async function handleFlashCurrent() {
     const updi = getCanvasUpdiRuntime();
     if (!updi || typeof updi.programHex !== "function") {
-      appendCompileLog("Flash tools are not ready yet.");
+      await showSiteAlert("Flash tools are not ready yet.", "Flash MCU");
       return;
     }
 
@@ -326,25 +343,36 @@
 
       try {
         loadHexIntoUpdiRuntime(updi, current, hexText, "editor");
-        appendCompileLog(`Using HEX text from "${current}" for flashing.`);
       } catch (error) {
-        appendCompileLog(`HEX load failed: ${error.message || String(error)}`);
+        await showSiteAlert(
+          `HEX load failed.\n${error.message || String(error)}`,
+          "Flash MCU"
+        );
         return;
       }
-    } else if (!updi.hasLoadedImage || !updi.hasLoadedImage()) {
-      const compiled = await compileCurrentFile();
-      if (!compiled || !updi.hasLoadedImage || !updi.hasLoadedImage()) {
+    } else {
+      let ready = false;
+      try {
+        ready = await ensureCurrentCompiledHexLoaded(updi);
+      } catch (error) {
+        await showSiteAlert(
+          `HEX load failed.\n${error.message || String(error)}`,
+          "Flash MCU"
+        );
+        return;
+      }
+      if (!ready) {
         return;
       }
     }
 
     if (typeof updi.preparePortPermission === "function") {
       try {
-        appendCompileLog("Preparing UPDI port access...");
         await updi.preparePortPermission();
       } catch (error) {
-        appendCompileLog(
-          `UPDI port access failed: ${error.message || String(error)}`
+        await showSiteAlert(
+          `UPDI port access failed.\n${error.message || String(error)}`,
+          "Flash MCU"
         );
         return;
       }
@@ -353,7 +381,10 @@
     try {
       await updi.programHex();
     } catch (error) {
-      appendCompileLog(`Flash failed: ${error.message || String(error)}`);
+      await showSiteAlert(
+        `Flash failed.\n${error.message || String(error)}`,
+        "Flash MCU"
+      );
     }
   }
 
@@ -380,7 +411,7 @@
 
     if (isHexFileName(current)) {
       setCompileLogText(
-        `"${current}" is a HEX firmware file.\nPress Flash MCU to program this editor text.`
+        `"${current}" is a HEX firmware file.\nSelect a *.c file to compile.`
       );
       return;
     }
@@ -558,6 +589,11 @@ int main(void) {
     return grouped;
   }
 
+  function getGroupFileCount(groupName) {
+    const group = fileGroups[groupName];
+    return (group?.files || []).filter((name) => hasFile(name)).length;
+  }
+
   function getFileGroup(fileName) {
     for (const [groupName, group] of Object.entries(fileGroups)) {
       if ((group.files || []).includes(fileName)) return groupName;
@@ -632,6 +668,120 @@ int main(void) {
     return HEX_FILE_EXTENSIONS.has(getFileExtension(fileName));
   }
 
+  function isCompileProjectFileName(fileName) {
+    return COMPILE_PROJECT_FILE_EXTENSIONS.has(getFileExtension(fileName));
+  }
+
+  function getFileStem(fileName) {
+    const name = String(fileName || "");
+    const lastDot = name.lastIndexOf(".");
+    return lastDot > 0 ? name.slice(0, lastDot) : name;
+  }
+
+  function getBaseFileName(fileName) {
+    return String(fileName || "")
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(Boolean)
+      .pop() || "";
+  }
+
+  function extractQuotedIncludes(sourceText) {
+    const includes = [];
+    const includePattern = /^\s*#\s*include\s*"([^"]+)"/gm;
+    let match;
+
+    while ((match = includePattern.exec(sourceText || ""))) {
+      const includeName = String(match[1] || "").trim();
+      if (includeName) includes.push(includeName);
+    }
+
+    return includes;
+  }
+
+  function resolveProjectIncludeName(includeName) {
+    const rawName = String(includeName || "").trim();
+    if (hasFile(rawName)) return rawName;
+
+    const baseName = getBaseFileName(rawName);
+    return baseName && hasFile(baseName) ? baseName : "";
+  }
+
+  function getHeaderCompanionSource(fileName) {
+    if (!COMPILE_HEADER_EXTENSIONS.has(getFileExtension(fileName))) return "";
+
+    const candidate = `${getFileStem(fileName)}.c`;
+    return hasFile(candidate) ? candidate : "";
+  }
+
+  function getCompileProjectFileNames(entryName) {
+    const visited = new Set();
+    const requiredFiles = new Set();
+    const textualSourceIncludes = new Set();
+
+    const visit = (fileName, includedTextually = false) => {
+      if (
+        !fileName ||
+        !hasFile(fileName) ||
+        !isCompileProjectFileName(fileName)
+      ) {
+        return;
+      }
+
+      if (
+        includedTextually &&
+        COMPILE_C_SOURCE_EXTENSIONS.has(getFileExtension(fileName))
+      ) {
+        textualSourceIncludes.add(fileName);
+      }
+
+      if (visited.has(fileName)) return;
+      visited.add(fileName);
+      requiredFiles.add(fileName);
+
+      for (const includeName of extractQuotedIncludes(files[fileName])) {
+        const resolved = resolveProjectIncludeName(includeName);
+        if (resolved) visit(resolved, true);
+      }
+
+      const companionSource = getHeaderCompanionSource(fileName);
+      if (companionSource) visit(companionSource, false);
+    };
+
+    visit(entryName, false);
+
+    const compileSourceNames = [entryName];
+    for (const fileName of requiredFiles) {
+      if (fileName === entryName) continue;
+      if (!COMPILE_C_SOURCE_EXTENSIONS.has(getFileExtension(fileName))) continue;
+      if (textualSourceIncludes.has(fileName)) continue;
+      compileSourceNames.push(fileName);
+    }
+
+    return {
+      requiredFiles: [...requiredFiles],
+      compileSourceNames,
+    };
+  }
+
+  function buildCompileProjectSnapshot(entryName) {
+    if (editor && current) {
+      syncCurrentFileFromEditor();
+    }
+
+    const plan = getCompileProjectFileNames(entryName);
+    const projectFiles = plan.requiredFiles.map((name) => ({
+      name,
+      content: String(files[name] || ""),
+    }));
+
+    return {
+      ...plan,
+      projectFiles,
+      sourceKey: JSON.stringify(projectFiles),
+    };
+  }
+
   function syncCurrentFileFromEditor() {
     if (!current) return "";
 
@@ -702,15 +852,6 @@ int main(void) {
 
     files[normalizedName] = String(content || "").replace(/\r\n/g, "\n");
     selectFile(normalizedName);
-
-    if (normalizedName !== fileName) {
-      appendCompileLog(
-        `Imported "${fileName}" as "${normalizedName}" because that name was already in use.`
-      );
-      return;
-    }
-
-    appendCompileLog(`Imported "${normalizedName}" into the editor.`);
   }
 
   function loadHexIntoUpdiRuntime(updi, fileName, hexText, source = "uploaded") {
@@ -746,7 +887,7 @@ int main(void) {
     const message =
       'Unsupported file type. Upload a source file (.c, .h, .cpp, .hpp, .ino, .s, .asm, .txt) or a firmware file (.hex).';
     await showSiteAlert(message, "Unsupported file");
-    appendCompileLog(`Import rejected: "${file.name}" has an unsupported extension.`);
+    console.warn(`Import rejected: "${file.name}" has an unsupported extension.`);
   }
 
   function ensureAtLeastOneFile() {
@@ -789,12 +930,38 @@ int main(void) {
     return "";
   }
 
+  function normalizeInlineFileName(fileName) {
+    const name = String(fileName || "").trim();
+    if (!name || name === "." || name === "..") return name;
+
+    const withoutTrailingDots = name.replace(/\.+$/g, "");
+    if (!withoutTrailingDots) return name;
+
+    const lastDot = withoutTrailingDots.lastIndexOf(".");
+    return lastDot > 0 ? withoutTrailingDots : `${withoutTrailingDots}.txt`;
+  }
+
+  function isInlineGroupEdit(edit = inlineFileEdit) {
+    return edit?.mode === "create-group" || edit?.mode === "rename-group";
+  }
+
+  function getFileNameSelectionEnd(fileName) {
+    const name = String(fileName || "");
+    const lastDot = name.lastIndexOf(".");
+    return lastDot > 0 ? lastDot : name.length;
+  }
+
   function focusInlineFileInput() {
     requestAnimationFrame(() => {
       const input = document.querySelector(".file-inline-input");
       if (!input) return;
       input.focus();
-      input.select();
+      if (isInlineGroupEdit()) {
+        input.select();
+        return;
+      }
+
+      input.setSelectionRange(0, getFileNameSelectionEnd(input.value));
     });
   }
 
@@ -912,11 +1079,14 @@ int main(void) {
     if (!inlineFileEdit) return false;
 
     const input = document.querySelector(".file-inline-input");
-    const nextName = String(input ? input.value : inlineFileEdit.value || "").trim();
+    const rawName = String(
+      input ? input.value : inlineFileEdit.value || ""
+    ).trim();
     const originalName = inlineFileEdit.originalName || "";
     const isGroupEdit =
       inlineFileEdit.mode === "create-group" ||
       inlineFileEdit.mode === "rename-group";
+    const nextName = isGroupEdit ? rawName : normalizeInlineFileName(rawName);
     const error = isGroupEdit
       ? validateInlineGroupName(nextName, originalName)
       : validateInlineFileName(nextName, originalName);
@@ -1209,6 +1379,12 @@ int main(void) {
     label.className = "file-name";
     label.textContent = groupName;
     row.appendChild(label);
+
+    const count = document.createElement("span");
+    count.className = "file-group-count";
+    count.textContent = `+${getGroupFileCount(groupName)}`;
+    count.title = "Files in group";
+    row.appendChild(count);
 
     const acts = document.createElement("div");
     acts.className = "file-actions";
@@ -1585,6 +1761,10 @@ int main(void) {
 
   function selectFile(name) {
     if (!hasFile(name)) return;
+    if (editor && current && current !== name && hasFile(current)) {
+      files[current] = editor.getValue();
+    }
+
     current = name;
     if (editor) {
       editor.setOption("readOnly", false);
@@ -2095,7 +2275,10 @@ int main(void) {
       deleteBtn.addEventListener("click", () => {
         if (!current) return;
         deleteFile(current).catch((error) => {
-          appendCompileLog(`Delete failed: ${error.message || String(error)}`);
+          showSiteAlert(
+            `Delete failed.\n${error.message || String(error)}`,
+            "Delete failed"
+          );
         });
       });
       downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
@@ -2141,7 +2324,7 @@ int main(void) {
         } catch (error) {
           const message = error && error.message ? error.message : String(error);
           await showSiteAlert(`Failed to import file.\n${message}`, "Import failed");
-          appendCompileLog(`Import failed: ${message}`);
+          console.warn(`Import failed: ${message}`);
         } finally {
           if (input instanceof HTMLInputElement) {
             input.value = "";
@@ -2157,8 +2340,9 @@ int main(void) {
         const action = btn.dataset.action;
         if (!action) return;
         handleFileContextAction(action).catch((error) => {
-          appendCompileLog(
-            `File action failed: ${error.message || String(error)}`
+          showSiteAlert(
+            `File action failed.\n${error.message || String(error)}`,
+            "File action failed"
           );
         });
       });
@@ -2285,12 +2469,13 @@ int main(void) {
     return hexArtifactsBySource.get(fileName) || null;
   }
 
-  function storeHexArtifact(fileName, hexText, hexName, sourceText) {
+  function storeHexArtifact(fileName, hexText, hexName, sourceText, sourceKey) {
     if (!fileName || !hexText || !hexName) return;
     hexArtifactsBySource.set(fileName, {
       hexText,
       hexName,
       sourceText: String(sourceText || ""),
+      sourceKey: String(sourceKey || sourceText || ""),
     });
   }
 
@@ -2317,21 +2502,58 @@ int main(void) {
     return downloadHexArtifact(artifact);
   }
 
-  async function downloadHexForFile(fileName) {
-    if (!fileName || !/\.c$/i.test(fileName)) return;
-
-    if (current === fileName && editor) {
+  function syncFileFromEditor(fileName) {
+    if (fileName && editor && current === fileName) {
       try {
         files[fileName] = editor.getValue();
         persistState();
       } catch {}
     }
 
-    const sourceText = String(files[fileName] || "");
+    return String(fileName ? files[fileName] || "" : "");
+  }
+
+  function loadCompiledHexArtifact(updi, artifact) {
+    if (!artifact || !artifact.hexText || !artifact.hexName) return false;
+
+    lastHexContent = artifact.hexText;
+    lastHexName = artifact.hexName;
+    updateHexUI(true);
+    setHexStatus("ready", lastHexName);
+    loadHexIntoUpdiRuntime(updi, lastHexName, lastHexContent, "compiled");
+    dispatchUpdiHexArtifact();
+    return true;
+  }
+
+  async function ensureCurrentCompiledHexLoaded(updi) {
+    const fileName = current;
+
+    if (!fileName || !hasFile(fileName) || !isCFileName(fileName)) {
+      return await compileCurrentFile();
+    }
+
+    syncFileFromEditor(fileName);
+    const sourceKey = buildCompileProjectSnapshot(fileName).sourceKey;
+    const cachedArtifact = getHexArtifactForFile(fileName);
+
+    if (cachedArtifact && cachedArtifact.sourceKey === sourceKey) {
+      return loadCompiledHexArtifact(updi, cachedArtifact);
+    }
+
+    const compiled = await compileCurrentFile();
+    if (!compiled || current !== fileName) return false;
+
+    return loadCompiledHexArtifact(updi, getHexArtifactForFile(fileName));
+  }
+
+  async function downloadHexForFile(fileName) {
+    if (!fileName || !/\.c$/i.test(fileName)) return;
+
+    syncFileFromEditor(fileName);
+    const sourceKey = buildCompileProjectSnapshot(fileName).sourceKey;
     const artifact = getHexArtifactForFile(fileName);
-    if (artifact && artifact.sourceText === sourceText) {
+    if (artifact && artifact.sourceKey === sourceKey) {
       downloadHexArtifact(artifact);
-      appendCompileLog(`Downloaded cached HEX for "${fileName}".`);
       return;
     }
 
@@ -2410,9 +2632,11 @@ int main(void) {
       selectedMcu = detectedMcu;
     }
 
+    const compileSnapshot = buildCompileProjectSnapshot(current);
     const payload = {
       filename: current,
       code: files[current],
+      project_files: compileSnapshot.projectFiles,
       mcu: selectedMcu,
       f_cpu: fcpuEl && Number(fcpuEl.value) ? Number(fcpuEl.value) : 20000000,
       optimize: optEl && optEl.value ? optEl.value.trim() : "O1",
@@ -2631,9 +2855,11 @@ int main(void) {
       }
     }
 
+    const compileSnapshot = buildCompileProjectSnapshot(compileFileName);
     const payload = {
       filename: compileFileName,
       code: files[compileFileName],
+      project_files: compileSnapshot.projectFiles,
       mcu: selectedMcu,
       f_cpu: fcpuEl && Number(fcpuEl.value) ? Number(fcpuEl.value) : 20000000,
       optimize: optEl && optEl.value ? optEl.value.trim() : "O1",
@@ -2656,6 +2882,13 @@ int main(void) {
     appendCompileLog(
       `Options: F_CPU=${payload.f_cpu}, optimize=${payload.optimize}.`
     );
+    if (compileSnapshot.projectFiles.length > 1) {
+      appendCompileLog(
+        `Project files: ${compileSnapshot.projectFiles
+          .map((file) => file.name)
+          .join(", ")}.`
+      );
+    }
 
     let resp;
     try {
@@ -2691,6 +2924,12 @@ int main(void) {
       if (errorData && errorData.cmd) {
         appendCompileBlock("Command", errorData.cmd);
       }
+      const compiledFiles = formatCompileFileList(
+        errorData && errorData.compiled_files
+      );
+      if (compiledFiles) {
+        appendCompileLog(`Compiled units: ${compiledFiles}.`);
+      }
       appendCompileBlock("Stdout", errorData && errorData.stdout);
       appendCompileBlock("Stderr", errorData && errorData.stderr);
       if (!errorData && rawText.trim()) {
@@ -2721,6 +2960,10 @@ int main(void) {
       if (data && data.cmd) {
         appendCompileBlock("Command", data.cmd);
       }
+      const compiledFiles = formatCompileFileList(data && data.compiled_files);
+      if (compiledFiles) {
+        appendCompileLog(`Compiled units: ${compiledFiles}.`);
+      }
       appendCompileBlock("Stdout", data && data.stdout);
       appendCompileBlock("Stderr", data && data.stderr);
       appendCompileBlock("Compiler stdout", data && data.compile_stdout);
@@ -2740,7 +2983,8 @@ int main(void) {
       compileFileName,
       lastHexContent,
       lastHexName,
-      files[compileFileName]
+      files[compileFileName],
+      compileSnapshot.sourceKey
     );
 
     updateHexUI(true);
@@ -2751,6 +2995,12 @@ int main(void) {
     appendCompileLog(
       `HEX ready: ${lastHexName} (${selectedMcu}, F_CPU=${payload.f_cpu}, ${payload.optimize}).`
     );
+    {
+      const compiledFiles = formatCompileFileList(data.compiled_files);
+      if (compiledFiles && data.compiled_files.length > 1) {
+        appendCompileLog(`Compiled units: ${compiledFiles}.`);
+      }
+    }
 
     const filteredCompileStdout = sanitizeCompilerOutput(data.compile_stdout);
     const filteredCompileStderr = sanitizeCompilerOutput(data.compile_stderr);

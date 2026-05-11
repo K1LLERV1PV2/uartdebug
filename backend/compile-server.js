@@ -22,6 +22,21 @@ try {
 // Порт как в старой версии, чтобы совпало с nginx-конфигом
 const PORT = process.env.PORT || 8082;
 const MAX_CODE_SIZE = 64 * 1024;
+const MAX_PROJECT_SIZE = 512 * 1024;
+const MAX_PROJECT_FILES = 64;
+const PROJECT_FILE_EXTENSIONS = new Set([
+  "c",
+  "h",
+  "cpp",
+  "cc",
+  "hpp",
+  "ino",
+  "s",
+  "asm",
+  "txt",
+]);
+const C_SOURCE_EXTENSIONS = new Set(["c"]);
+const HEADER_EXTENSIONS = new Set(["h", "hpp"]);
 
 // Пути к тулзам — можно переопределить переменными окружения
 const XC8_CC = process.env.XC8_CC || "xc8-cc";
@@ -29,7 +44,7 @@ const AVR_OBJCOPY = process.env.AVR_OBJCOPY || "avr-objcopy";
 // Путь к DFP для ATtiny (мы распаковывали его сюда)
 const DFP_PATH = process.env.XC8_DFP || "/opt/microchip/dfp/attiny/xc8";
 
-app.use(express.json({ limit: "512kb" }));
+app.use(express.json({ limit: "1mb" }));
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -55,9 +70,172 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+function getFileExtension(fileName) {
+  const lastDot = typeof fileName === "string" ? fileName.lastIndexOf(".") : -1;
+  return lastDot > -1 ? fileName.slice(lastDot + 1).toLowerCase() : "";
+}
+
+function getFileStem(fileName) {
+  const lastDot = typeof fileName === "string" ? fileName.lastIndexOf(".") : -1;
+  return lastDot > 0 ? fileName.slice(0, lastDot) : fileName;
+}
+
+function normalizeProjectFileName(fileName) {
+  const name = String(fileName || "").trim();
+  if (!name || name === "." || name === "..") return "";
+  if (name.length > 96) return "";
+  if (/[\\/:*?"<>|\x00-\x1f]/.test(name)) return "";
+  if (!PROJECT_FILE_EXTENSIONS.has(getFileExtension(name))) return "";
+  return name;
+}
+
+function shellQuote(value) {
+  const text = String(value);
+  return /^[A-Za-z0-9_./:=+-]+$/.test(text)
+    ? text
+    : `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
+function normalizeProjectFiles(rawFiles, entryName, entryCode) {
+  const projectFiles = new Map();
+  let totalSize = 0;
+
+  const addFile = (rawName, rawContent) => {
+    const safeName = normalizeProjectFileName(rawName);
+    if (!safeName || projectFiles.has(safeName)) return;
+
+    const content = String(rawContent || "").replace(/\r\n/g, "\n");
+    if (content.length > MAX_CODE_SIZE) {
+      throw new Error(`File "${safeName}" is too large.`);
+    }
+
+    totalSize += content.length;
+    if (totalSize > MAX_PROJECT_SIZE) {
+      throw new Error("Project is too large.");
+    }
+    if (projectFiles.size >= MAX_PROJECT_FILES) {
+      throw new Error("Project has too many files.");
+    }
+
+    projectFiles.set(safeName, content);
+  };
+
+  if (rawFiles && typeof rawFiles === "object") {
+    if (Array.isArray(rawFiles)) {
+      for (const item of rawFiles) {
+        if (!item || typeof item !== "object") continue;
+        addFile(item.name, item.content);
+      }
+    } else {
+      for (const [name, content] of Object.entries(rawFiles)) {
+        addFile(name, content);
+      }
+    }
+  }
+
+  const normalizedEntryCode = String(entryCode || "").replace(/\r\n/g, "\n");
+  const previousEntryCode = projectFiles.get(entryName);
+  if (previousEntryCode == null) {
+    totalSize += normalizedEntryCode.length;
+    if (totalSize > MAX_PROJECT_SIZE) {
+      throw new Error("Project is too large.");
+    }
+    if (projectFiles.size >= MAX_PROJECT_FILES) {
+      throw new Error("Project has too many files.");
+    }
+  } else {
+    totalSize += normalizedEntryCode.length - previousEntryCode.length;
+    if (totalSize > MAX_PROJECT_SIZE) {
+      throw new Error("Project is too large.");
+    }
+  }
+
+  projectFiles.set(entryName, normalizedEntryCode);
+  return projectFiles;
+}
+
+function extractQuotedIncludes(sourceText) {
+  const includes = [];
+  const includePattern = /^\s*#\s*include\s*"([^"]+)"/gm;
+  let match;
+
+  while ((match = includePattern.exec(sourceText || ""))) {
+    const includeName = String(match[1] || "").trim();
+    if (includeName) includes.push(includeName);
+  }
+
+  return includes;
+}
+
+function resolveProjectIncludeName(includeName, projectFiles) {
+  const normalized = normalizeProjectFileName(includeName);
+  if (normalized && projectFiles.has(normalized)) return normalized;
+
+  const baseName = path.basename(String(includeName || "").replace(/\\/g, "/"));
+  const normalizedBase = normalizeProjectFileName(baseName);
+  return normalizedBase && projectFiles.has(normalizedBase)
+    ? normalizedBase
+    : "";
+}
+
+function getHeaderCompanionSource(fileName, projectFiles) {
+  if (!HEADER_EXTENSIONS.has(getFileExtension(fileName))) return "";
+
+  const candidate = `${getFileStem(fileName)}.c`;
+  return projectFiles.has(candidate) ? candidate : "";
+}
+
+function buildCompilePlan(entryName, projectFiles) {
+  const visited = new Set();
+  const requiredFiles = new Set();
+  const textualSourceIncludes = new Set();
+
+  const visit = (fileName, includedTextually = false) => {
+    if (!fileName || !projectFiles.has(fileName)) return;
+
+    if (
+      includedTextually &&
+      C_SOURCE_EXTENSIONS.has(getFileExtension(fileName))
+    ) {
+      textualSourceIncludes.add(fileName);
+    }
+
+    if (visited.has(fileName)) return;
+    visited.add(fileName);
+    requiredFiles.add(fileName);
+
+    const sourceText = projectFiles.get(fileName) || "";
+    for (const includeName of extractQuotedIncludes(sourceText)) {
+      const resolved = resolveProjectIncludeName(includeName, projectFiles);
+      if (resolved) visit(resolved, true);
+    }
+
+    const companionSource = getHeaderCompanionSource(fileName, projectFiles);
+    if (companionSource) visit(companionSource, false);
+  };
+
+  visit(entryName, false);
+
+  const compileSourceNames = [entryName];
+  for (const fileName of requiredFiles) {
+    if (fileName === entryName) continue;
+    if (!C_SOURCE_EXTENSIONS.has(getFileExtension(fileName))) continue;
+    if (textualSourceIncludes.has(fileName)) continue;
+    compileSourceNames.push(fileName);
+  }
+
+  return {
+    requiredFiles: [...requiredFiles],
+    compileSourceNames,
+  };
+}
+
 app.post("/api/avr/compile", async (req, res) => {
+  let tmp = "";
+
   try {
-    const { filename, code, mcu, f_cpu, optimize } = req.body || {};
+    const { filename, code, mcu, f_cpu, optimize, project_files } =
+      req.body || {};
 
     if (typeof code !== "string" || !code.length) {
       return res.status(400).send('Missing "code".');
@@ -66,10 +244,7 @@ app.post("/api/avr/compile", async (req, res) => {
       return res.status(413).send("Code too large.");
     }
 
-    const safeName =
-      typeof filename === "string" && filename.match(/^[\w.\-]{1,64}$/)
-        ? filename
-        : "main.c";
+    const safeName = normalizeProjectFileName(filename) || "main.c";
 
     const MCU =
       typeof mcu === "string" && mcu.trim().length > 0
@@ -85,12 +260,25 @@ app.post("/api/avr/compile", async (req, res) => {
       ? requestedOptimize
       : "O1";
 
-    const tmp = await mkdtemp(path.join(os.tmpdir(), "xc8-"));
-    const srcPath = path.join(tmp, safeName);
+    let projectFiles;
+    try {
+      projectFiles = normalizeProjectFiles(project_files, safeName, code);
+    } catch (error) {
+      return res.status(400).json({
+        ok: false,
+        stage: "project",
+        stderr: error.message || String(error),
+      });
+    }
+
+    const compilePlan = buildCompilePlan(safeName, projectFiles);
+    tmp = await mkdtemp(path.join(os.tmpdir(), "xc8-"));
     const elfPath = path.join(tmp, "main.elf");
     const hexPath = path.join(tmp, "main.hex");
 
-    await writeFile(srcPath, code, "utf8");
+    for (const [fileName, content] of projectFiles) {
+      await writeFile(path.join(tmp, fileName), content, "utf8");
+    }
 
     // --- Компиляция xc8-cc ---
     // По мануалу для AVR-версии XC8 нужно:
@@ -102,7 +290,8 @@ app.post("/api/avr/compile", async (req, res) => {
       "-Wall",
       "-Wextra",
       `-DF_CPU=${F_CPU}UL`,
-      srcPath,
+      `-I${tmp}`,
+      ...compilePlan.compileSourceNames.map((name) => path.join(tmp, name)),
       "-o",
       elfPath,
     ];
@@ -119,7 +308,9 @@ app.post("/api/avr/compile", async (req, res) => {
         ok: false,
         stage: "compile",
         compiler: XC8_CC,
-        cmd: `${XC8_CC} ${compileArgs.join(" ")}`,
+        cmd: [XC8_CC, ...compileArgs].map(shellQuote).join(" "),
+        compiled_files: compilePlan.compileSourceNames,
+        project_files: compilePlan.requiredFiles,
         stdout: (err.stdout || "").toString(),
         stderr: (err.stderr || "").toString(),
       });
@@ -136,7 +327,9 @@ app.post("/api/avr/compile", async (req, res) => {
         ok: false,
         stage: "objcopy",
         tool: AVR_OBJCOPY,
-        cmd: `${AVR_OBJCOPY} ${objcopyArgs.join(" ")}`,
+        cmd: [AVR_OBJCOPY, ...objcopyArgs].map(shellQuote).join(" "),
+        compiled_files: compilePlan.compileSourceNames,
+        project_files: compilePlan.requiredFiles,
         stdout: (err.stdout || "").toString(),
         stderr: (err.stderr || "").toString(),
       });
@@ -153,10 +346,18 @@ app.post("/api/avr/compile", async (req, res) => {
       mcu: MCU,
       f_cpu: F_CPU,
       optimize: OPT,
+      compiled_files: compilePlan.compileSourceNames,
+      project_files: compilePlan.requiredFiles,
       compile_stdout: compileResult.stdout.toString(),
       compile_stderr: compileResult.stderr.toString(),
     });
   } catch (e) {
+    if (tmp) {
+      try {
+        await rm(tmp, { recursive: true, force: true });
+      } catch {}
+    }
+
     console.error(e);
     res.status(500).send("Internal error.");
   }
