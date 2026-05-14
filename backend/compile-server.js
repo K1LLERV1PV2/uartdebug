@@ -21,6 +21,7 @@ try {
 
 // Порт как в старой версии, чтобы совпало с nginx-конфигом
 const PORT = process.env.PORT || 8082;
+const COMPILE_SERVER_VERSION = "20260514-multifile-v1";
 const MAX_CODE_SIZE = 64 * 1024;
 const MAX_PROJECT_SIZE = 512 * 1024;
 const MAX_PROJECT_FILES = 64;
@@ -266,6 +267,7 @@ app.post("/api/avr/compile", async (req, res) => {
     } catch (error) {
       return res.status(400).json({
         ok: false,
+        compile_server_version: COMPILE_SERVER_VERSION,
         stage: "project",
         stderr: error.message || String(error),
       });
@@ -306,6 +308,7 @@ app.post("/api/avr/compile", async (req, res) => {
       await rm(tmp, { recursive: true, force: true });
       return res.status(400).json({
         ok: false,
+        compile_server_version: COMPILE_SERVER_VERSION,
         stage: "compile",
         compiler: XC8_CC,
         cmd: [XC8_CC, ...compileArgs].map(shellQuote).join(" "),
@@ -325,6 +328,7 @@ app.post("/api/avr/compile", async (req, res) => {
       await rm(tmp, { recursive: true, force: true });
       return res.status(400).json({
         ok: false,
+        compile_server_version: COMPILE_SERVER_VERSION,
         stage: "objcopy",
         tool: AVR_OBJCOPY,
         cmd: [AVR_OBJCOPY, ...objcopyArgs].map(shellQuote).join(" "),
@@ -340,6 +344,7 @@ app.post("/api/avr/compile", async (req, res) => {
 
     res.json({
       ok: true,
+      compile_server_version: COMPILE_SERVER_VERSION,
       hex,
       hex_name: safeName.replace(/\.c$/i, "") + ".hex",
       compiler: XC8_CC,
@@ -363,7 +368,9 @@ app.post("/api/avr/compile", async (req, res) => {
   }
 });
 
-app.get("/health", (req, res) => res.send("ok"));
+app.get("/health", (req, res) =>
+  res.type("text/plain").send(`ok ${COMPILE_SERVER_VERSION}`)
+);
 
 app.listen(PORT, () => {
   console.log(`[xc8-compile] listening on :${PORT}`);

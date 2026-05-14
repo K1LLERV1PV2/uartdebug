@@ -222,9 +222,18 @@ jobs:
 
             if [ -n "${HC_URL}" ]; then
               echo "Healthcheck: ${HC_URL}"
-              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "${HC_URL}" || echo 000)"
+              hc_body="$(mktemp)"
+              code="$(curl -sS -o "${hc_body}" -w '%{http_code}' --max-time 10 "${HC_URL}" || echo 000)"
               echo "HTTP ${code}"
               [ "${code}" = "200" ] || { echo "Healthcheck failed"; exit 1; }
+              if [ -d "${BE_DIR}" ] && [ -f "${BE_DIR}/compile-server.js" ]; then
+                grep -q '20260514-multifile-v1' "${hc_body}" || {
+                  echo "Backend healthcheck did not return expected compile-server version"
+                  cat "${hc_body}" || true
+                  exit 1
+                }
+              fi
+              rm -f "${hc_body}"
             fi
 
             if [ -z "${ROLLBACK}" ]; then

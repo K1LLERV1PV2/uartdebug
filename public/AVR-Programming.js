@@ -155,6 +155,24 @@
       : "";
   }
 
+  function isLegacyCompileServerResponse(data, compileSnapshot) {
+    if (!compileSnapshot || compileSnapshot.projectFiles.length <= 1) {
+      return false;
+    }
+
+    if (!data || typeof data !== "object") return false;
+    if (Array.isArray(data.compiled_files)) return false;
+
+    const command = String(data.cmd || "");
+    return !command || !/\s-I/.test(command);
+  }
+
+  function appendLegacyCompileServerWarning() {
+    appendCompileLog(
+      "Compile server is still running an older backend. Redeploy/restart backend so it accepts project_files and compiles linked project sources."
+    );
+  }
+
   function sanitizeCompilerOutput(text) {
     return String(text || "")
       .replace(/\r\n/g, "\n")
@@ -2924,6 +2942,9 @@ int main(void) {
       if (errorData && errorData.cmd) {
         appendCompileBlock("Command", errorData.cmd);
       }
+      if (isLegacyCompileServerResponse(errorData, compileSnapshot)) {
+        appendLegacyCompileServerWarning();
+      }
       const compiledFiles = formatCompileFileList(
         errorData && errorData.compiled_files
       );
@@ -2960,6 +2981,9 @@ int main(void) {
       if (data && data.cmd) {
         appendCompileBlock("Command", data.cmd);
       }
+      if (isLegacyCompileServerResponse(data, compileSnapshot)) {
+        appendLegacyCompileServerWarning();
+      }
       const compiledFiles = formatCompileFileList(data && data.compiled_files);
       if (compiledFiles) {
         appendCompileLog(`Compiled units: ${compiledFiles}.`);
@@ -2995,6 +3019,9 @@ int main(void) {
     appendCompileLog(
       `HEX ready: ${lastHexName} (${selectedMcu}, F_CPU=${payload.f_cpu}, ${payload.optimize}).`
     );
+    if (isLegacyCompileServerResponse(data, compileSnapshot)) {
+      appendLegacyCompileServerWarning();
+    }
     {
       const compiledFiles = formatCompileFileList(data.compiled_files);
       if (compiledFiles && data.compiled_files.length > 1) {
