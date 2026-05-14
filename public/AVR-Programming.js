@@ -194,7 +194,7 @@
         (line) =>
           !/^\s*sh:\s*0:\s*getcwd\(\)\s*failed:\s*No such file or directory\s*$/.test(
             line
-          )
+          ) && !/^\s*Info:\s*Loading file:\s*.+$/i.test(line)
       )
       .join("\n")
       .trim();
