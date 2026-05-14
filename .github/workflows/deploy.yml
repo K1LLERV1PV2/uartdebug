@@ -115,7 +115,11 @@ jobs:
             [ -z "${BACKEND_PORT:-}" ] && BACKEND_PORT="8082"
             [ -z "${BACKEND_BIND_HOST:-}" ] && BACKEND_BIND_HOST="127.0.0.1"
             [ -z "${BACKEND_HC_URL:-}" ] && BACKEND_HC_URL="http://127.0.0.1:${BACKEND_PORT}/health"
-            EXPECTED_COMPILE_SERVER_VERSION="20260514-multifile-v2"
+            EXPECTED_COMPILE_SERVER_VERSION="20260514-multifile-v3"
+            XC8_CC="${{ secrets.XC8_CC || '' }}"
+            AVR_OBJCOPY="${{ secrets.AVR_OBJCOPY || '' }}"
+            XC8_DFP="${{ secrets.XC8_DFP || '' }}"
+            [ -z "${XC8_DFP:-}" ] && XC8_DFP="/opt/microchip/dfp/attiny/xc8"
 
             run_sudo() {
               command -v sudo >/dev/null 2>&1 || return 127
@@ -179,6 +183,84 @@ jobs:
                 echo "Backend port ${BACKEND_PORT} is still busy after stop attempt"
                 exit 1
               fi
+            }
+
+            find_backend_tool() {
+              tool_name="$1"
+              configured="$2"
+              shift 2
+
+              if [ -n "${configured:-}" ]; then
+                if [ -x "${configured}" ]; then
+                  printf '%s\n' "${configured}"
+                  return 0
+                fi
+
+                resolved="$(command -v "${configured}" 2>/dev/null || true)"
+                if [ -n "${resolved}" ]; then
+                  printf '%s\n' "${resolved}"
+                  return 0
+                fi
+
+                echo "Configured ${tool_name} path is not executable: ${configured}" >&2
+                return 1
+              fi
+
+              resolved="$(command -v "${tool_name}" 2>/dev/null || true)"
+              if [ -n "${resolved}" ]; then
+                printf '%s\n' "${resolved}"
+                return 0
+              fi
+
+              for candidate in "$@"; do
+                [ -x "${candidate}" ] || continue
+                printf '%s\n' "${candidate}"
+                return 0
+              done
+
+              if [ -d "/opt/microchip" ]; then
+                resolved="$(find /opt/microchip -type f -name "${tool_name}" -perm -111 2>/dev/null | sort -V | tail -n 1 || true)"
+                if [ -n "${resolved}" ]; then
+                  printf '%s\n' "${resolved}"
+                  return 0
+                fi
+              fi
+
+              return 1
+            }
+
+            resolve_backend_tools() {
+              if ! XC8_CC="$(find_backend_tool "xc8-cc" "${XC8_CC:-}" \
+                "/opt/microchip/xc8/v3.00/bin/xc8-cc" \
+                "/opt/microchip/xc8/v2.50/bin/xc8-cc" \
+                "/opt/microchip/xc8/bin/xc8-cc")"; then
+                echo "Microchip XC8 compiler xc8-cc was not found on the server."
+                echo "Install XC8 or set GitHub secret XC8_CC to the full xc8-cc path."
+                exit 1
+              fi
+
+              xc8_root="$(dirname "$(dirname "${XC8_CC}")")"
+              if ! AVR_OBJCOPY="$(find_backend_tool "avr-objcopy" "${AVR_OBJCOPY:-}" \
+                "$(dirname "${XC8_CC}")/avr-objcopy" \
+                "${xc8_root}/avr/bin/avr-objcopy" \
+                "/usr/bin/avr-objcopy" \
+                "/usr/local/bin/avr-objcopy")"; then
+                echo "avr-objcopy was not found on the server."
+                echo "Install AVR binutils or set GitHub secret AVR_OBJCOPY to the full avr-objcopy path."
+                exit 1
+              fi
+
+              if [ ! -d "${XC8_DFP}" ]; then
+                echo "XC8 DFP path was not found: ${XC8_DFP}"
+                echo "Install the ATtiny DFP or set GitHub secret XC8_DFP to the correct directory."
+                exit 1
+              fi
+
+              export XC8_CC AVR_OBJCOPY XC8_DFP
+              export PATH="$(dirname "${XC8_CC}"):$(dirname "${AVR_OBJCOPY}"):${PATH}"
+              echo "XC8_CC=${XC8_CC}"
+              echo "AVR_OBJCOPY=${AVR_OBJCOPY}"
+              echo "XC8_DFP=${XC8_DFP}"
             }
 
             KEEP="${{ secrets.RELEASES_KEEP || '10' }}"
@@ -272,6 +354,7 @@ jobs:
                 cd "${BE_DIR}"
                 npm ci --omit=dev || npm install --omit=dev
               fi
+              resolve_backend_tools
 
               if command -v pm2 >/dev/null 2>&1; then
                 export PORT="${BACKEND_PORT}"

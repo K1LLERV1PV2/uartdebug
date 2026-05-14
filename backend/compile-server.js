@@ -4,6 +4,7 @@
 
 const express = require("express");
 const { mkdtemp, writeFile, readFile, rm } = require("fs/promises");
+const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFile } = require("child_process");
@@ -22,7 +23,7 @@ try {
 // Порт как в старой версии, чтобы совпало с nginx-конфигом
 const PORT = process.env.PORT || 8082;
 const HOST = process.env.HOST || process.env.BIND_HOST || "127.0.0.1";
-const COMPILE_SERVER_VERSION = "20260514-multifile-v2";
+const COMPILE_SERVER_VERSION = "20260514-multifile-v3";
 const MAX_CODE_SIZE = 64 * 1024;
 const MAX_PROJECT_SIZE = 512 * 1024;
 const MAX_PROJECT_FILES = 64;
@@ -41,10 +42,63 @@ const C_SOURCE_EXTENSIONS = new Set(["c"]);
 const HEADER_EXTENSIONS = new Set(["h", "hpp"]);
 
 // Пути к тулзам — можно переопределить переменными окружения
-const XC8_CC = process.env.XC8_CC || "xc8-cc";
-const AVR_OBJCOPY = process.env.AVR_OBJCOPY || "avr-objcopy";
+const XC8_CC = resolveTool("XC8_CC", "xc8-cc");
+const AVR_OBJCOPY = resolveTool("AVR_OBJCOPY", "avr-objcopy");
 // Путь к DFP для ATtiny (мы распаковывали его сюда)
 const DFP_PATH = process.env.XC8_DFP || "/opt/microchip/dfp/attiny/xc8";
+
+function isExecutable(filePath) {
+  try {
+    fs.accessSync(filePath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getPathTool(toolName) {
+  const pathDirs = String(process.env.PATH || "")
+    .split(path.delimiter)
+    .filter(Boolean);
+
+  for (const dir of pathDirs) {
+    const candidate = path.join(dir, toolName);
+    if (isExecutable(candidate)) return candidate;
+  }
+
+  return "";
+}
+
+function getXc8InstallCandidates(toolName) {
+  const candidates = [];
+  const roots = ["/opt/microchip/xc8", "/Applications/microchip/xc8"];
+
+  for (const root of roots) {
+    try {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const versionDir = path.join(root, entry.name);
+        candidates.push(path.join(versionDir, "bin", toolName));
+        candidates.push(path.join(versionDir, "avr", "bin", toolName));
+      }
+    } catch {}
+  }
+
+  candidates.push(path.join("/opt/microchip/xc8", "bin", toolName));
+  candidates.push(path.join("/usr/local/bin", toolName));
+  candidates.push(path.join("/usr/bin", toolName));
+  return candidates;
+}
+
+function resolveTool(envName, toolName) {
+  const configured = String(process.env[envName] || "").trim();
+  if (configured) return configured;
+
+  const fromPath = getPathTool(toolName);
+  if (fromPath) return fromPath;
+
+  return getXc8InstallCandidates(toolName).find(isExecutable) || toolName;
+}
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -72,11 +126,16 @@ function run(cmd, args, opts = {}) {
   });
 }
 
-function getRunErrorDetails(err) {
+function getRunErrorDetails(err, toolName) {
+  let error = err && err.message ? err.message : String(err || "");
+  if (err && err.code === "ENOENT" && toolName) {
+    error = `${toolName} executable was not found. Install Microchip XC8 on the server or set the ${toolName === AVR_OBJCOPY ? "AVR_OBJCOPY" : "XC8_CC"} environment variable.`;
+  }
+
   return {
     stdout: (err && err.stdout ? err.stdout : "").toString(),
     stderr: (err && err.stderr ? err.stderr : "").toString(),
-    error: err && err.message ? err.message : String(err || ""),
+    error,
     exit_code: err && Object.prototype.hasOwnProperty.call(err, "code")
       ? err.code
       : null,
@@ -353,7 +412,7 @@ app.post("/api/avr/compile", async (req, res) => {
           commands: compileCommands,
           compiled_files: compilePlan.compileSourceNames,
           project_files: compilePlan.requiredFiles,
-          ...getRunErrorDetails(err),
+          ...getRunErrorDetails(err, XC8_CC),
         });
       }
     }
@@ -385,7 +444,7 @@ app.post("/api/avr/compile", async (req, res) => {
         commands: compileCommands,
         compiled_files: compilePlan.compileSourceNames,
         project_files: compilePlan.requiredFiles,
-        ...getRunErrorDetails(err),
+        ...getRunErrorDetails(err, XC8_CC),
       });
     }
 
@@ -404,7 +463,7 @@ app.post("/api/avr/compile", async (req, res) => {
         cmd: [AVR_OBJCOPY, ...objcopyArgs].map(shellQuote).join(" "),
         compiled_files: compilePlan.compileSourceNames,
         project_files: compilePlan.requiredFiles,
-        ...getRunErrorDetails(err),
+        ...getRunErrorDetails(err, AVR_OBJCOPY),
       });
     }
 
@@ -438,7 +497,16 @@ app.post("/api/avr/compile", async (req, res) => {
 });
 
 app.get("/health", (req, res) =>
-  res.type("text/plain").send(`ok ${COMPILE_SERVER_VERSION}`)
+  res
+    .type("text/plain")
+    .send(
+      [
+        `ok ${COMPILE_SERVER_VERSION}`,
+        `xc8_cc=${XC8_CC}`,
+        `avr_objcopy=${AVR_OBJCOPY}`,
+        `xc8_dfp=${DFP_PATH}`,
+      ].join("\n")
+    )
 );
 
 app.listen(PORT, HOST, () => {
@@ -446,4 +514,7 @@ app.listen(PORT, HOST, () => {
     `[xc8-compile] ${COMPILE_SERVER_VERSION} listening on ${HOST}:${PORT}`
   );
   console.log(`[xc8-compile] cwd=${process.cwd()} script=${__filename}`);
+  console.log(`[xc8-compile] XC8_CC=${XC8_CC}`);
+  console.log(`[xc8-compile] AVR_OBJCOPY=${AVR_OBJCOPY}`);
+  console.log(`[xc8-compile] XC8_DFP=${DFP_PATH}`);
 });
