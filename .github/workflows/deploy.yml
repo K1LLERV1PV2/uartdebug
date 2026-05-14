@@ -111,28 +111,73 @@ jobs:
 
             BACKEND_HC_URL="${{ secrets.BACKEND_HC_URL || '' }}"
             BACKEND_PORT="${{ secrets.BACKEND_PORT || '8082' }}"
+            BACKEND_BIND_HOST="${{ secrets.BACKEND_BIND_HOST || '127.0.0.1' }}"
             [ -z "${BACKEND_PORT:-}" ] && BACKEND_PORT="8082"
+            [ -z "${BACKEND_BIND_HOST:-}" ] && BACKEND_BIND_HOST="127.0.0.1"
             [ -z "${BACKEND_HC_URL:-}" ] && BACKEND_HC_URL="http://127.0.0.1:${BACKEND_PORT}/health"
             EXPECTED_COMPILE_SERVER_VERSION="20260514-multifile-v1"
 
-            stop_backend_port_owner() {
+            run_sudo() {
+              command -v sudo >/dev/null 2>&1 || return 127
+              sudo -n "$@"
+            }
+
+            print_backend_port_owner() {
               [ -n "${BACKEND_PORT:-}" ] || return 0
+              echo "Backend port ${BACKEND_PORT} listeners:"
+
+              if command -v ss >/dev/null 2>&1; then
+                run_sudo ss -ltnp "sport = :${BACKEND_PORT}" 2>/dev/null || ss -ltnp "sport = :${BACKEND_PORT}" 2>/dev/null || true
+              fi
+
+              if command -v lsof >/dev/null 2>&1; then
+                run_sudo lsof -nP -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null || lsof -nP -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null || true
+              fi
 
               if command -v fuser >/dev/null 2>&1; then
-                if fuser "${BACKEND_PORT}/tcp" >/dev/null 2>&1; then
-                  echo "Stopping process currently listening on backend port ${BACKEND_PORT}"
-                  fuser -k "${BACKEND_PORT}/tcp" || true
-                  sleep 1
-                fi
+                run_sudo fuser -v "${BACKEND_PORT}/tcp" 2>/dev/null || fuser -v "${BACKEND_PORT}/tcp" 2>/dev/null || true
+              fi
+            }
+
+            backend_port_busy() {
+              [ -n "${BACKEND_PORT:-}" ] || return 1
+
+              if command -v fuser >/dev/null 2>&1; then
+                run_sudo fuser "${BACKEND_PORT}/tcp" >/dev/null 2>&1 || fuser "${BACKEND_PORT}/tcp" >/dev/null 2>&1
+                return $?
+              fi
+
+              if command -v lsof >/dev/null 2>&1; then
+                [ -n "$(run_sudo lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null || lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null || true)" ]
+                return $?
+              fi
+
+              return 1
+            }
+
+            stop_backend_port_owner() {
+              [ -n "${BACKEND_PORT:-}" ] || return 0
+              print_backend_port_owner
+
+              if command -v fuser >/dev/null 2>&1; then
+                echo "Stopping any process currently listening on backend port ${BACKEND_PORT}"
+                run_sudo fuser -k "${BACKEND_PORT}/tcp" >/dev/null 2>&1 || fuser -k "${BACKEND_PORT}/tcp" >/dev/null 2>&1 || true
+                sleep 2
               elif command -v lsof >/dev/null 2>&1; then
-                pids="$(lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN || true)"
+                pids="$(run_sudo lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null || lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null || true)"
                 if [ -n "${pids}" ]; then
                   echo "Stopping process currently listening on backend port ${BACKEND_PORT}: ${pids}"
                   kill ${pids} || true
-                  sleep 1
+                  sleep 2
                 fi
               else
                 echo "Neither fuser nor lsof found; relying on PM2 process-name cleanup"
+              fi
+
+              print_backend_port_owner
+              if backend_port_busy; then
+                echo "Backend port ${BACKEND_PORT} is still busy after stop attempt"
+                exit 1
               fi
             }
 
@@ -230,6 +275,8 @@ jobs:
 
               if command -v pm2 >/dev/null 2>&1; then
                 export PORT="${BACKEND_PORT}"
+                export HOST="${BACKEND_BIND_HOST}"
+                export BIND_HOST="${BACKEND_BIND_HOST}"
                 if [ -f "${BE_DIR}/ecosystem.config.js" ]; then
                   cd "${BE_DIR}"
                   pm2 delete "${PM2_NAME}" >/dev/null 2>&1 || true
@@ -250,6 +297,7 @@ jobs:
                   echo "No backend entrypoint found in ${BE_DIR}"
                   exit 1
                 fi
+                sleep 2
                 pm2 save
               else
                 echo "pm2 not found - backend cannot be restarted"

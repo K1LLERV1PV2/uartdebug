@@ -21,6 +21,7 @@ try {
 
 // Порт как в старой версии, чтобы совпало с nginx-конфигом
 const PORT = process.env.PORT || 8082;
+const HOST = process.env.HOST || process.env.BIND_HOST || "127.0.0.1";
 const COMPILE_SERVER_VERSION = "20260514-multifile-v1";
 const MAX_CODE_SIZE = 64 * 1024;
 const MAX_PROJECT_SIZE = 512 * 1024;
@@ -372,6 +373,9 @@ app.get("/health", (req, res) =>
   res.type("text/plain").send(`ok ${COMPILE_SERVER_VERSION}`)
 );
 
-app.listen(PORT, () => {
-  console.log(`[xc8-compile] listening on :${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(
+    `[xc8-compile] ${COMPILE_SERVER_VERSION} listening on ${HOST}:${PORT}`
+  );
+  console.log(`[xc8-compile] cwd=${process.cwd()} script=${__filename}`);
 });
