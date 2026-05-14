@@ -109,6 +109,12 @@ jobs:
             HC_URL="${{ secrets.HC_URL || '' }}"
             [ -z "${HC_URL:-}" ] && HC_URL="http://68.183.170.241/health"
 
+            BACKEND_HC_URL="${{ secrets.BACKEND_HC_URL || '' }}"
+            BACKEND_PORT="${{ secrets.BACKEND_PORT || '8082' }}"
+            [ -z "${BACKEND_PORT:-}" ] && BACKEND_PORT="8082"
+            [ -z "${BACKEND_HC_URL:-}" ] && BACKEND_HC_URL="http://127.0.0.1:${BACKEND_PORT}/health"
+            EXPECTED_COMPILE_SERVER_VERSION="20260514-multifile-v1"
+
             KEEP="${{ secrets.RELEASES_KEEP || '10' }}"
             ROLLBACK="${{ inputs.rollback && '1' || '' }}"
             TO_RELEASE="${{ inputs.to_release || '' }}"
@@ -220,19 +226,43 @@ jobs:
               fi
             fi
 
+            if [ -z "${ROLLBACK}" ] && [ -d "${BE_DIR}" ] && [ -f "${BE_DIR}/compile-server.js" ]; then
+              echo "Backend healthcheck: ${BACKEND_HC_URL}"
+              backend_hc_body="$(mktemp)"
+              backend_code="000"
+              if ! backend_code="$(curl -sS -o "${backend_hc_body}" -w '%{http_code}' --max-time 10 "${BACKEND_HC_URL}")"; then
+                backend_code="000"
+              fi
+              echo "Backend HTTP ${backend_code}"
+              [ "${backend_code}" = "200" ] || {
+                echo "Backend healthcheck failed"
+                cat "${backend_hc_body}" || true
+                rm -f "${backend_hc_body}"
+                exit 1
+              }
+              grep -q "${EXPECTED_COMPILE_SERVER_VERSION}" "${backend_hc_body}" || {
+                echo "Backend healthcheck did not return expected compile-server version ${EXPECTED_COMPILE_SERVER_VERSION}"
+                cat "${backend_hc_body}" || true
+                rm -f "${backend_hc_body}"
+                exit 1
+              }
+              rm -f "${backend_hc_body}"
+            fi
+
             if [ -n "${HC_URL}" ]; then
               echo "Healthcheck: ${HC_URL}"
               hc_body="$(mktemp)"
-              code="$(curl -sS -o "${hc_body}" -w '%{http_code}' --max-time 10 "${HC_URL}" || echo 000)"
-              echo "HTTP ${code}"
-              [ "${code}" = "200" ] || { echo "Healthcheck failed"; exit 1; }
-              if [ -d "${BE_DIR}" ] && [ -f "${BE_DIR}/compile-server.js" ]; then
-                grep -q '20260514-multifile-v1' "${hc_body}" || {
-                  echo "Backend healthcheck did not return expected compile-server version"
-                  cat "${hc_body}" || true
-                  exit 1
-                }
+              code="000"
+              if ! code="$(curl -sS -o "${hc_body}" -w '%{http_code}' --max-time 10 "${HC_URL}")"; then
+                code="000"
               fi
+              echo "HTTP ${code}"
+              [ "${code}" = "200" ] || {
+                echo "Healthcheck failed"
+                cat "${hc_body}" || true
+                rm -f "${hc_body}"
+                exit 1
+              }
               rm -f "${hc_body}"
             fi
 
