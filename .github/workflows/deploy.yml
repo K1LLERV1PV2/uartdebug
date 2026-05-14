@@ -115,6 +115,27 @@ jobs:
             [ -z "${BACKEND_HC_URL:-}" ] && BACKEND_HC_URL="http://127.0.0.1:${BACKEND_PORT}/health"
             EXPECTED_COMPILE_SERVER_VERSION="20260514-multifile-v1"
 
+            stop_backend_port_owner() {
+              [ -n "${BACKEND_PORT:-}" ] || return 0
+
+              if command -v fuser >/dev/null 2>&1; then
+                if fuser "${BACKEND_PORT}/tcp" >/dev/null 2>&1; then
+                  echo "Stopping process currently listening on backend port ${BACKEND_PORT}"
+                  fuser -k "${BACKEND_PORT}/tcp" || true
+                  sleep 1
+                fi
+              elif command -v lsof >/dev/null 2>&1; then
+                pids="$(lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN || true)"
+                if [ -n "${pids}" ]; then
+                  echo "Stopping process currently listening on backend port ${BACKEND_PORT}: ${pids}"
+                  kill ${pids} || true
+                  sleep 1
+                fi
+              else
+                echo "Neither fuser nor lsof found; relying on PM2 process-name cleanup"
+              fi
+            }
+
             KEEP="${{ secrets.RELEASES_KEEP || '10' }}"
             ROLLBACK="${{ inputs.rollback && '1' || '' }}"
             TO_RELEASE="${{ inputs.to_release || '' }}"
@@ -208,12 +229,22 @@ jobs:
               fi
 
               if command -v pm2 >/dev/null 2>&1; then
+                export PORT="${BACKEND_PORT}"
                 if [ -f "${BE_DIR}/ecosystem.config.js" ]; then
                   cd "${BE_DIR}"
                   pm2 delete "${PM2_NAME}" >/dev/null 2>&1 || true
+                  stop_backend_port_owner
                   pm2 start ecosystem.config.js --only "${PM2_NAME}" --update-env
                 elif [ -f "${BE_DIR}/compile-server.js" ]; then
+                  if [ -z "${ROLLBACK}" ]; then
+                    grep -q "${EXPECTED_COMPILE_SERVER_VERSION}" "${BE_DIR}/compile-server.js" || {
+                      echo "Deployed backend file does not contain expected compile-server version ${EXPECTED_COMPILE_SERVER_VERSION}"
+                      grep -n "COMPILE_SERVER_VERSION\\|/health" "${BE_DIR}/compile-server.js" || true
+                      exit 1
+                    }
+                  fi
                   pm2 delete "${PM2_NAME}" >/dev/null 2>&1 || true
+                  stop_backend_port_owner
                   pm2 start "${BE_DIR}/compile-server.js" --name "${PM2_NAME}" --cwd "${BE_DIR}" --update-env
                 else
                   echo "No backend entrypoint found in ${BE_DIR}"
@@ -243,6 +274,12 @@ jobs:
               grep -q "${EXPECTED_COMPILE_SERVER_VERSION}" "${backend_hc_body}" || {
                 echo "Backend healthcheck did not return expected compile-server version ${EXPECTED_COMPILE_SERVER_VERSION}"
                 cat "${backend_hc_body}" || true
+                echo "Deployed backend version lines:"
+                grep -n "COMPILE_SERVER_VERSION\\|/health" "${BE_DIR}/compile-server.js" || true
+                echo "PM2 status:"
+                pm2 status "${PM2_NAME}" || true
+                echo "PM2 recent logs:"
+                pm2 logs "${PM2_NAME}" --lines 50 --nostream || true
                 rm -f "${backend_hc_body}"
                 exit 1
               }
