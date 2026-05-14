@@ -22,7 +22,7 @@ try {
 // Порт как в старой версии, чтобы совпало с nginx-конфигом
 const PORT = process.env.PORT || 8082;
 const HOST = process.env.HOST || process.env.BIND_HOST || "127.0.0.1";
-const COMPILE_SERVER_VERSION = "20260514-multifile-v1";
+const COMPILE_SERVER_VERSION = "20260514-multifile-v2";
 const MAX_CODE_SIZE = 64 * 1024;
 const MAX_PROJECT_SIZE = 512 * 1024;
 const MAX_PROJECT_FILES = 64;
@@ -70,6 +70,19 @@ function run(cmd, args, opts = {}) {
       resolve({ stdout, stderr });
     });
   });
+}
+
+function getRunErrorDetails(err) {
+  return {
+    stdout: (err && err.stdout ? err.stdout : "").toString(),
+    stderr: (err && err.stderr ? err.stderr : "").toString(),
+    error: err && err.message ? err.message : String(err || ""),
+    exit_code: err && Object.prototype.hasOwnProperty.call(err, "code")
+      ? err.code
+      : null,
+    signal: err && err.signal ? err.signal : null,
+    killed: !!(err && err.killed),
+  };
 }
 
 function getFileExtension(fileName) {
@@ -286,7 +299,7 @@ app.post("/api/avr/compile", async (req, res) => {
     // --- Компиляция xc8-cc ---
     // По мануалу для AVR-версии XC8 нужно:
     //   xc8-cc -mcpu=<device> -mdfp=<путь-к-dfp> ... :contentReference[oaicite:0]{index=0}
-    const compileArgs = [
+    const commonCompileArgs = [
       `-mcpu=${MCU}`,
       `-mdfp=${DFP_PATH}`,
       `-${OPT}`,
@@ -294,29 +307,85 @@ app.post("/api/avr/compile", async (req, res) => {
       "-Wextra",
       `-DF_CPU=${F_CPU}UL`,
       `-I${tmp}`,
-      ...compilePlan.compileSourceNames.map((name) => path.join(tmp, name)),
+    ];
+
+    const linkArgsBase = [`-mcpu=${MCU}`, `-mdfp=${DFP_PATH}`, `-${OPT}`];
+    const objectFiles = compilePlan.compileSourceNames.map((name, index) => {
+      const stem = getFileStem(name).replace(/[^A-Za-z0-9_.-]/g, "_");
+      return {
+        sourceName: name,
+        sourcePath: path.join(tmp, name),
+        objectPath: path.join(tmp, `${index + 1}-${stem}.o`),
+      };
+    });
+
+    const compileCommands = [];
+    let compileStdout = "";
+    let compileStderr = "";
+
+    for (const file of objectFiles) {
+      const args = [
+        ...commonCompileArgs,
+        "-c",
+        file.sourcePath,
+        "-o",
+        file.objectPath,
+      ];
+      const cmd = [XC8_CC, ...args].map(shellQuote).join(" ");
+      compileCommands.push(cmd);
+
+      try {
+        const result = await run(XC8_CC, args, {
+          timeout: 20000,
+          cwd: tmp,
+        });
+        compileStdout += result.stdout.toString();
+        compileStderr += result.stderr.toString();
+      } catch (err) {
+        await rm(tmp, { recursive: true, force: true });
+        return res.status(400).json({
+          ok: false,
+          compile_server_version: COMPILE_SERVER_VERSION,
+          stage: "compile",
+          compiler: XC8_CC,
+          failed_file: file.sourceName,
+          cmd,
+          commands: compileCommands,
+          compiled_files: compilePlan.compileSourceNames,
+          project_files: compilePlan.requiredFiles,
+          ...getRunErrorDetails(err),
+        });
+      }
+    }
+
+    const linkArgs = [
+      ...linkArgsBase,
+      ...objectFiles.map((file) => file.objectPath),
       "-o",
       elfPath,
     ];
+    const linkCommand = [XC8_CC, ...linkArgs].map(shellQuote).join(" ");
+    compileCommands.push(linkCommand);
 
-    let compileResult;
     try {
-      compileResult = await run(XC8_CC, compileArgs, {
+      const result = await run(XC8_CC, linkArgs, {
         timeout: 20000,
         cwd: tmp,
       });
+      compileStdout += result.stdout.toString();
+      compileStderr += result.stderr.toString();
     } catch (err) {
       await rm(tmp, { recursive: true, force: true });
       return res.status(400).json({
         ok: false,
         compile_server_version: COMPILE_SERVER_VERSION,
-        stage: "compile",
+        stage: "link",
         compiler: XC8_CC,
-        cmd: [XC8_CC, ...compileArgs].map(shellQuote).join(" "),
+        cmd: linkCommand,
+        commands: compileCommands,
         compiled_files: compilePlan.compileSourceNames,
         project_files: compilePlan.requiredFiles,
-        stdout: (err.stdout || "").toString(),
-        stderr: (err.stderr || "").toString(),
+        ...getRunErrorDetails(err),
       });
     }
 
@@ -335,8 +404,7 @@ app.post("/api/avr/compile", async (req, res) => {
         cmd: [AVR_OBJCOPY, ...objcopyArgs].map(shellQuote).join(" "),
         compiled_files: compilePlan.compileSourceNames,
         project_files: compilePlan.requiredFiles,
-        stdout: (err.stdout || "").toString(),
-        stderr: (err.stderr || "").toString(),
+        ...getRunErrorDetails(err),
       });
     }
 
@@ -354,8 +422,8 @@ app.post("/api/avr/compile", async (req, res) => {
       optimize: OPT,
       compiled_files: compilePlan.compileSourceNames,
       project_files: compilePlan.requiredFiles,
-      compile_stdout: compileResult.stdout.toString(),
-      compile_stderr: compileResult.stderr.toString(),
+      compile_stdout: compileStdout,
+      compile_stderr: compileStderr,
     });
   } catch (e) {
     if (tmp) {

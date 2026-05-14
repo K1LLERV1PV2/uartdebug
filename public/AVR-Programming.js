@@ -149,6 +149,19 @@
     el.scrollTop = el.scrollHeight;
   }
 
+  function formatCompileErrorDetails(data) {
+    if (!data || typeof data !== "object") return "";
+    const lines = [];
+    if (data.failed_file) lines.push(`file: ${data.failed_file}`);
+    if (data.error) lines.push(String(data.error));
+    if (data.exit_code !== undefined && data.exit_code !== null) {
+      lines.push(`exit code: ${data.exit_code}`);
+    }
+    if (data.signal) lines.push(`signal: ${data.signal}`);
+    if (data.killed) lines.push("process was killed");
+    return lines.join("\n");
+  }
+
   function formatCompileFileList(names) {
     return Array.isArray(names)
       ? names.filter(Boolean).map(String).join(", ")
@@ -2949,8 +2962,9 @@ int main(void) {
         errorData && errorData.compiled_files
       );
       if (compiledFiles) {
-        appendCompileLog(`Compiled units: ${compiledFiles}.`);
+        appendCompileLog(`Source units: ${compiledFiles}.`);
       }
+      appendCompileBlock("Error", formatCompileErrorDetails(errorData));
       appendCompileBlock("Stdout", errorData && errorData.stdout);
       appendCompileBlock("Stderr", errorData && errorData.stderr);
       if (!errorData && rawText.trim()) {
@@ -2986,8 +3000,9 @@ int main(void) {
       }
       const compiledFiles = formatCompileFileList(data && data.compiled_files);
       if (compiledFiles) {
-        appendCompileLog(`Compiled units: ${compiledFiles}.`);
+        appendCompileLog(`Source units: ${compiledFiles}.`);
       }
+      appendCompileBlock("Error", formatCompileErrorDetails(data));
       appendCompileBlock("Stdout", data && data.stdout);
       appendCompileBlock("Stderr", data && data.stderr);
       appendCompileBlock("Compiler stdout", data && data.compile_stdout);

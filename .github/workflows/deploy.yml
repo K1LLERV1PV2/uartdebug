@@ -115,7 +115,7 @@ jobs:
             [ -z "${BACKEND_PORT:-}" ] && BACKEND_PORT="8082"
             [ -z "${BACKEND_BIND_HOST:-}" ] && BACKEND_BIND_HOST="127.0.0.1"
             [ -z "${BACKEND_HC_URL:-}" ] && BACKEND_HC_URL="http://127.0.0.1:${BACKEND_PORT}/health"
-            EXPECTED_COMPILE_SERVER_VERSION="20260514-multifile-v1"
+            EXPECTED_COMPILE_SERVER_VERSION="20260514-multifile-v2"
 
             run_sudo() {
               command -v sudo >/dev/null 2>&1 || return 127

@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-v21";
+const CACHE_NAME = "uartdebug-shell-v22";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
