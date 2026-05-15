@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="uart.css" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260511-avr-files-compile"
+      href="AVR-Programming.css?v=20260516-avr-templates"
     />
 
     <link
@@ -220,6 +220,83 @@
                     </span>
                   </button>
                 </div>
+
+                <section
+                  class="file-add-template-section"
+                  aria-labelledby="fileTemplatesTitle"
+                >
+                  <h4 class="file-add-section-title" id="fileTemplatesTitle">
+                    Templates
+                  </h4>
+
+                  <div class="file-template-grid" id="fileTemplateGrid">
+                    <button
+                      class="file-add-card file-template-card template-minimum"
+                      type="button"
+                      data-template-id="minimum"
+                    >
+                      <span class="file-add-card-title">01 Minimum</span>
+                      <span class="file-add-card-copy">
+                        Smallest AVR program structure.
+                      </span>
+                    </button>
+
+                    <button
+                      class="file-add-card file-template-card template-clock"
+                      type="button"
+                      data-template-id="cpu-clock"
+                    >
+                      <span class="file-add-card-title">02 CPU Clock</span>
+                      <span class="file-add-card-copy">
+                        Clock source and prescaler examples.
+                      </span>
+                    </button>
+
+                    <button
+                      class="file-add-card file-template-card template-delay"
+                      type="button"
+                      data-template-id="delay-blink"
+                    >
+                      <span class="file-add-card-title">03 Delay Blink</span>
+                      <span class="file-add-card-copy">
+                        PB1 blink with a blocking delay.
+                      </span>
+                    </button>
+
+                    <button
+                      class="file-add-card file-template-card template-timer"
+                      type="button"
+                      data-template-id="timer-interrupt"
+                    >
+                      <span class="file-add-card-title">04 Timer ISR</span>
+                      <span class="file-add-card-copy">
+                        PB1 blink from a TCA0 overflow interrupt.
+                      </span>
+                    </button>
+
+                    <button
+                      class="file-add-card file-template-card template-uart-tx"
+                      type="button"
+                      data-template-id="uart-tx"
+                    >
+                      <span class="file-add-card-title">05 UART TX</span>
+                      <span class="file-add-card-copy">
+                        UART0 byte stream at 115200 8N1.
+                      </span>
+                    </button>
+
+                    <button
+                      class="file-add-card file-template-card template-uart-rx"
+                      type="button"
+                      data-template-id="uart-rx"
+                    >
+                      <span class="file-add-card-title">06 UART RX</span>
+                      <span class="file-add-card-copy">
+                        Receive one byte and transmit the next value.
+                      </span>
+                    </button>
+                  </div>
+                </section>
               </div>
             </div>
           </div>
@@ -364,7 +441,7 @@
         </section>
       </div>
     </main>
-    <script defer src="AVR-Programming.js?v=20260514-avr-filter-info"></script>
+    <script defer src="AVR-Programming.js?v=20260516-avr-templates"></script>
     <script defer src="updi-test.js?v=20260511-port-error"></script>
   </body>
 </html>

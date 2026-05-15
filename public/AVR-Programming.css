@@ -1343,7 +1343,10 @@ main,
 }
 
 .file-add-dialog {
-  width: min(100%, 640px);
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 900px);
+  max-height: calc(100vh - 40px);
   overflow: hidden;
   border: 1px solid rgba(129, 159, 141, 0.32);
   border-radius: var(--avr-radius);
@@ -1383,6 +1386,7 @@ main,
 
 .file-add-body {
   padding: 18px;
+  overflow: auto;
 }
 
 .file-add-intro {
@@ -1393,6 +1397,28 @@ main,
 }
 
 .file-add-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.file-add-template-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(129, 159, 141, 0.2);
+}
+
+.file-add-section-title {
+  margin: 0 0 12px;
+  color: var(--avr-text);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.file-template-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
@@ -1434,6 +1460,225 @@ main,
   color: var(--avr-text-soft);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.file-template-card {
+  position: relative;
+  isolation: isolate;
+  --template-before-opacity: 1;
+  --template-after-opacity: 1;
+  min-height: 132px;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, rgba(23, 35, 46, 0.52), rgba(39, 174, 96, 0.1)),
+    rgba(39, 174, 96, 0.1);
+}
+
+.file-template-card:hover {
+  background:
+    linear-gradient(145deg, rgba(23, 35, 46, 0.42), rgba(39, 174, 96, 0.17)),
+    rgba(39, 174, 96, 0.16);
+}
+
+.file-template-card::before,
+.file-template-card::after {
+  position: absolute;
+  z-index: -1;
+  opacity: 0;
+  filter: blur(2px);
+  content: "";
+  pointer-events: none;
+  transition: opacity 0.32s ease;
+  will-change: opacity, transform, background-position;
+}
+
+.file-template-card:is(:hover, :focus-visible)::before {
+  opacity: var(--template-before-opacity);
+}
+
+.file-template-card:is(:hover, :focus-visible)::after {
+  opacity: var(--template-after-opacity);
+}
+
+.file-template-card .file-add-card-title,
+.file-template-card .file-add-card-copy {
+  position: relative;
+  z-index: 1;
+}
+
+.template-minimum::before {
+  --template-before-opacity: 0.56;
+  right: 16px;
+  bottom: 14px;
+  width: 86px;
+  height: 54px;
+  border-left: 2px solid rgba(200, 255, 221, 0.34);
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(200, 255, 221, 0.18) 0 2px,
+    transparent 2px 13px
+  );
+}
+
+.template-minimum::after {
+  right: 92px;
+  bottom: 16px;
+  width: 7px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(200, 255, 221, 0.62);
+  box-shadow: 0 0 18px rgba(200, 255, 221, 0.32);
+}
+
+.template-clock::before {
+  --template-before-opacity: 0.72;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 16px,
+      rgba(122, 214, 255, 0.2) 16px 18px,
+      transparent 18px 34px
+    ),
+    linear-gradient(90deg, transparent, rgba(122, 214, 255, 0.1), transparent);
+}
+
+.template-clock::after {
+  right: 18px;
+  bottom: 18px;
+  width: 42px;
+  height: 42px;
+  border: 2px solid rgba(122, 214, 255, 0.3);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 10px rgba(122, 214, 255, 0.05);
+}
+
+.template-delay::before {
+  right: 20px;
+  bottom: 18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 210, 120, 0.84), rgba(255, 210, 120, 0.08) 62%, transparent 66%);
+  box-shadow: 0 0 26px rgba(255, 210, 120, 0.36);
+}
+
+.template-delay::after {
+  right: 68px;
+  bottom: 30px;
+  width: 72px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(255, 210, 120, 0.5));
+}
+
+.template-timer::before {
+  --template-before-opacity: 0.78;
+  right: 12px;
+  bottom: 8px;
+  width: 96px;
+  height: 96px;
+  border: 2px solid rgba(110, 232, 165, 0.3);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, rgba(110, 232, 165, 0.24) 0 4px, transparent 5px),
+    radial-gradient(circle at center, transparent 0 58%, rgba(110, 232, 165, 0.1) 59% 62%, transparent 63%),
+    repeating-conic-gradient(
+      from 0deg,
+      rgba(110, 232, 165, 0.46) 0deg 3deg,
+      transparent 3deg 30deg
+    );
+  box-shadow:
+    0 0 28px rgba(110, 232, 165, 0.14),
+    inset 0 0 18px rgba(110, 232, 165, 0.08);
+}
+
+.template-timer::after {
+  --template-after-opacity: 0.95;
+  right: 58px;
+  bottom: 56px;
+  width: 4px;
+  height: 38px;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(210, 255, 230, 0.9),
+    rgba(110, 232, 165, 0.34)
+  );
+  box-shadow: 0 0 14px rgba(110, 232, 165, 0.28);
+  transform-origin: 50% 100%;
+}
+
+.template-uart-tx::before,
+.template-uart-rx::before {
+  left: 14px;
+  right: 14px;
+  bottom: 24px;
+  height: 22px;
+  border-top: 1px solid rgba(98, 216, 255, 0.28);
+  border-bottom: 1px solid rgba(98, 216, 255, 0.2);
+  background: linear-gradient(90deg, transparent, rgba(98, 216, 255, 0.1), transparent);
+}
+
+.template-uart-tx::after,
+.template-uart-rx::after {
+  left: 22px;
+  bottom: 33px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(98, 216, 255, 0.86);
+  box-shadow:
+    24px 0 0 rgba(98, 216, 255, 0.56),
+    48px 0 0 rgba(98, 216, 255, 0.32);
+}
+
+.template-minimum:is(:hover, :focus-visible)::after {
+  animation: templateCaret 1.8s steps(4, end) infinite;
+}
+
+.template-clock:is(:hover, :focus-visible)::before {
+  animation: templateClockSweep 1.4s linear infinite;
+}
+
+.template-clock:is(:hover, :focus-visible)::after {
+  animation: templateClockPulse 2s ease-in-out infinite;
+}
+
+.template-delay:is(:hover, :focus-visible)::before {
+  animation: templateBlink 1s ease-in-out infinite;
+}
+
+.template-delay:is(:hover, :focus-visible)::after {
+  animation: templateDelayBar 1s ease-in-out infinite;
+}
+
+.template-timer:is(:hover, :focus-visible)::before {
+  animation: templateClockPulse 2.4s ease-in-out infinite;
+}
+
+.template-timer:is(:hover, :focus-visible)::after {
+  animation: templateClockHand 1.6s linear infinite;
+}
+
+.template-uart-tx:is(:hover, :focus-visible)::after {
+  animation: templateUartTx 1.2s linear infinite;
+}
+
+.template-uart-rx::before {
+  border-color: rgba(255, 172, 118, 0.24);
+  background: linear-gradient(90deg, transparent, rgba(98, 216, 255, 0.08), rgba(255, 172, 118, 0.1), transparent);
+}
+
+.template-uart-rx::after {
+  background: rgba(255, 172, 118, 0.86);
+  box-shadow:
+    28px 0 0 rgba(98, 216, 255, 0.58),
+    56px 0 0 rgba(255, 172, 118, 0.34);
+}
+
+.template-uart-rx:is(:hover, :focus-visible)::after {
+  animation: templateUartRx 1.45s ease-in-out infinite;
 }
 
 .site-dialog {
@@ -1707,6 +1952,131 @@ main,
   }
 }
 
+@keyframes templateCaret {
+  0% {
+    opacity: 0.9;
+    transform: translateX(0);
+  }
+
+  24% {
+    opacity: 0.9;
+    transform: translateX(12px);
+  }
+
+  25% {
+    opacity: 0.18;
+    transform: translateX(12px);
+  }
+
+  49% {
+    opacity: 0.18;
+    transform: translateX(26px);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: translateX(26px);
+  }
+
+  74% {
+    opacity: 0.9;
+    transform: translateX(42px);
+  }
+
+  75%,
+  100% {
+    opacity: 0.18;
+    transform: translateX(42px);
+  }
+}
+
+@keyframes templateClockSweep {
+  to {
+    background-position:
+      34px 0,
+      120px 0;
+  }
+}
+
+@keyframes templateClockPulse {
+  0%,
+  100% {
+    transform: scale(0.88);
+    opacity: 0.42;
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 0.72;
+  }
+}
+
+@keyframes templateBlink {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.72);
+  }
+
+  50% {
+    opacity: 0.94;
+    transform: scale(1);
+  }
+}
+
+@keyframes templateDelayBar {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: scaleX(0.56);
+  }
+
+  50% {
+    opacity: 0.68;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes templateClockHand {
+  from {
+    transform: rotate(-35deg);
+  }
+
+  to {
+    transform: rotate(325deg);
+  }
+}
+
+@keyframes templateUartTx {
+  0% {
+    opacity: 0.2;
+    transform: translateX(0);
+  }
+
+  20%,
+  82% {
+    opacity: 0.86;
+  }
+
+  100% {
+    opacity: 0.08;
+    transform: translateX(92px);
+  }
+}
+
+@keyframes templateUartRx {
+  0%,
+  100% {
+    opacity: 0.18;
+    transform: translateX(84px);
+  }
+
+  50% {
+    opacity: 0.86;
+    transform: translateX(0);
+  }
+}
+
 @media (max-width: 1100px) {
   .avr-device-panel {
     grid-template-columns: 136px minmax(0, max-content);
@@ -1798,6 +2168,10 @@ main,
     height: auto;
     min-height: 240px;
   }
+
+  .file-template-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 640px) {
@@ -1834,11 +2208,19 @@ main,
   }
 
   .file-add-options,
+  .file-template-grid,
   .summary-grid {
     grid-template-columns: 1fr;
   }
 
   .compile-log-section {
     flex-basis: 160px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-template-card::before,
+  .file-template-card::after {
+    animation: none !important;
   }
 }

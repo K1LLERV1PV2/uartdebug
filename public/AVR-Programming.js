@@ -459,25 +459,729 @@
     );
   }
 
-  function defaultTemplate(name = "main.c") {
-    return `// ${name}
-// UartDebug AVR Programming workspace
+  const AVR_FILE_TEMPLATES = [
+    {
+      id: "minimum",
+      fileName: "01_Minimum.c",
+      content: `/*
+ * Project name: 01_Minimum.c
+ * Description: Minimal AVR project template.
+ *
+ * Purpose:
+ *   This is the smallest program structure that can be compiled
+ *   and programmed into the microcontroller.
+ *
+ * Hardware action:
+ *   No visible hardware action is performed.
+ */
 
-#include <stdint.h>
-#include <avr/interrupt.h>
+#include <xc.h>    // Device-specific definitions for the XC8 compiler (MPLAB X IDE)
+// #include <avr/io.h> // Alternative header for AVR-GCC compiler
 
-int main(void) {
-  sei();
-  // put your setup code here
-  
-  while (1) {
-    // loop
-  }
-  
-  return 0;
+int main(void)
+{
+    /*
+     * Initialization code can be placed here.
+     * For example: clock setup, port configuration, timer setup, etc.
+     */
+
+    while (1)
+    {
+        /*
+         * Main application code can be placed here.
+         * This loop runs continuously after initialization.
+         */
+    }
+
+    return 0;      // Normally never reached; keeps the compiler satisfied.
 }
-`;
-  }
+`,
+    },
+    {
+      id: "cpu-clock",
+      fileName: "02_CPU_Clock.c",
+      content: `/*
+ * Project name: 02_CPU_Clock.c
+ * Description: System clock configuration examples.
+ *
+ * Purpose:
+ *   This project shows how to change the default CPU clock frequency.
+ *   If the default 3.333 MHz clock is suitable, this project can be ignored.
+ *
+ *   The examples also show how to write to Configuration Change Protection
+ *   (CCP) registers using _PROTECTED_WRITE().
+ *
+ * Hardware response:
+ *   On microcontrollers with enough pins, the CPU clock can be output on PB5
+ *   for test purposes.
+ *
+ *   This can be useful when a high-speed output signal is needed.
+ */
+
+#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
+// #include <avr/io.h> // Alternative header for AVR-GCC compiler
+
+
+/*
+ * If no clock configuration function is called, the CPU clock remains
+ * at the default value:
+ *
+ *   20 MHz / 6 = 3.333 MHz
+ */
+
+
+/*
+ * Set the CPU clock to 20 MHz and output the system clock on PB5.
+ *
+ * Note:
+ *   System Clock Out on PB5 is not available on small 14-pin packages.
+ */
+void CPU_Max_Clock_20MHz_Out(void)
+{
+    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLA,
+                     CLKCTRL_CLKSEL_OSC20M_gc | CLKCTRL_CLKOUT_bm);
+
+    /*
+     * Disable the clock prescaler.
+     * CPU and peripheral clock: 20 MHz.
+     */
+    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLB, 0);
+}
+
+
+/*
+ * Set the CPU clock to 20 MHz without system clock output.
+ */
+void CPU_Max_Clock_20MHz_NoOutputSignal(void)
+{
+    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLA, CLKCTRL_CLKSEL_OSC20M_gc);
+
+    /*
+     * Disable the clock prescaler.
+     * CPU and peripheral clock: 20 MHz.
+     */
+    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLB, 0);
+}
+
+
+/*
+ * Set the CPU clock to 10 MHz without system clock output.
+ *
+ * The 20 MHz internal oscillator is used with a division factor of 2.
+ * CPU and peripheral clock: 20 MHz / 2 = 10 MHz.
+ */
+void CPU_Clock_10MHz_NoOutputSignal(void)
+{
+    /*
+     * Select the 20 MHz internal oscillator.
+     * This is the default clock source, so this line can be omitted.
+     */
+    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLA, CLKCTRL_CLKSEL_OSC20M_gc);
+
+    /*
+     * Enable the clock prescaler and select division by 2.
+     */
+    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLB,
+                     CLKCTRL_PDIV_2X_gc | CLKCTRL_PEN_bm);
+
+    /*
+     * Some available prescaler values:
+     *
+     *   CLKCTRL_PDIV_2X_gc    divide by 2
+     *   CLKCTRL_PDIV_4X_gc    divide by 4
+     *   CLKCTRL_PDIV_6X_gc    divide by 6, default value
+     *   CLKCTRL_PDIV_10X_gc   divide by 10
+     *   CLKCTRL_PDIV_16X_gc   divide by 16
+     */
+}
+
+
+int main(void)
+{
+    /*
+     * This function provides a continuous clock signal on PB5
+     * for test purposes, if the selected microcontroller package supports it.
+     */
+    CPU_Max_Clock_20MHz_Out();
+
+    /*
+     * User initialization code can be placed here.
+     */
+
+    while (1)
+    {
+        /*
+         * Main application code can be placed here.
+         */
+    }
+
+    return 0;    // Normally never reached; keeps the compiler satisfied.
+}
+`,
+    },
+    {
+      id: "delay-blink",
+      fileName: "03_Delay-Based_Blink.c",
+      content: `/*
+ * Project name: 03_Delay-Based_Blink.c
+ * Description: LED blinking using a blocking software delay.
+ *
+ * Purpose:
+ *   This is a simple first-run project example.
+ *
+ * Hardware response:
+ *   PB1 is configured as output and toggled in the main loop.
+ *
+ *   The delay is implemented using a software blocking delay function.
+ *   During the delay, the CPU cannot execute other tasks.
+ *
+ *   An LED with a series resistor can be connected to PB1
+ *   to observe the blinking process.
+ *
+ *   On SOIC-14 packages, PB1 is pin 8.
+ */
+
+#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
+// #include <avr/io.h> // Alternative header for AVR-GCC compiler
+
+/*
+ * CPU clock remains at the default frequency:
+ *
+ *   20 MHz / 6 = 3.333 MHz
+ *
+ * See project:
+ *   02_CPU_Clock.c
+ */
+#define F_CPU 3333333UL
+
+#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
+
+
+int main(void)
+{
+    /*
+     * Set the output level before enabling output mode.
+     *
+     * This approach helps prevent unwanted glitches on the pin.
+     * It can be especially important when controlling MOSFET gates.
+     */
+    PORTB.OUTCLR = PIN1_bm;   // Set PB1 low
+    PORTB.DIRSET = PIN1_bm;   // Configure PB1 as output
+
+    while (1)
+    {
+        PORTB.OUTTGL = PIN1_bm;   // Toggle PB1 state
+        _delay_ms(500);           // 500 ms blocking delay
+    }
+
+    /*
+     * In embedded systems, execution normally never reaches this point.
+     * The return statement is kept to satisfy the compiler.
+     */
+    return 0;
+}
+`,
+    },
+    {
+      id: "timer-interrupt",
+      fileName: "04_Timer_Interrupt_Blink.c",
+      content: `/*
+ * Project name: 04_Timer_Interrupt_Blink.c
+ * Description: Non-blocking LED blinking using TCA0 timer interrupts.
+ *
+ * Purpose:
+ *   This project demonstrates a simple periodic timer interrupt
+ *   using the 16-bit TCA0 timer.
+ *
+ *   Unlike software delay functions, the CPU is not blocked while
+ *   waiting for the next LED toggle event.
+ *
+ * Hardware response:
+ *   PB1 is configured as output and toggled inside the interrupt
+ *   service routine (ISR).
+ *
+ *   An LED with a series resistor can be connected to PB1
+ *   to observe the blinking process.
+ *
+ *   On SOIC-14 packages, PB1 is pin 8.
+ */
+
+#include <xc.h>                // Device-specific definitions for XC8 compiler (MPLAB X IDE)
+// #include <avr/io.h>         // Alternative header for AVR-GCC compiler
+
+#include <avr/interrupt.h>     // Interrupt handling functions
+
+#define F_CPU 3333333UL        // System clock frequency in Hz
+
+
+/*
+ * Timer configuration parameters
+ *
+ * Prescaler:
+ *   1024
+ *
+ * Timer period:
+ *   0.5 seconds
+ */
+#define TCA_PRESCALER   1024UL
+#define TCA_PERIOD_US   500000UL
+
+
+/*
+ * Calculate TCA0 period register value.
+ */
+#define TCA_PER_VALUE \\
+    ((uint16_t)(((F_CPU / TCA_PRESCALER) * TCA_PERIOD_US) / 1000000UL - 1UL))
+
+
+/*
+ * Notes:
+ *
+ * 1.
+ *    1000000UL is the number of microseconds in one second.
+ *
+ * 2.
+ *    Maximum practical TCA0 period value is approximately 65535.
+ *
+ * 3.
+ *    With:
+ *
+ *        F_CPU = 3333333 Hz
+ *        Prescaler = 1024
+ *
+ *    Timer resolution is:
+ *
+ *        (1 / 3333333) x 1024 ~= 307 us
+ *
+ * 4.
+ *    For a 0.5 second period:
+ *
+ *        TCA_PER_VALUE = 1626
+ *
+ * 5.
+ *    Actual timer period:
+ *
+ *        (1626 + 1) x (1024 / 3333333)
+ *        ~= 0.4998 seconds
+ */
+
+
+/*
+ * Initialize TCA0 in normal 16-bit mode.
+ */
+void Init_TCA(void)
+{
+    /*
+     * Normal counting mode.
+     */
+    TCA0.SINGLE.CTRLB = TCA_SINGLE_WGMODE_NORMAL_gc;
+
+    /*
+     * Enable timer overflow interrupt.
+     */
+    TCA0.SINGLE.INTCTRL = TCA_SINGLE_OVF_bm;
+
+    /*
+     * Set timer period value.
+     */
+    TCA0.SINGLE.PER = TCA_PER_VALUE;
+
+    /*
+     * Select clock prescaler and start the timer.
+     */
+    TCA0.SINGLE.CTRLA =
+            TCA_SINGLE_CLKSEL_DIV1024_gc |
+            TCA_SINGLE_ENABLE_bm;
+
+    /*
+     * Available TCA clock divider options:
+     *
+     *   TCA_SINGLE_CLKSEL_DIV1_gc
+     *   TCA_SINGLE_CLKSEL_DIV2_gc
+     *   TCA_SINGLE_CLKSEL_DIV4_gc
+     *   TCA_SINGLE_CLKSEL_DIV8_gc
+     *   TCA_SINGLE_CLKSEL_DIV16_gc
+     *   TCA_SINGLE_CLKSEL_DIV64_gc
+     *   TCA_SINGLE_CLKSEL_DIV256_gc
+     *   TCA_SINGLE_CLKSEL_DIV1024_gc
+     *
+     * If the clock divider is changed here,
+     * the TCA_PRESCALER definition above must also be updated
+     * to keep the timer period calculation correct.
+     */
+}
+
+
+/*
+ * TCA0 overflow interrupt service routine.
+ */
+ISR(TCA0_OVF_vect)
+{
+    /*
+     * Toggle PB1 state.
+     * Any other periodic interrupt code can be placed here.
+     */
+    PORTB.OUTTGL = PIN1_bm;
+
+    /*
+     * Clear interrupt flag.
+     * This must be done to allow future interrupts.
+     */
+    TCA0.SINGLE.INTFLAGS = TCA_SINGLE_OVF_bm;
+}
+
+
+int main(void)
+{
+    /*
+     * Set output level before enabling output mode.
+     */
+    PORTB.OUTCLR = PIN1_bm;
+
+    /*
+     * Configure PB1 as output.
+     */
+    PORTB.DIRSET = PIN1_bm;
+
+    /*
+     * Initialize and start TCA0 timer.
+     */
+    Init_TCA();
+
+    /*
+     * Enable global interrupts.
+     */
+    sei();
+
+    while (1)
+    {
+        /*
+         * User code can run here simultaneously
+         * with timer interrupt processing.
+         */
+    }
+
+    /*
+     * In embedded systems, execution normally never reaches this point.
+     * The return statement is kept to satisfy the compiler.
+     */
+    return 0;
+}
+`,
+    },
+    {
+      id: "uart-tx",
+      fileName: "05_UART_Basic_Transmission.c",
+      content: `/*
+ * Project name: 05_UART_Basic_Transmission.c
+ * Description: Basic UART0 byte transmission.
+ *
+ * Purpose:
+ *   This project demonstrates UART0 initialization and direct byte
+ *   transmission through the hardware data register.
+ *
+ *   This is the simplest way to transmit a byte using UART.
+ *   The example uses blocking transmission in the main while(1) loop.
+ *
+ * Hardware response:
+ *   UART0, 115200 baud, 8 data bits, no parity, 1 stop bit.
+ *
+ *   TxD output is on PB2.
+ *   On SOIC-14 packages, PB2 is pin 7.
+ *
+ *   UART transmission period: 20 ms.
+ *
+ *   The transmitted byte value is increased after each transmission.
+ *   This creates a sawtooth byte pattern.
+ *
+ *   The received bytes can be observed using a serial terminal.
+ *   You can also observe the waveform using uartdebug.com
+ *   in the following mode:  Unsigned, 1 byte
+ *
+ */
+
+#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
+// #include <avr/io.h> // Alternative header for AVR-GCC compiler
+
+/*
+ * CPU clock remains at the default frequency:
+ *
+ *   20 MHz / 6 = 3.333 MHz
+ *
+ * F_CPU must be defined before including <util/delay.h>.
+ */
+#define F_CPU 3333333UL
+
+#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
+
+
+#define BAUD_RATE 115200UL // User-selected UART baud rate
+#define CLK_PER   F_CPU
+
+/*
+ * USART baud register calculation.
+ */
+#define USART_BAUD_RATE \\
+    ((uint16_t)(((float)CLK_PER * 64.0 / (16.0 * (float)BAUD_RATE)) + 0.5))
+
+
+/*
+ * Initialize USART0 for basic asynchronous transmission.
+ *
+ * UART format:
+ *   115200 baud
+ *   8 data bits
+ *   No parity
+ *   1 stop bit
+ *
+ * Common notation:
+ *   115200 8N1
+ */
+ //
+void USART_Init(void)
+{
+    /*
+     * Set asynchronous UART mode, no parity,
+     * 8 data bits, 1 stop bit.
+     */
+    USART0.CTRLC = USART_CMODE_ASYNCHRONOUS_gc |
+                   USART_PMODE_DISABLED_gc |
+                   USART_CHSIZE_8BIT_gc |
+                   USART_SBMODE_1BIT_gc;
+
+    /*
+     * Set UART baud rate.
+     */
+    USART0.BAUD = USART_BAUD_RATE;
+
+    /*
+     * Configure PB2 as UART0 TX output.
+     */
+    PORTB.DIRSET = PIN2_bm;
+
+    /*
+     * Enable USART transmitter.
+     */
+    USART0.CTRLB = USART_TXEN_bm;
+}
+
+/*
+* UART1 configuration:
+*
+* 1. Replace all occurrences of USART0. with USART1.
+*
+* 2. Replace:
+* PORTB.DIRSET = PIN2_bm;
+* with:
+* PORTA.DIRSET = PIN1_bm;
+*
+* 3. UART1 pin assignment:
+* PA1 - TxD
+* For SOIC-14 packages:
+* PA1 - TxD - pin 11
+*/
+
+
+int main(void)
+{
+    uint8_t out_data = 0;
+
+    USART_Init();
+
+    while (1)
+    {
+        /*
+         * Waiting for the transmit buffer can be omitted
+         * if enough time is guaranteed between transmissions.
+         *
+         * At 115200 baud (8N1), transmission of one byte takes
+         * approximately 87 us.
+         */
+        while (!(USART0.STATUS & USART_DREIF_bm)) // Wait until the transmit buffer is empty
+        {
+            ;
+        }
+
+        /*
+         * Send one byte through UART0.
+         */
+        USART0.TXDATAL = out_data;
+
+        /*
+         * Increase the transmitted value.
+         * After 255, the uint8_t value automatically rolls over to 0.
+         */
+        out_data++;
+
+        /*
+         * Transmission period.
+         */
+        _delay_ms(20);
+    }
+
+    /*
+     * In embedded systems, execution normally never reaches this point.
+     * The return statement is kept to satisfy the compiler.
+     */
+    return 0;
+}
+`,
+    },
+    {
+      id: "uart-rx",
+      fileName: "06_UART_Basic_Receive.c",
+      content: `/*
+ * Project name: 06_UART_Basic_Receive.c
+ * Description: Basic UART0 byte receive.
+ *
+ * Purpose:
+ *   This project demonstrates UART0 initialization and direct byte
+ *   reception and transmission through the hardware data registers.
+ *
+ *   This is the simplest way to receive a byte using UART.
+ *   The example uses blocking receive in the main while(1) loop.
+ *
+ * Hardware response:
+ *   UART0, 115200 baud, 8 data bits, no parity, 1 stop bit.
+ *
+ *   The microcontroller waits for one byte on the UART0 input (PB3).
+ *
+ *   After receiving the byte, the microcontroller increments its value by 1
+ *   and transmits the result through UART0 (PB2).
+ *
+ *   For SOIC-14 packages:
+ *   PB2 - UART0 TxD - pin 7
+ *   PB3 - UART0 RxD - pin 6
+ */
+
+
+#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
+// #include <avr/io.h> // Alternative header for AVR-GCC compiler
+
+/*
+ * CPU clock remains at the default frequency:
+ *
+ *   20 MHz / 6 = 3.333 MHz
+ *
+ * F_CPU must be defined before including <util/delay.h>.
+ */
+#define F_CPU 3333333UL
+
+#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
+
+
+#define BAUD_RATE 115200UL // User-selected UART baud rate
+#define CLK_PER   F_CPU
+
+/*
+ * USART baud register calculation.
+ */
+#define USART_BAUD_RATE \\
+    ((uint16_t)(((float)CLK_PER * 64.0 / (16.0 * (float)BAUD_RATE)) + 0.5))
+
+
+/*
+ * Initialize USART0 for basic asynchronous reception and transmission.
+ *
+ * UART format:
+ *   115200 baud
+ *   8 data bits
+ *   No parity
+ *   1 stop bit
+ *
+ * Common notation:
+ *   115200 8N1
+ */
+void USART_Init(void)
+{
+    /*
+     * Set asynchronous UART mode, no parity,
+     * 8 data bits, 1 stop bit.
+     */
+    USART0.CTRLC = USART_CMODE_ASYNCHRONOUS_gc |
+                   USART_PMODE_DISABLED_gc |
+                   USART_CHSIZE_8BIT_gc |
+                   USART_SBMODE_1BIT_gc;
+
+    /*
+     * Set UART baud rate.
+     */
+    USART0.BAUD = USART_BAUD_RATE;
+
+    /*
+     * Configure PB2 as UART0 TX output.
+     */
+    PORTB.DIRSET = PIN2_bm;
+
+    /*
+     * Enable USART0 transmitter and receiver.
+     */
+    USART0.CTRLB = USART_TXEN_bm | USART_RXEN_bm;
+}
+
+/*
+* UART1 configuration:
+*
+* 1. Replace all occurrences of USART0. with USART1.
+*
+* 2. Replace:
+* PORTB.DIRSET = PIN2_bm;
+* with:
+* PORTA.DIRSET = PIN1_bm;
+*
+* 3. UART1 pin assignment:
+* PA1 - TxD
+* PA2 - RxD
+* For SOIC-14 packages:
+* PA1 - TxD - pin 11
+* PA2 - RxD - pin 12
+*/
+
+
+int main(void)
+{
+    uint8_t received_byte;
+
+    USART_Init();
+
+    while (1)
+    {
+        // Wait until the receive register gets a byte.
+        while (!(USART0.STATUS & USART_RXCIF_bm))
+        {
+            ;
+        }
+
+        /*
+         * Get the received byte from the register.
+         */
+        received_byte = USART0.RXDATAL;
+
+        // Wait until the transmit data register is empty.
+        while (!(USART0.STATUS & USART_DREIF_bm))
+        {
+            ;
+        }
+
+        /*
+         * Increment the received value and transmit it.
+         */
+        USART0.TXDATAL = received_byte + 1;
+    }
+
+    /*
+     * In embedded systems, execution normally never reaches this point.
+     * The return statement is kept to satisfy the compiler.
+     */
+    return 0;
+}
+`,
+    },
+  ];
+
+  const AVR_FILE_TEMPLATE_MAP = new Map(
+    AVR_FILE_TEMPLATES.map((template) => [template.id, template])
+  );
 
   function loadState() {
     try {
@@ -692,7 +1396,7 @@ int main(void) {
   }
 
   function getNewFileContent(fileName) {
-    return isCFileName(fileName) ? defaultTemplate(fileName) : "";
+    return "";
   }
 
   function isHexFileName(fileName) {
@@ -885,6 +1589,19 @@ int main(void) {
     selectFile(normalizedName);
   }
 
+  function createFileFromTemplate(templateId) {
+    const template = AVR_FILE_TEMPLATE_MAP.get(templateId);
+    if (!template) return false;
+
+    const fileName = uniqueImportedName(template.fileName);
+    if (!fileName) return false;
+
+    files[fileName] = String(template.content || "").replace(/\r\n/g, "\n");
+    closeAddFileModal();
+    selectFile(fileName);
+    return true;
+  }
+
   function loadHexIntoUpdiRuntime(updi, fileName, hexText, source = "uploaded") {
     const normalizedHex = String(hexText || "").replace(/\r\n/g, "\n");
 
@@ -924,7 +1641,7 @@ int main(void) {
   function ensureAtLeastOneFile() {
     if (Object.keys(files).length === 0) {
       const name = "main.c";
-      files[name] = defaultTemplate(name);
+      files[name] = "";
       current = name;
       persistState();
     }
@@ -2291,6 +3008,7 @@ int main(void) {
       const createNewFileCard = $("createNewFileCard");
       const uploadExistingFileCard = $("uploadExistingFileCard");
       const createNewGroupCard = $("createNewGroupCard");
+      const fileTemplateGrid = $("fileTemplateGrid");
       const siteDialog = $("siteDialog");
       const siteDialogCloseBtn = $("siteDialogCloseBtn");
       const siteDialogCancelBtn = $("siteDialogCancelBtn");
@@ -2327,6 +3045,12 @@ int main(void) {
       createNewGroupCard.addEventListener("click", () => {
         closeAddFileModal();
         startInlineCreateGroup();
+      });
+    fileTemplateGrid &&
+      fileTemplateGrid.addEventListener("click", (event) => {
+        const card = event.target.closest("[data-template-id]");
+        if (!card) return;
+        createFileFromTemplate(card.dataset.templateId || "");
       });
     uploadExistingFileCard &&
       uploadExistingFileCard.addEventListener("click", () => {
