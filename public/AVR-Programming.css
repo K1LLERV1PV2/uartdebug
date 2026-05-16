@@ -476,7 +476,7 @@ main,
   justify-content: space-between;
   gap: 8px;
   min-height: 38px;
-  padding: 7px 8px;
+  padding: 7px 8px 7px calc(8px + var(--outliner-depth, 0) * 12px);
   border: 1px solid transparent;
   border-radius: 10px;
   color: var(--avr-text);
@@ -519,6 +519,11 @@ main,
   border-radius: 12px;
 }
 
+.file-group-block .file-group-block {
+  width: calc(100% - 10px);
+  margin-left: 10px;
+}
+
 .file-item.group-member {
   background: transparent;
   border-color: transparent;
@@ -528,9 +533,14 @@ main,
   opacity: 0.56;
 }
 
-.file-item.file-group.drop-target {
-  border-color: var(--avr-border-hot);
-  background: rgba(39, 174, 96, 0.22);
+.file-item.drop-target {
+  border-color: rgba(129, 159, 141, 0.42);
+  background: rgba(129, 159, 141, 0.12);
+}
+
+.file-group-block.drop-target {
+  outline-color: rgba(129, 159, 141, 0.46);
+  background: rgba(129, 159, 141, 0.07);
 }
 
 .file-item.drop-before {
@@ -1086,6 +1096,18 @@ main,
 
 .cm-s-material-darker .CodeMirror-activeline-background {
   background: rgba(70, 255, 120, 0.07) !important;
+}
+
+.CodeMirror-selected {
+  background: rgba(97, 97, 97, 0.36) !important;
+}
+
+.CodeMirror-focused .CodeMirror-selected {
+  background: rgba(128, 128, 128, 0.42) !important;
+}
+
+.CodeMirror-selectedtext {
+  color: #f4fff7 !important;
 }
 
 .cm-s-material-darker span.cm-comment {
@@ -1991,10 +2013,16 @@ main,
 }
 
 @keyframes templateClockSweep {
+  from {
+    background-position:
+      0 0,
+      0 0;
+  }
+
   to {
     background-position:
       34px 0,
-      120px 0;
+      0 0;
   }
 }
 
@@ -2060,20 +2088,24 @@ main,
 
   100% {
     opacity: 0.08;
-    transform: translateX(92px);
+    transform: translateX(230px);
   }
 }
 
 @keyframes templateUartRx {
-  0%,
-  100% {
+  0% {
     opacity: 0.18;
-    transform: translateX(84px);
+    transform: translateX(230px);
   }
 
   50% {
     opacity: 0.86;
     transform: translateX(0);
+  }
+
+  100% {
+    opacity: 0.08;
+    transform: translateX(-40px);
   }
 }
 

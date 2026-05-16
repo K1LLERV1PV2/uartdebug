@@ -1223,6 +1223,7 @@ int main(void)
   function normalizeFileGroups() {
     const normalized = {};
     const assignedFiles = new Set();
+    const assignedGroups = new Set();
 
     if (!fileGroups || typeof fileGroups !== "object") {
       fileGroups = {};
@@ -1233,10 +1234,20 @@ int main(void)
       const name = String(rawName || "").trim();
       if (!name || normalized[name]) continue;
 
+      normalized[name] = {
+        files: [],
+        groups: [],
+        expanded: !!rawGroup?.expanded,
+      };
+    }
+
+    for (const [rawName, rawGroup] of Object.entries(fileGroups)) {
+      const name = String(rawName || "").trim();
+      if (!normalized[name]) continue;
+
       const rawFiles = Array.isArray(rawGroup?.files)
         ? rawGroup.files
         : [];
-      const groupFiles = [];
 
       for (const fileName of rawFiles) {
         const normalizedFile = String(fileName || "").trim();
@@ -1248,17 +1259,37 @@ int main(void)
           continue;
         }
 
-        groupFiles.push(normalizedFile);
+        normalized[name].files.push(normalizedFile);
         assignedFiles.add(normalizedFile);
       }
+    }
 
-      normalized[name] = {
-        files: groupFiles,
-        expanded: !!rawGroup?.expanded,
-      };
+    for (const [rawName, rawGroup] of Object.entries(fileGroups)) {
+      const name = String(rawName || "").trim();
+      if (!normalized[name]) continue;
+
+      const rawGroups = Array.isArray(rawGroup?.groups)
+        ? rawGroup.groups
+        : [];
+
+      for (const groupName of rawGroups) {
+        const childName = String(groupName || "").trim();
+        if (
+          !childName ||
+          childName === name ||
+          !normalized[childName] ||
+          assignedGroups.has(childName)
+        ) {
+          continue;
+        }
+
+        normalized[name].groups.push(childName);
+        assignedGroups.add(childName);
+      }
     }
 
     fileGroups = normalized;
+    pruneGroupCycles();
   }
 
   function uniqueName(base) {
@@ -1314,6 +1345,57 @@ int main(void)
     return candidate;
   }
 
+  function getGroupChildGroups(groupName) {
+    const group = fileGroups[groupName];
+    return (group?.groups || []).filter((name) => hasGroup(name));
+  }
+
+  function getRootGroupNames() {
+    const nested = new Set();
+
+    for (const group of Object.values(fileGroups)) {
+      for (const groupName of group.groups || []) {
+        if (hasGroup(groupName)) nested.add(groupName);
+      }
+    }
+
+    return Object.keys(fileGroups).filter((name) => !nested.has(name));
+  }
+
+  function getGroupParent(groupName) {
+    for (const [parentName, group] of Object.entries(fileGroups)) {
+      if ((group.groups || []).includes(groupName)) return parentName;
+    }
+    return "";
+  }
+
+  function isGroupDescendant(groupName, possibleDescendant) {
+    if (!hasGroup(groupName) || !possibleDescendant) return false;
+
+    const stack = [...getGroupChildGroups(groupName)];
+    const seen = new Set();
+
+    while (stack.length) {
+      const childName = stack.pop();
+      if (!childName || seen.has(childName)) continue;
+      if (childName === possibleDescendant) return true;
+      seen.add(childName);
+      stack.push(...getGroupChildGroups(childName));
+    }
+
+    return false;
+  }
+
+  function pruneGroupCycles() {
+    for (const groupName of Object.keys(fileGroups)) {
+      const group = fileGroups[groupName];
+      group.groups = (group.groups || []).filter(
+        (childName) =>
+          childName !== groupName && !isGroupDescendant(childName, groupName)
+      );
+    }
+  }
+
   function getGroupedFileSet() {
     const grouped = new Set();
     for (const group of Object.values(fileGroups)) {
@@ -1326,7 +1408,9 @@ int main(void)
 
   function getGroupFileCount(groupName) {
     const group = fileGroups[groupName];
-    return (group?.files || []).filter((name) => hasFile(name)).length;
+    const fileCount = (group?.files || []).filter((name) => hasFile(name)).length;
+    const groupCount = (group?.groups || []).filter((name) => hasGroup(name)).length;
+    return fileCount + groupCount;
   }
 
   function getFileGroup(fileName) {
@@ -1336,17 +1420,21 @@ int main(void)
     return "";
   }
 
-  function insertFileName(names, fileName, targetName = "", placement = "after") {
-    const next = names.filter((name) => name !== fileName);
+  function insertName(names, name, targetName = "", placement = "after") {
+    const next = names.filter((itemName) => itemName !== name);
     const targetIndex = targetName ? next.indexOf(targetName) : -1;
 
     if (targetIndex === -1) {
-      next.push(fileName);
+      next.push(name);
       return next;
     }
 
-    next.splice(placement === "before" ? targetIndex : targetIndex + 1, 0, fileName);
+    next.splice(placement === "before" ? targetIndex : targetIndex + 1, 0, name);
     return next;
+  }
+
+  function insertFileName(names, fileName, targetName = "", placement = "after") {
+    return insertName(names, fileName, targetName, placement);
   }
 
   function setFilesInOrder(names) {
@@ -1367,6 +1455,24 @@ int main(void)
     files = nextFiles;
   }
 
+  function setGroupsInOrder(names) {
+    const nextGroups = {};
+    const seen = new Set();
+
+    for (const name of names) {
+      if (!hasGroup(name) || seen.has(name)) continue;
+      nextGroups[name] = fileGroups[name];
+      seen.add(name);
+    }
+
+    for (const name of Object.keys(fileGroups)) {
+      if (seen.has(name)) continue;
+      nextGroups[name] = fileGroups[name];
+    }
+
+    fileGroups = nextGroups;
+  }
+
   function renameFileKey(oldName, newName) {
     const nextFiles = {};
 
@@ -1385,6 +1491,12 @@ int main(void)
     }
 
     fileGroups = nextGroups;
+
+    for (const group of Object.values(fileGroups)) {
+      group.groups = (group.groups || []).map((groupName) =>
+        groupName === oldName ? newName : groupName
+      );
+    }
   }
 
   function isCFileName(fileName) {
@@ -1867,6 +1979,7 @@ int main(void)
     if (inlineFileEdit.mode === "create-group") {
       fileGroups[nextName] = {
         files: [],
+        groups: [],
         expanded: false,
       };
       inlineFileEdit = null;
@@ -1898,6 +2011,12 @@ int main(void)
     }
   }
 
+  function removeGroupFromParents(groupName) {
+    for (const group of Object.values(fileGroups)) {
+      group.groups = (group.groups || []).filter((name) => name !== groupName);
+    }
+  }
+
   function moveFileToRoot(fileName, targetName = "", placement = "after") {
     if (!hasFile(fileName)) return false;
 
@@ -1923,31 +2042,125 @@ int main(void)
     return true;
   }
 
+  function moveGroupToRoot(groupName, targetName = "", placement = "after") {
+    if (!hasGroup(groupName)) return false;
+
+    removeGroupFromParents(groupName);
+    setGroupsInOrder(
+      insertName(Object.keys(fileGroups), groupName, targetName, placement)
+    );
+    persistState();
+    renderOutliner();
+    return true;
+  }
+
+  function moveGroupToGroup(groupName, parentGroupName, targetName = "", placement = "after") {
+    if (
+      !hasGroup(groupName) ||
+      !hasGroup(parentGroupName) ||
+      groupName === parentGroupName ||
+      isGroupDescendant(groupName, parentGroupName)
+    ) {
+      return false;
+    }
+
+    removeGroupFromParents(groupName);
+    const parentGroup = fileGroups[parentGroupName];
+    const groupNames = (parentGroup.groups || []).filter((name) => hasGroup(name));
+    parentGroup.groups = insertName(groupNames, groupName, targetName, placement);
+    parentGroup.expanded = true;
+    persistState();
+    renderOutliner();
+    return true;
+  }
+
   function assignFileToGroup(fileName, groupName) {
     moveFileToGroup(fileName, groupName);
   }
 
-  function eventHasDraggedFile(event) {
-    const types = Array.from(event.dataTransfer?.types || []);
-    return types.includes("text/x-ud-file") || types.includes("text/plain");
+  function createGroupFromFiles(sourceFileName, targetFileName) {
+    if (
+      !hasFile(sourceFileName) ||
+      !hasFile(targetFileName) ||
+      sourceFileName === targetFileName
+    ) {
+      return false;
+    }
+
+    const parentGroupName = getFileGroup(targetFileName);
+    const groupName = uniqueGroupName("New group");
+    fileGroups[groupName] = {
+      files: [],
+      groups: [],
+      expanded: true,
+    };
+
+    removeFileFromGroups(sourceFileName);
+    removeFileFromGroups(targetFileName);
+    fileGroups[groupName].files = [targetFileName, sourceFileName];
+
+    if (parentGroupName && hasGroup(parentGroupName)) {
+      const parentGroup = fileGroups[parentGroupName];
+      parentGroup.groups = insertName(parentGroup.groups || [], groupName);
+      parentGroup.expanded = true;
+    }
+
+    persistState();
+    renderOutliner();
+    return true;
   }
 
-  function getDraggedFileName(event) {
+  function eventHasDraggedEntry(event) {
+    const types = Array.from(event.dataTransfer?.types || []);
     return (
-      event.dataTransfer?.getData("text/x-ud-file") ||
-      event.dataTransfer?.getData("text/plain") ||
-      ""
+      types.includes("text/x-ud-file") ||
+      types.includes("text/x-ud-group") ||
+      types.includes("text/plain")
     );
+  }
+
+  function getDraggedEntry(event) {
+    const type = event.dataTransfer?.getData("text/x-ud-drag-type") || "";
+    const groupName = event.dataTransfer?.getData("text/x-ud-group") || "";
+    const fileName = event.dataTransfer?.getData("text/x-ud-file") || "";
+
+    if (type === "group" && groupName) {
+      return {
+        type: "group",
+        name: groupName,
+      };
+    }
+
+    if (type === "file" && fileName) {
+      return {
+        type: "file",
+        name: fileName,
+      };
+    }
+
+    if (groupName) {
+      return {
+        type: "group",
+        name: groupName,
+      };
+    }
+
+    return {
+      type: "file",
+      name: fileName || event.dataTransfer?.getData("text/plain") || "",
+    };
   }
 
   function getDropPlacement(event, row) {
     const rect = row.getBoundingClientRect();
-    return event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+    const y = event.clientY - rect.top;
+    if (y > rect.height * 0.28 && y < rect.height * 0.72) return "inside";
+    return y < rect.height / 2 ? "before" : "after";
   }
 
   function clearOutlinerDropMarkers() {
     document
-      .querySelectorAll(".file-item.drop-before, .file-item.drop-after, .file-item.drop-target")
+      .querySelectorAll(".file-item.drop-before, .file-item.drop-after, .file-item.drop-target, .file-group-block.drop-target")
       .forEach((row) => {
         row.classList.remove("drop-before", "drop-after", "drop-target");
       });
@@ -1956,6 +2169,11 @@ int main(void)
 
   function markRowDrop(row, placement) {
     clearOutlinerDropMarkers();
+    if (placement === "inside") {
+      row.classList.add("drop-target");
+      return;
+    }
+
     row.classList.add(placement === "before" ? "drop-before" : "drop-after");
   }
 
@@ -1964,7 +2182,7 @@ int main(void)
     if (!list) return;
 
     list.addEventListener("dragover", (event) => {
-      if (!eventHasDraggedFile(event)) return;
+      if (!eventHasDraggedEntry(event)) return;
       const handledTarget = event.target.closest(
         ".file-item[data-file], .file-item.file-group, .file-group-block"
       );
@@ -1982,7 +2200,7 @@ int main(void)
     });
 
     list.addEventListener("drop", (event) => {
-      if (!eventHasDraggedFile(event)) return;
+      if (!eventHasDraggedEntry(event)) return;
       const handledTarget = event.target.closest(
         ".file-item[data-file], .file-item.file-group, .file-group-block"
       );
@@ -1990,16 +2208,21 @@ int main(void)
 
       event.preventDefault();
       clearOutlinerDropMarkers();
-      const fileName = getDraggedFileName(event);
-      moveFileToRoot(fileName);
+      const dragged = getDraggedEntry(event);
+      if (dragged.type === "group") {
+        moveGroupToRoot(dragged.name);
+      } else {
+        moveFileToRoot(dragged.name);
+      }
     });
   }
 
-  function renderFileRow(list, name, groupName = "") {
+  function renderFileRow(list, name, groupName = "", depth = 0) {
     const row = document.createElement("div");
     row.className = "file-item";
     row.dataset.file = name;
     row.draggable = true;
+    row.style.setProperty("--outliner-depth", String(depth));
 
     if (groupName) {
       row.dataset.groupMemberOf = groupName;
@@ -2057,6 +2280,7 @@ int main(void)
 
     row.addEventListener("dragstart", (e) => {
       row.classList.add("dragging");
+      e.dataTransfer?.setData("text/x-ud-drag-type", "file");
       e.dataTransfer?.setData("text/x-ud-file", name);
       e.dataTransfer?.setData("text/x-ud-source-group", groupName || "");
       e.dataTransfer?.setData("text/plain", name);
@@ -2069,44 +2293,64 @@ int main(void)
     });
 
     row.addEventListener("dragover", (e) => {
-      if (!eventHasDraggedFile(e)) return;
+      if (!eventHasDraggedEntry(e)) return;
+
+      const dragged = getDraggedEntry(e);
+      if (dragged.type === "file" && dragged.name === name) return;
 
       e.preventDefault();
       e.stopPropagation();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-      markRowDrop(row, getDropPlacement(e, row));
+      const placement = getDropPlacement(e, row);
+      markRowDrop(row, dragged.type === "file" ? placement : placement === "inside" ? "after" : placement);
     });
 
     row.addEventListener("dragleave", (e) => {
       if (row.contains(e.relatedTarget)) return;
-      row.classList.remove("drop-before", "drop-after");
+      row.classList.remove("drop-before", "drop-after", "drop-target");
     });
 
     row.addEventListener("drop", (e) => {
-      if (!eventHasDraggedFile(e)) return;
+      if (!eventHasDraggedEntry(e)) return;
 
       e.preventDefault();
       e.stopPropagation();
       clearOutlinerDropMarkers();
 
-      const fileName = getDraggedFileName(e);
-      if (!fileName || fileName === name) return;
-
+      const dragged = getDraggedEntry(e);
+      if (!dragged.name || dragged.name === name) return;
       const placement = getDropPlacement(e, row);
+
+      if (dragged.type === "group") {
+        if (groupName) {
+          moveGroupToGroup(dragged.name, groupName);
+        } else {
+          moveGroupToRoot(dragged.name);
+        }
+        return;
+      }
+
+      if (placement === "inside") {
+        createGroupFromFiles(dragged.name, name);
+        return;
+      }
+
       if (groupName) {
-        moveFileToGroup(fileName, groupName, name, placement);
+        moveFileToGroup(dragged.name, groupName, name, placement);
       } else {
-        moveFileToRoot(fileName, name, placement);
+        moveFileToRoot(dragged.name, name, placement);
       }
     });
 
     list.appendChild(row);
   }
 
-  function renderGroupRow(list, groupName) {
+  function renderGroupRow(list, groupName, depth = 0) {
     const row = document.createElement("div");
     row.className = "file-item file-group";
     row.dataset.group = groupName;
+    row.draggable = true;
+    row.style.setProperty("--outliner-depth", String(depth));
 
     const group = fileGroups[groupName];
     if (group?.expanded) row.classList.add("expanded");
@@ -2131,7 +2375,7 @@ int main(void)
     const count = document.createElement("span");
     count.className = "file-group-count";
     count.textContent = `+${getGroupFileCount(groupName)}`;
-    count.title = "Files in group";
+    count.title = "Items in group";
     row.appendChild(count);
 
     const acts = document.createElement("div");
@@ -2163,27 +2407,84 @@ int main(void)
       openGroupContextMenu(groupName, e.clientX, e.clientY);
     });
 
+    row.addEventListener("dragstart", (e) => {
+      row.classList.add("dragging");
+      e.dataTransfer?.setData("text/x-ud-drag-type", "group");
+      e.dataTransfer?.setData("text/x-ud-group", groupName);
+      e.dataTransfer?.setData("text/plain", groupName);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    });
+
+    row.addEventListener("dragend", () => {
+      row.classList.remove("dragging");
+      clearOutlinerDropMarkers();
+    });
+
     row.addEventListener("dragover", (e) => {
-      if (!eventHasDraggedFile(e)) return;
+      if (!eventHasDraggedEntry(e)) return;
+      const dragged = getDraggedEntry(e);
+      if (
+        dragged.type === "group" &&
+        (dragged.name === groupName || isGroupDescendant(dragged.name, groupName))
+      ) {
+        return;
+      }
+
       e.preventDefault();
       e.stopPropagation();
-      clearOutlinerDropMarkers();
-      row.classList.add("drop-target");
+      const placement = getDropPlacement(e, row);
+      markRowDrop(row, placement);
       if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
     });
 
     row.addEventListener("dragleave", (e) => {
       if (row.contains(e.relatedTarget)) return;
-      row.classList.remove("drop-target");
+      row.classList.remove("drop-before", "drop-after", "drop-target");
     });
 
     row.addEventListener("drop", (e) => {
-      if (!eventHasDraggedFile(e)) return;
+      if (!eventHasDraggedEntry(e)) return;
       e.preventDefault();
       e.stopPropagation();
       clearOutlinerDropMarkers();
-      const fileName = getDraggedFileName(e);
-      assignFileToGroup(fileName, groupName);
+
+      const dragged = getDraggedEntry(e);
+      if (!dragged.name) return;
+      const placement = getDropPlacement(e, row);
+
+      if (dragged.type === "group") {
+        if (
+          dragged.name === groupName ||
+          isGroupDescendant(dragged.name, groupName)
+        ) {
+          return;
+        }
+
+        if (placement === "inside") {
+          moveGroupToGroup(dragged.name, groupName);
+          return;
+        }
+
+        const parentGroupName = getGroupParent(groupName);
+        if (parentGroupName) {
+          moveGroupToGroup(dragged.name, parentGroupName, groupName, placement);
+        } else {
+          moveGroupToRoot(dragged.name, groupName, placement);
+        }
+        return;
+      }
+
+      if (placement === "inside") {
+        assignFileToGroup(dragged.name, groupName);
+        return;
+      }
+
+      const parentGroupName = getGroupParent(groupName);
+      if (parentGroupName) {
+        moveFileToGroup(dragged.name, parentGroupName);
+      } else {
+        moveFileToRoot(dragged.name);
+      }
     });
 
     list.appendChild(row);
@@ -2277,6 +2578,79 @@ int main(void)
     updateCompilePanelState(false);
   }
 
+  function renderGroupEntry(list, groupName, depth = 0) {
+    const group = fileGroups[groupName];
+    if (!group) return;
+
+    if (!group.expanded) {
+      renderGroupRow(list, groupName, depth);
+      return;
+    }
+
+    const groupBlock = document.createElement("div");
+    groupBlock.className = "file-group-block";
+    groupBlock.dataset.groupFiles = groupName;
+    groupBlock.style.setProperty("--outliner-depth", String(depth));
+
+    groupBlock.addEventListener("dragover", (event) => {
+      if (!eventHasDraggedEntry(event)) return;
+      const handledTarget = event.target.closest(
+        ".file-item[data-file], .file-item.file-group"
+      );
+      if (handledTarget) return;
+
+      const dragged = getDraggedEntry(event);
+      if (
+        dragged.type === "group" &&
+        (dragged.name === groupName || isGroupDescendant(dragged.name, groupName))
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      clearOutlinerDropMarkers();
+      groupBlock.classList.add("drop-target");
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    });
+
+    groupBlock.addEventListener("dragleave", (event) => {
+      if (groupBlock.contains(event.relatedTarget)) return;
+      groupBlock.classList.remove("drop-target");
+    });
+
+    groupBlock.addEventListener("drop", (event) => {
+      if (!eventHasDraggedEntry(event)) return;
+      const handledTarget = event.target.closest(
+        ".file-item[data-file], .file-item.file-group"
+      );
+      if (handledTarget) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      clearOutlinerDropMarkers();
+
+      const dragged = getDraggedEntry(event);
+      if (dragged.type === "group") {
+        moveGroupToGroup(dragged.name, groupName);
+      } else {
+        moveFileToGroup(dragged.name, groupName);
+      }
+    });
+
+    renderGroupRow(groupBlock, groupName, depth);
+
+    for (const childGroupName of getGroupChildGroups(groupName)) {
+      renderGroupEntry(groupBlock, childGroupName, depth + 1);
+    }
+
+    for (const fileName of (group.files || []).filter((name) => hasFile(name))) {
+      renderFileRow(groupBlock, fileName, groupName, depth + 1);
+    }
+
+    list.appendChild(groupBlock);
+  }
+
   function renderOutliner() {
     const list = $("fileList");
     list.innerHTML = "";
@@ -2311,7 +2685,7 @@ int main(void)
 
     const groupedFiles = getGroupedFileSet();
     const entries = [
-      ...Object.keys(fileGroups).map((name) => ({
+      ...getRootGroupNames().map((name) => ({
         type: "group",
         name,
       })),
@@ -2325,26 +2699,9 @@ int main(void)
 
     for (const entry of entries) {
       if (entry.type === "group") {
-        const group = fileGroups[entry.name];
-        if (group?.expanded) {
-          const groupFiles = (group.files || []).filter((name) => hasFile(name));
-
-          const groupBlock = document.createElement("div");
-          groupBlock.className = "file-group-block";
-          groupBlock.dataset.groupFiles = entry.name;
-
-          renderGroupRow(groupBlock, entry.name);
-
-          for (const fileName of groupFiles) {
-            renderFileRow(groupBlock, fileName, entry.name);
-          }
-
-          list.appendChild(groupBlock);
-        } else {
-          renderGroupRow(list, entry.name);
-        }
+        renderGroupEntry(list, entry.name, 0);
       } else {
-        renderFileRow(list, entry.name);
+        renderFileRow(list, entry.name, "", 0);
       }
     }
 
@@ -2584,6 +2941,8 @@ int main(void)
   async function deleteGroup(groupName) {
     if (!hasGroup(groupName)) return;
 
+    const childGroups = getGroupChildGroups(groupName);
+    const parentGroupName = getGroupParent(groupName);
     const confirmed = await showSiteConfirm({
       title: "Delete group",
       message: `Delete group "${groupName}"? Files inside it will stay in Files.`,
@@ -2592,6 +2951,16 @@ int main(void)
       danger: true,
     });
     if (!confirmed) return;
+
+    removeGroupFromParents(groupName);
+    if (parentGroupName && hasGroup(parentGroupName)) {
+      const parentGroup = fileGroups[parentGroupName];
+      parentGroup.groups = [
+        ...(parentGroup.groups || []).filter((name) => name !== groupName),
+        ...childGroups.filter((name) => name !== parentGroupName),
+      ];
+      parentGroup.expanded = true;
+    }
 
     delete fileGroups[groupName];
     persistState();
