@@ -115,7 +115,7 @@ jobs:
             [ -z "${BACKEND_PORT:-}" ] && BACKEND_PORT="8082"
             [ -z "${BACKEND_BIND_HOST:-}" ] && BACKEND_BIND_HOST="127.0.0.1"
             [ -z "${BACKEND_HC_URL:-}" ] && BACKEND_HC_URL="http://127.0.0.1:${BACKEND_PORT}/health"
-            EXPECTED_COMPILE_SERVER_VERSION="20260514-multifile-v3"
+            EXPECTED_COMPILE_SERVER_VERSION=""
             XC8_CC="${{ secrets.XC8_CC || '' }}"
             AVR_OBJCOPY="${{ secrets.AVR_OBJCOPY || '' }}"
             XC8_DFP="${{ secrets.XC8_DFP || '' }}"
@@ -227,6 +227,20 @@ jobs:
               fi
 
               return 1
+            }
+
+            resolve_expected_compile_server_version() {
+              EXPECTED_COMPILE_SERVER_VERSION="$(
+                sed -nE 's/.*COMPILE_SERVER_VERSION[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "${BE_DIR}/compile-server.js" | head -n 1
+              )"
+
+              [ -n "${EXPECTED_COMPILE_SERVER_VERSION:-}" ] || {
+                echo "Could not resolve COMPILE_SERVER_VERSION from ${BE_DIR}/compile-server.js"
+                grep -n "COMPILE_SERVER_VERSION\\|/health" "${BE_DIR}/compile-server.js" || true
+                exit 1
+              }
+
+              echo "Expected compile-server version: ${EXPECTED_COMPILE_SERVER_VERSION}"
             }
 
             resolve_backend_tools() {
@@ -355,6 +369,9 @@ jobs:
                 npm ci --omit=dev || npm install --omit=dev
               fi
               resolve_backend_tools
+              if [ -z "${ROLLBACK}" ] && [ -f "${BE_DIR}/compile-server.js" ]; then
+                resolve_expected_compile_server_version
+              fi
 
               if command -v pm2 >/dev/null 2>&1; then
                 export PORT="${BACKEND_PORT}"
