@@ -1477,3 +1477,757 @@ body {
     gap: 5px;
   }
 }
+
+/* UART Terminal blue programmer-style shell */
+body.terminal-page {
+  --terminal-bg: #202d3c;
+  --terminal-surface: rgba(76, 151, 211, 0.14);
+  --terminal-surface-strong: rgba(76, 151, 211, 0.28);
+  --terminal-surface-connected: rgba(76, 151, 211, 0.42);
+  --terminal-surface-dark: #182635;
+  --terminal-surface-deep: #14202e;
+  --terminal-border: #7fa8c4;
+  --terminal-border-muted: rgba(127, 168, 196, 0.24);
+  --terminal-border-hot: #8fd4ff;
+  --terminal-border-hover: #5eb7ef;
+  --terminal-text: #c8eaff;
+  --terminal-text-soft: #9fc2d7;
+  --terminal-text-muted: #7899ad;
+  --terminal-danger: #e85f5c;
+  --terminal-warning: #f2a444;
+  --terminal-radius: 15px;
+  --terminal-scrollbar-size: 8px;
+  --terminal-scrollbar-track: var(--terminal-surface-deep);
+  --terminal-scrollbar-thumb: rgba(143, 212, 255, 0.5);
+  --terminal-scrollbar-thumb-hover: rgba(143, 212, 255, 0.7);
+
+  min-height: 100%;
+  overflow: hidden;
+  background: var(--terminal-bg);
+  color: var(--terminal-text);
+  font-family:
+    Inter,
+    Arial,
+    Helvetica,
+    sans-serif;
+  scrollbar-width: thin;
+  scrollbar-color: var(--terminal-scrollbar-thumb)
+    var(--terminal-scrollbar-track);
+}
+
+body.terminal-page *,
+body.terminal-page *::before,
+body.terminal-page *::after {
+  box-sizing: border-box;
+}
+
+body.terminal-page ::selection {
+  background: rgba(143, 212, 255, 0.32);
+  color: var(--terminal-text);
+}
+
+body.terminal-page *::-webkit-scrollbar {
+  width: var(--terminal-scrollbar-size);
+  height: var(--terminal-scrollbar-size);
+}
+
+body.terminal-page *::-webkit-scrollbar-track {
+  background: var(--terminal-scrollbar-track);
+}
+
+body.terminal-page *::-webkit-scrollbar-thumb {
+  background: var(--terminal-scrollbar-thumb);
+  border-radius: 999px;
+}
+
+body.terminal-page *::-webkit-scrollbar-thumb:hover {
+  background: var(--terminal-scrollbar-thumb-hover);
+}
+
+body.terminal-page main,
+body.terminal-page .feature-panel {
+  width: 100%;
+  height: 100vh;
+  min-height: 0;
+}
+
+body.terminal-page main {
+  overflow: hidden;
+}
+
+body.terminal-page .feature-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: none;
+  padding: 18px;
+  padding-bottom: 18px;
+  overflow: hidden;
+  background: transparent;
+}
+
+body.terminal-page .api-support-warning {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid rgba(242, 164, 68, 0.35);
+  border-radius: 10px;
+  background: rgba(242, 164, 68, 0.18);
+  color: #ffe3bd;
+}
+
+body.terminal-page .uart-section {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--terminal-border-muted);
+  border-radius: var(--terminal-radius);
+  background: rgba(20, 32, 46, 0.72);
+  box-shadow: none;
+}
+
+body.terminal-page .uart-section.is-locked {
+  filter: brightness(0.74) saturate(0.82);
+}
+
+body.terminal-page .terminal-device-section {
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+body.terminal-page .terminal-device-panel {
+  display: grid;
+  grid-template-columns: 148px max-content 44px;
+  align-items: center;
+  gap: 18px;
+  min-height: 74px;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--terminal-border-muted);
+  border-radius: var(--terminal-radius);
+  background: rgba(20, 32, 46, 0.72);
+}
+
+body.terminal-page .terminal-connect-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 148px !important;
+  height: 44px;
+  min-width: 0;
+  margin: 0 !important;
+  padding: 10px 14px;
+  overflow: hidden;
+  border: 2px solid var(--terminal-border);
+  border-radius: 10px;
+  background: var(--terminal-surface);
+  color: var(--terminal-text);
+  font:
+    400 13px/1.1 Inter,
+    Arial,
+    sans-serif;
+  text-align: center;
+  box-shadow: none;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+body.terminal-page .terminal-connect-label {
+  grid-area: 1 / 1;
+  display: block;
+  max-width: 132px;
+  white-space: nowrap;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+body.terminal-page .terminal-connect-hover {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+body.terminal-page .terminal-connect-btn:hover:not(:disabled)
+  .terminal-connect-default {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+body.terminal-page .terminal-connect-btn:hover:not(:disabled)
+  .terminal-connect-hover {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+body.terminal-page .terminal-connect-btn:hover {
+  background: var(--terminal-surface-strong);
+  border-color: var(--terminal-border);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 30px rgba(5, 14, 20, 0.18);
+}
+
+body.terminal-page .terminal-connect-btn.connected {
+  background: rgba(232, 95, 92, 0.18);
+  border-color: var(--terminal-danger);
+  color: #ffd0d0;
+}
+
+body.terminal-page .terminal-connect-btn.connected:hover {
+  background: rgba(232, 95, 92, 0.28);
+  border-color: #ff8b85;
+}
+
+body.terminal-page .terminal-connect-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+  transform: none;
+}
+
+body.terminal-page .terminal-status-lines {
+  display: grid;
+  grid-template-columns: auto minmax(260px, 523px) auto 220px;
+  justify-self: start;
+  width: auto;
+  max-width: min(100%, 820px);
+  gap: 8px 6px;
+  align-items: center;
+}
+
+body.terminal-page .terminal-status-label {
+  color: var(--terminal-text);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1;
+  text-align: right;
+  white-space: nowrap;
+}
+
+body.terminal-page .terminal-status-value {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 44px;
+  padding: 7px 16px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: var(--terminal-surface);
+  color: var(--terminal-text);
+  font-size: 14px;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+body.terminal-page .terminal-status-value::after {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  padding: inherit;
+  box-sizing: border-box;
+  color: currentColor;
+  content: "";
+  opacity: 0;
+  text-indent: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity 140ms ease;
+}
+
+body.terminal-page
+  .terminal-device-section:has(.terminal-connect-btn:hover:not(:disabled))
+  #statusIndicator {
+  text-indent: -9999px;
+}
+
+body.terminal-page
+  .terminal-device-section:has(.terminal-connect-btn:hover:not(:disabled))
+  #statusIndicator::after {
+  content: "Click to select port";
+  opacity: 1;
+}
+
+body.terminal-page
+  .terminal-device-section:has(.terminal-connect-btn.connected:hover)
+  #statusIndicator::after {
+  content: "Click to disconnect";
+}
+
+body.terminal-page .terminal-status-value.connected {
+  background: var(--terminal-surface-connected);
+  border-color: var(--terminal-border-hot);
+}
+
+body.terminal-page .terminal-status-value.disconnected {
+  color: #ffd0d0;
+  background: rgba(232, 95, 92, 0.12);
+}
+
+body.terminal-page .terminal-baud-value {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0;
+  overflow: visible;
+  border: none;
+  background: transparent;
+}
+
+body.terminal-page .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+body.terminal-page .connection-control select,
+body.terminal-page .connection-control input[type="text"],
+body.terminal-page .connection-control input,
+body.terminal-page .terminal-input,
+body.terminal-page .loop-interval-input,
+body.terminal-page .generator-field input,
+body.terminal-page .generator-field select {
+  border: 1px solid var(--terminal-border-muted);
+  border-radius: 8px;
+  background-color: var(--terminal-surface-dark);
+  color: var(--terminal-text);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    background-color 120ms ease;
+}
+
+body.terminal-page .native-select-hidden {
+  position: absolute !important;
+  inset: 0 auto auto 0;
+  width: 1px !important;
+  height: 1px !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+body.terminal-page .custom-select {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  font: 600 14px/1 Inter, Arial, sans-serif;
+}
+
+body.terminal-page .terminal-baud-value .custom-select {
+  width: 100%;
+}
+
+body.terminal-page .custom-select-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100% !important;
+  height: 44px;
+  padding: 0 40px 0 14px;
+  overflow: hidden;
+  border: 1px solid rgba(127, 168, 196, 0.34);
+  border-radius: 12px;
+  background: rgba(20, 32, 46, 0.68);
+  color: var(--terminal-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+body.terminal-page .custom-select-trigger::after {
+  position: absolute;
+  right: 14px;
+  width: 0;
+  height: 0;
+  border-right: 5px solid transparent;
+  border-left: 5px solid transparent;
+  border-top: 6px solid var(--terminal-text);
+  content: "";
+  transition: transform 140ms ease;
+}
+
+body.terminal-page .custom-select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.terminal-page .custom-select-trigger:hover,
+body.terminal-page .custom-select.is-open .custom-select-trigger {
+  border-color: var(--terminal-border-hover);
+}
+
+body.terminal-page .custom-select-trigger:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(143, 212, 255, 0.14);
+}
+
+body.terminal-page .custom-select.is-open .custom-select-trigger::after {
+  transform: rotate(180deg);
+}
+
+body.terminal-page .custom-select.is-disabled {
+  opacity: 0.62;
+}
+
+body.terminal-page .custom-select.is-disabled .custom-select-trigger {
+  cursor: not-allowed;
+}
+
+body.terminal-page .custom-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 2100;
+  display: none;
+  width: 100%;
+  min-width: 180px;
+  max-height: min(360px, calc(100vh - 180px));
+  overflow: hidden;
+  border: 1px solid rgba(127, 168, 196, 0.28);
+  border-radius: 12px;
+  background: var(--terminal-surface-dark);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
+}
+
+body.terminal-page .custom-select.is-open .custom-select-menu {
+  display: block;
+}
+
+body.terminal-page .custom-select-list {
+  max-height: inherit;
+  padding: 6px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--terminal-scrollbar-thumb)
+    var(--terminal-scrollbar-track);
+}
+
+body.terminal-page .custom-select-option {
+  display: flex;
+  align-items: center;
+  width: 100% !important;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--terminal-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+body.terminal-page .custom-select-option:hover,
+body.terminal-page .custom-select-option:focus {
+  border-color: rgba(127, 168, 196, 0.28);
+  background: rgba(76, 151, 211, 0.13);
+  outline: none;
+}
+
+body.terminal-page .custom-select-option[aria-selected="true"] {
+  border-color: rgba(143, 212, 255, 0.34);
+  background: rgba(76, 151, 211, 0.18);
+}
+
+body.terminal-page .terminal-baud-value select {
+  width: 100% !important;
+  max-width: none;
+  min-width: 0;
+  height: 34px;
+  padding: 7px 36px 7px 14px;
+  border: none;
+  border-radius: 8px;
+  background-color: transparent;
+  color: var(--terminal-text);
+  font: 600 14px/1 Inter, Arial, sans-serif;
+}
+
+body.terminal-page .connection-control select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238FD4FF' d='M5 6 .67.75h8.66z'/%3E%3C/svg%3E");
+  scrollbar-color: var(--terminal-border-hot) var(--terminal-surface-deep);
+}
+
+body.terminal-page .connection-control select:hover,
+body.terminal-page .connection-control input:hover,
+body.terminal-page .terminal-input:hover,
+body.terminal-page .loop-interval-input:hover,
+body.terminal-page .generator-field input:hover,
+body.terminal-page .generator-field select:hover {
+  border-color: var(--terminal-border-hover);
+}
+
+body.terminal-page .connection-control select:focus,
+body.terminal-page .connection-control input:focus,
+body.terminal-page .terminal-input:focus,
+body.terminal-page .loop-interval-input:focus,
+body.terminal-page .generator-field input:focus,
+body.terminal-page .generator-field select:focus {
+  outline: none;
+  border-color: var(--terminal-border-hot);
+  box-shadow: 0 0 0 2px rgba(143, 212, 255, 0.16);
+}
+
+body.terminal-page .connection-control select option,
+body.terminal-page .connection-control select optgroup,
+body.terminal-page .generator-field select option {
+  background: var(--terminal-surface-deep);
+  color: var(--terminal-text);
+}
+
+body.terminal-page .terminal-settings-btn,
+body.terminal-page .icon-btn {
+  border: 1px solid var(--terminal-border-muted);
+  border-radius: 10px;
+  background: rgba(76, 151, 211, 0.1);
+  color: var(--terminal-text-soft);
+}
+
+body.terminal-page .terminal-settings-btn {
+  width: 44px !important;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+}
+
+body.terminal-page .terminal-settings-btn:hover,
+body.terminal-page .icon-btn:hover {
+  border-color: var(--terminal-border-hover);
+  background: var(--terminal-surface-strong);
+  color: var(--terminal-text);
+}
+
+body.terminal-page .uart-sessions-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  gap: 15px;
+}
+
+body.terminal-page .uart-sessions-split .uart-section {
+  min-height: 0;
+}
+
+body.terminal-page .terminal-label {
+  color: var(--terminal-border-hot);
+  letter-spacing: 0.8px;
+}
+
+body.terminal-page .terminal-container,
+body.terminal-page .generator-panel,
+body.terminal-page .oscilloscope-container {
+  border: 1px solid var(--terminal-border-muted);
+  border-radius: var(--terminal-radius);
+  background: rgba(20, 32, 46, 0.68);
+}
+
+body.terminal-page .terminal-container,
+body.terminal-page .generator-panel {
+  padding: 12px;
+}
+
+body.terminal-page #oscilloscopeCanvas {
+  background: transparent;
+}
+
+body.terminal-page .terminal-input-panel {
+  margin-top: 12px;
+}
+
+body.terminal-page .terminal-input {
+  min-height: 38px;
+  padding: 9px 12px;
+  font-family:
+    Consolas,
+    "Courier New",
+    monospace;
+}
+
+body.terminal-page .radio-group {
+  border: 1px solid rgba(127, 168, 196, 0.16);
+  border-radius: 8px;
+  background: rgba(20, 32, 46, 0.52);
+}
+
+body.terminal-page .radio-label-inline {
+  color: var(--terminal-text-soft);
+}
+
+body.terminal-page .radio-label-inline input[type="radio"]:checked + span,
+body.terminal-page .checkbox-label input[type="checkbox"]:checked
+  + .checkbox-custom {
+  background: rgba(76, 151, 211, 0.46);
+  border-color: var(--terminal-border-hot);
+  color: var(--terminal-text);
+}
+
+body.terminal-page .radio-label-inline:hover span,
+body.terminal-page .checkbox-label {
+  color: var(--terminal-text);
+}
+
+body.terminal-page .checkbox-custom {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 14px;
+  border-color: rgba(127, 168, 196, 0.7);
+  border-radius: 4px;
+  background: var(--terminal-surface-dark);
+}
+
+body.terminal-page .checkbox-custom::after {
+  left: 3px;
+  top: 0;
+  width: 4px;
+  height: 8px;
+}
+
+body.terminal-page .checkbox-label:hover .checkbox-custom {
+  border-color: var(--terminal-border-hot);
+}
+
+body.terminal-page .connect-btn:not(.terminal-connect-btn),
+body.terminal-page .send-btn,
+body.terminal-page .log-btn,
+body.terminal-page .play-pause-btn,
+body.terminal-page .receive-toggle-btn {
+  border: 1px solid rgba(143, 212, 255, 0.32);
+  border-radius: 8px;
+  background: rgba(76, 151, 211, 0.34);
+  color: var(--terminal-text);
+  font-weight: 700;
+}
+
+body.terminal-page .send-btn:hover,
+body.terminal-page .log-btn:hover,
+body.terminal-page .play-pause-btn:hover,
+body.terminal-page .receive-toggle-btn:hover {
+  background: rgba(76, 151, 211, 0.48);
+  border-color: var(--terminal-border-hot);
+}
+
+body.terminal-page .send-btn.running,
+body.terminal-page .receive-toggle-btn.receiving,
+body.terminal-page .send-loop-btn.active {
+  background: rgba(232, 95, 92, 0.3);
+  border-color: rgba(232, 95, 92, 0.68);
+}
+
+body.terminal-page .connect-btn:not(.terminal-connect-btn):disabled,
+body.terminal-page .send-btn:disabled,
+body.terminal-page .receive-toggle-btn:disabled,
+body.terminal-page .send-loop-btn:disabled {
+  border-color: rgba(127, 168, 196, 0.2);
+  background: rgba(127, 168, 196, 0.12);
+  color: var(--terminal-text-muted);
+}
+
+body.terminal-page .terminal-line.sent {
+  color: #79c7ff;
+}
+
+body.terminal-page .terminal-line.received {
+  color: #9fe1ff;
+}
+
+body.terminal-page .terminal-line.info {
+  color: var(--terminal-warning);
+}
+
+body.terminal-page .terminal-line.error {
+  color: #ff9c99;
+}
+
+body.terminal-page .modal-content {
+  border: 1px solid var(--terminal-border-muted);
+  border-radius: var(--terminal-radius);
+  background: var(--terminal-surface-dark);
+  color: var(--terminal-text);
+  box-shadow: 0 20px 60px rgba(7, 13, 20, 0.32);
+}
+
+body.terminal-page .modal-header {
+  border-bottom-color: var(--terminal-border-muted);
+}
+
+body.terminal-page .modal-header h3 {
+  color: var(--terminal-border-hot);
+}
+
+body.terminal-page footer {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  body.terminal-page .feature-panel {
+    overflow-y: auto;
+  }
+
+  body.terminal-page .terminal-device-panel {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  body.terminal-page .terminal-connect-btn {
+    width: 100% !important;
+  }
+
+  body.terminal-page .terminal-status-lines {
+    grid-template-columns: auto minmax(0, 1fr);
+    width: 100%;
+  }
+
+  body.terminal-page .terminal-settings-btn {
+    width: 100% !important;
+    min-width: 0;
+  }
+
+  body.terminal-page .uart-sessions-split {
+    flex-direction: column;
+  }
+}
+
+@media (max-height: 800px) {
+  body.terminal-page .feature-panel {
+    padding: 14px;
+    padding-bottom: 14px;
+  }
+
+  body.terminal-page .terminal-device-panel {
+    min-height: 92px;
+    padding: 10px 12px;
+  }
+
+  body.terminal-page .terminal-connect-btn {
+    height: 44px;
+  }
+}

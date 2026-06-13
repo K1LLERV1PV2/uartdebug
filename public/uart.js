@@ -42,6 +42,15 @@ const GEN_DEFAULT_OFFSET_SIGNED = 0;
 const GEN_DEFAULT_OFFSET_UNSIGNED_1BYTE = 128;
 const GEN_DEFAULT_OFFSET_UNSIGNED_2BYTE = 32768;
 const OSCILLOSCOPE_ALIGN_PROBE_BYTES = 16;
+const OSCILLOSCOPE_THEME = {
+  signal: "#79c7ff",
+  overflow: "#ff9c99",
+  text: "#c8eaff",
+  muted: "#9fc2d7",
+  grid: "rgba(127, 168, 196, 0.18)",
+  axis: "rgba(200, 234, 255, 0.12)",
+  axisHover: "rgba(200, 234, 255, 0.92)",
+};
 
 // DOM elements cache
 let terminalSent = null;
@@ -68,6 +77,7 @@ let uartSessions = [];
 document.addEventListener("DOMContentLoaded", function () {
   initializeElements();
   initializeEventListeners();
+  initializeCustomSelects();
   updateTxInputPlaceholder();
   updateGeneratorUi();
   applyGeneratorOffsetDefaults();
@@ -234,6 +244,7 @@ function checkWebSerialSupport() {
   if (!("serial" in navigator)) {
     document.getElementById("apiWarning").classList.add("show");
     connectBtn.disabled = true;
+    updateConnectButtonLabels("Unavailable", "Web Serial unavailable");
     sendBtn.disabled = true;
     if (receiveToggleBtn) receiveToggleBtn.disabled = true;
     terminalInput.disabled = true;
@@ -387,12 +398,10 @@ function getModeForTarget(targetTerminal) {
 
 function updateConnectionStatus(connected, deviceLabel = "") {
   if (connected) {
-    statusIndicator.textContent = deviceLabel
-      ? `Connected: ${deviceLabel}`
-      : "Connected";
+    statusIndicator.textContent = deviceLabel || "Connected";
     statusIndicator.classList.remove("disconnected");
     statusIndicator.classList.add("connected");
-    connectBtn.textContent = "Disconnect";
+    updateConnectButtonLabels("Connected", "Click to disconnect");
     connectBtn.classList.add("connected");
     sendBtn.disabled = false;
     if (receiveToggleBtn) receiveToggleBtn.disabled = false;
@@ -403,7 +412,7 @@ function updateConnectionStatus(connected, deviceLabel = "") {
     statusIndicator.textContent = "Disconnected";
     statusIndicator.classList.remove("connected");
     statusIndicator.classList.add("disconnected");
-    connectBtn.textContent = "Connect";
+    updateConnectButtonLabels("Disconnected", "Click to connect");
     connectBtn.classList.remove("connected");
     sendBtn.disabled = true;
     if (receiveToggleBtn) receiveToggleBtn.disabled = true;
@@ -416,6 +425,22 @@ function updateConnectionStatus(connected, deviceLabel = "") {
   setConnectionSelectsDisabled(connected);
 }
 
+function updateConnectButtonLabels(defaultText, hoverText) {
+  if (!connectBtn) return;
+  const defaultLabel = connectBtn.querySelector("[data-connect-default]");
+  const hoverLabel = connectBtn.querySelector("[data-connect-hover]");
+
+  if (defaultLabel && hoverLabel) {
+    defaultLabel.textContent = defaultText;
+    hoverLabel.textContent = hoverText;
+    connectBtn.title = hoverText;
+    connectBtn.setAttribute("aria-label", hoverText);
+    return;
+  }
+
+  connectBtn.textContent = defaultText;
+}
+
 function updateTxInputAvailability() {
   if (!terminalInput) return;
   const enabled = !!port && txView === "text";
@@ -426,6 +451,148 @@ function setConnectionSelectsDisabled(disabled) {
   document.querySelectorAll(".connection-control select").forEach((el) => {
     el.disabled = !!disabled;
   });
+}
+
+function getSelectDisplayText(select) {
+  if (!select) return "";
+  const selected = select.selectedOptions && select.selectedOptions[0];
+  return selected ? selected.textContent.trim() : "";
+}
+
+function renderCustomSelectOptions(select, custom) {
+  const list = custom.querySelector(".custom-select-list");
+  const label = custom.querySelector(".custom-select-value");
+  if (!list || !label) return;
+
+  list.innerHTML = "";
+  label.textContent = getSelectDisplayText(select) || "Select";
+
+  for (const option of Array.from(select.options)) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "custom-select-option";
+    item.dataset.value = option.value;
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", String(option.value === select.value));
+    item.textContent = option.textContent.trim();
+
+    item.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (select.value !== option.value) {
+        select.value = option.value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        updateCustomSelect(select, custom);
+      }
+      closeCustomSelect(custom);
+    });
+
+    list.appendChild(item);
+  }
+}
+
+function updateCustomSelect(select, custom) {
+  if (!select || !custom) return;
+  custom.classList.toggle("is-disabled", !!select.disabled);
+  custom.setAttribute("aria-disabled", String(!!select.disabled));
+  renderCustomSelectOptions(select, custom);
+}
+
+function closeCustomSelect(custom) {
+  if (!custom) return;
+  custom.classList.remove("is-open");
+  const trigger = custom.querySelector(".custom-select-trigger");
+  if (trigger) trigger.setAttribute("aria-expanded", "false");
+}
+
+function openCustomSelect(select, custom) {
+  if (!select || !custom || select.disabled) return;
+  updateCustomSelect(select, custom);
+  custom.classList.add("is-open");
+  const trigger = custom.querySelector(".custom-select-trigger");
+  if (trigger) trigger.setAttribute("aria-expanded", "true");
+
+  requestAnimationFrame(() => {
+    const active = custom.querySelector(
+      '.custom-select-option[aria-selected="true"]'
+    );
+    active && active.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function initCustomSelect(select) {
+  if (!select || select.dataset.customized === "true") return;
+
+  select.dataset.customized = "true";
+  select.classList.add("native-select-hidden");
+
+  const custom = document.createElement("div");
+  custom.className = "custom-select";
+  custom.setAttribute("aria-hidden", "false");
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "custom-select-trigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+
+  const value = document.createElement("span");
+  value.className = "custom-select-value";
+  trigger.appendChild(value);
+
+  const menu = document.createElement("div");
+  menu.className = "custom-select-menu";
+
+  const list = document.createElement("div");
+  list.className = "custom-select-list";
+  list.setAttribute("role", "listbox");
+  menu.appendChild(list);
+
+  custom.appendChild(trigger);
+  custom.appendChild(menu);
+  select.insertAdjacentElement("afterend", custom);
+
+  trigger.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (custom.classList.contains("is-open")) {
+      closeCustomSelect(custom);
+    } else {
+      openCustomSelect(select, custom);
+    }
+  });
+
+  trigger.addEventListener("keydown", (event) => {
+    if (
+      event.key === "ArrowDown" ||
+      event.key === "Enter" ||
+      event.key === " "
+    ) {
+      event.preventDefault();
+      openCustomSelect(select, custom);
+    }
+  });
+
+  custom.addEventListener("click", (event) => event.stopPropagation());
+  select.addEventListener("change", () => updateCustomSelect(select, custom));
+
+  const observer = new MutationObserver(() => updateCustomSelect(select, custom));
+  observer.observe(select, {
+    attributes: true,
+    childList: true,
+    subtree: true,
+    attributeFilter: ["disabled", "label", "selected", "value"],
+  });
+
+  document.addEventListener("click", () => closeCustomSelect(custom));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeCustomSelect(custom);
+  });
+
+  updateCustomSelect(select, custom);
+}
+
+function initializeCustomSelects() {
+  initCustomSelect(document.getElementById("baudRate"));
 }
 
 // ---------- Friendly USB names ----------
@@ -1273,13 +1440,15 @@ function initOscilloscope() {
           },
           pointHoverRadius: 4,
           pointBackgroundColor: function (context) {
-            return context.raw?.overflow ? "#e74c3c" : "#2ecc71";
+            return context.raw?.overflow
+              ? OSCILLOSCOPE_THEME.overflow
+              : OSCILLOSCOPE_THEME.signal;
           },
           segment: {
             borderColor: function (context) {
               return context.p0.raw?.overflow || context.p1.raw?.overflow
-                ? "#e74c3c"
-                : "#2ecc71";
+                ? OSCILLOSCOPE_THEME.overflow
+                : OSCILLOSCOPE_THEME.signal;
             },
           },
         },
@@ -1305,21 +1474,25 @@ function initOscilloscope() {
       scales: {
         x: {
           display: true,
-          title: { display: true, text: "Sample", color: "#ecf0f1" },
-          ticks: { color: "#bdc3c7" },
+          title: {
+            display: true,
+            text: "Sample",
+            color: OSCILLOSCOPE_THEME.text,
+          },
+          ticks: { color: OSCILLOSCOPE_THEME.muted },
           border: {
             display: true,
             color: function () {
               return axisHoverMode === "x"
-                ? "rgba(236, 240, 241, 0.9)"
-                : "rgba(236, 240, 241, 0.08)";
+                ? OSCILLOSCOPE_THEME.axisHover
+                : OSCILLOSCOPE_THEME.axis;
             },
             width: function () {
               return axisHoverMode === "x" ? 1.6 : 1;
             },
           },
           grid: {
-            color: "rgba(127, 140, 141, 0.2)",
+            color: OSCILLOSCOPE_THEME.grid,
           },
         },
         y: {
@@ -1327,14 +1500,14 @@ function initOscilloscope() {
           title: {
             display: true,
             text: yTitle,
-            color: "#ecf0f1",
+            color: OSCILLOSCOPE_THEME.text,
           },
           border: {
             display: true,
             color: function () {
               return axisHoverMode === "y"
-                ? "rgba(236, 240, 241, 0.9)"
-                : "rgba(236, 240, 241, 0.08)";
+                ? OSCILLOSCOPE_THEME.axisHover
+                : OSCILLOSCOPE_THEME.axis;
             },
             width: function () {
               return axisHoverMode === "y" ? 1.6 : 1;
@@ -1343,7 +1516,7 @@ function initOscilloscope() {
           min: yMin,
           max: yMax,
           ticks: {
-            color: "#bdc3c7",
+            color: OSCILLOSCOPE_THEME.muted,
             callback: function (value) {
               // Round value to integer for Y axis labels
               const roundedValue = Math.round(value);
@@ -1356,7 +1529,7 @@ function initOscilloscope() {
             },
           },
           grid: {
-            color: "rgba(127, 140, 141, 0.2)",
+            color: OSCILLOSCOPE_THEME.grid,
           },
         },
       },
