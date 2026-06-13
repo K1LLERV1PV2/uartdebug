@@ -43,13 +43,13 @@ const GEN_DEFAULT_OFFSET_UNSIGNED_1BYTE = 128;
 const GEN_DEFAULT_OFFSET_UNSIGNED_2BYTE = 32768;
 const OSCILLOSCOPE_ALIGN_PROBE_BYTES = 16;
 const OSCILLOSCOPE_THEME = {
-  signal: "#79c7ff",
+  signal: "#46ff78",
   overflow: "#ff9c99",
-  text: "#c8eaff",
-  muted: "#9fc2d7",
-  grid: "rgba(127, 168, 196, 0.18)",
-  axis: "rgba(200, 234, 255, 0.12)",
-  axisHover: "rgba(200, 234, 255, 0.92)",
+  text: "#c8ffdd",
+  muted: "#9fcbb0",
+  grid: "rgba(129, 159, 141, 0.18)",
+  axis: "rgba(200, 255, 221, 0.12)",
+  axisHover: "rgba(200, 255, 221, 0.92)",
 };
 
 // DOM elements cache
@@ -58,6 +58,7 @@ let terminalReceived = null;
 let txTerminalShell = null;
 let rxTerminalShell = null;
 let terminalInput = null;
+let terminalInputPanel = null;
 let txGeneratorPanel = null;
 let txLogControls = null;
 let txModeControls = null;
@@ -79,6 +80,7 @@ document.addEventListener("DOMContentLoaded", function () {
   initializeEventListeners();
   initializeCustomSelects();
   updateTxInputPlaceholder();
+  updateTxInputPanelVisibility();
   updateGeneratorUi();
   applyGeneratorOffsetDefaults();
   updateRunButtonState();
@@ -96,6 +98,9 @@ function initializeElements() {
   txTerminalShell = document.getElementById("txTerminalShell");
   rxTerminalShell = document.getElementById("rxTerminalShell");
   terminalInput = document.getElementById("terminalInput");
+  terminalInputPanel = document.querySelector(
+    "#uartTxSession .terminal-input-panel"
+  );
   txGeneratorPanel = document.getElementById("txGeneratorPanel");
   txLogControls = document.getElementById("txLogControls");
   txModeControls = document.getElementById("txModeControls");
@@ -409,7 +414,7 @@ function updateConnectionStatus(connected, deviceLabel = "") {
     loopIntervalInput.disabled = false;
     updateTxInputAvailability();
   } else {
-    statusIndicator.textContent = "Disconnected";
+    statusIndicator.textContent = "No port selection";
     statusIndicator.classList.remove("connected");
     statusIndicator.classList.add("disconnected");
     updateConnectButtonLabels("Disconnected", "Click to connect");
@@ -445,6 +450,11 @@ function updateTxInputAvailability() {
   if (!terminalInput) return;
   const enabled = !!port && txView === "text";
   terminalInput.disabled = !enabled;
+}
+
+function updateTxInputPanelVisibility() {
+  if (!terminalInputPanel) return;
+  terminalInputPanel.style.display = txView === "generator" ? "none" : "flex";
 }
 
 function setConnectionSelectsDisabled(disabled) {
@@ -592,7 +602,14 @@ function initCustomSelect(select) {
 }
 
 function initializeCustomSelects() {
-  initCustomSelect(document.getElementById("baudRate"));
+  [
+    "baudRate",
+    "genWaveform",
+    "modalBaudRate",
+    "dataBits",
+    "stopBits",
+    "parity",
+  ].forEach((id) => initCustomSelect(document.getElementById(id)));
 }
 
 // ---------- Friendly USB names ----------
@@ -964,6 +981,7 @@ function handleTxViewChange(event) {
     stopLoopSend();
   }
   applyTxViewDefaults();
+  updateTxInputPanelVisibility();
   updateTxInputAvailability();
 }
 
@@ -1337,6 +1355,7 @@ function openSettings() {
 
   if (modalBaudRate && mainBaudRate) {
     modalBaudRate.value = mainBaudRate.value;
+    modalBaudRate.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   modal.classList.add("show");
@@ -1354,6 +1373,7 @@ function closeSettings() {
 
   if (modalBaudRate && mainBaudRate) {
     mainBaudRate.value = modalBaudRate.value;
+    mainBaudRate.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   modal.classList.remove("show");
