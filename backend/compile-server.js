@@ -23,7 +23,7 @@ try {
 // Порт как в старой версии, чтобы совпало с nginx-конфигом
 const PORT = process.env.PORT || 8082;
 const HOST = process.env.HOST || process.env.BIND_HOST || "127.0.0.1";
-const COMPILE_SERVER_VERSION = "20260514-multifile-v3";
+const COMPILE_SERVER_VERSION = "20260613-no-backend-fcpu";
 const MAX_CODE_SIZE = 64 * 1024;
 const MAX_PROJECT_SIZE = 512 * 1024;
 const MAX_PROJECT_FILES = 64;
@@ -308,8 +308,7 @@ app.post("/api/avr/compile", async (req, res) => {
   let tmp = "";
 
   try {
-    const { filename, code, mcu, f_cpu, optimize, project_files } =
-      req.body || {};
+    const { filename, code, mcu, optimize, project_files } = req.body || {};
 
     if (typeof code !== "string" || !code.length) {
       return res.status(400).send('Missing "code".');
@@ -324,9 +323,6 @@ app.post("/api/avr/compile", async (req, res) => {
       typeof mcu === "string" && mcu.trim().length > 0
         ? mcu.trim()
         : "attiny1624";
-
-    const fCpuNum = Number(f_cpu);
-    const F_CPU = Number.isFinite(fCpuNum) && fCpuNum > 0 ? fCpuNum : 20000000;
 
     const requestedOptimize =
       typeof optimize === "string" ? optimize.trim() : "";
@@ -364,7 +360,6 @@ app.post("/api/avr/compile", async (req, res) => {
       `-${OPT}`,
       "-Wall",
       "-Wextra",
-      `-DF_CPU=${F_CPU}UL`,
       `-I${tmp}`,
     ];
 
@@ -477,7 +472,6 @@ app.post("/api/avr/compile", async (req, res) => {
       hex_name: safeName.replace(/\.c$/i, "") + ".hex",
       compiler: XC8_CC,
       mcu: MCU,
-      f_cpu: F_CPU,
       optimize: OPT,
       compiled_files: compilePlan.compileSourceNames,
       project_files: compilePlan.requiredFiles,

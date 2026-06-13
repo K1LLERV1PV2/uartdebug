@@ -19,6 +19,7 @@
   let fileGroups = {};
   let current = null;
   let saveTimer = null;
+  let compileErrorLineHandle = null;
   let contextMenuFile = null;
   let contextMenuGroup = null;
   let inlineFileEdit = null;
@@ -113,14 +114,6 @@
     el.textContent = fileName || "";
   }
 
-  function formatCompileLogTime() {
-    return new Date().toLocaleTimeString("ru-RU", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  }
-
   function setCompileLogText(text) {
     const el = $("compileLog");
     if (!el) return;
@@ -128,62 +121,16 @@
     el.scrollTop = el.scrollHeight;
   }
 
-  function appendCompileLog(message) {
+  function appendCompileStatus(message) {
     const el = $("compileLog");
     if (!el) return;
-    const text = String(message || "").replace(/\r\n/g, "\n");
+    const text = String(message || "").replace(/\r\n/g, "\n").trim();
+    if (!text) return;
     if (el.textContent && !el.textContent.endsWith("\n")) {
       el.textContent += "\n";
     }
-    el.textContent += `[${formatCompileLogTime()}] ${text}\n`;
+    el.textContent += text;
     el.scrollTop = el.scrollHeight;
-  }
-
-  function appendCompileBlock(title, text) {
-    const el = $("compileLog");
-    if (!el) return;
-    const normalized = sanitizeCompilerOutput(text);
-    if (!normalized) return;
-    appendCompileLog(title);
-    el.textContent += `${normalized}\n`;
-    el.scrollTop = el.scrollHeight;
-  }
-
-  function formatCompileErrorDetails(data) {
-    if (!data || typeof data !== "object") return "";
-    const lines = [];
-    if (data.failed_file) lines.push(`file: ${data.failed_file}`);
-    if (data.error) lines.push(String(data.error));
-    if (data.exit_code !== undefined && data.exit_code !== null) {
-      lines.push(`exit code: ${data.exit_code}`);
-    }
-    if (data.signal) lines.push(`signal: ${data.signal}`);
-    if (data.killed) lines.push("process was killed");
-    return lines.join("\n");
-  }
-
-  function formatCompileFileList(names) {
-    return Array.isArray(names)
-      ? names.filter(Boolean).map(String).join(", ")
-      : "";
-  }
-
-  function isLegacyCompileServerResponse(data, compileSnapshot) {
-    if (!compileSnapshot || compileSnapshot.projectFiles.length <= 1) {
-      return false;
-    }
-
-    if (!data || typeof data !== "object") return false;
-    if (Array.isArray(data.compiled_files)) return false;
-
-    const command = String(data.cmd || "");
-    return !command || !/\s-I/.test(command);
-  }
-
-  function appendLegacyCompileServerWarning() {
-    appendCompileLog(
-      "Compile server is still running an older backend. Redeploy/restart backend so it accepts project_files and compiles linked project sources."
-    );
   }
 
   function sanitizeCompilerOutput(text) {
@@ -198,6 +145,167 @@
       )
       .join("\n")
       .trim();
+  }
+
+  function collectCompilerErrorText(data, rawText = "") {
+    const parts = [];
+    if (data && typeof data === "object") {
+      parts.push(
+        data.compile_stderr,
+        data.stderr,
+        data.error,
+        data.compile_stdout,
+        data.stdout
+      );
+    }
+    parts.push(rawText);
+    return sanitizeCompilerOutput(parts.filter(Boolean).join("\n"));
+  }
+
+  function getFirstCompilerIssue(data, rawText = "", fallbackFile = "") {
+    const output = collectCompilerErrorText(data, rawText);
+    const lines = output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const firstErrorLine =
+      lines.find((line) => /(^|\s)(fatal\s+)?error\s*:/i.test(line)) ||
+      lines[0] ||
+      "";
+    const failedFile =
+      data && typeof data === "object" && data.failed_file
+        ? getBaseFileName(data.failed_file)
+        : "";
+
+    if (!firstErrorLine) {
+      return {
+        fileName: failedFile || fallbackFile || "",
+        lineNumber: 0,
+        columnNumber: 0,
+        message: "Compilation failed.",
+      };
+    }
+
+    const normalized = firstErrorLine.replace(/\\/g, "/");
+    const locationMatch = normalized.match(
+      /(?:^|\s)((?:[A-Za-z]:\/)?[^:\n]+?):(\d+)(?::(\d+))?:\s*(?:(?:fatal\s+)?error|undefined reference)\s*:?\s*(.+)$/i
+    );
+
+    if (locationMatch) {
+      return {
+        fileName:
+          getBaseFileName(locationMatch[1]) || failedFile || fallbackFile || "",
+        lineNumber: Number(locationMatch[2]) || 0,
+        columnNumber: Number(locationMatch[3]) || 0,
+        message: cleanupCompilerMessage(locationMatch[4]),
+      };
+    }
+
+    const genericMatch = firstErrorLine.match(
+      /(?:(?:fatal\s+)?error|undefined reference)\s*:?\s*(.+)$/i
+    );
+
+    return {
+      fileName: failedFile || fallbackFile || "",
+      lineNumber: 0,
+      columnNumber: 0,
+      message: cleanupCompilerMessage(
+        genericMatch ? genericMatch[1] : firstErrorLine
+      ),
+    };
+  }
+
+  function cleanupCompilerMessage(message) {
+    return String(message || "")
+      .replace(/\s*\[[^\]]+\]\s*$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function formatCompilerIssue(issue) {
+    const message =
+      issue && issue.message ? issue.message : "Compilation failed.";
+    const fileName = issue && issue.fileName ? issue.fileName : "";
+    const lineNumber = issue && issue.lineNumber ? issue.lineNumber : 0;
+    const columnNumber = issue && issue.columnNumber ? issue.columnNumber : 0;
+    const locationParts = [];
+
+    if (fileName) locationParts.push(fileName);
+    if (lineNumber) locationParts.push(String(lineNumber));
+    if (columnNumber) locationParts.push(String(columnNumber));
+
+    return locationParts.length
+      ? `${locationParts.join(":")}: ${message}`
+      : message;
+  }
+
+  function clearCompileErrorHighlight() {
+    if (!editor || !compileErrorLineHandle) {
+      compileErrorLineHandle = null;
+      return;
+    }
+
+    try {
+      editor.removeLineClass(
+        compileErrorLineHandle,
+        "background",
+        "compile-error-line"
+      );
+      editor.removeLineClass(
+        compileErrorLineHandle,
+        "wrap",
+        "compile-error-wrap"
+      );
+    } catch {}
+
+    compileErrorLineHandle = null;
+  }
+
+  function findProjectFileByBaseName(baseName) {
+    const normalized = getBaseFileName(baseName);
+    if (!normalized) return "";
+    if (hasFile(normalized)) return normalized;
+    return (
+      Object.keys(files).find((name) => getBaseFileName(name) === normalized) ||
+      ""
+    );
+  }
+
+  function highlightCompilerIssue(issue) {
+    clearCompileErrorHighlight();
+    if (!issue || !issue.lineNumber || !editor) return;
+
+    const targetFile =
+      findProjectFileByBaseName(issue.fileName) ||
+      (current && hasFile(current) ? current : "");
+    if (targetFile && targetFile !== current && hasFile(targetFile)) {
+      selectFile(targetFile);
+    }
+    if (!editor) return;
+
+    const lineIndex = Math.max(0, Number(issue.lineNumber) - 1);
+    const lineCount = editor.lineCount ? editor.lineCount() : 0;
+    if (!lineCount || lineIndex >= lineCount) return;
+
+    compileErrorLineHandle = editor.addLineClass(
+      lineIndex,
+      "background",
+      "compile-error-line"
+    );
+    editor.addLineClass(lineIndex, "wrap", "compile-error-wrap");
+    editor.setCursor({
+      line: lineIndex,
+      ch: Math.max(0, Number(issue.columnNumber || 1) - 1),
+    });
+    editor.scrollIntoView({ line: lineIndex, ch: 0 }, 80);
+    setTimeout(() => editor && editor.refresh(), 0);
+  }
+
+  function showCompilerIssue(data, rawText = "", fallbackFile = "") {
+    const issue = getFirstCompilerIssue(data, rawText, fallbackFile);
+    highlightCompilerIssue(issue);
+    setCompileLogText(formatCompilerIssue(issue));
+    return issue;
   }
 
   function resolveSiteDialog(value) {
@@ -411,6 +519,7 @@
 
     try {
       await updi.programHex();
+      appendCompileStatus("Flash succeeded.");
     } catch (error) {
       await showSiteAlert(
         `Flash failed.\n${error.message || String(error)}`,
@@ -3190,6 +3299,7 @@ int main(void)
     }
     if (!current) editor.setOption("readOnly", "nocursor");
     editor.on("change", () => {
+      clearCompileErrorHighlight();
       if (!current) return;
       if (saveTimer) clearTimeout(saveTimer);
 
@@ -3725,7 +3835,6 @@ int main(void)
 
     // Read compile options if present in UI, fallback to defaults
     const mcuEl = document.getElementById("mcuSelect");
-    const fcpuEl = document.getElementById("fCpuInput");
     const optEl = document.getElementById("optimizeSelect");
     let selectedMcu = mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624";
 
@@ -3762,7 +3871,6 @@ int main(void)
       code: files[current],
       project_files: compileSnapshot.projectFiles,
       mcu: selectedMcu,
-      f_cpu: fcpuEl && Number(fcpuEl.value) ? Number(fcpuEl.value) : 20000000,
       optimize: optEl && optEl.value ? optEl.value.trim() : "O1",
     };
 
@@ -3909,6 +4017,14 @@ int main(void)
     const compileFileName = current;
     const btn = $("compileBtn");
     const restoreButton = () => updateCompilePanelState(false);
+    const markCompileFailed = () => {
+      setHexStatus("error");
+      updateHexUI(false);
+      restoreButton();
+      return false;
+    };
+
+    clearCompileErrorHighlight();
 
     try {
       if (compileFileName && editor && current === compileFileName) {
@@ -3919,34 +4035,25 @@ int main(void)
     const compileSource = compileFileName ? files[compileFileName] : "";
 
     if (!compileFileName || !compileSource) {
-      setCompileLogText("");
-      appendCompileLog("No open file to compile.");
-      setHexStatus("error");
-      updateHexUI(false);
-      restoreButton();
-      return false;
+      setCompileLogText("No open file to compile.");
+      return markCompileFailed();
     }
 
     if (!/\.c$/i.test(compileFileName)) {
-      setCompileLogText("");
-      appendCompileLog(
+      setCompileLogText(
         `"${compileFileName}" is not a C source file. Only *.c files can be compiled.`
       );
-      setHexStatus("error");
-      updateHexUI(false);
-      restoreButton();
-      return false;
+      return markCompileFailed();
     }
 
-    setCompileLogText("");
+    setCompileLogText("Compiling...");
 
     const mcuEl = $("mcuSelect");
-    const fcpuEl = $("fCpuInput");
     const optEl = $("optimizeSelect");
     let selectedMcu = mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624";
 
     if (selectedMcu === "auto") {
-      appendCompileLog("Auto detect is enabled. Reading chip signature...");
+      setCompileLogText("Detecting target...");
 
       try {
         const signatureInfo = await ensureAutoDetectedTarget();
@@ -3966,16 +4073,13 @@ int main(void)
         }
 
         selectedMcu = detectedMcu;
-        appendCompileLog(`Detected target: ${detectedLabel}.`);
+        setCompileLogText(`Compiling for ${detectedLabel}...`);
       } catch (error) {
-        appendCompileLog(
+        setCompileLogText(
           error.message ||
             "Auto detect could not resolve a supported chip. Check the UPDI connection or choose a concrete MCU before compiling."
         );
-        setHexStatus("error");
-        updateHexUI(false);
-        restoreButton();
-        return false;
+        return markCompileFailed();
       }
     }
 
@@ -3985,7 +4089,6 @@ int main(void)
       code: files[compileFileName],
       project_files: compileSnapshot.projectFiles,
       mcu: selectedMcu,
-      f_cpu: fcpuEl && Number(fcpuEl.value) ? Number(fcpuEl.value) : 20000000,
       optimize: optEl && optEl.value ? optEl.value.trim() : "O1",
     };
 
@@ -4002,18 +4105,6 @@ int main(void)
     lastHexName = null;
     dispatchUpdiHexArtifact();
 
-    appendCompileLog(`Compiling "${compileFileName}" for ${selectedMcu}...`);
-    appendCompileLog(
-      `Options: F_CPU=${payload.f_cpu}, optimize=${payload.optimize}.`
-    );
-    if (compileSnapshot.projectFiles.length > 1) {
-      appendCompileLog(
-        `Project files: ${compileSnapshot.projectFiles
-          .map((file) => file.name)
-          .join(", ")}.`
-      );
-    }
-
     let resp;
     try {
       resp = await fetch("/api/avr/compile", {
@@ -4023,13 +4114,10 @@ int main(void)
       });
     } catch (error) {
       console.error("Network error:", error);
-      appendCompileLog(
+      setCompileLogText(
         `Failed to reach the compile server: ${error.message || String(error)}`
       );
-      setHexStatus("error");
-      updateHexUI(false);
-      restoreButton();
-      return false;
+      return markCompileFailed();
     }
 
     if (!resp.ok) {
@@ -4040,33 +4128,8 @@ int main(void)
       } catch {}
 
       console.error("Compile server error:", resp.status, errorData || rawText);
-      appendCompileLog(
-        errorData && errorData.stage
-          ? `Compilation failed during ${errorData.stage}.`
-          : `Compile server error ${resp.status}.`
-      );
-      if (errorData && errorData.cmd) {
-        appendCompileBlock("Command", errorData.cmd);
-      }
-      if (isLegacyCompileServerResponse(errorData, compileSnapshot)) {
-        appendLegacyCompileServerWarning();
-      }
-      const compiledFiles = formatCompileFileList(
-        errorData && errorData.compiled_files
-      );
-      if (compiledFiles) {
-        appendCompileLog(`Source units: ${compiledFiles}.`);
-      }
-      appendCompileBlock("Error", formatCompileErrorDetails(errorData));
-      appendCompileBlock("Stdout", errorData && errorData.stdout);
-      appendCompileBlock("Stderr", errorData && errorData.stderr);
-      if (!errorData && rawText.trim()) {
-        appendCompileBlock("Server response", rawText);
-      }
-      setHexStatus("error");
-      updateHexUI(false);
-      restoreButton();
-      return false;
+      showCompilerIssue(errorData, rawText, compileFileName);
+      return markCompileFailed();
     }
 
     let data;
@@ -4074,36 +4137,14 @@ int main(void)
       data = await resp.json();
     } catch (error) {
       console.error("Bad JSON:", error);
-      appendCompileLog("Invalid JSON response from compile server.");
-      appendCompileBlock("Parse error", error.message || String(error));
-      setHexStatus("error");
-      updateHexUI(false);
-      restoreButton();
-      return false;
+      setCompileLogText("Invalid JSON response from compile server.");
+      return markCompileFailed();
     }
 
     if (!data || data.ok !== true || !data.hex) {
       console.error("Compilation failed:", data);
-      appendCompileLog("Compilation failed.");
-      if (data && data.cmd) {
-        appendCompileBlock("Command", data.cmd);
-      }
-      if (isLegacyCompileServerResponse(data, compileSnapshot)) {
-        appendLegacyCompileServerWarning();
-      }
-      const compiledFiles = formatCompileFileList(data && data.compiled_files);
-      if (compiledFiles) {
-        appendCompileLog(`Source units: ${compiledFiles}.`);
-      }
-      appendCompileBlock("Error", formatCompileErrorDetails(data));
-      appendCompileBlock("Stdout", data && data.stdout);
-      appendCompileBlock("Stderr", data && data.stderr);
-      appendCompileBlock("Compiler stdout", data && data.compile_stdout);
-      appendCompileBlock("Compiler stderr", data && data.compile_stderr);
-      setHexStatus("error");
-      updateHexUI(false);
-      restoreButton();
-      return false;
+      showCompilerIssue(data, "", compileFileName);
+      return markCompileFailed();
     }
 
     lastHexContent = data.hex;
@@ -4123,31 +4164,7 @@ int main(void)
     setHexStatus("ready", lastHexName);
     dispatchUpdiHexArtifact();
 
-    appendCompileLog(`Compilation succeeded for "${compileFileName}".`);
-    appendCompileLog(
-      `HEX ready: ${lastHexName} (${selectedMcu}, F_CPU=${payload.f_cpu}, ${payload.optimize}).`
-    );
-    if (isLegacyCompileServerResponse(data, compileSnapshot)) {
-      appendLegacyCompileServerWarning();
-    }
-    {
-      const compiledFiles = formatCompileFileList(data.compiled_files);
-      if (compiledFiles && data.compiled_files.length > 1) {
-        appendCompileLog(`Compiled units: ${compiledFiles}.`);
-      }
-    }
-
-    const filteredCompileStdout = sanitizeCompilerOutput(data.compile_stdout);
-    const filteredCompileStderr = sanitizeCompilerOutput(data.compile_stderr);
-    const hasCompilerOutput =
-      !!filteredCompileStdout || !!filteredCompileStderr;
-
-    if (!hasCompilerOutput) {
-      appendCompileLog("Compiler returned no additional messages.");
-    }
-
-    appendCompileBlock("Compiler stdout", filteredCompileStdout);
-    appendCompileBlock("Compiler stderr", filteredCompileStderr);
+    setCompileLogText(`Compilation succeeded: ${lastHexName}.`);
 
     restoreButton();
     return true;

@@ -1098,6 +1098,16 @@ main,
   background: rgba(70, 255, 120, 0.07) !important;
 }
 
+.cm-s-material-darker .compile-error-line {
+  background: rgba(206, 88, 78, 0.2) !important;
+  box-shadow: inset 3px 0 0 rgba(224, 117, 96, 0.9);
+}
+
+.cm-s-material-darker .compile-error-wrap {
+  outline: 1px solid rgba(224, 117, 96, 0.14);
+  outline-offset: -1px;
+}
+
 .CodeMirror-selected {
   background: rgba(97, 97, 97, 0.36) !important;
 }
