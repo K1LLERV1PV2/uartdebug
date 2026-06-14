@@ -9,10 +9,12 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <!-- link to global styles and uart specific styles -->
-    <link rel="stylesheet" href="uart.css?v=20260614-terminal-settings-v3" />
+    <link rel="stylesheet" href="uart.css?v=20260614-terminal-tooltips-v2" />
+    <link rel="stylesheet" href="ui-tooltips.css?v=20260614-v2" />
     <!-- include Chart.js library -->
     <script src="vendor/chart.umd.js"></script>
-    <script defer src="uart.js?v=20260614-terminal-settings-v3"></script>
+    <script defer src="ui-tooltips.js?v=20260614-v2"></script>
+    <script defer src="uart.js?v=20260614-terminal-tooltips-v2"></script>
   </head>
   <body class="terminal-page">
     <main>
@@ -34,6 +36,7 @@
               class="connect-btn terminal-connect-btn"
               id="connectBtn"
               type="button"
+              data-tooltip-disabled
             >
               <span
                 class="terminal-connect-label terminal-connect-default"
@@ -98,10 +101,11 @@
         </section>
 
         <!-- Terminal and oscilloscope section -->
-        <div class="uart-sessions-split">
+        <div class="uart-sessions-split" id="uartSessionsSplit">
           <section
             class="uart-section uart-session is-locked"
             id="uartTxSession"
+            data-terminal-session="tx"
             aria-disabled="true"
           >
             <div class="terminal-wrapper">
@@ -312,9 +316,19 @@
             </div>
           </section>
 
+          <div
+            class="terminal-layout-resizer"
+            id="terminalLayoutResizer"
+            role="separator"
+            tabindex="0"
+            aria-label="Resize terminal panels"
+            aria-orientation="vertical"
+          ></div>
+
           <section
             class="uart-section uart-session is-locked"
             id="uartRxSession"
+            data-terminal-session="rx"
             aria-disabled="true"
           >
             <div class="terminal-wrapper">

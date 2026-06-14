@@ -1286,6 +1286,309 @@ int main(void)
 }
 `,
     },
+    {
+      id: "printf-usart0",
+      fileName: "07_Printf_Redirect_USART0.c",
+      content: `/*
+ * Project name: 07_Printf_Redirect_USART0.c
+ * Description: Redirect printf output to USART0. No interrupts.
+ *
+ * Purpose:
+ *   This project demonstrates printf redirection to USART0
+ *   and blocking text transmission in the main while(1) loop.
+ *
+ *   The output is a text string with an incrementing counter.
+ *
+ * Hardware response:
+ *   UART0, 115200 baud, 8 data bits, no parity, 1 stop bit.
+ *
+ *   TxD output is on PB2.
+ *   On SOIC-14 packages, PB2 is pin 7.
+ *
+ *   UART string transmission period: 500 ms.
+ *
+ *   The received string can be observed using a serial terminal.
+ *   On uartdebug.com, use RXD in Text mode.
+ */
+
+#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
+// #include <avr/io.h> // Alternative header for AVR-GCC compiler
+
+#include <stdio.h>    // For FILE and printf
+
+/*
+ * CPU clock remains at the default frequency:
+ *
+ *   20 MHz / 6 = 3.333 MHz
+ *
+ * F_CPU must be defined before including <util/delay.h>.
+ */
+#define F_CPU 3333333UL
+
+#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
+
+
+#define BAUD_RATE 115200UL // User-selected UART baud rate
+#define CLK_PER   F_CPU
+
+/*
+ * USART baud register calculation.
+ */
+#define USART_BAUD_RATE \\
+    ((uint16_t)(((float)CLK_PER * 64.0 / (16.0 * (float)BAUD_RATE)) + 0.5))
+
+
+/*
+ * This function is used by printf() to send one character through USART0.
+ */
+int USART_PrintChar(char c, FILE *stream)
+{
+    while (!(USART0.STATUS & USART_DREIF_bm))
+    {
+        ;
+    }
+
+    USART0.TXDATAL = c;
+
+    return 0;
+}
+
+
+/*
+ * Output stream for printf redirection.
+ */
+FILE USART_stream = FDEV_SETUP_STREAM(USART_PrintChar, NULL, _FDEV_SETUP_WRITE);
+
+
+/*
+ * Initialize USART0 for basic asynchronous transmission.
+ *
+ * UART format:
+ *   115200 baud
+ *   8 data bits
+ *   No parity
+ *   1 stop bit
+ *
+ * Common notation:
+ *   115200 8N1
+ */
+void USART_Init(void)
+{
+    /*
+     * Set asynchronous UART mode, no parity,
+     * 8 data bits, 1 stop bit.
+     */
+    USART0.CTRLC = USART_CMODE_ASYNCHRONOUS_gc |
+                   USART_PMODE_DISABLED_gc |
+                   USART_CHSIZE_8BIT_gc |
+                   USART_SBMODE_1BIT_gc;
+
+    /*
+     * Set UART baud rate.
+     */
+    USART0.BAUD = USART_BAUD_RATE;
+
+    /*
+     * Configure PB2 as UART0 TX output.
+     */
+    PORTB.DIRSET = PIN2_bm;
+
+    /*
+     * Enable USART transmitter.
+     */
+    USART0.CTRLB = USART_TXEN_bm;
+
+    /*
+     * Redirect stdout to USART0.
+     */
+    stdout = &USART_stream;
+}
+
+
+/*
+ * UART1 configuration:
+ *
+ * 1. Replace all occurrences of USART0. with USART1.
+ *
+ * 2. Replace:
+ *      PORTB.DIRSET = PIN2_bm;
+ *
+ *    with:
+ *      PORTA.DIRSET = PIN1_bm;
+ *
+ * 3. UART1 pin assignment:
+ *      PA1 - TxD
+ *
+ * 4. For SOIC-14 packages:
+ *      PA1 - TxD - pin 11
+ */
+
+
+int main(void)
+{
+    uint16_t tr_count = 0;
+
+    USART_Init();
+
+    while (1)
+    {
+        printf("Counter = %u\\r\\n", tr_count);
+
+        tr_count++;
+
+        _delay_ms(500);
+    }
+
+    /*
+     * In embedded systems, execution normally never reaches this point.
+     * The return statement is kept to satisfy the compiler.
+     */
+    return 0;
+}
+`,
+    },
+    {
+      id: "printf-usart1",
+      fileName: "08_Printf_Redirect_USART1.c",
+      content: `/*
+ * Project name: 08_Printf_Redirect_USART1.c
+ * Description: Redirect printf output to USART1. No interrupts.
+ *
+ * Purpose:
+ *   This project demonstrates printf redirection to USART1
+ *   and blocking text transmission in the main while(1) loop.
+ *
+ *   The output is a text string with an incrementing counter.
+ *
+ * Hardware response:
+ *   UART1, 115200 baud, 8 data bits, no parity, 1 stop bit.
+ *
+ *   TxD output is on PA1.
+ *   On SOIC-14 packages, PA1 is pin 11.
+ *
+ *   UART string transmission period: 500 ms.
+ *
+ *   The received string can be observed using a serial terminal.
+ *   On uartdebug.com, use RXD in Text mode.
+ */
+
+#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
+// #include <avr/io.h> // Alternative header for AVR-GCC compiler
+
+#include <stdio.h>    // For FILE and printf
+
+/*
+ * CPU clock remains at the default frequency:
+ *
+ *   20 MHz / 6 = 3.333 MHz
+ *
+ * F_CPU must be defined before including <util/delay.h>.
+ */
+#define F_CPU 3333333UL
+
+#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
+
+
+#define BAUD_RATE 115200UL // User-selected UART baud rate
+#define CLK_PER   F_CPU
+
+/*
+ * USART baud register calculation.
+ */
+#define USART_BAUD_RATE \\
+    ((uint16_t)(((float)CLK_PER * 64.0 / (16.0 * (float)BAUD_RATE)) + 0.5))
+
+
+/*
+ * This function is used by printf() to send one character through USART1.
+ */
+int USART_PrintChar(char c, FILE *stream)
+{
+    while (!(USART1.STATUS & USART_DREIF_bm))
+    {
+        ;
+    }
+
+    USART1.TXDATAL = c;
+
+    return 0;
+}
+
+
+/*
+ * Output stream for printf redirection.
+ */
+FILE USART_stream = FDEV_SETUP_STREAM(USART_PrintChar, NULL, _FDEV_SETUP_WRITE);
+
+
+/*
+ * Initialize USART1 for basic asynchronous transmission.
+ *
+ * UART format:
+ *   115200 baud
+ *   8 data bits
+ *   No parity
+ *   1 stop bit
+ *
+ * Common notation:
+ *   115200 8N1
+ */
+void USART_Init(void)
+{
+    /*
+     * Set asynchronous UART mode, no parity,
+     * 8 data bits, 1 stop bit.
+     */
+    USART1.CTRLC = USART_CMODE_ASYNCHRONOUS_gc |
+                   USART_PMODE_DISABLED_gc |
+                   USART_CHSIZE_8BIT_gc |
+                   USART_SBMODE_1BIT_gc;
+
+    /*
+     * Set UART baud rate.
+     */
+    USART1.BAUD = USART_BAUD_RATE;
+
+    /*
+     * Configure PA1 as UART1 TX output.
+     */
+    PORTA.DIRSET = PIN1_bm;
+
+    /*
+     * Enable USART transmitter.
+     */
+    USART1.CTRLB = USART_TXEN_bm;
+
+    /*
+     * Redirect stdout to USART1.
+     */
+    stdout = &USART_stream;
+}
+
+
+int main(void)
+{
+    uint16_t tr_count = 0;
+
+    USART_Init();
+
+    while (1)
+    {
+        printf("Counter = %u\\r\\n", tr_count);
+
+        tr_count++;
+
+        _delay_ms(500);
+    }
+
+    /*
+     * In embedded systems, execution normally never reaches this point.
+     * The return statement is kept to satisfy the compiler.
+     */
+    return 0;
+}
+`,
+    },
   ];
 
   const AVR_FILE_TEMPLATE_MAP = new Map(

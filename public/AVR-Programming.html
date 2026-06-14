@@ -8,8 +8,9 @@
     <link rel="stylesheet" href="uart.css" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260613-compile-log"
+      href="AVR-Programming.css?v=20260614-add-file-list"
     />
+    <link rel="stylesheet" href="ui-tooltips.css?v=20260614-v2" />
 
     <link
       rel="stylesheet"
@@ -42,6 +43,7 @@
                 id="detectChipBtn"
                 type="button"
                 aria-label="Detect chip"
+                data-tooltip-disabled
               >
                 <span
                   class="detect-chip-label detect-chip-default"
@@ -175,7 +177,15 @@
                   type="button"
                   aria-label="Close"
                 >
-                  &times;
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M6 6l12 12M18 6 6 18"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.8"
+                      stroke-linecap="round"
+                    />
+                  </svg>
                 </button>
               </div>
 
@@ -231,7 +241,7 @@
 
                   <div class="file-template-grid" id="fileTemplateGrid">
                     <button
-                      class="file-add-card file-template-card template-minimum"
+                      class="file-add-card file-template-card"
                       type="button"
                       data-template-id="minimum"
                     >
@@ -242,7 +252,7 @@
                     </button>
 
                     <button
-                      class="file-add-card file-template-card template-clock"
+                      class="file-add-card file-template-card"
                       type="button"
                       data-template-id="cpu-clock"
                     >
@@ -253,7 +263,7 @@
                     </button>
 
                     <button
-                      class="file-add-card file-template-card template-delay"
+                      class="file-add-card file-template-card"
                       type="button"
                       data-template-id="delay-blink"
                     >
@@ -264,7 +274,7 @@
                     </button>
 
                     <button
-                      class="file-add-card file-template-card template-timer"
+                      class="file-add-card file-template-card"
                       type="button"
                       data-template-id="timer-interrupt"
                     >
@@ -275,7 +285,7 @@
                     </button>
 
                     <button
-                      class="file-add-card file-template-card template-uart-tx"
+                      class="file-add-card file-template-card"
                       type="button"
                       data-template-id="uart-tx"
                     >
@@ -286,13 +296,35 @@
                     </button>
 
                     <button
-                      class="file-add-card file-template-card template-uart-rx"
+                      class="file-add-card file-template-card"
                       type="button"
                       data-template-id="uart-rx"
                     >
                       <span class="file-add-card-title">06 UART RX</span>
                       <span class="file-add-card-copy">
                         Receive one byte and transmit the next value.
+                      </span>
+                    </button>
+
+                    <button
+                      class="file-add-card file-template-card"
+                      type="button"
+                      data-template-id="printf-usart0"
+                    >
+                      <span class="file-add-card-title">07 printf USART0</span>
+                      <span class="file-add-card-copy">
+                        Redirect printf output to USART0.
+                      </span>
+                    </button>
+
+                    <button
+                      class="file-add-card file-template-card"
+                      type="button"
+                      data-template-id="printf-usart1"
+                    >
+                      <span class="file-add-card-title">08 printf USART1</span>
+                      <span class="file-add-card-copy">
+                        Redirect printf output to USART1.
                       </span>
                     </button>
                   </div>
@@ -441,7 +473,8 @@
         </section>
       </div>
     </main>
-    <script defer src="AVR-Programming.js?v=20260613-compile-log"></script>
+    <script defer src="ui-tooltips.js?v=20260614-v2"></script>
+    <script defer src="AVR-Programming.js?v=20260614-add-file-list"></script>
     <script defer src="updi-test.js?v=20260511-port-error"></script>
   </body>
 </html>

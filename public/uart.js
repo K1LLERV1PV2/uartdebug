@@ -51,12 +51,18 @@ const OSCILLOSCOPE_THEME = {
   axis: "rgba(200, 255, 221, 0.12)",
   axisHover: "rgba(200, 255, 221, 0.92)",
 };
+const TERMINAL_LAYOUT_STORAGE_KEY = "ud_uart_terminal_layout_v1";
+const TERMINAL_LAYOUT_PANEL_IDS = ["tx", "rx"];
+const TERMINAL_LAYOUT_MIN_PANEL_SIZE = 22;
+const TERMINAL_LAYOUT_MAX_PANEL_SIZE = 78;
 
 // DOM elements cache
 let terminalSent = null;
 let terminalReceived = null;
 let txTerminalShell = null;
 let rxTerminalShell = null;
+let uartSessionsSplit = null;
+let terminalLayoutResizer = null;
 let terminalInput = null;
 let terminalInputPanel = null;
 let txGeneratorPanel = null;
@@ -73,10 +79,19 @@ let oscilloscopeCanvas = null;
 let oscilloscopeContainer = null;
 let cycleCheckbox = null;
 let uartSessions = [];
+let terminalLayoutState = {
+  layout: "row",
+  order: ["tx", "rx"],
+  sizes: { tx: 50, rx: 50 },
+};
+let terminalLayoutDrag = null;
+let terminalLayoutResize = null;
+let terminalLayoutRefreshFrame = null;
 
 // Initialize on page load
 document.addEventListener("DOMContentLoaded", function () {
   initializeElements();
+  initializeTerminalLayout();
   initializeEventListeners();
   initializeCustomSelects();
   updateTxInputPlaceholder();
@@ -97,6 +112,8 @@ function initializeElements() {
   terminalReceived = document.getElementById("terminalReceived");
   txTerminalShell = document.getElementById("txTerminalShell");
   rxTerminalShell = document.getElementById("rxTerminalShell");
+  uartSessionsSplit = document.getElementById("uartSessionsSplit");
+  terminalLayoutResizer = document.getElementById("terminalLayoutResizer");
   terminalInput = document.getElementById("terminalInput");
   terminalInputPanel = document.querySelector(
     "#uartTxSession .terminal-input-panel"
@@ -239,7 +256,360 @@ function initializeEventListeners() {
     "fullscreenchange",
     updateOscilloscopeFullscreenState
   );
+}
 
+function initializeTerminalLayout() {
+  if (!uartSessionsSplit) return;
+
+  terminalLayoutState = loadTerminalLayoutState();
+  applyTerminalLayout();
+
+  uartSessions.forEach((session) => {
+    session
+      .querySelector(".terminal-header")
+      ?.addEventListener("pointerdown", handleTerminalDragPointerDown);
+  });
+
+  terminalLayoutResizer?.addEventListener(
+    "pointerdown",
+    handleTerminalResizePointerDown
+  );
+  terminalLayoutResizer?.addEventListener("keydown", handleTerminalResizeKey);
+}
+
+function loadTerminalLayoutState() {
+  try {
+    const raw = localStorage.getItem(TERMINAL_LAYOUT_STORAGE_KEY);
+    return normalizeTerminalLayoutState(raw ? JSON.parse(raw) : null);
+  } catch (error) {
+    console.warn("Unable to load terminal layout:", error);
+    return normalizeTerminalLayoutState(null);
+  }
+}
+
+function saveTerminalLayoutState() {
+  try {
+    localStorage.setItem(
+      TERMINAL_LAYOUT_STORAGE_KEY,
+      JSON.stringify(terminalLayoutState)
+    );
+  } catch (error) {
+    console.warn("Unable to save terminal layout:", error);
+  }
+}
+
+function normalizeTerminalLayoutState(input) {
+  const layout = input?.layout === "column" ? "column" : "row";
+  const order = Array.isArray(input?.order)
+    ? input.order.filter((id) => TERMINAL_LAYOUT_PANEL_IDS.includes(id))
+    : [];
+  TERMINAL_LAYOUT_PANEL_IDS.forEach((id) => {
+    if (!order.includes(id)) order.push(id);
+  });
+
+  let txSize = Number(input?.sizes?.tx);
+  let rxSize = Number(input?.sizes?.rx);
+
+  if (!Number.isFinite(txSize) || !Number.isFinite(rxSize)) {
+    txSize = 50;
+    rxSize = 50;
+  } else {
+    const total = txSize + rxSize;
+    if (total > 0) {
+      txSize = (txSize / total) * 100;
+      rxSize = 100 - txSize;
+    }
+  }
+
+  txSize = clampToRange(
+    txSize,
+    TERMINAL_LAYOUT_MIN_PANEL_SIZE,
+    TERMINAL_LAYOUT_MAX_PANEL_SIZE
+  );
+  rxSize = 100 - txSize;
+
+  return {
+    layout,
+    order: order.slice(0, 2),
+    sizes: {
+      tx: txSize,
+      rx: rxSize,
+    },
+  };
+}
+
+function applyTerminalLayout() {
+  if (!uartSessionsSplit) return;
+
+  terminalLayoutState = normalizeTerminalLayoutState(terminalLayoutState);
+  const [firstId, secondId] = terminalLayoutState.order;
+  const firstPanel = getTerminalLayoutPanel(firstId);
+  const secondPanel = getTerminalLayoutPanel(secondId);
+
+  if (!firstPanel || !secondPanel) return;
+
+  uartSessionsSplit.dataset.terminalLayout = terminalLayoutState.layout;
+  uartSessionsSplit.style.setProperty(
+    "--terminal-layout-first-grow",
+    terminalLayoutState.sizes[firstId].toFixed(3)
+  );
+  uartSessionsSplit.style.setProperty(
+    "--terminal-layout-second-grow",
+    terminalLayoutState.sizes[secondId].toFixed(3)
+  );
+
+  uartSessions.forEach((session) => {
+    session.classList.remove("is-layout-first", "is-layout-second");
+  });
+  firstPanel.classList.add("is-layout-first");
+  secondPanel.classList.add("is-layout-second");
+
+  if (terminalLayoutResizer) {
+    const isRow = terminalLayoutState.layout === "row";
+    terminalLayoutResizer.setAttribute(
+      "aria-orientation",
+      isRow ? "vertical" : "horizontal"
+    );
+    terminalLayoutResizer.title = isRow
+      ? "Drag to resize terminal widths"
+      : "Drag to resize terminal heights";
+  }
+
+  scheduleTerminalLayoutRefresh();
+}
+
+function getTerminalLayoutPanel(id) {
+  return document.querySelector(`[data-terminal-session="${id}"]`);
+}
+
+function getOtherTerminalPanelId(id) {
+  return TERMINAL_LAYOUT_PANEL_IDS.find((panelId) => panelId !== id);
+}
+
+function handleTerminalDragPointerDown(event) {
+  if (event.button !== 0 || !uartSessionsSplit) return;
+  if (isTerminalHeaderInteractiveTarget(event.target)) return;
+
+  const panelId =
+    event.currentTarget.closest(".uart-session")?.dataset.terminalSession;
+  const panel = getTerminalLayoutPanel(panelId);
+  if (!panel) return;
+
+  event.preventDefault();
+  terminalLayoutDrag = {
+    panelId,
+    placement: null,
+  };
+
+  panel.classList.add("is-terminal-drag-source");
+  document.body.classList.add("is-terminal-layout-active");
+  uartSessionsSplit.classList.add("is-terminal-dragging");
+  updateTerminalDropPlacement(event.clientX, event.clientY);
+
+  document.addEventListener("pointermove", handleTerminalDragPointerMove);
+  document.addEventListener("pointerup", handleTerminalDragPointerUp);
+  document.addEventListener("pointercancel", cancelTerminalDrag);
+}
+
+function isTerminalHeaderInteractiveTarget(target) {
+  return !!target.closest(
+    "button, input, select, textarea, label, a, .custom-select, .checkbox-label, .radio-group, .view-toggle, .mode-controls, .data-mode-controls"
+  );
+}
+
+function handleTerminalDragPointerMove(event) {
+  if (!terminalLayoutDrag) return;
+  event.preventDefault();
+  updateTerminalDropPlacement(event.clientX, event.clientY);
+}
+
+function handleTerminalDragPointerUp(event) {
+  if (!terminalLayoutDrag) return;
+  event.preventDefault();
+
+  const { panelId, placement } = terminalLayoutDrag;
+  if (placement) {
+    const otherPanelId = getOtherTerminalPanelId(panelId);
+    terminalLayoutState.layout = placement.layout;
+    terminalLayoutState.order =
+      placement.position === "start"
+        ? [panelId, otherPanelId]
+        : [otherPanelId, panelId];
+    applyTerminalLayout();
+    saveTerminalLayoutState();
+  }
+
+  cancelTerminalDrag();
+}
+
+function cancelTerminalDrag() {
+  if (!terminalLayoutDrag) return;
+
+  getTerminalLayoutPanel(terminalLayoutDrag.panelId)?.classList.remove(
+    "is-terminal-drag-source"
+  );
+  terminalLayoutDrag = null;
+  clearTerminalDropClasses();
+  uartSessionsSplit?.classList.remove("is-terminal-dragging");
+  document.body.classList.remove("is-terminal-layout-active");
+  document.removeEventListener("pointermove", handleTerminalDragPointerMove);
+  document.removeEventListener("pointerup", handleTerminalDragPointerUp);
+  document.removeEventListener("pointercancel", cancelTerminalDrag);
+}
+
+function updateTerminalDropPlacement(clientX, clientY) {
+  if (!terminalLayoutDrag || !uartSessionsSplit) return;
+
+  const rect = uartSessionsSplit.getBoundingClientRect();
+  const xRatio = clampToRange((clientX - rect.left) / rect.width, 0, 1);
+  const yRatio = clampToRange((clientY - rect.top) / rect.height, 0, 1);
+  const horizontalBias = Math.abs(xRatio - 0.5);
+  const verticalBias = Math.abs(yRatio - 0.5);
+
+  const useHorizontal = horizontalBias >= verticalBias;
+  const layout = useHorizontal ? "row" : "column";
+  const position = useHorizontal
+    ? xRatio < 0.5
+      ? "start"
+      : "end"
+    : yRatio < 0.5
+      ? "start"
+      : "end";
+
+  terminalLayoutDrag.placement = { layout, position };
+  setTerminalDropClass(layout, position);
+}
+
+function setTerminalDropClass(layout, position) {
+  if (!uartSessionsSplit) return;
+  clearTerminalDropClasses();
+
+  const className =
+    layout === "row"
+      ? position === "start"
+        ? "terminal-drop-left"
+        : "terminal-drop-right"
+      : position === "start"
+        ? "terminal-drop-top"
+        : "terminal-drop-bottom";
+
+  uartSessionsSplit.classList.add(className);
+}
+
+function clearTerminalDropClasses() {
+  uartSessionsSplit?.classList.remove(
+    "terminal-drop-left",
+    "terminal-drop-right",
+    "terminal-drop-top",
+    "terminal-drop-bottom"
+  );
+}
+
+function handleTerminalResizePointerDown(event) {
+  if (event.button !== 0 || !uartSessionsSplit) return;
+
+  event.preventDefault();
+  terminalLayoutResize = true;
+  document.body.classList.add("is-terminal-layout-active");
+  uartSessionsSplit.classList.add("is-terminal-resizing");
+  terminalLayoutResizer?.setPointerCapture?.(event.pointerId);
+  updateTerminalLayoutSize(event.clientX, event.clientY);
+
+  document.addEventListener("pointermove", handleTerminalResizePointerMove);
+  document.addEventListener("pointerup", handleTerminalResizePointerUp);
+  document.addEventListener("pointercancel", cancelTerminalResize);
+}
+
+function handleTerminalResizePointerMove(event) {
+  if (!terminalLayoutResize) return;
+  event.preventDefault();
+  updateTerminalLayoutSize(event.clientX, event.clientY);
+}
+
+function handleTerminalResizePointerUp(event) {
+  if (!terminalLayoutResize) return;
+  event.preventDefault();
+  cancelTerminalResize();
+  saveTerminalLayoutState();
+}
+
+function cancelTerminalResize() {
+  terminalLayoutResize = null;
+  uartSessionsSplit?.classList.remove("is-terminal-resizing");
+  document.body.classList.remove("is-terminal-layout-active");
+  document.removeEventListener("pointermove", handleTerminalResizePointerMove);
+  document.removeEventListener("pointerup", handleTerminalResizePointerUp);
+  document.removeEventListener("pointercancel", cancelTerminalResize);
+}
+
+function updateTerminalLayoutSize(clientX, clientY) {
+  if (!uartSessionsSplit) return;
+
+  const rect = uartSessionsSplit.getBoundingClientRect();
+  const [firstId, secondId] = terminalLayoutState.order;
+  const isRow = terminalLayoutState.layout === "row";
+  const axisSize = isRow ? rect.width : rect.height;
+  const axisPosition = isRow ? clientX - rect.left : clientY - rect.top;
+  const firstSize = clampToRange(
+    (axisPosition / axisSize) * 100,
+    TERMINAL_LAYOUT_MIN_PANEL_SIZE,
+    TERMINAL_LAYOUT_MAX_PANEL_SIZE
+  );
+
+  terminalLayoutState.sizes[firstId] = firstSize;
+  terminalLayoutState.sizes[secondId] = 100 - firstSize;
+  applyTerminalLayout();
+}
+
+function handleTerminalResizeKey(event) {
+  const isRow = terminalLayoutState.layout === "row";
+  const increaseKeys = isRow ? ["ArrowRight"] : ["ArrowDown"];
+  const decreaseKeys = isRow ? ["ArrowLeft"] : ["ArrowUp"];
+
+  if (increaseKeys.includes(event.key)) {
+    adjustTerminalLayoutSize(4);
+  } else if (decreaseKeys.includes(event.key)) {
+    adjustTerminalLayoutSize(-4);
+  } else if (event.key === "Home" || event.key === "End") {
+    resetTerminalLayoutSize();
+  } else {
+    return;
+  }
+
+  event.preventDefault();
+  saveTerminalLayoutState();
+}
+
+function adjustTerminalLayoutSize(delta) {
+  const [firstId, secondId] = terminalLayoutState.order;
+  const firstSize = clampToRange(
+    terminalLayoutState.sizes[firstId] + delta,
+    TERMINAL_LAYOUT_MIN_PANEL_SIZE,
+    TERMINAL_LAYOUT_MAX_PANEL_SIZE
+  );
+
+  terminalLayoutState.sizes[firstId] = firstSize;
+  terminalLayoutState.sizes[secondId] = 100 - firstSize;
+  applyTerminalLayout();
+}
+
+function resetTerminalLayoutSize() {
+  terminalLayoutState.sizes.tx = 50;
+  terminalLayoutState.sizes.rx = 50;
+  applyTerminalLayout();
+}
+
+function scheduleTerminalLayoutRefresh() {
+  if (terminalLayoutRefreshFrame) {
+    cancelAnimationFrame(terminalLayoutRefreshFrame);
+  }
+
+  terminalLayoutRefreshFrame = requestAnimationFrame(() => {
+    terminalLayoutRefreshFrame = null;
+    if (oscilloscopeChart) {
+      oscilloscopeChart.resize();
+    }
+  });
 }
 
 /**
@@ -379,7 +749,6 @@ function setUartSessionLocked(locked) {
   uartSessions.forEach((session) => {
     session.classList.toggle("is-locked", !!locked);
     session.setAttribute("aria-disabled", locked ? "true" : "false");
-    session.inert = !!locked;
   });
 }
 
@@ -791,9 +1160,6 @@ async function sendData() {
 
     // Display in terminal
     addToTerminal("sent", displayText, terminalSent);
-
-    // Clear input
-    terminalInput.value = "";
   } catch (error) {
     console.error("Data format error:", error);
     addToTerminal("error", `Data format error: ${error.message}`, terminalSent);
