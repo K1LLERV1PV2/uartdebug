@@ -386,9 +386,11 @@
     if (!section || !btn) return;
 
     const isExpanded = !!expanded;
+    const optionsLabel = isExpanded ? "Hide options" : "More options";
     section.hidden = !isExpanded;
     btn.setAttribute("aria-expanded", String(isExpanded));
-    btn.textContent = isExpanded ? "Hide options" : "More options";
+    btn.setAttribute("aria-label", optionsLabel);
+    btn.textContent = optionsLabel;
     btn.title = isExpanded
       ? "Hide advanced UPDI tools"
       : "Show advanced UPDI tools";

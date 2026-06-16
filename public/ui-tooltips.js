@@ -1,6 +1,7 @@
 (function () {
   const TOOLTIP_ATTR = "data-ui-tooltip";
   const TOOLTIP_SOURCE_ATTR = "data-ui-tooltip-source";
+  const TOOLTIP_SHOW_DELAY_MS = 550;
   const SELECTOR = [
     "[data-tooltip]",
     "[data-ui-tooltip]",
@@ -101,6 +102,13 @@
   }
 
   function getElementVisibleText(element) {
+    if (
+      element instanceof HTMLElement &&
+      Number.parseFloat(window.getComputedStyle(element).fontSize) === 0
+    ) {
+      return "";
+    }
+
     const text =
       element instanceof HTMLElement
         ? element.innerText || element.textContent || ""
@@ -135,7 +143,7 @@
     clearTimeout(showTimer);
     showTimer = window.setTimeout(() => {
       tooltip.classList.add("is-visible");
-    }, 90);
+    }, TOOLTIP_SHOW_DELAY_MS);
   }
 
   function hideTooltip(target) {

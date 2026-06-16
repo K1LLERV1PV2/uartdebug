@@ -418,9 +418,10 @@ body {
 }
 
 .generator-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
 }
 
 .generator-field {
@@ -460,6 +461,78 @@ body {
   appearance: auto;
   -webkit-appearance: menulist;
   -moz-appearance: menulist;
+}
+
+.generator-function-stage {
+  position: relative;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(129, 159, 141, 0.3);
+  border-radius: 12px;
+  background: rgba(39, 174, 96, 0.12);
+}
+
+.generator-function-stage::after {
+  position: absolute;
+  left: 50%;
+  bottom: -13px;
+  width: 2px;
+  height: 13px;
+  border-radius: 999px;
+  background: rgba(129, 159, 141, 0.5);
+  content: "";
+  transform: translateX(-50%);
+}
+
+.generator-function-field {
+  gap: 7px;
+}
+
+.generator-function-field label {
+  color: #46ff78;
+}
+
+.generator-function-field select {
+  min-height: 40px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.generator-dependent-params {
+  position: relative;
+  min-width: 0;
+  padding: 14px 12px 12px;
+  border: 1px solid rgba(129, 159, 141, 0.22);
+  border-radius: 12px;
+  background: rgba(23, 35, 46, 0.36);
+}
+
+.generator-dependent-params::before {
+  position: absolute;
+  left: 50%;
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid rgba(129, 159, 141, 0.38);
+  border-bottom: 1px solid rgba(129, 159, 141, 0.38);
+  background: rgba(23, 35, 46, 0.72);
+  content: "";
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.generator-params-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.generator-dependent-params[data-waveform="square"] {
+  border-color: rgba(70, 255, 120, 0.34);
+}
+
+.generator-dependent-params[data-waveform="square"]::before {
+  border-color: rgba(70, 255, 120, 0.42);
 }
 
 .generator-options {
@@ -1447,7 +1520,7 @@ body {
     justify-content: space-between;
   }
 
-  .generator-grid {
+  .generator-params-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1614,9 +1687,10 @@ body.terminal-page .terminal-device-section {
 
 body.terminal-page .terminal-device-panel {
   display: grid;
-  grid-template-columns: 148px max-content 44px;
+  grid-template-columns: 148px minmax(0, 1fr) 44px;
   align-items: center;
   gap: 18px;
+  min-width: 0;
   min-height: 74px;
   margin: 0;
   padding: 14px 16px;
@@ -1706,12 +1780,13 @@ body.terminal-page .terminal-connect-btn:disabled {
 
 body.terminal-page .terminal-status-lines {
   display: grid;
-  grid-template-columns: auto minmax(260px, 523px) auto 220px;
+  grid-template-columns: auto minmax(180px, 1fr) auto minmax(116px, 150px);
   justify-self: start;
-  width: auto;
-  max-width: min(100%, 820px);
+  width: 100%;
+  max-width: none;
   gap: 8px 6px;
   align-items: center;
+  min-width: 0;
 }
 
 body.terminal-page .terminal-status-label {

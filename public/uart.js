@@ -370,9 +370,6 @@ function applyTerminalLayout() {
       "aria-orientation",
       isRow ? "vertical" : "horizontal"
     );
-    terminalLayoutResizer.title = isRow
-      ? "Drag to resize terminal widths"
-      : "Drag to resize terminal heights";
   }
 
   scheduleTerminalLayoutRefresh();
@@ -1241,7 +1238,11 @@ function updateTxInputPlaceholder() {
 
 function updateGeneratorUi() {
   const dutyField = document.getElementById("genDutyField");
+  const paramsPanel = document.getElementById("generatorDependentParams");
   const waveform = document.getElementById("genWaveform")?.value || "sine";
+  if (paramsPanel) {
+    paramsPanel.dataset.waveform = waveform;
+  }
   if (dutyField) {
     dutyField.style.display = waveform === "square" ? "flex" : "none";
   }
