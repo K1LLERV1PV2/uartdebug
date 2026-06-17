@@ -8,10 +8,10 @@
     <title>UART Terminal - Uart Debug</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <!-- link to global styles and uart specific styles -->
+    <!-- Link global and UART-specific styles. -->
     <link rel="stylesheet" href="uart.css?v=20260617-start-overlay-v1" />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
-    <!-- include Chart.js library -->
+    <!-- Include Chart.js. -->
     <script src="vendor/chart.umd.js"></script>
     <script defer src="ui-tooltips.js?v=20260616-responsive-actions-v1"></script>
     <script defer src="uart.js?v=20260617-start-overlay-v1"></script>
@@ -27,14 +27,14 @@
     </button>
     <main>
       <div class="feature-panel">
-        <!-- Web Serial API support warning -->
+        <!-- Web Serial API support warning. -->
         <div class="api-support-warning" id="apiWarning">
           <strong>Attention:</strong> Your browser does not support the
           Web&nbsp;Serial API. To work with UART you need a modern browser based
           on Chromium (Chrome, Edge, Opera).
         </div>
 
-        <!-- Connection section -->
+        <!-- Connection section. -->
         <section class="uart-section terminal-device-section">
           <div
             class="connection-panel terminal-device-panel"
@@ -93,7 +93,7 @@
               type="button"
               title="Connection settings"
             >
-              <!-- gear icon -->
+              <!-- Settings icon. -->
               <svg
                 width="16"
                 height="16"
@@ -108,7 +108,7 @@
           </div>
         </section>
 
-        <!-- Terminal and oscilloscope section -->
+        <!-- Terminal and oscilloscope section. -->
         <div class="uart-sessions-split" id="uartSessionsSplit">
           <section
             class="uart-section uart-session is-locked"
@@ -567,7 +567,7 @@
           </section>
         </div>
 
-        <!-- Modal dialog for connection settings -->
+        <!-- Connection settings modal. -->
         <div class="modal-overlay" id="settingsModal">
           <div class="modal-content">
             <div class="modal-header">

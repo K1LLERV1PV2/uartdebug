@@ -10,20 +10,20 @@ $S+ @TXD_LOCATION
 	?USART1 PORTA.DIRSET |= PIN1_bm; // 
 $S- @TXD_LOCATION 
 
-// ========================== Condition - условия и параметры
-$P //$I @USART USART0 // поместить в программу
+// ========================== Conditions and parameters
+$P //$I @USART USART0 // Insert into the program.
 $P //$I @USART_LOCATION USART_LOCATION_DEFAULT  
 
 $H #include <xc.h>
 $H #include <stdio.h>
-// ========= добавить сюда скорости, как параметры
+// ========= Add baud rates here as parameters.
 #define BAUD_RATE 115200
 #define CLK_PER 3333333UL // My clock 20 MHz - For the next string
 #define USART_BAUD_RATE (((float) CLK_PER * 64.0 / (16.0 * (float)BAUD_RATE)) + 0.5)
 
-// ========================= Шаблон программы
-$C+   // Начало раздела инициализации
-// This my function is only envelope for other my function - USART0_sendChar(char c)
+// ========================= Program template
+$C+   // Start of the initialization section.
+// This function wraps USART0_sendChar(char c).
 int USART_printChar(char c, FILE *stream) {
     while (!(@USART.STATUS & USART_DREIF_bm)) {
         ;
@@ -41,6 +41,6 @@ void USART_Init(void) {
     @USART.CTRLB |= USART_TXEN_bm;
     stdout = &USART_stream;
 }
-$C- // Завершение раздела инициализации
+$C- // End of the initialization section.
 
-$I USART_Init(); 
+$I USART_Init();

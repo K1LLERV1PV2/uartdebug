@@ -1,36 +1,36 @@
-//`V+ 1.0.0  Место для автоматического заголовка
+//`V+ 1.0.0  Auto-generated header section
 //`V-
-// User code can be plased here
+// User code can be placed here
 
-//`P+   Место для параметров, выбранных пользователем
+//`P+   User-selected parameters section
 //`P-
-// User code can be plased here
+// User code can be placed here
 
-//`D+   Место для Define
+//`D+   Define section
 //`D-
-// User code can be plased here
+// User code can be placed here
 
-//`H+   Место для include
+//`H+   Include section
 //`H-
-// User code can be plased here
+// User code can be placed here
 
-//`C+   Место для описания функций
+//`C+   Function definition section
 //`C-
-// User code can be plased here
+// User code can be placed here
 
 int main(void)
 {
-	//`I+   Место для запуска функций инициализации
+	//`I+   Initialization call section
     USART_Init(); 
 	//`I-
-	// User code can be plased here
+	// User code can be placed here
 	
-	//`Csss   Место для автоматического добавления sei(); 
+	//`Csss   Auto-generated sei() insertion section
 	while(1)
 	{
-		//`C+   Место для запуска функций инициализации
+		//`C+   Loop body section
 		//`C-
-		// User code can be plased here
+		// User code can be placed here
 	}
     return 0;
 }

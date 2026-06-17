@@ -1,4 +1,4 @@
-// c-canvas.js — code canvas with local files, CodeMirror editor, UART connect, and AVR compile->HEX
+// AVR programming canvas with local files, CodeMirror, UART, and XC8 compilation.
 (function () {
   const STORAGE_KEY = "ud_avr_programming_files_v1";
   const STORAGE_CURRENT = "ud_avr_programming_current_v1";
@@ -3648,7 +3648,7 @@ int main(void)
   }
 
   const C_HINT_WORDS = [
-    // ключевые слова
+    // C keywords
     "auto",
     "break",
     "case",
@@ -3683,14 +3683,14 @@ int main(void)
     "void",
     "volatile",
     "while",
-    // типы stdint
+    // stdint types
     "int8_t",
     "int16_t",
     "int32_t",
     "uint8_t",
     "uint16_t",
     "uint32_t",
-    // часто встречающиеся функции
+    // Common functions
     "printf",
     "puts",
     "putchar",
@@ -3705,7 +3705,7 @@ int main(void)
     "labs",
     "rand",
     "srand",
-    // твоё железо/прошивки (примерные хелперы)
+    // MCU and firmware helpers
     "F_CPU",
     "sei",
     "cli",
@@ -3713,24 +3713,24 @@ int main(void)
     "_delay_us",
   ];
 
-  // Регистрируем собственный хинт: словарик + любые слова из файла
+  // Register a custom hint source from the dictionary and current file.
   CodeMirror.registerHelper("hint", "udc", function (cm) {
     const cur = cm.getCursor();
     const line = cm.getLine(cur.line);
     let start = cur.ch,
       end = cur.ch;
 
-    // расширяем слово влево/вправо (латиница, цифры, подчёркивание)
+    // Expand the current word left and right.
     while (start && /[\w_]/.test(line.charAt(start - 1))) start--;
     while (end < line.length && /[\w_]/.test(line.charAt(end))) end++;
 
     const prefix = line.slice(start, cur.ch);
     const lcPref = prefix.toLowerCase();
 
-    // 1) из словарика
+    // Dictionary matches
     const dict = C_HINT_WORDS.filter((w) => w.toLowerCase().startsWith(lcPref));
 
-    // 2) из текущего буфера (anyword)
+    // Current buffer matches
     let any = [];
     try {
       any = (CodeMirror.hint.anyword(cm) || {}).list || [];
@@ -3739,13 +3739,13 @@ int main(void)
       (w) => w && typeof w === "string" && w.toLowerCase().startsWith(lcPref)
     );
 
-    // склеим и удалим дубликаты, кроме точного совпадения с уже набранным префиксом
+    // Merge, deduplicate, and omit the exact typed prefix.
     const seen = new Set();
     const list = []
       .concat(dict, any)
       .filter((w) => w !== prefix)
       .filter((w) => (seen.has(w) ? false : (seen.add(w), true)))
-      .slice(0, 200); // на всякий случай ограничим
+      .slice(0, 200); // Keep the hint list bounded.
 
     return {
       list,
@@ -4291,7 +4291,7 @@ int main(void)
     // Ensure we have a .c file open
     if (!current || !hasFile(current)) {
       await showSiteAlert("No open file.", "Compile");
-      // индикатор ошибки
+      // Mark the HEX status as failed.
       try {
         if (typeof setHexStatus === "function") setHexStatus("error");
       } catch {}

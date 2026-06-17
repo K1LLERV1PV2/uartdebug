@@ -1,6 +1,5 @@
 // compile-server.js
-// Сервис, который принимает C-код и возвращает HEX,
-// собирая всё через Microchip XC8 (xc8-cc) для AVR.
+// Receives C code and returns an AVR HEX file built with Microchip XC8.
 
 const express = require("express");
 const { mkdtemp, writeFile, readFile, rm } = require("fs/promises");
@@ -20,10 +19,16 @@ try {
   );
 }
 
-// Порт как в старой версии, чтобы совпало с nginx-конфигом
+// Keep the legacy port so existing nginx configuration keeps working.
 const PORT = process.env.PORT || 8082;
 const HOST = process.env.HOST || process.env.BIND_HOST || "127.0.0.1";
-const COMPILE_SERVER_VERSION = "20260613-no-backend-fcpu";
+const ALLOWED_ORIGINS = new Set(
+  String(process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
+const COMPILE_SERVER_VERSION = "20260617-security-hardening-v1";
 const MAX_CODE_SIZE = 64 * 1024;
 const MAX_PROJECT_SIZE = 512 * 1024;
 const MAX_PROJECT_FILES = 64;
@@ -40,11 +45,46 @@ const PROJECT_FILE_EXTENSIONS = new Set([
 ]);
 const C_SOURCE_EXTENSIONS = new Set(["c"]);
 const HEADER_EXTENSIONS = new Set(["h", "hpp"]);
+const SUPPORTED_MCUS = new Set([
+  "attiny402",
+  "attiny404",
+  "attiny406",
+  "attiny412",
+  "attiny414",
+  "attiny416",
+  "attiny417",
+  "attiny424",
+  "attiny426",
+  "attiny427",
+  "attiny804",
+  "attiny806",
+  "attiny807",
+  "attiny814",
+  "attiny816",
+  "attiny817",
+  "attiny824",
+  "attiny826",
+  "attiny827",
+  "attiny1604",
+  "attiny1606",
+  "attiny1607",
+  "attiny1614",
+  "attiny1616",
+  "attiny1617",
+  "attiny1624",
+  "attiny1626",
+  "attiny1627",
+  "attiny3216",
+  "attiny3217",
+  "attiny3224",
+  "attiny3226",
+  "attiny3227",
+]);
 
-// Пути к тулзам — можно переопределить переменными окружения
+// Tool paths can be overridden through environment variables.
 const XC8_CC = resolveTool("XC8_CC", "xc8-cc");
 const AVR_OBJCOPY = resolveTool("AVR_OBJCOPY", "avr-objcopy");
-// Путь к DFP для ATtiny (мы распаковывали его сюда)
+// Default ATtiny DFP path.
 const DFP_PATH = process.env.XC8_DFP || "/opt/microchip/dfp/attiny/xc8";
 
 function isExecutable(filePath) {
@@ -100,19 +140,104 @@ function resolveTool(envName, toolName) {
   return getXc8InstallCandidates(toolName).find(isExecutable) || toolName;
 }
 
+app.disable("x-powered-by");
+
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader(
+    "Content-Security-Policy",
+    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+  );
+  next();
+});
+
 app.use(express.json({ limit: "1mb" }));
+
+app.use((err, req, res, next) => {
+  if (err && err.type === "entity.too.large") {
+    return res.status(413).json({
+      ok: false,
+      compile_server_version: COMPILE_SERVER_VERSION,
+      stage: "request",
+      stderr: "Request body is too large.",
+    });
+  }
+
+  if (
+    err instanceof SyntaxError &&
+    Object.prototype.hasOwnProperty.call(err, "body")
+  ) {
+    return res.status(400).json({
+      ok: false,
+      compile_server_version: COMPILE_SERVER_VERSION,
+      stage: "request",
+      stderr: "Invalid JSON request body.",
+    });
+  }
+
+  return next(err);
+});
+
+function rejectCrossSiteApiRequests(req, res, next) {
+  const fetchSite = String(req.get("sec-fetch-site") || "").toLowerCase();
+  if (fetchSite === "cross-site") {
+    return res.status(403).json({
+      ok: false,
+      compile_server_version: COMPILE_SERVER_VERSION,
+      stage: "request",
+      stderr: "Cross-site API requests are not allowed.",
+    });
+  }
+
+  const origin = String(req.get("origin") || "").trim();
+  if (!origin || isAllowedOrigin(origin, req)) {
+    return next();
+  }
+
+  return res.status(403).json({
+    ok: false,
+    compile_server_version: COMPILE_SERVER_VERSION,
+    stage: "request",
+    stderr: "Origin is not allowed.",
+  });
+}
+
+function isAllowedOrigin(origin, req) {
+  if (ALLOWED_ORIGINS.has(origin)) return true;
+
+  try {
+    const originUrl = new URL(origin);
+    const forwardedHost = String(req.get("x-forwarded-host") || "").trim();
+    const host = forwardedHost || String(req.get("host") || "").trim();
+    return !!host && originUrl.host === host;
+  } catch {
+    return false;
+  }
+}
+
+function requireJsonRequest(req, res, next) {
+  if (!req.is("application/json")) {
+    return res.status(415).json({
+      ok: false,
+      compile_server_version: COMPILE_SERVER_VERSION,
+      stage: "request",
+      stderr: "Content-Type must be application/json.",
+    });
+  }
+
+  return next();
+}
+
+app.use("/api/", rejectCrossSiteApiRequests);
 
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const childCwd = opts.cwd || process.cwd();
     const execOpts = {
       ...opts,
-      env: {
-        ...process.env,
-        ...opts.env,
-        PWD: childCwd,
-        OLDPWD: childCwd,
-      },
+      env: buildChildEnv(childCwd, opts.env),
     };
 
     execFile(cmd, args, execOpts, (err, stdout, stderr) => {
@@ -126,16 +251,39 @@ function run(cmd, args, opts = {}) {
   });
 }
 
-function getRunErrorDetails(err, toolName) {
-  let error = err && err.message ? err.message : String(err || "");
-  if (err && err.code === "ENOENT" && toolName) {
-    error = `${toolName} executable was not found. Install Microchip XC8 on the server or set the ${toolName === AVR_OBJCOPY ? "AVR_OBJCOPY" : "XC8_CC"} environment variable.`;
+function buildChildEnv(childCwd, extraEnv = {}) {
+  const env = {};
+
+  for (const [name, value] of Object.entries(process.env)) {
+    if (isSensitiveEnvName(name)) continue;
+    env[name] = value;
   }
 
   return {
-    stdout: (err && err.stdout ? err.stdout : "").toString(),
-    stderr: (err && err.stderr ? err.stderr : "").toString(),
-    error,
+    ...env,
+    ...extraEnv,
+    PWD: childCwd,
+    OLDPWD: childCwd,
+  };
+}
+
+function isSensitiveEnvName(name) {
+  return /(?:TOKEN|SECRET|PASSWORD|PASS|PRIVATE|CREDENTIAL|AUTH|API_?KEY|ACCESS_?KEY)/i.test(
+    String(name || "")
+  );
+}
+
+function getRunErrorDetails(err, toolName, tmpDir = "") {
+  let error = err && err.message ? err.message : String(err || "");
+  if (err && err.code === "ENOENT" && toolName) {
+    const envName = toolName === AVR_OBJCOPY ? "AVR_OBJCOPY" : "XC8_CC";
+    error = `${getToolLabel(toolName)} executable was not found. Install Microchip XC8 on the server or set the ${envName} environment variable.`;
+  }
+
+  return {
+    stdout: sanitizeTextForResponse(err && err.stdout ? err.stdout : "", tmpDir),
+    stderr: sanitizeTextForResponse(err && err.stderr ? err.stderr : "", tmpDir),
+    error: sanitizeTextForResponse(error, tmpDir),
     exit_code: err && Object.prototype.hasOwnProperty.call(err, "code")
       ? err.code
       : null,
@@ -170,6 +318,122 @@ function shellQuote(value) {
     : `"${text.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
+function getToolLabel(toolPath) {
+  const label = path.basename(String(toolPath || ""));
+  return label || String(toolPath || "");
+}
+
+function getDisplayPath(value, tmpDir = "") {
+  const text = String(value);
+  const normalizedTmp = tmpDir ? path.resolve(tmpDir) : "";
+
+  if (normalizedTmp) {
+    const normalizedArg = path.resolve(text);
+    if (
+      normalizedArg === normalizedTmp ||
+      normalizedArg.startsWith(normalizedTmp + path.sep)
+    ) {
+      return path
+        .join("<tmp>", path.relative(normalizedTmp, normalizedArg))
+        .replace(/\\/g, "/");
+    }
+  }
+
+  if (text === DFP_PATH) return "<xc8-dfp>";
+  return text;
+}
+
+function getDisplayArg(arg, tmpDir = "") {
+  const text = String(arg);
+
+  if (text.startsWith("-I")) {
+    const includePath = text.slice(2);
+    return `-I${getDisplayPath(includePath, tmpDir)}`;
+  }
+
+  const displayPath = getDisplayPath(text, tmpDir);
+  if (displayPath !== text) return displayPath;
+
+  if (text === `-mdfp=${DFP_PATH}`) return "-mdfp=<xc8-dfp>";
+  return text;
+}
+
+function getDisplayCommand(toolPath, args, tmpDir = "") {
+  return [
+    getToolLabel(toolPath),
+    ...args.map((arg) => getDisplayArg(arg, tmpDir)),
+  ]
+    .map(shellQuote)
+    .join(" ");
+}
+
+function sanitizeTextForResponse(value, tmpDir = "") {
+  let text = String(value || "");
+  const replacements = [
+    [tmpDir ? path.resolve(tmpDir) : "", "<tmp>"],
+    [DFP_PATH, "<xc8-dfp>"],
+    [XC8_CC, getToolLabel(XC8_CC)],
+    [AVR_OBJCOPY, getToolLabel(AVR_OBJCOPY)],
+  ];
+
+  for (const [needle, replacement] of replacements) {
+    if (!needle) continue;
+    text = text.split(needle).join(replacement);
+  }
+
+  return text;
+}
+
+function normalizeMcu(rawMcu) {
+  const mcu =
+    typeof rawMcu === "string" && rawMcu.trim().length > 0
+      ? rawMcu.trim().toLowerCase()
+      : "attiny1624";
+
+  return SUPPORTED_MCUS.has(mcu) ? mcu : "";
+}
+
+function normalizeIncludePath(includePath) {
+  return String(includePath || "").trim().replace(/\\/g, "/");
+}
+
+function isUnsafeIncludePath(includePath) {
+  const normalized = normalizeIncludePath(includePath);
+  if (!normalized) return true;
+  if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) return true;
+  return normalized.split("/").includes("..");
+}
+
+function findUnsafeInclude(sourceText) {
+  const includeDirective = /^\s*#\s*(?:include|include_next|import)\s+(.+)$/gm;
+  const asmIncludeDirective = /^\s*\.include\s+["']([^"']+)["']/gim;
+  let match;
+
+  while ((match = includeDirective.exec(sourceText || ""))) {
+    const operand = String(match[1] || "").trim();
+    const pathMatch = operand.match(/^([<"])([^>"]+)[>"]/);
+    if (!pathMatch) {
+      return operand || "<macro include>";
+    }
+    if (isUnsafeIncludePath(pathMatch[2])) return pathMatch[2];
+  }
+
+  while ((match = asmIncludeDirective.exec(sourceText || ""))) {
+    if (isUnsafeIncludePath(match[1])) return match[1];
+  }
+
+  return "";
+}
+
+function assertSafeProjectSource(fileName, content) {
+  const unsafeInclude = findUnsafeInclude(content);
+  if (!unsafeInclude) return;
+
+  throw new Error(
+    `File "${fileName}" uses disallowed include path "${unsafeInclude}". Use project file names or compiler-provided headers only.`
+  );
+}
+
 function normalizeProjectFiles(rawFiles, entryName, entryCode) {
   const projectFiles = new Map();
   let totalSize = 0;
@@ -182,6 +446,7 @@ function normalizeProjectFiles(rawFiles, entryName, entryCode) {
     if (content.length > MAX_CODE_SIZE) {
       throw new Error(`File "${safeName}" is too large.`);
     }
+    assertSafeProjectSource(safeName, content);
 
     totalSize += content.length;
     if (totalSize > MAX_PROJECT_SIZE) {
@@ -208,6 +473,7 @@ function normalizeProjectFiles(rawFiles, entryName, entryCode) {
   }
 
   const normalizedEntryCode = String(entryCode || "").replace(/\r\n/g, "\n");
+  assertSafeProjectSource(entryName, normalizedEntryCode);
   const previousEntryCode = projectFiles.get(entryName);
   if (previousEntryCode == null) {
     totalSize += normalizedEntryCode.length;
@@ -304,7 +570,7 @@ function buildCompilePlan(entryName, projectFiles) {
   };
 }
 
-app.post("/api/avr/compile", async (req, res) => {
+app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
   let tmp = "";
 
   try {
@@ -319,10 +585,15 @@ app.post("/api/avr/compile", async (req, res) => {
 
     const safeName = normalizeProjectFileName(filename) || "main.c";
 
-    const MCU =
-      typeof mcu === "string" && mcu.trim().length > 0
-        ? mcu.trim()
-        : "attiny1624";
+    const MCU = normalizeMcu(mcu);
+    if (!MCU) {
+      return res.status(400).json({
+        ok: false,
+        compile_server_version: COMPILE_SERVER_VERSION,
+        stage: "request",
+        stderr: "Unsupported MCU target.",
+      });
+    }
 
     const requestedOptimize =
       typeof optimize === "string" ? optimize.trim() : "";
@@ -351,9 +622,7 @@ app.post("/api/avr/compile", async (req, res) => {
       await writeFile(path.join(tmp, fileName), content, "utf8");
     }
 
-    // --- Компиляция xc8-cc ---
-    // По мануалу для AVR-версии XC8 нужно:
-    //   xc8-cc -mcpu=<device> -mdfp=<путь-к-dfp> ... :contentReference[oaicite:0]{index=0}
+    // XC8 for AVR expects -mcpu=<device> and -mdfp=<dfp-path>.
     const commonCompileArgs = [
       `-mcpu=${MCU}`,
       `-mdfp=${DFP_PATH}`,
@@ -385,7 +654,7 @@ app.post("/api/avr/compile", async (req, res) => {
         "-o",
         file.objectPath,
       ];
-      const cmd = [XC8_CC, ...args].map(shellQuote).join(" ");
+      const cmd = getDisplayCommand(XC8_CC, args, tmp);
       compileCommands.push(cmd);
 
       try {
@@ -401,13 +670,13 @@ app.post("/api/avr/compile", async (req, res) => {
           ok: false,
           compile_server_version: COMPILE_SERVER_VERSION,
           stage: "compile",
-          compiler: XC8_CC,
+          compiler: getToolLabel(XC8_CC),
           failed_file: file.sourceName,
           cmd,
           commands: compileCommands,
           compiled_files: compilePlan.compileSourceNames,
           project_files: compilePlan.requiredFiles,
-          ...getRunErrorDetails(err, XC8_CC),
+          ...getRunErrorDetails(err, XC8_CC, tmp),
         });
       }
     }
@@ -418,7 +687,7 @@ app.post("/api/avr/compile", async (req, res) => {
       "-o",
       elfPath,
     ];
-    const linkCommand = [XC8_CC, ...linkArgs].map(shellQuote).join(" ");
+    const linkCommand = getDisplayCommand(XC8_CC, linkArgs, tmp);
     compileCommands.push(linkCommand);
 
     try {
@@ -434,16 +703,15 @@ app.post("/api/avr/compile", async (req, res) => {
         ok: false,
         compile_server_version: COMPILE_SERVER_VERSION,
         stage: "link",
-        compiler: XC8_CC,
+        compiler: getToolLabel(XC8_CC),
         cmd: linkCommand,
         commands: compileCommands,
         compiled_files: compilePlan.compileSourceNames,
         project_files: compilePlan.requiredFiles,
-        ...getRunErrorDetails(err, XC8_CC),
+        ...getRunErrorDetails(err, XC8_CC, tmp),
       });
     }
 
-    // --- ELF -> HEX ---
     const objcopyArgs = ["-O", "ihex", elfPath, hexPath];
 
     try {
@@ -454,11 +722,11 @@ app.post("/api/avr/compile", async (req, res) => {
         ok: false,
         compile_server_version: COMPILE_SERVER_VERSION,
         stage: "objcopy",
-        tool: AVR_OBJCOPY,
-        cmd: [AVR_OBJCOPY, ...objcopyArgs].map(shellQuote).join(" "),
+        tool: getToolLabel(AVR_OBJCOPY),
+        cmd: getDisplayCommand(AVR_OBJCOPY, objcopyArgs, tmp),
         compiled_files: compilePlan.compileSourceNames,
         project_files: compilePlan.requiredFiles,
-        ...getRunErrorDetails(err, AVR_OBJCOPY),
+        ...getRunErrorDetails(err, AVR_OBJCOPY, tmp),
       });
     }
 
@@ -470,13 +738,13 @@ app.post("/api/avr/compile", async (req, res) => {
       compile_server_version: COMPILE_SERVER_VERSION,
       hex,
       hex_name: safeName.replace(/\.c$/i, "") + ".hex",
-      compiler: XC8_CC,
+      compiler: getToolLabel(XC8_CC),
       mcu: MCU,
       optimize: OPT,
       compiled_files: compilePlan.compileSourceNames,
       project_files: compilePlan.requiredFiles,
-      compile_stdout: compileStdout,
-      compile_stderr: compileStderr,
+      compile_stdout: sanitizeTextForResponse(compileStdout, tmp),
+      compile_stderr: sanitizeTextForResponse(compileStderr, tmp),
     });
   } catch (e) {
     if (tmp) {
@@ -491,16 +759,7 @@ app.post("/api/avr/compile", async (req, res) => {
 });
 
 app.get("/health", (req, res) =>
-  res
-    .type("text/plain")
-    .send(
-      [
-        `ok ${COMPILE_SERVER_VERSION}`,
-        `xc8_cc=${XC8_CC}`,
-        `avr_objcopy=${AVR_OBJCOPY}`,
-        `xc8_dfp=${DFP_PATH}`,
-      ].join("\n")
-    )
+  res.type("text/plain").send(`ok ${COMPILE_SERVER_VERSION}\n`)
 );
 
 app.listen(PORT, HOST, () => {

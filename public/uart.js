@@ -1114,7 +1114,7 @@ function handleReceivedData(data) {
 }
 
 function rxAppend(chunk) {
-  // Склеиваем Uint8Array без мутаций исходников
+  // Merge Uint8Array chunks without mutating the original buffers.
   const merged = new Uint8Array(rxBuffer.length + chunk.length);
   merged.set(rxBuffer, 0);
   merged.set(chunk, rxBuffer.length);
@@ -1124,22 +1124,21 @@ function rxAppend(chunk) {
 function flushRxBufferToTerminal() {
   if (!rxBuffer || rxBuffer.length === 0) return;
 
-  // Определяем текущий режим отображения RxD
+  // Resolve the current RxD display mode.
   const inputMode = getRxMode();
 
   if (inputMode === "hex") {
-    // HEX: весь буфер одной строкой
+    // HEX: render the whole buffer as one line.
     const hexString = formatHexData(rxBuffer);
     addToTerminal("received", hexString, terminalReceived);
   } else {
-    // ASCII: декодируем целиком, CR/LF будут отрисованы красиво внутри addToTerminal
-    // (addToTerminal уже вызывает visualizeCRLFWithBreaks)
+    // ASCII: decode the full buffer; addToTerminal renders CR/LF visibly.
     const decoder = new TextDecoder();
     const text = decoder.decode(rxBuffer);
     addToTerminal("received", text, terminalReceived);
   }
 
-  // Очистка
+  // Clear the receive buffer.
   rxBuffer = new Uint8Array(0);
   rxFlushTimer = null;
 }
@@ -1221,8 +1220,8 @@ function formatTimeWithMs(date = new Date()) {
 
 function visualizeCRLFWithBreaks(str) {
   return str
-    .replace(/\r/g, "\\r\r") // видимая "\r" + реальная \r (на экране эффекта не даст)
-    .replace(/\n/g, "\\n\n"); // видимая "\n" + реальный перенос
+    .replace(/\r/g, "\\r\r") // Visible "\r" plus the original carriage return.
+    .replace(/\n/g, "\\n\n"); // Visible "\n" plus the original line break.
 }
 
 function addToTerminal(type, data, targetTerminal) {
@@ -2265,7 +2264,7 @@ window.addEventListener("beforeunload", async function (e) {
  * Start loop sending
  */
 function startLoopSend() {
-  // Проверяем, что есть что отправлять
+  // Make sure there is data to send.
   const inputValue = terminalInput.value.trim();
 
   if (txView === "generator") {
@@ -2278,13 +2277,13 @@ function startLoopSend() {
     return;
   }
 
-  // Получаем интервал из поля ввода
+  // Read the interval from the input.
   const intervalMs = getNormalizedLoopIntervalMs(TX_TEXT_INTERVAL_MS);
 
-  // Отправляем первый раз сразу
+  // Send once immediately.
   sendDataLoop();
 
-  // Запускаем интервал
+  // Start the repeating send timer.
   loopInterval = setInterval(() => {
     sendDataLoop();
   }, intervalMs);
@@ -2498,7 +2497,7 @@ async function sendDataLoop() {
       const encoder = new TextEncoder();
       const textWithLineEnding = inputValue + "\r\n";
       dataToSend = encoder.encode(textWithLineEnding);
-      // Не применяем visualizeCRLFWithBreaks здесь - это делается в addToTerminal
+      // addToTerminal applies visualizeCRLFWithBreaks.
       displayText = textWithLineEnding;
     }
 
@@ -2512,11 +2511,11 @@ async function sendDataLoop() {
       addToTerminal("sent", displayText, terminalSent);
     }
 
-    // НЕ очищаем поле ввода при циклической отправке
+    // Keep the input intact during loop sending.
   } catch (error) {
     console.error("Send error:", error);
     addToTerminal("error", `Send failed: ${error.message}`, terminalSent);
-    stopLoopSend(); // Останавливаем цикл при ошибке
+    stopLoopSend(); // Stop the loop on send errors.
   }
 }
 
