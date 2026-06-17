@@ -9,14 +9,22 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <!-- link to global styles and uart specific styles -->
-    <link rel="stylesheet" href="uart.css?v=20260616-contained-fields-v1" />
+    <link rel="stylesheet" href="uart.css?v=20260617-start-overlay-v1" />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
     <!-- include Chart.js library -->
     <script src="vendor/chart.umd.js"></script>
     <script defer src="ui-tooltips.js?v=20260616-responsive-actions-v1"></script>
-    <script defer src="uart.js?v=20260616-generator-hierarchy-v1"></script>
+    <script defer src="uart.js?v=20260617-start-overlay-v1"></script>
   </head>
   <body class="terminal-page">
+    <button
+      class="terminal-start-overlay"
+      id="terminalStartOverlay"
+      type="button"
+      aria-label="Click to start"
+    >
+      <span>Click to start</span>
+    </button>
     <main>
       <div class="feature-panel">
         <!-- Web Serial API support warning -->

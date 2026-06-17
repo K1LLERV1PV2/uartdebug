@@ -87,6 +87,7 @@ let terminalLayoutState = {
 let terminalLayoutDrag = null;
 let terminalLayoutResize = null;
 let terminalLayoutRefreshFrame = null;
+let terminalStartOverlay = null;
 
 // Initialize on page load
 document.addEventListener("DOMContentLoaded", function () {
@@ -134,6 +135,7 @@ function initializeElements() {
   oscilloscopeCanvas = document.getElementById("oscilloscopeCanvas");
   oscilloscopeContainer = document.getElementById("oscilloscopeContainer");
   cycleCheckbox = document.getElementById("cycleCheckbox");
+  terminalStartOverlay = document.getElementById("terminalStartOverlay");
   uartSessions = Array.from(document.querySelectorAll(".uart-session"));
 }
 
@@ -143,6 +145,7 @@ function initializeElements() {
 function initializeEventListeners() {
   // Connection button
   connectBtn.addEventListener("click", toggleConnection);
+  terminalStartOverlay?.addEventListener("click", handleTerminalStart);
 
   // Run/Stop button and input
   sendBtn.addEventListener("click", handleRunAction);
@@ -615,12 +618,29 @@ function scheduleTerminalLayoutRefresh() {
 function checkWebSerialSupport() {
   if (!("serial" in navigator)) {
     document.getElementById("apiWarning").classList.add("show");
+    hideTerminalStartOverlay();
     connectBtn.disabled = true;
     updateConnectButtonLabels("Unavailable", "Web Serial unavailable");
     sendBtn.disabled = true;
     if (receiveToggleBtn) receiveToggleBtn.disabled = true;
     terminalInput.disabled = true;
   }
+}
+
+function hideTerminalStartOverlay() {
+  if (!terminalStartOverlay) return;
+  terminalStartOverlay.hidden = true;
+}
+
+function handleTerminalStart(event) {
+  event.preventDefault();
+  hideTerminalStartOverlay();
+
+  if (!("serial" in navigator) || port || !connectBtn || connectBtn.disabled) {
+    return;
+  }
+
+  connectSerial({ quietPortSelectionErrors: true });
 }
 
 /**
@@ -634,13 +654,34 @@ async function toggleConnection() {
   }
 }
 
+function isSerialPortSelectionDismissed(error) {
+  const name = error?.name || "";
+  const message = String(error?.message || error || "");
+  return (
+    name === "NotFoundError" ||
+    name === "NotAllowedError" ||
+    name === "SecurityError" ||
+    /user activation|user gesture|permission request|cancel/i.test(message)
+  );
+}
+
 /**
  * Connect to serial port
  */
-async function connectSerial() {
+async function connectSerial({ quietPortSelectionErrors = false } = {}) {
+  let selectedPort = null;
+
   try {
-    // Get port selection from user
-    port = await navigator.serial.requestPort();
+    selectedPort = await navigator.serial.requestPort();
+  } catch (error) {
+    if (!quietPortSelectionErrors || !isSerialPortSelectionDismissed(error)) {
+      console.error("Connection error:", error);
+    }
+    return false;
+  }
+
+  try {
+    port = selectedPort;
 
     // Get connection parameters with safe defaults
     const baudRate = parseInt(
@@ -674,9 +715,12 @@ async function connectSerial() {
 
     // Start reading
     readLoop();
+    return true;
   } catch (error) {
+    port = null;
     console.error("Connection error:", error);
     // addToTerminal('error', `Connection failed: ${error.message}`, terminalSent);
+    return false;
   }
 }
 

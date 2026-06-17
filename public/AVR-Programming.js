@@ -2093,7 +2093,7 @@ int main(void)
     modal.hidden = false;
 
     requestAnimationFrame(() => {
-      const primaryAction = $("createNewFileCard");
+      const primaryAction = $("uploadExistingFileCard");
       primaryAction && primaryAction.focus();
     });
   }
@@ -3094,7 +3094,7 @@ int main(void)
     const newRow = document.createElement("div");
     newRow.className = "file-item new-item";
     newRow.dataset.outlinerIcon = "+";
-    newRow.title = "Create new file";
+    newRow.title = "Add file";
 
     if (inlineFileEdit && inlineFileEdit.mode === "create") {
       newRow.classList.add("active", "editing");
@@ -3256,7 +3256,7 @@ int main(void)
     const newRow = document.createElement("div");
     newRow.className = "file-item new-item";
     newRow.dataset.outlinerIcon = "+";
-    newRow.title = "Create new file";
+    newRow.title = "Add file";
 
     if (inlineFileEdit && inlineFileEdit.mode === "create") {
       newRow.classList.add("active", "editing");
@@ -3975,7 +3975,6 @@ int main(void)
       const fileUploadInput = $("fileUploadInput");
       const fileAddModal = $("fileAddModal");
       const fileAddCloseBtn = $("fileAddCloseBtn");
-      const createNewFileCard = $("createNewFileCard");
       const uploadExistingFileCard = $("uploadExistingFileCard");
       const createNewGroupCard = $("createNewGroupCard");
       const fileTemplateGrid = $("fileTemplateGrid");
@@ -4007,11 +4006,6 @@ int main(void)
       programHexBtn && programHexBtn.addEventListener("click", handleFlashCurrent);
       moreOptionsBtn && moreOptionsBtn.addEventListener("click", toggleMoreOptions);
     fileAddCloseBtn && fileAddCloseBtn.addEventListener("click", closeAddFileModal);
-    createNewFileCard &&
-      createNewFileCard.addEventListener("click", () => {
-        closeAddFileModal();
-        newCanvas();
-      });
     createNewGroupCard &&
       createNewGroupCard.addEventListener("click", () => {
         closeAddFileModal();
