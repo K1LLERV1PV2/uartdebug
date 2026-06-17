@@ -1687,7 +1687,7 @@ body.terminal-page .terminal-device-section {
 
 body.terminal-page .terminal-device-panel {
   display: grid;
-  grid-template-columns: 148px minmax(0, 1fr) 44px;
+  grid-template-columns: 148px minmax(0, max-content) 44px;
   align-items: center;
   gap: 18px;
   min-width: 0;
@@ -1782,8 +1782,8 @@ body.terminal-page .terminal-status-lines {
   display: grid;
   grid-template-columns: auto minmax(180px, 1fr) auto minmax(116px, 150px);
   justify-self: start;
-  width: 100%;
-  max-width: none;
+  width: 575px;
+  max-width: 100%;
   gap: 8px 6px;
   align-items: center;
   min-width: 0;

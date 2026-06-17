@@ -3,6 +3,7 @@
   const STORAGE_KEY = "ud_avr_programming_files_v1";
   const STORAGE_CURRENT = "ud_avr_programming_current_v1";
   const STORAGE_GROUPS = "ud_avr_programming_file_groups_v1";
+  const STORAGE_OUTLINER_WIDTH = "ud_avr_programming_outliner_width_v1";
   const LEGACY_STORAGE_KEY = "ud_c_canvas_files_v1";
   const LEGACY_STORAGE_CURRENT = "ud_c_canvas_current_v1";
   const AVR_UPDI_RUNTIME_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI__";
@@ -11,6 +12,12 @@
   const LEGACY_UPDI_BRIDGE_KEY = "__UARTDEBUG_CANVAS_UPDI_BRIDGE__";
   const AVR_SERIAL_STATE_EVENT = "ud-avr-programming-serial-state";
   const LEGACY_SERIAL_STATE_EVENT = "ud-canvas-serial-state";
+  const OUTLINER_DEFAULT_WIDTH = 305;
+  const OUTLINER_COMPACT_WIDTH = 62;
+  const OUTLINER_COMPACT_THRESHOLD = 112;
+  const OUTLINER_MIN_EXPANDED_WIDTH = 180;
+  const OUTLINER_MAX_WIDTH = 460;
+  const OUTLINER_EDITOR_MIN_WIDTH = 420;
 
   const $ = (id) => document.getElementById(id);
 
@@ -23,6 +30,8 @@
   let contextMenuFile = null;
   let contextMenuGroup = null;
   let inlineFileEdit = null;
+  let outlinerWidth = OUTLINER_DEFAULT_WIDTH;
+  let outlinerResizeState = null;
   let siteDialogResolve = null;
   const EDITOR_FILE_EXTENSIONS = new Set([
     "c",
@@ -2292,9 +2301,175 @@ int main(void)
     row.appendChild(editorWrap);
   }
 
+  function getCanvasSplitContainer() {
+    return document.querySelector(".canvas-split-container");
+  }
+
+  function getOutlinerMaxWidth() {
+    const container = getCanvasSplitContainer();
+    if (!container) return OUTLINER_MAX_WIDTH;
+
+    const rect = container.getBoundingClientRect();
+    const available = rect.width - OUTLINER_EDITOR_MIN_WIDTH;
+    return Math.max(
+      OUTLINER_MIN_EXPANDED_WIDTH,
+      Math.min(OUTLINER_MAX_WIDTH, available)
+    );
+  }
+
+  function normalizeOutlinerWidth(width) {
+    const numeric = Number(width);
+    if (!Number.isFinite(numeric)) return OUTLINER_DEFAULT_WIDTH;
+    if (numeric <= OUTLINER_COMPACT_THRESHOLD) return OUTLINER_COMPACT_WIDTH;
+    return Math.max(
+      OUTLINER_MIN_EXPANDED_WIDTH,
+      Math.min(getOutlinerMaxWidth(), numeric)
+    );
+  }
+
+  function persistOutlinerWidth(width) {
+    try {
+      localStorage.setItem(STORAGE_OUTLINER_WIDTH, String(width));
+    } catch (error) {
+      console.warn("Failed to persist file list width:", error);
+    }
+  }
+
+  function refreshEditorAfterOutlinerResize() {
+    if (!editor) return;
+    window.requestAnimationFrame(() => editor.refresh());
+  }
+
+  function applyOutlinerWidth(width, { persist = true } = {}) {
+    const container = getCanvasSplitContainer();
+    const normalized = normalizeOutlinerWidth(width);
+    outlinerWidth = normalized;
+
+    if (container) {
+      const isCompact = normalized <= OUTLINER_COMPACT_THRESHOLD;
+      container.style.setProperty("--outliner-width", `${normalized}px`);
+      container.classList.toggle("is-outliner-compact", isCompact);
+    }
+
+    const resizer = $("fileListResizer");
+    if (resizer) {
+      resizer.setAttribute("aria-valuemin", String(OUTLINER_COMPACT_WIDTH));
+      resizer.setAttribute("aria-valuemax", String(getOutlinerMaxWidth()));
+      resizer.setAttribute("aria-valuenow", String(normalized));
+    }
+
+    if (persist) persistOutlinerWidth(normalized);
+    refreshEditorAfterOutlinerResize();
+  }
+
+  function restoreOutlinerWidth() {
+    let stored = OUTLINER_DEFAULT_WIDTH;
+    try {
+      const raw = localStorage.getItem(STORAGE_OUTLINER_WIDTH);
+      stored = raw === null ? OUTLINER_DEFAULT_WIDTH : Number(raw);
+    } catch (error) {
+      console.warn("Failed to restore file list width:", error);
+    }
+    applyOutlinerWidth(Number.isFinite(stored) ? stored : OUTLINER_DEFAULT_WIDTH, {
+      persist: false,
+    });
+  }
+
+  function expandOutlinerForEditing() {
+    if (outlinerWidth <= OUTLINER_COMPACT_THRESHOLD) {
+      applyOutlinerWidth(OUTLINER_DEFAULT_WIDTH);
+    }
+  }
+
+  function bindFileListResizer() {
+    const resizer = $("fileListResizer");
+    const container = getCanvasSplitContainer();
+    if (!resizer || !container) return;
+
+    const finishResize = (event) => {
+      if (!outlinerResizeState) return;
+      resizer.releasePointerCapture?.(outlinerResizeState.pointerId);
+      outlinerResizeState = null;
+      container.classList.remove("is-outliner-resizing");
+      document.body.classList.remove("is-outliner-resizing");
+      applyOutlinerWidth(outlinerWidth);
+      event?.preventDefault?.();
+    };
+
+    resizer.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      outlinerResizeState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startWidth: outlinerWidth,
+      };
+      resizer.setPointerCapture?.(event.pointerId);
+      container.classList.add("is-outliner-resizing");
+      document.body.classList.add("is-outliner-resizing");
+    });
+
+    resizer.addEventListener("pointermove", (event) => {
+      if (!outlinerResizeState) return;
+      event.preventDefault();
+      const nextWidth =
+        outlinerResizeState.startWidth + event.clientX - outlinerResizeState.startX;
+      applyOutlinerWidth(nextWidth, { persist: false });
+    });
+
+    resizer.addEventListener("pointerup", finishResize);
+    resizer.addEventListener("pointercancel", finishResize);
+
+    resizer.addEventListener("keydown", (event) => {
+      const step = event.shiftKey ? 48 : 24;
+      let nextWidth = outlinerWidth;
+
+      if (event.key === "ArrowLeft") {
+        nextWidth -= step;
+      } else if (event.key === "ArrowRight") {
+        nextWidth =
+          outlinerWidth <= OUTLINER_COMPACT_THRESHOLD
+            ? OUTLINER_MIN_EXPANDED_WIDTH
+            : outlinerWidth + step;
+      } else if (event.key === "Home") {
+        nextWidth = OUTLINER_COMPACT_WIDTH;
+      } else if (event.key === "End") {
+        nextWidth = OUTLINER_DEFAULT_WIDTH;
+      } else {
+        return;
+      }
+
+      event.preventDefault();
+      applyOutlinerWidth(nextWidth);
+    });
+
+    applyOutlinerWidth(outlinerWidth, { persist: false });
+  }
+
+  function getOutlinerFileKind(fileName) {
+    const ext = String(fileName || "").split(".").pop().toLowerCase();
+    if (["c", "cpp", "cc", "ino"].includes(ext)) return "c";
+    if (["h", "hpp"].includes(ext)) return "h";
+    if (["s", "asm"].includes(ext)) return "asm";
+    if (["hex", "ihex"].includes(ext)) return "hex";
+    if (ext === "txt") return "txt";
+    return "file";
+  }
+
+  function getOutlinerFileIcon(fileName) {
+    const kind = getOutlinerFileKind(fileName);
+    if (kind === "c") return "C";
+    if (kind === "h") return "H";
+    if (kind === "asm") return "ASM";
+    if (kind === "hex") return "HEX";
+    if (kind === "txt") return "TXT";
+    return "F";
+  }
+
   function startInlineCreate() {
     closeFileContextMenu();
     closeAddFileModal();
+    expandOutlinerForEditing();
     inlineFileEdit = {
       mode: "create",
       value: uniqueName("main.c"),
@@ -2307,6 +2482,7 @@ int main(void)
   function startInlineCreateGroup() {
     closeFileContextMenu();
     closeAddFileModal();
+    expandOutlinerForEditing();
     inlineFileEdit = {
       mode: "create-group",
       value: uniqueGroupName("New group"),
@@ -2320,6 +2496,7 @@ int main(void)
     if (!hasFile(fileName)) return;
     closeFileContextMenu();
     closeAddFileModal();
+    expandOutlinerForEditing();
     inlineFileEdit = {
       mode: "rename",
       originalName: fileName,
@@ -2334,6 +2511,7 @@ int main(void)
     if (!hasGroup(groupName)) return;
     closeFileContextMenu();
     closeAddFileModal();
+    expandOutlinerForEditing();
     inlineFileEdit = {
       mode: "rename-group",
       originalName: groupName,
@@ -2635,7 +2813,10 @@ int main(void)
     const row = document.createElement("div");
     row.className = "file-item";
     row.dataset.file = name;
+    row.dataset.fileKind = getOutlinerFileKind(name);
+    row.dataset.outlinerIcon = getOutlinerFileIcon(name);
     row.draggable = true;
+    row.title = name;
     row.style.setProperty("--outliner-depth", String(depth));
 
     if (groupName) {
@@ -2763,7 +2944,9 @@ int main(void)
     const row = document.createElement("div");
     row.className = "file-item file-group";
     row.dataset.group = groupName;
+    row.dataset.outlinerIcon = "";
     row.draggable = true;
+    row.title = groupName;
     row.style.setProperty("--outliner-depth", String(depth));
 
     const group = fileGroups[groupName];
@@ -2910,6 +3093,7 @@ int main(void)
 
     const newRow = document.createElement("div");
     newRow.className = "file-item new-item";
+    newRow.dataset.outlinerIcon = "+";
     newRow.title = "Create new file";
 
     if (inlineFileEdit && inlineFileEdit.mode === "create") {
@@ -3071,6 +3255,7 @@ int main(void)
 
     const newRow = document.createElement("div");
     newRow.className = "file-item new-item";
+    newRow.dataset.outlinerIcon = "+";
     newRow.title = "Create new file";
 
     if (inlineFileEdit && inlineFileEdit.mode === "create") {
@@ -3093,6 +3278,7 @@ int main(void)
     if (inlineFileEdit && inlineFileEdit.mode === "create-group") {
       const groupRow = document.createElement("div");
       groupRow.className = "file-item file-group editing";
+      groupRow.dataset.outlinerIcon = "";
       renderInlineFileInput(groupRow, inlineFileEdit);
       list.appendChild(groupRow);
     }
@@ -3801,6 +3987,7 @@ int main(void)
 
     initCustomSelect(mcuSelect);
     bindOutlinerDropZone();
+    bindFileListResizer();
     newBtn && newBtn.addEventListener("click", startInlineCreate);
     renameBtn &&
       renameBtn.addEventListener("click", () => current && renameFile(current));
@@ -4478,6 +4665,7 @@ int main(void)
   function boot() {
     loadState();
     ensureAtLeastOneFile();
+    restoreOutlinerWidth();
     renderOutliner();
     if (!current) current = Object.keys(files)[0];
     initUpdiBridge();
