@@ -929,9 +929,9 @@ body.is-outliner-resizing * {
 }
 
 .avr-action-strip #compileBtn {
-  flex: 1 1 184px;
-  min-width: 150px;
-  max-width: 240px;
+  flex: 0 0 116px;
+  min-width: 104px;
+  max-width: 124px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1666,6 +1666,17 @@ body.is-outliner-resizing * {
   gap: 12px;
 }
 
+.file-add-options .file-add-card {
+  align-items: center;
+  justify-content: center;
+  min-height: 58px;
+  text-align: center;
+}
+
+.file-add-options .file-add-card-title {
+  text-align: center;
+}
+
 .file-add-template-section {
   margin-top: 16px;
   padding-top: 14px;
@@ -1680,6 +1691,11 @@ body.is-outliner-resizing * {
   line-height: 1;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+#fileTemplatesTitle {
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .file-template-grid {
@@ -2006,6 +2022,82 @@ body.is-outliner-resizing * {
   justify-content: flex-end;
   gap: 10px;
   padding: 0 18px 18px;
+}
+
+.updi-options-card {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, calc(100vw - 40px));
+  max-height: min(86vh, 760px);
+  border-color: rgba(129, 159, 141, 0.24);
+  background: var(--avr-window-bg);
+  color: var(--avr-text);
+  box-shadow: 0 20px 60px rgba(7, 13, 20, 0.32);
+}
+
+.updi-options-card:focus {
+  outline: none;
+}
+
+.updi-options-modal {
+  background: rgba(7, 13, 20, 0.68);
+  backdrop-filter: blur(8px);
+}
+
+.updi-options-header {
+  flex: 0 0 auto;
+  min-height: 62px;
+  padding: 16px 18px;
+  border-bottom-color: rgba(129, 159, 141, 0.24);
+}
+
+.updi-options-header .editor-title {
+  margin: 0;
+  color: var(--avr-border-hot);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.updi-options-modal .site-dialog-close {
+  width: 36px;
+  height: 36px;
+  border-color: rgba(129, 159, 141, 0.24);
+  background: rgba(39, 174, 96, 0.1);
+  color: var(--avr-text-soft);
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.updi-options-modal .site-dialog-close:hover,
+.updi-options-modal .site-dialog-close:focus-visible {
+  border-color: var(--avr-border-hover);
+  background: var(--avr-surface-strong);
+  color: var(--avr-text);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.updi-options-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+}
+
+.updi-options-modal .updi-layout {
+  gap: 14px;
+  grid-template-columns: minmax(280px, 0.78fr) minmax(0, 1.22fr);
+}
+
+.updi-options-modal .updi-pane-body-frame,
+.updi-options-modal .probe-log-frame {
+  height: clamp(300px, 48vh, 440px);
 }
 
 .api-support-warning {
@@ -2365,8 +2457,9 @@ body.is-outliner-resizing * {
   }
 
   .avr-action-strip #compileBtn {
-    min-width: 136px;
-    max-width: 210px;
+    flex-basis: 112px;
+    min-width: 104px;
+    max-width: 120px;
     padding-inline: 14px;
   }
 
@@ -2475,6 +2568,12 @@ body.is-outliner-resizing * {
     flex: 1 1 180px;
   }
 
+  .avr-action-strip #compileBtn {
+    flex: 0 0 116px;
+    min-width: 104px;
+    max-width: 124px;
+  }
+
   .avr-action-strip #programHexBtn,
   .avr-action-strip #moreOptionsBtn {
     width: auto !important;
@@ -2495,6 +2594,16 @@ body.is-outliner-resizing * {
 
   .updi-pane-body-frame,
   .probe-log-frame {
+    height: auto;
+    min-height: 240px;
+  }
+
+  .updi-options-modal .updi-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .updi-options-modal .updi-pane-body-frame,
+  .updi-options-modal .probe-log-frame {
     height: auto;
     min-height: 240px;
   }

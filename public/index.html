@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#2c3e50" />
+    <meta name="theme-color" content="#222f3c" />
     <title>Uart Debug</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -16,930 +16,204 @@
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 
     <style>
+      :root {
+        --home-bg: #222f3c;
+        --home-surface: rgba(23, 35, 46, 0.72);
+        --home-surface-hover: rgba(39, 174, 96, 0.16);
+        --home-border: rgba(129, 159, 141, 0.24);
+        --home-border-hover: rgba(70, 255, 120, 0.42);
+        --home-text: #c8ffdd;
+        --home-text-soft: #9fcbb0;
+        --home-accent: #46ff78;
+        --home-radius: 15px;
+        --home-shadow: 0 20px 60px rgba(7, 13, 20, 0.26);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
       body {
-        background-color: #2c3e50;
-        color: #ecf0f1;
+        min-height: 100%;
+      }
+
+      body {
         margin: 0;
-        padding: 0;
-        font-family: Arial, sans-serif;
         min-height: 100vh;
+        overflow: hidden;
+        background: var(--home-bg);
+        color: var(--home-text);
+        font-family:
+          Inter,
+          Arial,
+          Helvetica,
+          sans-serif;
+      }
+
+      .debug-background {
+        position: fixed;
+        inset: -46vmax;
+        z-index: 0;
         display: flex;
         flex-direction: column;
-        overflow-x: hidden;
+        justify-content: center;
+        gap: clamp(24px, 4vh, 50px);
+        overflow: hidden;
+        pointer-events: none;
+        transform: rotate(-30deg);
       }
 
-      body::before {
-        content: "";
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background:
-          radial-gradient(
-            circle at 20% 80%,
-            rgba(26, 188, 156, 0.1) 0%,
-            transparent 50%
-          ),
-          radial-gradient(
-            circle at 80% 20%,
-            rgba(22, 160, 133, 0.08) 0%,
-            transparent 50%
-          ),
-          radial-gradient(
-            circle at 40% 60%,
-            rgba(52, 152, 219, 0.05) 0%,
-            transparent 50%
-          );
-        animation: backgroundFloat 20s ease-in-out infinite;
-        z-index: -1;
+      .debug-line {
+        display: flex;
+        width: max-content;
+        color: rgba(200, 255, 221, 0.075);
+        font:
+          900 clamp(26px, 4.9vw, 76px) / 1 Inter,
+          Arial,
+          sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        animation: debugLineForward 42s linear infinite;
+        will-change: transform;
       }
 
-      @keyframes backgroundFloat {
-        0%,
-        100% {
-          transform: scale(1) rotate(0deg);
+      .debug-line:nth-child(even) {
+        color: rgba(70, 255, 120, 0.055);
+        animation-name: debugLineBackward;
+        animation-duration: 46s;
+      }
+
+      .debug-line span {
+        flex: 0 0 auto;
+        padding-right: 0.8em;
+      }
+
+      @keyframes debugLineForward {
+        from {
+          transform: translate3d(0, 0, 0);
         }
-        50% {
-          transform: scale(1.1) rotate(1deg);
+
+        to {
+          transform: translate3d(-50%, 0, 0);
+        }
+      }
+
+      @keyframes debugLineBackward {
+        from {
+          transform: translate3d(-50%, 0, 0);
+        }
+
+        to {
+          transform: translate3d(0, 0, 0);
         }
       }
 
       main {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .hero-section {
-        padding: clamp(13px, 4vh, 28px) clamp(15px, 4vw, 25px)
-          clamp(9px, 2vh, 16px);
-        text-align: center;
-        background: linear-gradient(
-          135deg,
-          rgba(26, 188, 156, 0.1) 0%,
-          rgba(22, 160, 133, 0.05) 100%
-        );
         position: relative;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: clamp(100px, 15vh, 154px);
+        z-index: 1;
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        padding: clamp(18px, 4vw, 38px);
       }
 
-      .hero-content {
-        width: 100%;
-        max-width: 90vw;
-      }
-
-      .hero-content h1 {
-        margin: 0 auto 12px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-        max-width: 1100px;
-        font-family: Arial, sans-serif;
-        font-weight: 700;
-        line-height: 1;
-      }
-
-      .hero-line {
-        display: block;
-        line-height: 0.92;
-        padding-bottom: 0.08em;
-        letter-spacing: -0.02em;
-        background: linear-gradient(135deg, #1abc9c 0%, #16a085 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        animation: titleGlow 3s ease-in-out infinite alternate;
-      }
-
-      .hero-line-main {
-        font-size: clamp(1.15rem, 2.5vw, 2rem);
-      }
-
-      .hero-line-sub {
-        margin-top: -0.03em;
-        font-size: clamp(0.6rem, 1.5vw, 1rem);
-      }
-
-      @keyframes titleGlow {
-        0% {
-          filter: brightness(1) drop-shadow(0 0 5px rgba(26, 188, 156, 0.3));
-        }
-        100% {
-          filter: brightness(1.1) drop-shadow(0 0 20px rgba(26, 188, 156, 0.6));
-        }
-      }
-
-      .hero-content p {
-        font-size: clamp(0.95rem, 2.4vw, 1.15rem);
-        margin: 0 auto;
-        opacity: 0.9;
-        max-width: clamp(320px, 82vw, 760px);
-        line-height: 1.45;
-        padding: 0 clamp(10px, 2vw, 20px);
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
       }
 
       .navigation-section {
-        padding: clamp(24px, 4vh, 40px) clamp(15px, 4vw, 32px);
-        margin: 0 auto;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        flex: 1;
-        width: 100%;
+        width: min(100%, 900px);
       }
 
       .nav-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: clamp(18px, 3vw, 28px);
-        width: min(100%, 980px);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        width: 100%;
       }
 
       .nav-card {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: clamp(15px, 3vw, 25px);
-        padding: clamp(20px, 5vw, 42px) clamp(15px, 4vw, 32px);
-        text-decoration: none;
-        color: #ecf0f1;
-        transition: all 0.4s ease;
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        text-align: center;
-        min-height: clamp(200px, 28vh, 280px);
-        position: relative;
-        overflow: hidden;
         display: flex;
         flex-direction: column;
-        justify-content: center;
         align-items: center;
-      }
-
-      .nav-card::before {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: -100%;
-        width: 100%;
-        height: 100%;
-        background: linear-gradient(
-          90deg,
-          transparent,
-          rgba(26, 188, 156, 0.1),
-          transparent
-        );
-        transition: left 0.6s ease;
-      }
-
-      .nav-card:hover::before {
-        left: 100%;
-      }
-
-      .nav-card:hover {
-        transform: translateY(-10px);
-        background: rgba(255, 255, 255, 0.08);
-        box-shadow:
-          0 20px 40px rgba(0, 0, 0, 0.3),
-          0 0 30px rgba(26, 188, 156, 0.2);
-        border-color: rgba(26, 188, 156, 0.3);
-      }
-
-      .nav-card > :not(.card-visual) {
-        position: relative;
-        z-index: 2;
-      }
-
-      .avr-card {
-        isolation: isolate;
-      }
-
-      .card-visual {
-        position: absolute;
-        inset: 0;
-        z-index: 1;
-        pointer-events: none;
-        display: flex;
-        align-items: flex-end;
-        justify-content: flex-end;
-        padding: 16px 18px;
-        opacity: 0;
-        transition: opacity 0.32s ease;
-      }
-
-      .card-visual::before {
-        content: "";
-        position: absolute;
-        right: 12px;
-        bottom: 12px;
-        width: 110px;
-        height: 110px;
-        border-radius: 50%;
-        background: radial-gradient(
-          circle,
-          rgba(35, 214, 156, 0.22) 0%,
-          rgba(35, 214, 156, 0.12) 38%,
-          transparent 74%
-        );
-        filter: blur(18px);
-        opacity: 0;
-        transition: opacity 0.42s ease;
-      }
-
-      .avr-card:hover .card-visual,
-      .avr-card:focus-visible .card-visual,
-      .uart-card:hover .card-visual,
-      .uart-card:focus-visible .card-visual {
-        opacity: 1;
-      }
-
-      .avr-card:hover .card-visual::before,
-      .avr-card:focus-visible .card-visual::before,
-      .uart-card:hover .card-visual::before,
-      .uart-card:focus-visible .card-visual::before {
-        opacity: 1;
-      }
-
-      .uart-card {
-        isolation: isolate;
-      }
-
-      .uart-visual {
-        align-items: flex-end;
-        justify-content: flex-end;
-      }
-
-      .uart-visual::before {
-        right: 18px;
-        bottom: 18px;
-        width: 142px;
-        height: 92px;
-        border-radius: 28px;
-        background: radial-gradient(
-          ellipse at center,
-          rgba(79, 208, 184, 0.18) 0%,
-          rgba(79, 208, 184, 0.1) 38%,
-          transparent 76%
-        );
-        filter: blur(16px);
-      }
-
-      .connector-scene {
-        position: relative;
-        width: 160px;
-        height: 78px;
-        opacity: 0.5;
-        filter: blur(1.2px);
-        transform: translate3d(0, 8px, 0) scale(0.97);
-        transform-origin: bottom right;
-        transition:
-          transform 0.42s ease,
-          opacity 0.42s ease,
-          filter 0.42s ease;
-      }
-
-      .uart-card:hover .connector-scene,
-      .uart-card:focus-visible .connector-scene {
-        opacity: 0.8;
-        filter: blur(0.8px);
-        transform: translate3d(0, 0, 0) scale(1);
-      }
-
-      .connector-bridge {
-        position: absolute;
-        left: 50%;
-        top: 50%;
-        width: 22px;
-        height: 10px;
-        border-radius: 999px;
-        transform: translate(-50%, -50%) scaleX(0.35);
-        background: linear-gradient(
-          90deg,
-          rgba(150, 255, 228, 0.12) 0%,
-          rgba(120, 247, 208, 0.38) 50%,
-          rgba(150, 255, 228, 0.12) 100%
-        );
-        box-shadow: 0 0 12px rgba(93, 240, 194, 0.16);
-        opacity: 0;
-        transition:
-          opacity 0.22s ease 0.72s,
-          transform 0.2s ease 0.72s;
-      }
-
-      .uart-card:hover .connector-bridge,
-      .uart-card:focus-visible .connector-bridge {
-        opacity: 0.92;
-        transform: translate(-50%, -50%) scaleX(1);
-      }
-
-      .connector {
-        position: absolute;
-        top: 50%;
-        width: 74px;
-        height: 44px;
-        transform: translateY(-50%);
-      }
-
-      .connector-left {
-        left: 0;
-      }
-
-      .connector-right {
-        right: 0;
-      }
-
-      .connector-cable,
-      .connector-shell,
-      .connector-head,
-      .connector-tip,
-      .connector-notch {
-        position: absolute;
-      }
-
-      .connector-cable {
-        top: 50%;
-        height: 8px;
-        transform: translateY(-50%);
-        border-radius: 999px;
-        background: linear-gradient(
-          90deg,
-          rgba(111, 192, 178, 0.08) 0%,
-          rgba(123, 214, 197, 0.16) 100%
-        );
-      }
-
-      .connector-left .connector-cable {
-        left: -999px;
-        right: 28px;
-      }
-
-      .connector-right .connector-cable {
-        left: 28px;
-        right: -999px;
-      }
-
-      .connector-shell {
-        top: 50%;
-        width: 34px;
-        height: 24px;
-        border-radius: 10px;
-        transform: translateY(-50%);
-        background: linear-gradient(
-          180deg,
-          rgba(71, 124, 125, 0.22) 0%,
-          rgba(39, 74, 78, 0.16) 100%
-        );
-        box-shadow:
-          inset 0 0 0 1px rgba(142, 244, 217, 0.08),
-          inset 0 0 10px rgba(91, 196, 176, 0.08);
-      }
-
-      .connector-left .connector-shell {
-        right: 10px;
-      }
-
-      .connector-right .connector-shell {
-        left: 10px;
-      }
-
-      .connector-head {
-        top: 50%;
-        width: 22px;
-        height: 16px;
-        border-radius: 7px;
-        transform: translateY(-50%);
-        background: linear-gradient(
-          180deg,
-          rgba(96, 168, 160, 0.24) 0%,
-          rgba(51, 99, 103, 0.16) 100%
-        );
-        box-shadow: inset 0 0 0 1px rgba(150, 241, 220, 0.07);
-      }
-
-      .connector-left .connector-head {
-        right: 0;
-      }
-
-      .connector-right .connector-head {
-        left: 0;
-      }
-
-      .connector-tip {
-        top: 50%;
-        width: 12px;
-        height: 10px;
-        border-radius: 4px;
-        transform: translateY(-50%);
-        background: linear-gradient(
-          180deg,
-          rgba(169, 255, 230, 0.24) 0%,
-          rgba(104, 219, 187, 0.16) 100%
-        );
-        box-shadow: 0 0 8px rgba(106, 238, 197, 0.08);
-        transition:
-          transform 0.16s ease 0s,
-          opacity 0.22s ease;
-      }
-
-      .connector-left .connector-tip {
-        right: -2px;
-      }
-
-      .connector-right .connector-tip {
-        left: -2px;
-      }
-
-      .connector-notch {
-        top: 50%;
-        width: 3px;
-        height: 16px;
-        border-radius: 999px;
-        transform: translateY(-50%);
-        background: rgba(178, 255, 231, 0.12);
-      }
-
-      .connector-left .connector-notch {
-        right: 18px;
-      }
-
-      .connector-right .connector-notch {
-        left: 18px;
-      }
-
-      .connector-left {
-        transform: translate(-18px, -50%);
-        transition: transform 0.96s cubic-bezier(0.22, 0.72, 0.18, 1);
-      }
-
-      .connector-right {
-        transform: translate(18px, -50%);
-        transition: transform 0.96s cubic-bezier(0.22, 0.72, 0.18, 1);
-      }
-
-      .uart-card:hover .connector-left,
-      .uart-card:focus-visible .connector-left {
-        transform: translate(8px, -50%);
-      }
-
-      .uart-card:hover .connector-right,
-      .uart-card:focus-visible .connector-right {
-        transform: translate(-8px, -50%);
-      }
-
-      .uart-card:hover .connector-left .connector-tip,
-      .uart-card:focus-visible .connector-left .connector-tip {
-        transform: translate(8px, -50%);
-        transition-delay: 0.7s;
-      }
-
-      .uart-card:hover .connector-right .connector-tip,
-      .uart-card:focus-visible .connector-right .connector-tip {
-        transform: translate(-8px, -50%);
-        transition-delay: 0.7s;
-      }
-
-      .binary-streams {
-        position: absolute;
-        inset: -8px;
+        justify-content: center;
+        min-height: clamp(150px, 23vh, 210px);
+        padding: clamp(22px, 4vw, 36px);
         overflow: hidden;
-        opacity: 0;
-        transition: opacity 0.4s ease 0.86s;
-        mask-image: radial-gradient(
-          ellipse at 68% 58%,
-          rgba(0, 0, 0, 0.92) 0%,
-          rgba(0, 0, 0, 0.72) 42%,
-          transparent 100%
-        );
-      }
-
-      .uart-card:hover .binary-streams,
-      .uart-card:focus-visible .binary-streams {
-        opacity: 0.58;
-      }
-
-      .binary-line {
-        position: absolute;
-        left: -18%;
-        width: 150%;
-        white-space: nowrap;
-        font-family: "Consolas", "Courier New", monospace;
-        font-size: 11px;
-        letter-spacing: 0.28em;
-        color: rgba(132, 247, 214, 0.16);
-        text-shadow: 0 0 10px rgba(84, 224, 185, 0.1);
-        filter: blur(1.4px);
-        will-change: transform;
-      }
-
-      .binary-line:nth-child(1) {
-        top: 8px;
-        animation: binaryDriftOne 2.8s linear infinite;
-      }
-
-      .binary-line:nth-child(2) {
-        top: 25px;
-        animation: binaryDriftTwo 3.3s linear infinite;
-      }
-
-      .binary-line:nth-child(3) {
-        top: 42px;
-        animation: binaryDriftThree 2.5s linear infinite;
-      }
-
-      .binary-line:nth-child(4) {
-        top: 59px;
-        animation: binaryDriftFour 3.1s linear infinite;
-      }
-
-      @keyframes binaryDriftOne {
-        from {
-          transform: translateX(0);
-        }
-        to {
-          transform: translateX(-82px);
-        }
-      }
-
-      @keyframes binaryDriftTwo {
-        from {
-          transform: translateX(-46px);
-        }
-        to {
-          transform: translateX(24px);
-        }
-      }
-
-      @keyframes binaryDriftThree {
-        from {
-          transform: translateX(0);
-        }
-        to {
-          transform: translateX(-64px);
-        }
-      }
-
-      @keyframes binaryDriftFour {
-        from {
-          transform: translateX(-28px);
-        }
-        to {
-          transform: translateX(34px);
-        }
-      }
-
-      .card-visual-chip {
-        position: relative;
-        width: 112px;
-        height: 112px;
-        opacity: 0.44;
-        filter: blur(1.6px);
-        transform: translate3d(0, 8px, 0) scale(0.96);
+        border: 1px solid var(--home-border);
+        border-radius: var(--home-radius);
+        background: var(--home-surface);
+        box-shadow: var(--home-shadow);
+        color: var(--home-text);
+        text-align: center;
+        text-decoration: none;
         transition:
-          transform 0.42s ease,
-          opacity 0.42s ease,
-          filter 0.42s ease;
+          background 140ms ease,
+          border-color 140ms ease,
+          box-shadow 140ms ease,
+          transform 140ms ease;
       }
 
-      .avr-card:hover .card-visual-chip,
-      .avr-card:focus-visible .card-visual-chip {
-        opacity: 0.72;
-        filter: blur(1px);
-        transform: translate3d(0, 0, 0) scale(1);
-      }
-
-      .chip-pins-x,
-      .chip-pins-y,
-      .chip-core,
-      .chip-window,
-      .chip-fill,
-      .chip-fill-wave {
-        position: absolute;
-      }
-
-      .chip-pins-x,
-      .chip-pins-y {
-        inset: 0;
-      }
-
-      .chip-pins-x::before,
-      .chip-pins-x::after,
-      .chip-pins-y::before,
-      .chip-pins-y::after {
-        content: "";
-        position: absolute;
-        opacity: 0.68;
-      }
-
-      .chip-pins-x::before,
-      .chip-pins-x::after {
-        top: 50%;
-        height: 72px;
-        transform: translateY(-50%);
-        background: repeating-linear-gradient(
-          to bottom,
-          rgba(108, 190, 173, 0.13) 0 6px,
-          transparent 6px 14px
-        );
-      }
-
-      .chip-pins-x::before {
-        right: calc(100% - 10px);
-        width: 999px;
-      }
-
-      .chip-pins-x::after {
-        left: calc(100% - 10px);
-        width: 999px;
-      }
-
-      .chip-pins-y::before,
-      .chip-pins-y::after {
-        left: 50%;
-        width: 72px;
-        transform: translateX(-50%);
-        background: repeating-linear-gradient(
-          to right,
-          rgba(108, 190, 173, 0.13) 0 6px,
-          transparent 6px 14px
-        );
-      }
-
-      .chip-pins-y::before {
-        bottom: calc(100% - 10px);
-        height: 999px;
-      }
-
-      .chip-pins-y::after {
-        top: calc(100% - 10px);
-        height: 999px;
-      }
-
-      .chip-core {
-        inset: 16px;
-        border-radius: 26px;
-        background: linear-gradient(
-          180deg,
-          rgba(56, 98, 97, 0.18) 0%,
-          rgba(33, 61, 64, 0.14) 100%
-        );
-        box-shadow:
-          inset 0 0 0 11px rgba(88, 154, 143, 0.18),
-          inset 0 0 16px rgba(106, 201, 180, 0.08),
-          0 0 0 1px rgba(154, 255, 231, 0.05);
-      }
-
-      .chip-window {
-        inset: 18px;
-        overflow: hidden;
-        border-radius: 16px;
-        background: rgba(214, 252, 244, 0.032);
-      }
-
-      .chip-fill {
-        left: 0;
-        right: 0;
-        bottom: 0;
-        height: 0%;
-        opacity: 0;
-        background: linear-gradient(
-          180deg,
-          rgba(91, 255, 192, 0.88) 0%,
-          rgba(32, 193, 129, 0.68) 48%,
-          rgba(16, 133, 94, 0.6) 100%
-        );
-        box-shadow:
-          0 0 18px rgba(44, 214, 151, 0.18),
-          inset 0 1px 0 rgba(215, 255, 242, 0.4);
-        transition:
-          height 1.65s cubic-bezier(0.22, 1, 0.36, 1),
-          opacity 0.5s ease;
-      }
-
-      .chip-fill-wave {
-        top: -12px;
-        left: -8%;
-        width: 116%;
-        height: 20px;
-        background: radial-gradient(
-            ellipse at 12px 16px,
-            rgba(198, 255, 230, 0.96) 0 9px,
-            transparent 10px
-          )
-          0 0 / 28px 20px repeat-x;
-        opacity: 0.88;
-      }
-
-      .avr-card:hover .chip-fill,
-      .avr-card:focus-visible .chip-fill {
-        height: 100%;
-        opacity: 0.88;
-      }
-
-      .card-icon {
-        font-size: clamp(1.5rem, 5vw, 2.2rem);
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        margin-bottom: clamp(14px, 2vh, 20px);
-        color: #a7fff0;
-        opacity: 0.95;
-        transition: transform 0.3s ease;
-      }
-
-      .nav-card:hover .card-icon {
-        transform: scale(1.08);
+      .nav-card:hover,
+      .nav-card:focus-visible {
+        border-color: var(--home-border-hover);
+        background: var(--home-surface-hover);
+        box-shadow: 0 22px 64px rgba(7, 13, 20, 0.34);
+        outline: none;
+        transform: translateY(-2px);
       }
 
       .card-title {
-        font-size: clamp(1.2rem, 4vw, 2rem);
-        font-weight: 600;
-        margin: 0 0 clamp(10px, 2vh, 18px);
-        color: #1abc9c;
+        margin: 0 0 10px;
+        color: var(--home-accent);
+        font-size: clamp(38px, 6vw, 72px);
+        font-weight: 900;
+        line-height: 0.92;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
       }
 
       .card-description {
-        font-size: clamp(0.9rem, 2.5vw, 1.1rem);
-        opacity: 0.82;
-        line-height: 1.5;
         margin: 0;
-        text-align: center;
-        max-width: 100%;
+        color: var(--home-text-soft);
+        font-size: clamp(15px, 2vw, 18px);
+        font-weight: 600;
+        line-height: 1.35;
+        letter-spacing: 0;
       }
 
-      .site-footer {
-        background: rgba(44, 62, 80, 0.9);
-        text-align: center;
-        padding: clamp(10px, 2vh, 18px) clamp(15px, 3vw, 25px);
-        backdrop-filter: blur(10px);
-        border-top: 1px solid rgba(255, 255, 255, 0.1);
-        margin-top: auto;
-      }
-
-      .site-footer p {
-        margin: 0;
-        opacity: 0.72;
-        font-size: clamp(0.74rem, 2vw, 0.9rem);
-      }
-
-      .site-footer p + p {
-        margin-top: 4px;
-      }
-
-      ::selection {
-        background: #16a085;
-        color: #ecf0f1;
-      }
-
-      ::-moz-selection {
-        background: #16a085;
-        color: #ecf0f1;
-      }
-
-      @media (max-width: 768px) {
-        .hero-section {
-          padding: 15px 15px 11px;
-          min-height: 94px;
+      @media (max-width: 720px) {
+        body {
+          overflow-y: auto;
         }
 
-        .hero-line-main {
-          font-size: clamp(1rem, 4vw, 1.5rem);
+        main {
+          min-height: 100svh;
+          align-items: center;
         }
 
-        .hero-line-sub {
-          font-size: clamp(0.5rem, 2.3vw, 0.72rem);
-          margin-top: 0;
-        }
-
-        .hero-content p {
-          font-size: clamp(0.95rem, 3.5vw, 1.05rem);
-          padding: 0 10px;
-        }
-
-        .navigation-section {
-          padding: 16px;
+        .nav-grid {
+          grid-template-columns: 1fr;
         }
 
         .nav-card {
-          min-height: 180px;
-          padding: clamp(15px, 4vw, 30px) clamp(12px, 3vw, 24px);
-        }
-
-        .card-visual {
-          padding: 10px 12px;
-        }
-
-        .card-visual-chip {
-          width: 92px;
-          height: 92px;
-        }
-
-        .chip-pins-x::before,
-        .chip-pins-x::after {
-          height: 60px;
-        }
-
-        .chip-pins-y::before,
-        .chip-pins-y::after {
-          width: 60px;
-        }
-
-        .connector-scene {
-          width: 132px;
-          height: 66px;
-        }
-
-        .binary-line {
-          font-size: 9px;
-          letter-spacing: 0.22em;
-        }
-
-        .binary-line:nth-child(2) {
-          top: 22px;
-        }
-
-        .binary-line:nth-child(3) {
-          top: 36px;
-        }
-
-        .binary-line:nth-child(4) {
-          top: 50px;
-        }
-
-        .connector {
-          width: 62px;
-          height: 38px;
-        }
-
-        .connector-shell {
-          width: 28px;
-          height: 20px;
-        }
-
-        .connector-head {
-          width: 18px;
-          height: 13px;
-        }
-
-        .connector-tip {
-          width: 10px;
-          height: 8px;
-        }
-      }
-
-      @media (max-height: 840px) {
-        .hero-section {
-          min-height: 86px;
-          padding-top: 12px;
-          padding-bottom: 8px;
-        }
-
-        .navigation-section {
-          padding-top: 16px;
-          padding-bottom: 16px;
-        }
-
-        .nav-card {
-          min-height: 170px;
-        }
-      }
-
-      @media (max-height: 700px) {
-        .hero-content p {
-          font-size: 0.92rem;
-        }
-
-        .card-icon {
-          margin-bottom: 10px;
-        }
-
-        .card-title {
-          margin-bottom: 8px;
-        }
-
-        .site-footer {
-          padding-top: 8px;
-          padding-bottom: 8px;
+          min-height: 132px;
         }
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .card-visual,
-        .card-visual::before,
-        .card-visual-chip,
-        .chip-fill,
-        .connector-scene,
-        .connector-left,
-        .connector-right,
-        .connector-tip,
-        .connector-bridge,
-        .binary-streams {
-          transition-duration: 0.01ms;
-        }
-
-        .binary-line {
-          animation-duration: 0.01ms;
+        .debug-line {
+          animation: none;
         }
       }
     </style>
@@ -955,92 +229,88 @@
     </script>
   </head>
   <body>
-    <main>
-      <section class="hero-section">
-        <div class="hero-content">
-          <h1>
-            <span class="hero-line hero-line-main">Uart Debug</span>
-            <span class="hero-line hero-line-sub"
-              >Programming, flashing, and debugging AVR</span
-            >
-          </h1>
-        </div>
-      </section>
+    <div class="debug-background" aria-hidden="true">
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+      <div class="debug-line">
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+        <span>UART DEBUG UART DEBUG UART DEBUG UART DEBUG UART DEBUG</span>
+      </div>
+    </div>
 
-      <section class="navigation-section">
+    <main>
+      <h1 class="sr-only">Uart Debug</h1>
+      <section class="navigation-section" aria-label="Tools">
         <div class="nav-grid">
-          <a href="/AVR-Programming.html" class="nav-card avr-card">
-            <div class="card-visual" aria-hidden="true">
-              <div class="card-visual-chip">
-                <span class="chip-pins-x"></span>
-                <span class="chip-pins-y"></span>
-                <span class="chip-core">
-                  <span class="chip-window">
-                    <span class="chip-fill">
-                      <span class="chip-fill-wave"></span>
-                    </span>
-                  </span>
-                </span>
-              </div>
-            </div>
-            <div class="card-icon">AVR</div>
-            <h3 class="card-title">Chip Programming</h3>
-            <p class="card-description">
-              Create programs for microcontrollers, compile firmware, and flash
-              supported AVR chips directly from the browser.
-            </p>
+          <a href="/AVR-Programming.html" class="nav-card">
+            <h2 class="card-title">AVR</h2>
+            <p class="card-description">Build &amp; Flash Online</p>
           </a>
-          <a href="/terminal.html" class="nav-card uart-card">
-            <div class="card-visual uart-visual" aria-hidden="true">
-              <div class="connector-scene">
-                <div class="binary-streams">
-                  <span class="binary-line"
-                    >10110100101101001011010010110100101101001011010010110100</span
-                  >
-                  <span class="binary-line"
-                    >01001011010010110100101101001011010010110100101101001011</span
-                  >
-                  <span class="binary-line"
-                    >11010010110100101101001011010010110100101101001011010010</span
-                  >
-                  <span class="binary-line"
-                    >00101101001011010010110100101101001011010010110100101101</span
-                  >
-                </div>
-                <span class="connector-bridge"></span>
-                <span class="connector connector-left">
-                  <span class="connector-cable"></span>
-                  <span class="connector-shell"></span>
-                  <span class="connector-head"></span>
-                  <span class="connector-tip"></span>
-                  <span class="connector-notch"></span>
-                </span>
-                <span class="connector connector-right">
-                  <span class="connector-cable"></span>
-                  <span class="connector-shell"></span>
-                  <span class="connector-head"></span>
-                  <span class="connector-tip"></span>
-                  <span class="connector-notch"></span>
-                </span>
-              </div>
-            </div>
-            <div class="card-icon">UART</div>
-            <h3 class="card-title">Terminal debugging</h3>
-            <p class="card-description">
-              Real-time monitoring, logging, and debugging of UART connections.
-            </p>
+          <a href="/terminal.html" class="nav-card">
+            <h2 class="card-title">UART</h2>
+            <p class="card-description">Terminal &amp; Graphics Online</p>
           </a>
         </div>
       </section>
     </main>
-
-    <footer class="site-footer">
-      <p>
-        (c) 2025 uartdebug.com - All rights reserved. Support -
-        uartdebug@gmail.com
-      </p>
-      <p>Author - Kabarukhin David, Telegram - @K1LLERV1P</p>
-    </footer>
 
     <script>
       if ("serviceWorker" in navigator) {

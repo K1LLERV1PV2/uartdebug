@@ -2043,6 +2043,7 @@
         ensureSignature,
         readSignature,
         programHex,
+        clearLog,
         loadHexFile: (hexText, fileName, source = "uploaded") =>
           loadHexFileWithFeedback(hexText, fileName, source),
         clearLoadedHex: () => clearHexState(false),

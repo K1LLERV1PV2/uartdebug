@@ -1668,6 +1668,9 @@ body.terminal-page .terminal-start-overlay[hidden] {
 }
 
 body.terminal-page .terminal-start-overlay span {
+  display: block;
+  max-width: min(1180px, 100%);
+  line-height: 1.16;
   text-shadow: 0 14px 48px rgba(7, 13, 20, 0.38);
   transition:
     color 140ms ease,

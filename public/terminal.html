@@ -9,21 +9,26 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <!-- Link global and UART-specific styles. -->
-    <link rel="stylesheet" href="uart.css?v=20260617-start-overlay-v1" />
+    <link rel="stylesheet" href="uart.css?v=20260623-start-overlay-copy-v1" />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
     <!-- Include Chart.js. -->
     <script src="vendor/chart.umd.js"></script>
     <script defer src="ui-tooltips.js?v=20260616-responsive-actions-v1"></script>
-    <script defer src="uart.js?v=20260617-start-overlay-v1"></script>
+    <script defer src="uart.js?v=20260623-start-overlay-copy-v1"></script>
   </head>
   <body class="terminal-page">
     <button
       class="terminal-start-overlay"
       id="terminalStartOverlay"
       type="button"
-      aria-label="Click to start"
+      aria-label="Start with unconnected USB-UART. Then plug it and choose the device. Now click to Start."
+      data-tooltip-disabled
     >
-      <span>Click to start</span>
+      <span>
+        Start with unconnected USB&#8209;UART<br />
+        Then plug it and choose the device<br />
+        Now click to Start
+      </span>
     </button>
     <main>
       <div class="feature-panel">

@@ -142,6 +142,17 @@
     el.scrollTop = el.scrollHeight;
   }
 
+  function clearUpdiLog() {
+    const updi = getCanvasUpdiRuntime();
+    if (updi && typeof updi.clearLog === "function") {
+      updi.clearLog();
+      return;
+    }
+
+    const el = $("probeLog");
+    if (el) el.textContent = "";
+  }
+
   function sanitizeCompilerOutput(text) {
     return String(text || "")
       .replace(/\r\n/g, "\n")
@@ -177,8 +188,11 @@
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
+    const locationLinePattern =
+      /(?:^|\s)((?:[A-Za-z]:\/)?[^:\n]+?):(\d+)(?::(\d+))?:\s*(.+)$/i;
     const firstErrorLine =
       lines.find((line) => /(^|\s)(fatal\s+)?error\s*:/i.test(line)) ||
+      lines.find((line) => locationLinePattern.test(line.replace(/\\/g, "/"))) ||
       lines[0] ||
       "";
     const failedFile =
@@ -196,9 +210,7 @@
     }
 
     const normalized = firstErrorLine.replace(/\\/g, "/");
-    const locationMatch = normalized.match(
-      /(?:^|\s)((?:[A-Za-z]:\/)?[^:\n]+?):(\d+)(?::(\d+))?:\s*(?:(?:fatal\s+)?error|undefined reference)\s*:?\s*(.+)$/i
-    );
+    const locationMatch = normalized.match(locationLinePattern);
 
     if (locationMatch) {
       return {
@@ -226,6 +238,7 @@
 
   function cleanupCompilerMessage(message) {
     return String(message || "")
+      .replace(/^\s*(?:(?:fatal\s+)?error|undefined reference)\s*:?\s*/i, "")
       .replace(/\s*\[[^\]]+\]\s*$/g, "")
       .replace(/\s+/g, " ")
       .trim();
@@ -234,18 +247,13 @@
   function formatCompilerIssue(issue) {
     const message =
       issue && issue.message ? issue.message : "Compilation failed.";
-    const fileName = issue && issue.fileName ? issue.fileName : "";
     const lineNumber = issue && issue.lineNumber ? issue.lineNumber : 0;
     const columnNumber = issue && issue.columnNumber ? issue.columnNumber : 0;
-    const locationParts = [];
+    const location = lineNumber
+      ? ` ---- Line ${lineNumber}${columnNumber ? `, position ${columnNumber}` : ""}`
+      : "";
 
-    if (fileName) locationParts.push(fileName);
-    if (lineNumber) locationParts.push(String(lineNumber));
-    if (columnNumber) locationParts.push(String(columnNumber));
-
-    return locationParts.length
-      ? `${locationParts.join(":")}: ${message}`
-      : message;
+    return `ERROR. ---- ${message}${location}`;
   }
 
   function clearCompileErrorHighlight() {
@@ -390,31 +398,36 @@
   }
 
   function setMoreOptionsExpanded(expanded) {
-    const section = $("canvasUpdiSection");
+    const modal = $("canvasUpdiSection");
     const btn = $("moreOptionsBtn");
-    if (!section || !btn) return;
+    if (!modal || !btn) return;
 
     const isExpanded = !!expanded;
-    const optionsLabel = isExpanded ? "Hide options" : "More options";
-    section.hidden = !isExpanded;
+    const optionsLabel = "More options";
+    modal.hidden = !isExpanded;
     btn.setAttribute("aria-expanded", String(isExpanded));
     btn.setAttribute("aria-label", optionsLabel);
     btn.textContent = optionsLabel;
     btn.title = isExpanded
-      ? "Hide advanced UPDI tools"
+      ? "Advanced UPDI tools are open"
       : "Show advanced UPDI tools";
 
     if (isExpanded) {
       requestAnimationFrame(() => {
-        section.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        const card = document.querySelector(".updi-options-card");
+        if (card) card.focus();
       });
     }
   }
 
   function toggleMoreOptions() {
-    const section = $("canvasUpdiSection");
-    if (!section) return;
-    setMoreOptionsExpanded(section.hidden);
+    const modal = $("canvasUpdiSection");
+    if (!modal) return;
+    setMoreOptionsExpanded(modal.hidden);
+  }
+
+  function closeMoreOptions() {
+    setMoreOptionsExpanded(false);
   }
 
   function getCanvasUpdiRuntime() {
@@ -543,9 +556,7 @@
     const btn = $("compileBtn");
     const hasCurrent = !!current;
     const canCompile = hasCurrent && /\.c$/i.test(current);
-    const buttonLabel = hasCurrent
-      ? `Compile "${current}"`
-      : "Compile current file";
+    const buttonLabel = "Compile";
 
     if (btn) {
       btn.textContent = buttonLabel;
@@ -554,29 +565,7 @@
     }
 
     if (!resetLog) return;
-
-    if (!hasCurrent) {
-      setCompileLogText("Create or select a C source file to compile.");
-      return;
-    }
-
-    if (isHexFileName(current)) {
-      setCompileLogText(
-        `"${current}" is a HEX firmware file.\nSelect a *.c file to compile.`
-      );
-      return;
-    }
-
-    if (!canCompile) {
-      setCompileLogText(
-        `"${current}" is not a C source file.\nSelect a *.c file to compile.`
-      );
-      return;
-    }
-
-    setCompileLogText(
-      `Ready to compile "${current}".\nCompiler messages and HEX status will appear here.`
-    );
+    setCompileLogText("");
   }
 
   const AVR_FILE_TEMPLATES = [
@@ -3982,6 +3971,8 @@ int main(void)
       const siteDialogCloseBtn = $("siteDialogCloseBtn");
       const siteDialogCancelBtn = $("siteDialogCancelBtn");
       const siteDialogConfirmBtn = $("siteDialogConfirmBtn");
+      const updiOptionsModal = $("canvasUpdiSection");
+      const updiOptionsCloseBtn = $("updiOptionsCloseBtn");
       const mcuSelect = $("mcuSelect");
 
     initCustomSelect(mcuSelect);
@@ -4005,6 +3996,14 @@ int main(void)
       detectChipBtn && detectChipBtn.addEventListener("click", handleDetectChip);
       programHexBtn && programHexBtn.addEventListener("click", handleFlashCurrent);
       moreOptionsBtn && moreOptionsBtn.addEventListener("click", toggleMoreOptions);
+    updiOptionsCloseBtn &&
+      updiOptionsCloseBtn.addEventListener("click", closeMoreOptions);
+    updiOptionsModal &&
+      updiOptionsModal.addEventListener("click", (event) => {
+        if (event.target === updiOptionsModal) {
+          closeMoreOptions();
+        }
+      });
     fileAddCloseBtn && fileAddCloseBtn.addEventListener("click", closeAddFileModal);
     createNewGroupCard &&
       createNewGroupCard.addEventListener("click", () => {
@@ -4102,6 +4101,10 @@ int main(void)
       if (e.key === "Escape") {
         if (siteDialog && !siteDialog.hidden) {
           resolveSiteDialog(false);
+          return;
+        }
+        if (updiOptionsModal && !updiOptionsModal.hidden) {
+          closeMoreOptions();
           return;
         }
         if (inlineFileEdit) {
@@ -4532,6 +4535,7 @@ int main(void)
       return markCompileFailed();
     }
 
+    clearUpdiLog();
     setCompileLogText("Compiling...");
 
     const mcuEl = $("mcuSelect");
@@ -4580,7 +4584,7 @@ int main(void)
 
     if (btn) {
       btn.disabled = true;
-      btn.textContent = `Compiling "${compileFileName}"...`;
+      btn.textContent = "Compiling...";
       btn.title = btn.textContent;
     }
 
@@ -4650,7 +4654,7 @@ int main(void)
     setHexStatus("ready", lastHexName);
     dispatchUpdiHexArtifact();
 
-    setCompileLogText(`Compilation succeeded: ${lastHexName}.`);
+    setCompileLogText("BUILD OK. Hex file available.");
 
     restoreButton();
     return true;

@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="uart.css" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260617-add-modal-templates-v2"
+      href="AVR-Programming.css?v=20260623-compact-compile-v2"
     />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
 
@@ -106,7 +106,7 @@
                   </div>
 
                   <button class="connect-btn" id="compileBtn" type="button">
-                    Compile current file
+                    Compile
                   </button>
 
                   <button
@@ -202,22 +202,13 @@
               </div>
 
               <div class="file-add-body">
-                <p class="file-add-intro">
-                  Choose how you want to add a file to this workspace.
-                </p>
-
                 <div class="file-add-options">
                   <button
                     class="file-add-card"
                     id="uploadExistingFileCard"
                     type="button"
                   >
-                    <span class="file-add-card-title"
-                      >Upload existing file</span
-                    >
-                    <span class="file-add-card-copy">
-                      Import source code or load firmware.
-                    </span>
+                    <span class="file-add-card-title">UPLOAD C or Hex</span>
                   </button>
 
                   <button
@@ -225,10 +216,7 @@
                     id="createNewGroupCard"
                     type="button"
                   >
-                    <span class="file-add-card-title">Create group</span>
-                    <span class="file-add-card-copy">
-                      Add a collapsible file group.
-                    </span>
+                    <span class="file-add-card-title">CREATE file group</span>
                   </button>
                 </div>
 
@@ -237,7 +225,7 @@
                   aria-labelledby="fileTemplatesTitle"
                 >
                   <h4 class="file-add-section-title" id="fileTemplatesTitle">
-                    Templates
+                    Mini projects
                   </h4>
 
                   <div class="file-template-grid" id="fileTemplateGrid">
@@ -375,107 +363,124 @@
           </div>
         </section>
 
-        <section
-          class="canvas-section canvas-updi-section"
+        <div
+          class="site-dialog updi-options-modal"
           id="canvasUpdiSection"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="updiOptionsTitle"
           hidden
         >
-          <div class="canvas-updi-scroll">
-            <div class="api-support-warning" id="apiWarning">
-              <strong>Attention:</strong> This page needs a Chromium-based
-              browser with Web Serial API support.
+          <div class="site-dialog-card updi-options-card" tabindex="-1">
+            <div class="site-dialog-header updi-options-header">
+              <h3 class="editor-title" id="updiOptionsTitle">More options</h3>
+              <button
+                class="site-dialog-close"
+                id="updiOptionsCloseBtn"
+                type="button"
+                aria-label="Close"
+              >
+                &times;
+              </button>
             </div>
 
-            <div class="updi-layout">
-              <div class="updi-pane">
-                <div class="editor-header updi-pane-header">
-                  <div class="updi-pane-heading">
-                    <h3 class="editor-title">Summary</h3>
-                  </div>
-
-                  <div class="updi-pane-actions">
-                    <button
-                      class="connect-btn secondary-btn"
-                      id="clearHexBtn"
-                      type="button"
-                    >
-                      Clear HEX
-                    </button>
-                  </div>
-                </div>
-
-                <div class="scroll-frame updi-pane-body-frame">
-                  <div class="updi-pane-body">
-                    <dl class="summary-grid">
-                      <div>
-                        <dt>Source</dt>
-                        <dd id="summarySource">-</dd>
-                      </div>
-                      <div>
-                        <dt>Bytes</dt>
-                        <dd id="summaryBytes">-</dd>
-                      </div>
-                      <div>
-                        <dt>Segments</dt>
-                        <dd id="summarySegments">-</dd>
-                      </div>
-                      <div>
-                        <dt>Range</dt>
-                        <dd id="summaryRange">-</dd>
-                      </div>
-                      <div>
-                        <dt>Records</dt>
-                        <dd id="summaryRecords">-</dd>
-                      </div>
-                      <div>
-                        <dt>Target</dt>
-                        <dd id="summaryTarget">ATtiny1624</dd>
-                      </div>
-                      <div>
-                        <dt>Signature</dt>
-                        <dd id="summarySignature">-</dd>
-                      </div>
-                      <div>
-                        <dt>Revision</dt>
-                        <dd id="summaryRevision">-</dd>
-                      </div>
-                      <div>
-                        <dt>Serial</dt>
-                        <dd id="summarySerial">-</dd>
-                      </div>
-                    </dl>
-
-                    <div class="sib-box" id="summarySib">SIB: -</div>
-                    <p class="summary-note" id="summaryNote">
-                      Compile a file or upload a valid Intel HEX image to
-                      inspect it.
-                    </p>
-                  </div>
-                </div>
+            <div class="canvas-updi-scroll updi-options-body">
+              <div class="api-support-warning" id="apiWarning">
+                <strong>Attention:</strong> This page needs a Chromium-based
+                browser with Web Serial API support.
               </div>
 
-              <div class="updi-pane">
-                <div class="editor-header updi-pane-header updi-log-header">
-                  <h3 class="editor-title">UPDI Log</h3>
-                  <button
-                    class="connect-btn secondary-btn"
-                    id="clearLogBtn"
-                    type="button"
-                  >
-                    Clear Log
-                  </button>
+              <div class="updi-layout">
+                <div class="updi-pane">
+                  <div class="editor-header updi-pane-header">
+                    <div class="updi-pane-heading">
+                      <h3 class="editor-title">Summary</h3>
+                    </div>
+
+                    <div class="updi-pane-actions">
+                      <button
+                        class="connect-btn secondary-btn"
+                        id="clearHexBtn"
+                        type="button"
+                      >
+                        Clear HEX
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="scroll-frame updi-pane-body-frame">
+                    <div class="updi-pane-body">
+                      <dl class="summary-grid">
+                        <div>
+                          <dt>Source</dt>
+                          <dd id="summarySource">-</dd>
+                        </div>
+                        <div>
+                          <dt>Bytes</dt>
+                          <dd id="summaryBytes">-</dd>
+                        </div>
+                        <div>
+                          <dt>Segments</dt>
+                          <dd id="summarySegments">-</dd>
+                        </div>
+                        <div>
+                          <dt>Range</dt>
+                          <dd id="summaryRange">-</dd>
+                        </div>
+                        <div>
+                          <dt>Records</dt>
+                          <dd id="summaryRecords">-</dd>
+                        </div>
+                        <div>
+                          <dt>Target</dt>
+                          <dd id="summaryTarget">ATtiny1624</dd>
+                        </div>
+                        <div>
+                          <dt>Signature</dt>
+                          <dd id="summarySignature">-</dd>
+                        </div>
+                        <div>
+                          <dt>Revision</dt>
+                          <dd id="summaryRevision">-</dd>
+                        </div>
+                        <div>
+                          <dt>Serial</dt>
+                          <dd id="summarySerial">-</dd>
+                        </div>
+                      </dl>
+
+                      <div class="sib-box" id="summarySib">SIB: -</div>
+                      <p class="summary-note" id="summaryNote">
+                        Compile a file or upload a valid Intel HEX image to
+                        inspect it.
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div class="scroll-frame probe-log-frame">
-                  <pre class="probe-log" id="probeLog"></pre>
+
+                <div class="updi-pane">
+                  <div class="editor-header updi-pane-header updi-log-header">
+                    <h3 class="editor-title">UPDI Log</h3>
+                    <button
+                      class="connect-btn secondary-btn"
+                      id="clearLogBtn"
+                      type="button"
+                    >
+                      Clear Log
+                    </button>
+                  </div>
+                  <div class="scroll-frame probe-log-frame">
+                    <pre class="probe-log" id="probeLog"></pre>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </section>
+        </div>
       </div>
     </main>
     <script defer src="ui-tooltips.js?v=20260616-responsive-actions-v1"></script>
-    <script defer src="AVR-Programming.js?v=20260617-add-modal-templates-v3"></script>
-    <script defer src="updi-test.js?v=20260511-port-error"></script>
+    <script defer src="AVR-Programming.js?v=20260623-programmer-modal-compile-v1"></script>
+    <script defer src="updi-test.js?v=20260623-programmer-modal-logs-v1"></script>
   </body>
 </html>
