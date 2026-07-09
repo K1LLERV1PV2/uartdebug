@@ -418,6 +418,12 @@ body {
   gap: 10px;
 }
 
+.terminal-container,
+.generator-panel {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(70, 255, 120, 0.42) transparent;
+}
+
 .generator-grid {
   display: flex;
   flex-direction: column;
@@ -888,17 +894,22 @@ body {
 }
 
 /* Scrollbar for terminal */
-.terminal-container::-webkit-scrollbar {
-  width: 8px;
+.terminal-container::-webkit-scrollbar,
+.generator-panel::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
 }
 
-.terminal-container::-webkit-scrollbar-track {
-  background: #2c3e50;
+.terminal-container::-webkit-scrollbar-track,
+.generator-panel::-webkit-scrollbar-track {
+  margin-block: 10px;
+  background: transparent;
 }
 
-.terminal-container::-webkit-scrollbar-thumb {
-  background: #16a085;
-  border-radius: 4px;
+.terminal-container::-webkit-scrollbar-thumb,
+.generator-panel::-webkit-scrollbar-thumb {
+  background: rgba(70, 255, 120, 0.42);
+  border-radius: 999px;
 }
 
 /* Custom checkboxes */
@@ -1573,7 +1584,7 @@ body.terminal-page {
   --terminal-danger: #e85f5c;
   --terminal-warning: #f2a444;
   --terminal-radius: 15px;
-  --terminal-scrollbar-size: 8px;
+  --terminal-scrollbar-size: 4px;
   --terminal-scrollbar-track: var(--terminal-surface-deep);
   --terminal-scrollbar-thumb: rgba(70, 255, 120, 0.55);
   --terminal-scrollbar-thumb-hover: rgba(70, 255, 120, 0.72);
@@ -2420,19 +2431,40 @@ body.terminal-page .oscilloscope-container {
 body.terminal-page .terminal-container,
 body.terminal-page .generator-panel {
   padding: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(70, 255, 120, 0.42) transparent;
+}
+
+body.terminal-page .terminal-container::-webkit-scrollbar,
+body.terminal-page .generator-panel::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+body.terminal-page .terminal-container::-webkit-scrollbar-track,
+body.terminal-page .generator-panel::-webkit-scrollbar-track {
+  margin-block: 10px;
+  background: transparent;
+}
+
+body.terminal-page .terminal-container::-webkit-scrollbar-thumb,
+body.terminal-page .generator-panel::-webkit-scrollbar-thumb {
+  background: rgba(70, 255, 120, 0.42);
+  border-radius: 999px;
 }
 
 body.terminal-page .terminal-watermark {
   position: absolute;
-  top: 14px;
   right: 18px;
+  bottom: 12px;
   z-index: 1;
   max-width: calc(100% - 72px);
   overflow: hidden;
   color: rgba(200, 255, 221, 0.065);
   font-size: clamp(30px, 4.4vw, 64px);
   font-weight: 800;
-  line-height: 1;
+  line-height: 1.14;
+  padding-bottom: 0.06em;
   pointer-events: none;
   text-align: right;
   text-overflow: ellipsis;

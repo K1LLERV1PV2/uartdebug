@@ -713,7 +713,6 @@ async function connectSerial({ quietPortSelectionErrors = false } = {}) {
     // Update UI
     updateConnectionStatus(true, getPortLabel(port));
     clearTerminals();
-    addToTerminal("info", `Connected at ${baudRate} baud`, terminalSent);
 
     // Start reading
     readLoop();
@@ -773,14 +772,8 @@ async function disconnectSerial() {
 
     // Update UI
     updateConnectionStatus(false);
-    addToTerminal("info", "Disconnected", terminalSent);
   } catch (error) {
     console.error("Disconnection error:", error);
-    addToTerminal(
-      "error",
-      `Disconnection error: ${error.message}`,
-      terminalSent
-    );
   }
 }
 
@@ -1378,9 +1371,12 @@ function setCheckedRadioValue(name, value) {
 }
 
 function syncRxViewFromTx() {
-  const nextRxView = txView === "generator" ? "oscilloscope" : "terminal";
-  if (setCheckedRadioValue("rxView", nextRxView)) {
-    applyRxView(nextRxView);
+  if (txView !== "generator") {
+    return;
+  }
+
+  if (setCheckedRadioValue("rxView", "oscilloscope")) {
+    applyRxView("oscilloscope");
   }
 }
 
@@ -1416,8 +1412,10 @@ function handleTxViewChange(event) {
     stopLoopSend();
   }
   applyTxViewDefaults();
-  syncRxViewFromTx();
-  syncRxByteSizeFromTx();
+  if (txView === "generator") {
+    syncRxViewFromTx();
+    syncRxByteSizeFromTx();
+  }
   updateTxInputPanelVisibility();
   updateTxInputAvailability();
   updateTerminalWatermarks();
