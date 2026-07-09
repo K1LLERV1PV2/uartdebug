@@ -5,6 +5,7 @@ let writer = null;
 let currentView = "terminal";
 let isReceiving = true;
 let oscilloscopeData = [];
+let oscilloscopeStopMarkers = [];
 let oscilloscopeChart = null;
 let zoomLevel = 1;
 let panOffset = 0;
@@ -45,11 +46,19 @@ const OSCILLOSCOPE_ALIGN_PROBE_BYTES = 16;
 const OSCILLOSCOPE_THEME = {
   signal: "#46ff78",
   overflow: "#ff9c99",
+  stopMarker: "rgba(242, 164, 68, 0.9)",
   text: "#c8ffdd",
   muted: "#9fcbb0",
   grid: "rgba(129, 159, 141, 0.18)",
   axis: "rgba(200, 255, 221, 0.12)",
   axisHover: "rgba(200, 255, 221, 0.92)",
+};
+const OSCILLOSCOPE_STOP_MARKER_LIMIT = 24;
+const OSCILLOSCOPE_STOP_MARKER_PLUGIN = {
+  id: "uartDebugStopMarkers",
+  afterDatasetsDraw(chart) {
+    drawOscilloscopeStopMarkers(chart);
+  },
 };
 const TERMINAL_LAYOUT_STORAGE_KEY = "ud_uart_terminal_layout_v1";
 const TERMINAL_LAYOUT_PANEL_IDS = ["tx", "rx"];
@@ -1548,6 +1557,55 @@ function dropDanglingOscilloscopePairByte() {
   }
 }
 
+function addOscilloscopeStopMarker() {
+  if (currentView !== "oscilloscope" || !oscilloscopeChart) return;
+
+  const x = Math.max(0, oscilloscopeData.length - 1);
+  oscilloscopeStopMarkers.push({ x });
+  if (oscilloscopeStopMarkers.length > OSCILLOSCOPE_STOP_MARKER_LIMIT) {
+    oscilloscopeStopMarkers.shift();
+  }
+  oscilloscopeChart.update("none");
+}
+
+function shiftOscilloscopeStopMarkers(delta = 1) {
+  if (!oscilloscopeStopMarkers.length) return;
+
+  oscilloscopeStopMarkers = oscilloscopeStopMarkers
+    .map((marker) => ({ x: marker.x - delta }))
+    .filter((marker) => marker.x >= 0);
+}
+
+function clearOscilloscopeStopMarkers() {
+  oscilloscopeStopMarkers = [];
+}
+
+function drawOscilloscopeStopMarkers(chart) {
+  if (!oscilloscopeStopMarkers.length) return;
+
+  const { ctx, chartArea, scales } = chart;
+  const xScale = scales?.x;
+  if (!ctx || !chartArea || !xScale) return;
+
+  ctx.save();
+  ctx.strokeStyle = OSCILLOSCOPE_THEME.stopMarker;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 5]);
+
+  oscilloscopeStopMarkers.forEach((marker) => {
+    const x = xScale.getPixelForValue(marker.x);
+    if (!Number.isFinite(x)) return;
+    if (x < chartArea.left || x > chartArea.right) return;
+
+    ctx.beginPath();
+    ctx.moveTo(x, chartArea.top);
+    ctx.lineTo(x, chartArea.bottom);
+    ctx.stroke();
+  });
+
+  ctx.restore();
+}
+
 function updateReceiveButtonState() {
   if (!receiveToggleBtn) return;
   if (pendingReceiveStop) {
@@ -1629,6 +1687,8 @@ function toggleReceiving() {
     stopReceivingImmediately(true);
     return;
   }
+
+  addOscilloscopeStopMarker();
 
   if (shouldDeferReceivingStop()) {
     pendingReceiveStop = true;
@@ -1864,6 +1924,7 @@ function initOscilloscope() {
 
   // Initialize data array
   oscilloscopeData = new Array(points).fill(0);
+  clearOscilloscopeStopMarkers();
   byteBuffer = []; // Clear byte buffer
   rxPausedByteParity = 0;
   rxResumeDiscardBytes = 0;
@@ -1930,6 +1991,7 @@ function initOscilloscope() {
         },
       ],
     },
+    plugins: [OSCILLOSCOPE_STOP_MARKER_PLUGIN],
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -2214,6 +2276,7 @@ function updateOscilloscopeData(uint8Array) {
       oscilloscopeData.push(value);
       if (oscilloscopeData.length > points) {
         oscilloscopeData.shift();
+        shiftOscilloscopeStopMarkers();
       }
     }
   }
@@ -2229,6 +2292,7 @@ function clearOscilloscope() {
   if (oscilloscopeChart) {
     const points = 500;
     oscilloscopeData = new Array(points).fill(0);
+    clearOscilloscopeStopMarkers();
     byteBuffer = []; // Clear byte buffer
     rxPausedByteParity = 0;
     rxResumeDiscardBytes = 0;
