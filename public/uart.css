@@ -2476,6 +2476,11 @@ body.terminal-page .oscilloscope-watermark {
   z-index: 2;
 }
 
+body.terminal-page .oscilloscope-watermark {
+  right: 24px;
+  bottom: clamp(58px, 8vh, 86px);
+}
+
 body.terminal-page #oscilloscopeCanvas {
   background: transparent;
 }
