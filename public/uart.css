@@ -1654,50 +1654,43 @@ body.terminal-page .feature-panel {
   background: transparent;
 }
 
-body.terminal-page .terminal-start-overlay {
+body.terminal-page .serial-port-hint {
   position: fixed;
-  inset: 0;
+  top: 50%;
+  left: min(calc(50% + 260px), calc(100vw - 320px));
   z-index: 3200;
-  display: grid;
-  place-items: center;
-  width: 100%;
-  min-height: 100vh;
-  padding: 24px;
-  border: 0;
+  width: min(288px, calc(100vw - 32px));
+  padding: 18px 20px;
+  border: 1px solid var(--terminal-panel-border);
+  border-radius: var(--terminal-radius-sm);
   background: rgba(23, 35, 46, 0.96);
   color: var(--terminal-text);
-  cursor: pointer;
   font:
-    800 clamp(28px, 5vw, 58px) / 1.05 Inter,
+    800 20px/1.16 Inter,
     Arial,
     sans-serif;
   letter-spacing: 0;
-  text-align: center;
-}
-
-body.terminal-page .terminal-start-overlay[hidden] {
-  display: none !important;
-}
-
-body.terminal-page .terminal-start-overlay span {
-  display: block;
-  max-width: min(1180px, 100%);
-  line-height: 1.16;
-  text-shadow: 0 14px 48px rgba(7, 13, 20, 0.38);
+  text-align: left;
+  box-shadow: 0 22px 60px rgba(5, 14, 20, 0.34);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(10px, -50%);
   transition:
-    color 140ms ease,
+    opacity 140ms ease,
     transform 140ms ease;
 }
 
-body.terminal-page .terminal-start-overlay:hover span,
-body.terminal-page .terminal-start-overlay:focus-visible span {
-  color: #effff5;
-  transform: translateY(-1px);
+body.terminal-page .serial-port-hint[hidden] {
+  display: none !important;
 }
 
-body.terminal-page .terminal-start-overlay:focus-visible {
-  outline: 2px solid rgba(70, 255, 120, 0.58);
-  outline-offset: -8px;
+body.terminal-page .serial-port-hint.show {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+body.terminal-page .serial-port-hint span {
+  display: block;
 }
 
 body.terminal-page .api-support-warning {
@@ -2726,6 +2719,21 @@ body.terminal-page footer {
   body.terminal-page .terminal-settings-btn {
     width: 100% !important;
     min-width: 0;
+  }
+
+  body.terminal-page .serial-port-hint {
+    top: auto;
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+    width: auto;
+    font-size: 18px;
+    text-align: center;
+    transform: translateY(10px);
+  }
+
+  body.terminal-page .serial-port-hint.show {
+    transform: translateY(0);
   }
 
   body.terminal-page .modal-content {

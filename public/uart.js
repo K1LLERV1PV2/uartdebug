@@ -96,7 +96,7 @@ let terminalLayoutState = {
 let terminalLayoutDrag = null;
 let terminalLayoutResize = null;
 let terminalLayoutRefreshFrame = null;
-let terminalStartOverlay = null;
+let serialPortHint = null;
 let txTerminalWatermark = null;
 let txGeneratorWatermark = null;
 let rxTerminalWatermark = null;
@@ -152,7 +152,7 @@ function initializeElements() {
   oscilloscopeCanvas = document.getElementById("oscilloscopeCanvas");
   oscilloscopeContainer = document.getElementById("oscilloscopeContainer");
   cycleCheckbox = document.getElementById("cycleCheckbox");
-  terminalStartOverlay = document.getElementById("terminalStartOverlay");
+  serialPortHint = document.getElementById("serialPortHint");
   txTerminalWatermark = document.getElementById("txTerminalWatermark");
   txGeneratorWatermark = document.getElementById("txGeneratorWatermark");
   rxTerminalWatermark = document.getElementById("rxTerminalWatermark");
@@ -165,8 +165,9 @@ function initializeElements() {
  */
 function initializeEventListeners() {
   // Connection button
+  connectBtn.addEventListener("pointerdown", handleConnectIntent);
+  connectBtn.addEventListener("keydown", handleConnectIntent);
   connectBtn.addEventListener("click", toggleConnection);
-  terminalStartOverlay?.addEventListener("click", handleTerminalStart);
 
   // Run/Stop button and input
   sendBtn.addEventListener("click", handleRunAction);
@@ -629,7 +630,7 @@ function scheduleTerminalLayoutRefresh() {
 function checkWebSerialSupport() {
   if (!("serial" in navigator)) {
     document.getElementById("apiWarning").classList.add("show");
-    hideTerminalStartOverlay();
+    hideSerialPortHint();
     connectBtn.disabled = true;
     updateConnectButtonLabels("Unavailable", "Web Serial unavailable");
     sendBtn.disabled = true;
@@ -638,20 +639,39 @@ function checkWebSerialSupport() {
   }
 }
 
-function hideTerminalStartOverlay() {
-  if (!terminalStartOverlay) return;
-  terminalStartOverlay.hidden = true;
+function canShowSerialPortHint() {
+  return !!(
+    serialPortHint &&
+    !port &&
+    "serial" in navigator &&
+    connectBtn &&
+    !connectBtn.disabled
+  );
 }
 
-function handleTerminalStart(event) {
-  event.preventDefault();
-  hideTerminalStartOverlay();
+function showSerialPortHint() {
+  if (!canShowSerialPortHint()) return;
 
-  if (!("serial" in navigator) || port || !connectBtn || connectBtn.disabled) {
+  serialPortHint.hidden = false;
+  serialPortHint.classList.add("show");
+}
+
+function hideSerialPortHint() {
+  if (!serialPortHint) return;
+  serialPortHint.classList.remove("show");
+  serialPortHint.hidden = true;
+}
+
+function handleConnectIntent(event) {
+  if (
+    event.type === "keydown" &&
+    event.key !== "Enter" &&
+    event.key !== " "
+  ) {
     return;
   }
 
-  connectSerial({ quietPortSelectionErrors: true });
+  showSerialPortHint();
 }
 
 /**
@@ -659,8 +679,10 @@ function handleTerminalStart(event) {
  */
 async function toggleConnection() {
   if (!port) {
+    showSerialPortHint();
     await connectSerial();
   } else {
+    hideSerialPortHint();
     await disconnectSerial();
   }
 }
@@ -685,11 +707,14 @@ async function connectSerial({ quietPortSelectionErrors = false } = {}) {
   try {
     selectedPort = await navigator.serial.requestPort();
   } catch (error) {
+    hideSerialPortHint();
     if (!quietPortSelectionErrors || !isSerialPortSelectionDismissed(error)) {
       console.error("Connection error:", error);
     }
     return false;
   }
+
+  hideSerialPortHint();
 
   try {
     port = selectedPort;
