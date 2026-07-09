@@ -404,6 +404,7 @@ body {
 }
 
 .generator-panel {
+  position: relative;
   background: #2c3e50;
   border: 1px solid #7f8c8d;
   border-radius: 4px;
@@ -1905,8 +1906,9 @@ body.terminal-page
 }
 
 body.terminal-page .terminal-status-value.connected {
-  background: var(--terminal-surface-connected);
-  border-color: var(--terminal-border-hot);
+  background: var(--terminal-surface);
+  border-color: transparent;
+  color: var(--terminal-text-soft);
 }
 
 body.terminal-page .terminal-status-value.disconnected {
@@ -2297,12 +2299,12 @@ body.terminal-page .uart-sessions-split.is-terminal-resizing
 body.terminal-page .uart-session .terminal-header {
   min-width: 0;
   max-width: 100%;
-  cursor: grab;
-  touch-action: none;
+  cursor: default;
+  touch-action: auto;
 }
 
 body.terminal-page .uart-session .terminal-header:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 body.terminal-page
@@ -2418,6 +2420,28 @@ body.terminal-page .oscilloscope-container {
 body.terminal-page .terminal-container,
 body.terminal-page .generator-panel {
   padding: 12px;
+}
+
+body.terminal-page .terminal-watermark {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  z-index: 1;
+  max-width: calc(100% - 72px);
+  overflow: hidden;
+  color: rgba(200, 255, 221, 0.065);
+  font-size: clamp(30px, 4.4vw, 64px);
+  font-weight: 800;
+  line-height: 1;
+  pointer-events: none;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.terminal-page .generator-watermark,
+body.terminal-page .oscilloscope-watermark {
+  z-index: 2;
 }
 
 body.terminal-page #oscilloscopeCanvas {

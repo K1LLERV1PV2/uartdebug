@@ -142,6 +142,12 @@
     el.scrollTop = el.scrollHeight;
   }
 
+  function setCompileLogLines(lines) {
+    setCompileLogText(
+      (Array.isArray(lines) ? lines : [lines]).filter(Boolean).join("\n")
+    );
+  }
+
   function clearUpdiLog() {
     const updi = getCanvasUpdiRuntime();
     if (updi && typeof updi.clearLog === "function") {
@@ -542,8 +548,19 @@
     }
 
     try {
+      appendCompileStatus("Flashing ...");
       await updi.programHex();
-      appendCompileStatus("Flash succeeded.");
+      const compileLog = $("compileLog");
+      const lines = String(compileLog?.textContent || "")
+        .replace(/\r\n/g, "\n")
+        .split("\n")
+        .filter(Boolean);
+      if (lines[lines.length - 1] === "Flashing ...") {
+        lines[lines.length - 1] = "FLASH OK.";
+      } else {
+        lines.push("FLASH OK.");
+      }
+      setCompileLogLines(lines);
     } catch (error) {
       await showSiteAlert(
         `Flash failed.\n${error.message || String(error)}`,
@@ -3764,6 +3781,17 @@ int main(void)
       if (!isCFileName(current)) return;
       if (!change || !change.text || !change.text.length) return;
       const ch = change.text.join("");
+      const isPastedBlock =
+        change.origin === "paste" ||
+        change.text.length > 1 ||
+        /\r|\n/.test(ch) ||
+        /\n$/.test(ch);
+      if (isPastedBlock) {
+        if (cm.state?.completionActive && typeof cm.closeHint === "function") {
+          cm.closeHint();
+        }
+        return;
+      }
       if (/\w|_/.test(ch)) {
         cm.showHint({
           hint: CodeMirror.hint.udc,
@@ -4536,26 +4564,19 @@ int main(void)
     }
 
     clearUpdiLog();
-    setCompileLogText("Compiling...");
+    setCompileLogText("Compiling ...");
 
     const mcuEl = $("mcuSelect");
     const optEl = $("optimizeSelect");
     let selectedMcu = mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624";
 
     if (selectedMcu === "auto") {
-      setCompileLogText("Detecting target...");
-
       try {
         const signatureInfo = await ensureAutoDetectedTarget();
         const detectedMcu =
           signatureInfo && signatureInfo.matchedTargetKey
             ? String(signatureInfo.matchedTargetKey).trim()
             : "";
-        const detectedLabel =
-          signatureInfo && signatureInfo.matchedTargetLabel
-            ? String(signatureInfo.matchedTargetLabel).trim()
-            : detectedMcu;
-
         if (!detectedMcu) {
           throw new Error(
             "Auto detect could not resolve a supported chip. Check the UPDI connection or choose a concrete MCU before compiling."
@@ -4563,7 +4584,6 @@ int main(void)
         }
 
         selectedMcu = detectedMcu;
-        setCompileLogText(`Compiling for ${detectedLabel}...`);
       } catch (error) {
         setCompileLogText(
           error.message ||
@@ -4584,7 +4604,7 @@ int main(void)
 
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "Compiling...";
+      btn.textContent = "Compiling ...";
       btn.title = btn.textContent;
     }
 

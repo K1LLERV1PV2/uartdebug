@@ -161,6 +161,8 @@
     signatureInfo: null,
     programInfo: null,
     preferredPort: null,
+    connectionErrorTarget: "",
+    connectionErrorMessage: "",
   };
 
   const AVR_UPDI_RUNTIME_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI__";
@@ -253,10 +255,55 @@
     );
   }
 
+  function getShortConnectionError(target, error) {
+    if (target === "adapter" || isPortSelectionError(error?.message || error)) {
+      return "Adapter error";
+    }
+    return "Chip error";
+  }
+
+  function resetMcuSelectionToAuto() {
+    if (!els.mcuSelect) return;
+    if (els.mcuSelect.value !== "auto") {
+      els.mcuSelect.value = "auto";
+      els.mcuSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    } else {
+      updateView();
+    }
+  }
+
+  function clearConnectionPanelError() {
+    state.connectionErrorTarget = "";
+    state.connectionErrorMessage = "";
+  }
+
+  function markConnectionPanelError(target, error) {
+    const message = getShortConnectionError(target, error);
+    state.connectionErrorTarget = target === "adapter" ? "adapter" : "chip";
+    state.connectionErrorMessage = message;
+    state.lastProbeOk = false;
+    state.signatureInfo = null;
+    state.programInfo = null;
+    state.sibText = "";
+    if (state.connectionErrorTarget === "adapter") {
+      state.preferredPort = null;
+    }
+    resetMcuSelectionToAuto();
+  }
+
   function updateDevicePanelState() {
-    const portText = getPortLabel() || "No port selection";
-    const chipText = getSignaturePanelText();
-    const hasDetectedChip = !!state.signatureInfo?.matchedTargetKey;
+    const panelErrorTarget = !state.busy ? state.connectionErrorTarget : "";
+    const panelErrorMessage = state.connectionErrorMessage || "";
+    const hasAdapterPanelError = panelErrorTarget === "adapter";
+    const hasChipPanelError = panelErrorTarget === "chip";
+    const portText = hasAdapterPanelError
+      ? panelErrorMessage || "Adapter error"
+      : getPortLabel() || "No port selection";
+    const chipText = hasChipPanelError
+      ? panelErrorMessage || "Chip error"
+      : getSignaturePanelText();
+    const hasDetectedChip =
+      !panelErrorTarget && !!state.signatureInfo?.matchedTargetKey;
     const hasSignature = !!state.signatureInfo;
     const hasError = !!state.lastProbeError && !state.busy;
     const hasPortSelectionError =
@@ -270,14 +317,26 @@
 
     const adapterValue = $("adapterStatusText");
     if (adapterValue) {
-      adapterValue.classList.toggle("is-muted", !getPortLabel());
-      adapterValue.classList.toggle("is-error", hasPortSelectionError);
+      adapterValue.classList.toggle(
+        "is-muted",
+        !getPortLabel() && !hasAdapterPanelError
+      );
+      adapterValue.classList.toggle(
+        "is-error",
+        hasPortSelectionError || hasAdapterPanelError
+      );
     }
 
     const chipValue = $("chipStatusText");
     if (chipValue) {
-      chipValue.classList.toggle("is-muted", !hasSignature && !hasError);
-      chipValue.classList.toggle("is-error", hasError);
+      chipValue.classList.toggle(
+        "is-muted",
+        !hasSignature && (!hasError || hasAdapterPanelError) && !hasChipPanelError
+      );
+      chipValue.classList.toggle(
+        "is-error",
+        hasChipPanelError || (hasError && !hasAdapterPanelError)
+      );
     }
 
     if (button) {
@@ -1739,9 +1798,11 @@
     }
 
     let session = null;
+    let connectionStage = "adapter";
     state.busy = true;
     state.busyLabel = actionName;
     state.lastProbeError = "";
+    clearConnectionPanelError();
     updateView();
 
     try {
@@ -1774,15 +1835,18 @@
 
       appendLog(`Opening port with ${SERIAL_BAUD} / 8E2...`);
       appendLog(`Port selected: ${formatPortInfo(session.port.getInfo?.())}`);
+      connectionStage = "chip";
 
       const result = await handler(session);
       state.lastProbeOk = true;
       state.lastProbeError = "";
+      clearConnectionPanelError();
       return result;
     } catch (error) {
       state.lastProbeOk = false;
-      state.lastProbeError = error.message || String(error);
-      appendLog(`${actionName} failed: ${state.lastProbeError}`);
+      markConnectionPanelError(connectionStage, error);
+      state.lastProbeError = state.connectionErrorMessage || "Connection error";
+      appendLog(`${actionName} failed: ${error.message || String(error)}`);
       throw error;
     } finally {
       if (session) {

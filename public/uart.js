@@ -36,8 +36,8 @@ const TX_GENERATOR_INTERVAL_MS = 10;
 const TX_TEXT_INTERVAL_MS = 1000;
 const TX_INTERVAL_MIN_MS = 10;
 const TX_INTERVAL_MAX_MS = 10000;
-const GEN_DEFAULT_AMPLITUDE_1BYTE = 100;
-const GEN_DEFAULT_AMPLITUDE_2BYTE = 20000;
+const GEN_DEFAULT_AMPLITUDE_1BYTE = 200;
+const GEN_DEFAULT_AMPLITUDE_2BYTE = 40000;
 const GEN_DEFAULT_OFFSET_SIGNED = 0;
 const GEN_DEFAULT_OFFSET_UNSIGNED_1BYTE = 128;
 const GEN_DEFAULT_OFFSET_UNSIGNED_2BYTE = 32768;
@@ -88,6 +88,10 @@ let terminalLayoutDrag = null;
 let terminalLayoutResize = null;
 let terminalLayoutRefreshFrame = null;
 let terminalStartOverlay = null;
+let txTerminalWatermark = null;
+let txGeneratorWatermark = null;
+let rxTerminalWatermark = null;
+let rxGraphicWatermark = null;
 
 // Initialize on page load
 document.addEventListener("DOMContentLoaded", function () {
@@ -98,7 +102,11 @@ document.addEventListener("DOMContentLoaded", function () {
   updateTxInputPlaceholder();
   updateTxInputPanelVisibility();
   updateGeneratorUi();
+  applyGeneratorByteSizeDefaults();
   applyGeneratorOffsetDefaults();
+  syncRxViewFromTx();
+  syncRxByteSizeFromTx();
+  updateTerminalWatermarks();
   updateRunButtonState();
   updateReceiveButtonState();
   updateConnectionStatus(false);
@@ -136,6 +144,10 @@ function initializeElements() {
   oscilloscopeContainer = document.getElementById("oscilloscopeContainer");
   cycleCheckbox = document.getElementById("cycleCheckbox");
   terminalStartOverlay = document.getElementById("terminalStartOverlay");
+  txTerminalWatermark = document.getElementById("txTerminalWatermark");
+  txGeneratorWatermark = document.getElementById("txGeneratorWatermark");
+  rxTerminalWatermark = document.getElementById("rxTerminalWatermark");
+  rxGraphicWatermark = document.getElementById("rxGraphicWatermark");
   uartSessions = Array.from(document.querySelectorAll(".uart-session"));
 }
 
@@ -249,6 +261,7 @@ function initializeEventListeners() {
     radio.addEventListener("change", () => {
       applyGeneratorByteSizeDefaults();
       applyGeneratorOffsetDefaults();
+      syncRxByteSizeFromTx();
     });
   });
   document.querySelectorAll('input[name="genSignMode"]').forEach((radio) => {
@@ -266,12 +279,6 @@ function initializeTerminalLayout() {
 
   terminalLayoutState = loadTerminalLayoutState();
   applyTerminalLayout();
-
-  uartSessions.forEach((session) => {
-    session
-      .querySelector(".terminal-header")
-      ?.addEventListener("pointerdown", handleTerminalDragPointerDown);
-  });
 
   terminalLayoutResizer?.addEventListener(
     "pointerdown",
@@ -302,13 +309,8 @@ function saveTerminalLayoutState() {
 }
 
 function normalizeTerminalLayoutState(input) {
-  const layout = input?.layout === "column" ? "column" : "row";
-  const order = Array.isArray(input?.order)
-    ? input.order.filter((id) => TERMINAL_LAYOUT_PANEL_IDS.includes(id))
-    : [];
-  TERMINAL_LAYOUT_PANEL_IDS.forEach((id) => {
-    if (!order.includes(id)) order.push(id);
-  });
+  const layout = "row";
+  const order = TERMINAL_LAYOUT_PANEL_IDS.slice();
 
   let txSize = Number(input?.sizes?.tx);
   let rxSize = Number(input?.sizes?.rx);
@@ -1366,6 +1368,29 @@ function applyTxViewDefaults() {
   getNormalizedLoopIntervalMs(TX_TEXT_INTERVAL_MS);
 }
 
+function setCheckedRadioValue(name, value) {
+  const radio = document.querySelector(
+    `input[name="${name}"][value="${value}"]`
+  );
+  if (!radio) return false;
+  radio.checked = true;
+  return true;
+}
+
+function syncRxViewFromTx() {
+  const nextRxView = txView === "generator" ? "oscilloscope" : "terminal";
+  if (setCheckedRadioValue("rxView", nextRxView)) {
+    applyRxView(nextRxView);
+  }
+}
+
+function syncRxByteSizeFromTx() {
+  const txByteSize = getGeneratorSelectedByteSize();
+  if (setCheckedRadioValue("byteSize", txByteSize)) {
+    updateOscilloscopeSettings();
+  }
+}
+
 function handleTxViewChange(event) {
   const view = event.target.value;
   if (!view || !event.target.checked) return;
@@ -1391,8 +1416,11 @@ function handleTxViewChange(event) {
     stopLoopSend();
   }
   applyTxViewDefaults();
+  syncRxViewFromTx();
+  syncRxByteSizeFromTx();
   updateTxInputPanelVisibility();
   updateTxInputAvailability();
+  updateTerminalWatermarks();
 }
 
 function updateRunButtonState() {
@@ -1401,6 +1429,7 @@ function updateRunButtonState() {
   sendBtn.textContent = running ? "Stop" : "Run";
   sendBtn.classList.toggle("running", running);
   sendBtn.title = running ? "Stop cycle" : "Run";
+  updateTerminalWatermarks();
 }
 
 function getOscilloscopeByteSizeMode() {
@@ -1528,6 +1557,7 @@ function updateReceiveButtonState() {
     receiveToggleBtn.classList.add("receiving");
     receiveToggleBtn.title =
       "Waiting for full 2-byte sample (click again to force stop)";
+    updateTerminalWatermarks();
     return;
   }
 
@@ -1535,6 +1565,19 @@ function updateReceiveButtonState() {
   receiveToggleBtn.textContent = receiving ? "Stop" : "Get";
   receiveToggleBtn.classList.toggle("receiving", receiving);
   receiveToggleBtn.title = receiving ? "Stop receiving" : "Get data";
+  updateTerminalWatermarks();
+}
+
+function updateTerminalWatermarks() {
+  const txStatus = loopInterval && cycleCheckbox?.checked ? "Cycling" : "Stopped";
+  const rxStatus = isReceiving ? "Receiving" : "Stopped";
+
+  [txTerminalWatermark, txGeneratorWatermark].forEach((el) => {
+    if (el) el.textContent = txStatus;
+  });
+  [rxTerminalWatermark, rxGraphicWatermark].forEach((el) => {
+    if (el) el.textContent = rxStatus;
+  });
 }
 
 function stopReceivingImmediately(forcePairRealignment = false) {
@@ -1636,9 +1679,7 @@ function handleRxModeChange() {}
 /**
  * Handle view change (Terminal/Oscilloscope)
  */
-function handleViewChange(event) {
-  const view = event.target.value;
-  if (!event.target.checked) return;
+function applyRxView(view) {
   const oscilloscopeControls = document.getElementById("oscilloscopeControls");
   const dataModeControls = document.getElementById("dataModeControls");
   const rxModeControls = document.querySelectorAll(
@@ -1671,6 +1712,13 @@ function handleViewChange(event) {
     rxModeControls.forEach((el) => (el.style.display = "flex"));
     currentView = "terminal";
   }
+  updateTerminalWatermarks();
+}
+
+function handleViewChange(event) {
+  const view = event.target.value;
+  if (!event.target.checked) return;
+  applyRxView(view);
 }
 
 /**
@@ -2310,8 +2358,10 @@ function stopLoopSend() {
 function getGeneratorConfig() {
   const waveform = document.getElementById("genWaveform")?.value || "sine";
   const samples = parseInt(document.getElementById("genSamples")?.value) || 64;
-  const amplitude =
-    parseFloat(document.getElementById("genAmplitude")?.value) || 0;
+  const amplitude = Math.max(
+    0,
+    parseFloat(document.getElementById("genAmplitude")?.value) || 0
+  );
   const offset = parseFloat(document.getElementById("genOffset")?.value) || 0;
   const duty = parseFloat(document.getElementById("genDuty")?.value) || 50;
   const signMode =
@@ -2334,6 +2384,7 @@ function getGeneratorConfig() {
 function generateWaveSamples(config) {
   const { waveform, samples, amplitude, offset, duty } = config;
   const out = new Array(samples);
+  const peakAmplitude = amplitude / 2;
 
   for (let i = 0; i < samples; i++) {
     const t = i / samples;
@@ -2347,7 +2398,7 @@ function generateWaveSamples(config) {
       base = Math.sin(2 * Math.PI * t);
     }
 
-    out[i] = offset + amplitude * base;
+    out[i] = offset + peakAmplitude * base;
   }
 
   return out;
