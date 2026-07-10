@@ -373,7 +373,25 @@ jobs:
                 resolve_expected_compile_server_version
               fi
 
-              if command -v pm2 >/dev/null 2>&1; then
+              if command -v systemctl >/dev/null 2>&1 &&
+                systemctl list-unit-files --type=service --no-pager | awk '{print $1}' | grep -qx "uartdebug-backend.service"; then
+                if [ ! -f "${BE_DIR}/compile-server.js" ]; then
+                  echo "No backend entrypoint found in ${BE_DIR}"
+                  exit 1
+                fi
+
+                if [ -z "${ROLLBACK}" ]; then
+                  grep -q "${EXPECTED_COMPILE_SERVER_VERSION}" "${BE_DIR}/compile-server.js" || {
+                    echo "Deployed backend file does not contain expected compile-server version ${EXPECTED_COMPILE_SERVER_VERSION}"
+                    grep -n "COMPILE_SERVER_VERSION\\|/health" "${BE_DIR}/compile-server.js" || true
+                    exit 1
+                  }
+                fi
+
+                echo "Restarting uartdebug-backend.service"
+                run_sudo systemctl restart uartdebug-backend.service
+                run_sudo systemctl is-active --quiet uartdebug-backend.service
+              elif command -v pm2 >/dev/null 2>&1; then
                 export PORT="${BACKEND_PORT}"
                 export HOST="${BACKEND_BIND_HOST}"
                 export BIND_HOST="${BACKEND_BIND_HOST}"
@@ -424,10 +442,16 @@ jobs:
                 cat "${backend_hc_body}" || true
                 echo "Deployed backend version lines:"
                 grep -n "COMPILE_SERVER_VERSION\\|/health" "${BE_DIR}/compile-server.js" || true
-                echo "PM2 status:"
-                pm2 status "${PM2_NAME}" || true
-                echo "PM2 recent logs:"
-                pm2 logs "${PM2_NAME}" --lines 50 --nostream || true
+                if command -v systemctl >/dev/null 2>&1 &&
+                  systemctl list-unit-files --type=service --no-pager | awk '{print $1}' | grep -qx "uartdebug-backend.service"; then
+                  echo "uartdebug-backend.service status:"
+                  run_sudo systemctl status uartdebug-backend.service --no-pager -l || true
+                elif command -v pm2 >/dev/null 2>&1; then
+                  echo "PM2 status:"
+                  pm2 status "${PM2_NAME}" || true
+                  echo "PM2 recent logs:"
+                  pm2 logs "${PM2_NAME}" --lines 50 --nostream || true
+                fi
                 rm -f "${backend_hc_body}"
                 exit 1
               }
