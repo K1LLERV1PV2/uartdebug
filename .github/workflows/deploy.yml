@@ -427,9 +427,21 @@ jobs:
               echo "Backend healthcheck: ${BACKEND_HC_URL}"
               backend_hc_body="$(mktemp)"
               backend_code="000"
-              if ! backend_code="$(curl -sS -o "${backend_hc_body}" -w '%{http_code}' --max-time 10 "${BACKEND_HC_URL}")"; then
-                backend_code="000"
-              fi
+
+              for attempt in $(seq 1 20); do
+                : > "${backend_hc_body}"
+                if backend_code="$(curl -sS -o "${backend_hc_body}" -w '%{http_code}' --max-time 10 "${BACKEND_HC_URL}")"; then
+                  if [ "${backend_code}" = "200" ] && grep -q "${EXPECTED_COMPILE_SERVER_VERSION}" "${backend_hc_body}"; then
+                    break
+                  fi
+                else
+                  backend_code="000"
+                fi
+
+                echo "Backend healthcheck attempt ${attempt}/20 failed with HTTP ${backend_code}; retrying..."
+                sleep 1
+              done
+
               echo "Backend HTTP ${backend_code}"
               [ "${backend_code}" = "200" ] || {
                 echo "Backend healthcheck failed"
