@@ -991,7 +991,7 @@
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
-          navigator.serviceWorker.register("/sw.js?v=36").catch(function (error) {
+          navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(function (error) {
             console.error("Service worker registration failed:", error);
           });
         });

@@ -36,6 +36,12 @@ jobs:
               -i "$KEY_FILE" -p "${{ secrets.SSH_PORT || 22 }}" \
               "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" 'whoami && hostname'
 
+      - name: Stamp frontend service worker build id
+        if: ${{ (hashFiles('public/**') != '') && (!inputs.rollback) }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/stamp_frontend_build.py
+
       - name: Upload public/ if exists and not rollback
         if: ${{ (hashFiles('public/**') != '') && (!inputs.rollback) }}
         uses: appleboy/scp-action@v0.1.7
