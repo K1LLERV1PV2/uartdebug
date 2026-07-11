@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-v35";
+const CACHE_NAME = "uartdebug-shell-v36";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -98,7 +98,11 @@ self.addEventListener("fetch", (event) => {
 });
 
 function shouldUseNetworkFirstForAsset(request) {
-  return request.destination === "style" || request.destination === "script";
+  return (
+    request.destination === "style" ||
+    request.destination === "script" ||
+    request.destination === "image"
+  );
 }
 
 async function handleNavigationRequest(request) {
