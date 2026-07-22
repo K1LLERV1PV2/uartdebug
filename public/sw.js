@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-dev";
+const CACHE_NAME = "uartdebug-shell-20260722-mini-project-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -11,6 +11,14 @@ const APP_SHELL_ASSETS = [
   "/uart.js",
   "/AVR-Programming.css",
   "/avr-mini-projects.js",
+  "/avr-mini-project-archive.js",
+  "/avr-mini-projects/catalog.json",
+  "/avr-mini-projects/01_Minimum/01_Minimum_1.2.3-d.c",
+  "/avr-mini-projects/01_Minimum/01_Minimum_help_1.2.3-d.md",
+  "/avr-mini-projects/01_Minimum/Pasted%20image%2020260720202929.png",
+  "/avr-mini-projects/01_Minimum/Pasted%20image%2020260720203447.png",
+  "/avr-mini-projects/01_Minimum/Pasted%20image%2020260720203718.png",
+  "/avr-mini-projects/01_Minimum/Pasted%20image%2020260720203813.png",
   "/AVR-Programming.js",
   "/updi-test.js",
   "/updi-test.css",
@@ -86,7 +94,7 @@ self.addEventListener("fetch", (event) => {
 
   const shouldUseShellCache =
     APP_SHELL_PATHS.has(url.pathname) &&
-    CACHEABLE_DESTINATIONS.has(request.destination);
+    (CACHEABLE_DESTINATIONS.has(request.destination) || !request.destination);
 
   if (shouldUseShellCache && shouldUseNetworkFirstForAsset(request)) {
     event.respondWith(networkFirstWithCacheFallback(request));

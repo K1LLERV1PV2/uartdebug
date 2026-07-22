@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "projects": [
+    {
+      "id": "01_Minimum",
+      "displayName": "01_Minimum",
+      "title": "01_Minimum",
+      "summary": "Minimal AVR project that can be used as the basis for your code.",
+      "version": "1.2.3-d",
+      "defaultLocale": "en",
+      "source": {
+        "name": "01_Minimum_1.2.3-d.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/01_Minimum/01_Minimum_1.2.3-d.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "01_Minimum_help_1.2.3-d.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/01_Minimum/01_Minimum_help_1.2.3-d.md",
+          "assetBaseUrl": "/avr-mini-projects/01_Minimum/"
+        }
+      ],
+      "aiSpecRef": {
+        "path": "01_Minimum/01_Minimum_AI_1.2.3-d.md",
+        "mediaType": "text/markdown"
+      }
+    }
+  ]
+}

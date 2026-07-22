@@ -56,7 +56,7 @@
   const DEFAULT_MEDIA_TYPES = Object.freeze({
     [ROLES.SOURCE]: "text/x-c",
     [ROLES.GUIDE]: "text/markdown",
-    [ROLES.AI_SPEC]: "text/yaml",
+    [ROLES.AI_SPEC]: "text/markdown",
   });
 
   function normalizeRole(value) {
@@ -96,11 +96,13 @@
     const normalizedName = name.trim().toLowerCase();
     if (/\.c$/i.test(normalizedName)) return ROLES.SOURCE;
     if (
+      /_ai[^/\\]*\.md$/i.test(normalizedName) ||
       /\.(?:ai|agent|ya?ml|api)\.md$/i.test(normalizedName) ||
       /\.(?:ai|agent|ya?ml|api)$/i.test(normalizedName)
     ) {
       return ROLES.AI_SPEC;
     }
+    if (/_help[^/\\]*\.md$/i.test(normalizedName)) return ROLES.GUIDE;
     if (/\.md$/i.test(normalizedName)) return ROLES.GUIDE;
 
     return null;
@@ -132,6 +134,8 @@
     const version = normalizeVersion(definition.version);
     const rawFiles = collectDefinitionFiles(definition);
     const filesByRole = {};
+    const guides = [];
+    const guideLocales = new Set();
     const usedNames = new Set();
 
     for (let index = 0; index < rawFiles.length; index += 1) {
@@ -144,13 +148,25 @@
       }
       usedNames.add(nameKey);
 
+      if (file.role === ROLES.GUIDE) {
+        if (file.locale) {
+          const localeKey = file.locale.toLowerCase();
+          if (guideLocales.has(localeKey)) {
+            throw new Error(
+              `Mini-project definition has duplicate guide locale: ${file.locale}.`
+            );
+          }
+          guideLocales.add(localeKey);
+        }
+        guides.push(file);
+        continue;
+      }
+
       if (filesByRole[file.role]) {
         if (file.role === ROLES.SOURCE) {
           throw new Error("Mini-project definition has duplicate source files.");
         }
-        throw new Error(
-          `Mini-project definition has duplicate ${file.role} files.`
-        );
+        throw new Error(`Mini-project definition has duplicate ${file.role} files.`);
       }
 
       filesByRole[file.role] = file;
@@ -160,58 +176,105 @@
       throw new Error("Mini-project definition is missing a source file.");
     }
 
-    const files = {};
-    for (const role of CANONICAL_ROLES) {
-      if (filesByRole[role]) files[role] = filesByRole[role];
+    const guideSelection = selectDefaultGuide(
+      guides,
+      definition.defaultLocale
+    );
+    const files = { source: filesByRole[ROLES.SOURCE] };
+    if (guideSelection.guide) files.guide = guideSelection.guide;
+    if (filesByRole[ROLES.AI_SPEC]) {
+      files.aiSpec = filesByRole[ROLES.AI_SPEC];
     }
 
-    return {
+    const normalized = {
       schemaVersion: SCHEMA_VERSION,
       id,
       title,
       summary,
       version,
       files,
+      guides,
+      defaultLocale: guideSelection.defaultLocale,
     };
+
+    if (Object.prototype.hasOwnProperty.call(definition, "assets")) {
+      if (!Array.isArray(definition.assets) && !isPlainObject(definition.assets)) {
+        throw new TypeError(
+          "Mini-project assets metadata must be an array or object."
+        );
+      }
+      normalized.assets = cloneSafeMetadata(
+        definition.assets,
+        "Mini-project assets"
+      );
+    }
+
+    if (Object.prototype.hasOwnProperty.call(definition, "aiSpecRef")) {
+      if (!isPlainObject(definition.aiSpecRef)) {
+        throw new TypeError("Mini-project aiSpecRef metadata must be an object.");
+      }
+      normalized.aiSpecRef = cloneSafeMetadata(
+        definition.aiSpecRef,
+        "Mini-project aiSpecRef"
+      );
+    }
+
+    return normalized;
   }
 
   function collectDefinitionFiles(definition) {
-    if (Array.isArray(definition.files)) {
-      return definition.files.map((file) => ({ file, roleHint: null }));
-    }
+    const collected = [];
 
-    if (
+    if (Array.isArray(definition.files)) {
+      collected.push(
+        ...definition.files.map((file) => ({ file, roleHint: null }))
+      );
+    } else if (
       definition.files &&
       typeof definition.files === "object" &&
       !Array.isArray(definition.files)
     ) {
-      return Object.entries(definition.files).map(([roleName, file]) => {
+      for (const [roleName, file] of Object.entries(definition.files)) {
         const roleHint = normalizeRole(roleName);
         if (!roleHint) {
           throw new Error(`Unknown mini-project file role: ${roleName}.`);
         }
-        return { file, roleHint };
-      });
-    }
-
-    if (
+        if (roleHint === ROLES.GUIDE && Array.isArray(file)) {
+          collected.push(
+            ...file.map((guide) => ({ file: guide, roleHint: ROLES.GUIDE }))
+          );
+        } else {
+          collected.push({ file, roleHint });
+        }
+      }
+    } else if (
       Object.prototype.hasOwnProperty.call(definition, "fileName") ||
       Object.prototype.hasOwnProperty.call(definition, "content")
     ) {
-      return [
-        {
-          roleHint: ROLES.SOURCE,
-          file: {
-            role: ROLES.SOURCE,
-            name: definition.fileName,
-            content: definition.content,
-            mediaType: definition.mediaType,
-          },
+      collected.push({
+        roleHint: ROLES.SOURCE,
+        file: {
+          role: ROLES.SOURCE,
+          name: definition.fileName,
+          content: definition.content,
+          mediaType: definition.mediaType,
         },
-      ];
+      });
     }
 
-    return [];
+    if (Object.prototype.hasOwnProperty.call(definition, "guides")) {
+      if (!Array.isArray(definition.guides)) {
+        throw new TypeError("Mini-project guides must be an array.");
+      }
+      collected.push(
+        ...definition.guides.map((guide) => ({
+          file: guide,
+          roleHint: ROLES.GUIDE,
+        }))
+      );
+    }
+
+    return collected;
   }
 
   function normalizeFile(rawFile, roleHint, index) {
@@ -266,12 +329,62 @@
       mediaType = rawFile.mediaType.trim();
     }
 
-    return {
+    const file = {
       role,
       name,
       content: rawFile.content.replace(/\r\n?/g, "\n"),
       mediaType,
     };
+
+    if (rawFile.locale !== undefined && rawFile.locale !== null) {
+      if (role !== ROLES.GUIDE) {
+        throw new Error(
+          `Mini-project locale metadata is only valid for guide files: ${name}.`
+        );
+      }
+      file.locale = normalizeLocale(rawFile.locale, `Guide locale for ${name}`);
+    }
+
+    if (rawFile.label !== undefined && rawFile.label !== null) {
+      if (role !== ROLES.GUIDE) {
+        throw new Error(
+          `Mini-project label metadata is only valid for guide files: ${name}.`
+        );
+      }
+      file.label = normalizeRequiredText(rawFile.label, `Guide label for ${name}`);
+    }
+
+    if (rawFile.default !== undefined) {
+      if (role !== ROLES.GUIDE || typeof rawFile.default !== "boolean") {
+        throw new TypeError(
+          `Mini-project guide default metadata must be a boolean: ${name}.`
+        );
+      }
+      file.default = rawFile.default;
+    }
+
+    if (rawFile.assetBaseUrl !== undefined && rawFile.assetBaseUrl !== null) {
+      if (role !== ROLES.GUIDE) {
+        throw new Error(
+          `Mini-project assetBaseUrl is only valid for guide files: ${name}.`
+        );
+      }
+      file.assetBaseUrl = normalizeRequiredText(
+        rawFile.assetBaseUrl,
+        `Guide assetBaseUrl for ${name}`
+      );
+    }
+
+    if (Object.prototype.hasOwnProperty.call(rawFile, "assets")) {
+      if (!Array.isArray(rawFile.assets) && !isPlainObject(rawFile.assets)) {
+        throw new TypeError(
+          `Mini-project file assets must be an array or object: ${name}.`
+        );
+      }
+      file.assets = cloneSafeMetadata(rawFile.assets, `Assets for ${name}`);
+    }
+
+    return file;
   }
 
   function normalizeFileName(value) {
@@ -317,10 +430,154 @@
     throw new TypeError("Mini-project version must be a positive number or string.");
   }
 
+  function selectDefaultGuide(guides, rawDefaultLocale) {
+    const explicitlyDefault = guides.filter((guide) => guide.default === true);
+    if (explicitlyDefault.length > 1) {
+      throw new Error("Mini-project definition has multiple default guides.");
+    }
+
+    let defaultLocale = "";
+    if (rawDefaultLocale !== undefined && rawDefaultLocale !== null) {
+      defaultLocale = normalizeLocale(
+        rawDefaultLocale,
+        "Mini-project defaultLocale"
+      );
+    }
+
+    let guide = null;
+    if (defaultLocale) {
+      guide =
+        guides.find(
+          (candidate) =>
+            candidate.locale &&
+            candidate.locale.toLowerCase() === defaultLocale.toLowerCase()
+        ) || null;
+
+      if (!guide && guides.length === 1 && !guides[0].locale) {
+        guides[0].locale = defaultLocale;
+        guide = guides[0];
+      }
+
+      if (!guide && guides.length > 0) {
+        throw new Error(
+          `Mini-project defaultLocale has no matching guide: ${defaultLocale}.`
+        );
+      }
+    } else {
+      guide = explicitlyDefault[0] || guides[0] || null;
+      defaultLocale = guide && guide.locale ? guide.locale : "";
+    }
+
+    if (
+      explicitlyDefault[0] &&
+      guide &&
+      explicitlyDefault[0] !== guide
+    ) {
+      throw new Error(
+        "Mini-project defaultLocale conflicts with the default guide."
+      );
+    }
+
+    return { guide, defaultLocale };
+  }
+
+  function normalizeLocale(value, label) {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new TypeError(`${label} must be a non-empty string.`);
+    }
+
+    const locale = value.trim().replace(/_/g, "-");
+    if (
+      locale.length > 48 ||
+      !/^[a-z]{2,8}(?:-[a-z0-9]{1,8})*$/i.test(locale)
+    ) {
+      throw new Error(`${label} is invalid: ${value}.`);
+    }
+
+    return locale
+      .split("-")
+      .map((part, index) => {
+        if (index === 0) return part.toLowerCase();
+        if (/^[a-z]{4}$/i.test(part)) {
+          return part[0].toUpperCase() + part.slice(1).toLowerCase();
+        }
+        if (/^[a-z]{2}$/i.test(part)) return part.toUpperCase();
+        return part.toLowerCase();
+      })
+      .join("-");
+  }
+
+  function cloneSafeMetadata(value, label, depth = 0) {
+    if (depth > 12) {
+      throw new Error(`${label} metadata is nested too deeply.`);
+    }
+
+    if (
+      value === null ||
+      typeof value === "string" ||
+      typeof value === "boolean"
+    ) {
+      return value;
+    }
+
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) {
+        throw new TypeError(`${label} metadata contains a non-finite number.`);
+      }
+      return value;
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((entry) => cloneSafeMetadata(entry, label, depth + 1));
+    }
+
+    if (!isPlainObject(value)) {
+      throw new TypeError(`${label} metadata must contain only JSON-safe values.`);
+    }
+
+    const clone = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (key === "__proto__" || key === "prototype" || key === "constructor") {
+        throw new Error(`${label} metadata contains an unsafe key: ${key}.`);
+      }
+      clone[key] = cloneSafeMetadata(entry, label, depth + 1);
+    }
+    return clone;
+  }
+
+  function isPlainObject(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  }
+
   function parseDocumentationMarker(line) {
     if (typeof line !== "string") return null;
 
-    const match = /^\s*\/\/(#{1,6})[ \t]+(.+?)\s*$/.exec(line);
+    const { start } = scanDocumentationLine(line, false);
+    return createDocumentationMarker(line, start);
+  }
+
+  function createDocumentationMarkerScanner() {
+    let inBlockComment = false;
+
+    return Object.freeze({
+      parseLine(line) {
+        if (typeof line !== "string") return null;
+        const result = scanDocumentationLine(line, inBlockComment);
+        inBlockComment = result.inBlockComment;
+        return createDocumentationMarker(line, result.start);
+      },
+      reset() {
+        inBlockComment = false;
+      },
+    });
+  }
+
+  function createDocumentationMarker(line, start) {
+    if (start < 0) return null;
+
+    const match = /^\/\/(#{1,6})[ \t]+(.+?)\s*$/.exec(line.slice(start));
     if (!match) return null;
 
     const title = match[2].trim();
@@ -330,7 +587,59 @@
       level: match[1].length,
       title,
       key: normalizeHeadingKey(title),
+      start,
+      end: line.length,
     };
+  }
+
+  function scanDocumentationLine(line, startsInBlockComment) {
+    let state = startsInBlockComment ? "block" : "code";
+
+    for (let index = 0; index < line.length - 1; index += 1) {
+      const character = line[index];
+      const next = line[index + 1];
+
+      if (state === "block") {
+        if (character === "*" && next === "/") {
+          state = "code";
+          index += 1;
+        }
+        continue;
+      }
+
+      if (state === "string" || state === "character") {
+        if (character === "\\") {
+          index += 1;
+          continue;
+        }
+        if (
+          (state === "string" && character === '"') ||
+          (state === "character" && character === "'")
+        ) {
+          state = "code";
+        }
+        continue;
+      }
+
+      if (character === '"') {
+        state = "string";
+        continue;
+      }
+      if (character === "'") {
+        state = "character";
+        continue;
+      }
+      if (character === "/" && next === "*") {
+        state = "block";
+        index += 1;
+        continue;
+      }
+      if (character === "/" && next === "/") {
+        return { start: index, inBlockComment: false };
+      }
+    }
+
+    return { start: -1, inBlockComment: state === "block" };
   }
 
   function normalizeHeadingKey(value) {
@@ -463,6 +772,7 @@
     inferFileRole,
     normalizeDefinition,
     parseDocumentationMarker,
+    createDocumentationMarkerScanner,
     normalizeHeadingKey,
     extractMarkdownHeadings,
   });

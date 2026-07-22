@@ -24,11 +24,28 @@
   const OUTLINER_EDITOR_MIN_WIDTH = 440;
   const DOCUMENTATION_DEFAULT_WIDTH = 360;
   const DOCUMENTATION_MIN_WIDTH = 240;
-  const DOCUMENTATION_MAX_WIDTH = 620;
+  const DOCUMENTATION_MAX_WIDTH = 1600;
   const SPLIT_RESIZER_TOTAL_WIDTH = 28;
   const MINI_PROJECT_IMPORT_EVENT = "ud-avr-mini-project";
   const MINI_PROJECT_INSTALLED_EVENT = "ud-avr-mini-project-installed";
   const MINI_PROJECT_READY_EVENT = "ud-avr-mini-projects-ready";
+  const LEGACY_BUILTIN_MINI_PROJECT_IDS = new Set([
+    "minimum",
+    "cpu-clock",
+    "delay-blink",
+    "timer-interrupt",
+    "uart-tx",
+    "uart-rx",
+    "printf-usart0",
+    "printf-usart1",
+  ]);
+  const MINI_PROJECT_ARCHIVE_WORKSPACE_LIMITS = Object.freeze({
+    maxArchiveBytes: 4 * 1024 * 1024,
+    maxEntryUncompressedBytes: 2 * 1024 * 1024,
+    maxTotalUncompressedBytes: 2 * 1024 * 1024,
+    maxTextBytes: 256 * 1024,
+    maxImageBytes: 1024 * 1024,
+  });
 
   const $ = (id) => document.getElementById(id);
   const miniProjectCore = window.UartDebugAvrMiniProjectCore;
@@ -58,6 +75,8 @@
   let documentationMarkerFrame = null;
   let documentationRenderTimer = null;
   let documentationTargetTimer = null;
+  let documentationEditMode = false;
+  let documentationEditSaveTimer = null;
   let workspaceResizeFrame = null;
   let workspaceResizeObserver = null;
   let siteDialogResolve = null;
@@ -96,6 +115,33 @@
       Object.assign(dictionary, source);
     }
     return dictionary;
+  }
+
+  function cloneJsonMetadata(value, fallback) {
+    if (value === undefined) return fallback;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return fallback;
+    }
+  }
+
+  function normalizeProjectAssets(value) {
+    if (Array.isArray(value)) return cloneJsonMetadata(value, []);
+    if (!value || typeof value !== "object") return [];
+
+    return Object.entries(value).map(([path, rawAsset]) => {
+      if (rawAsset && typeof rawAsset === "object") {
+        return {
+          ...cloneJsonMetadata(rawAsset, {}),
+          path: String(rawAsset.path || rawAsset.name || path),
+        };
+      }
+      return {
+        path,
+        dataUrl: typeof rawAsset === "string" ? rawAsset : "",
+      };
+    });
   }
 
   function setHexStatus(state, filename) {
@@ -450,7 +496,7 @@
     modal.hidden = !isExpanded;
     btn.setAttribute("aria-expanded", String(isExpanded));
     btn.setAttribute("aria-label", optionsLabel);
-    btn.textContent = optionsLabel;
+    btn.textContent = "More";
     btn.title = isExpanded
       ? "Advanced UPDI tools are open"
       : "Show advanced UPDI tools";
@@ -622,1035 +668,120 @@
     setCompileLogText("");
   }
 
-  const AVR_FILE_TEMPLATES = [
-    {
-      id: "minimum",
-      fileName: "01_Minimum.c",
-      content: `/*
- * Project name: 01_Minimum.c
- * Description: Minimal AVR project template.
- *
- * Purpose:
- *   This is the smallest program structure that can be compiled
- *   and programmed into the microcontroller.
- *
- * Hardware action:
- *   No visible hardware action is performed.
- */
+  // Built-in mini-projects are loaded from the versioned catalog below.
 
-#include <xc.h>    // Device-specific definitions for the XC8 compiler (MPLAB X IDE)
-// #include <avr/io.h> // Alternative header for AVR-GCC compiler
+  const BUILTIN_MINI_PROJECT_CATALOG_URL = "/avr-mini-projects/catalog.json";
+  let builtInMiniProjectCatalogPromise = null;
 
-int main(void)
-{
-    /*
-     * Initialization code can be placed here.
-     * For example: clock setup, port configuration, timer setup, etc.
-     */
-
-    while (1)
-    {
-        /*
-         * Main application code can be placed here.
-         * This loop runs continuously after initialization.
-         */
+  async function loadBuiltInMiniProjectCatalog() {
+    if (builtInMiniProjectCatalogPromise) {
+      return builtInMiniProjectCatalogPromise;
     }
 
-    return 0;      // Normally never reached; keeps the compiler satisfied.
-}
-`,
-    },
-    {
-      id: "cpu-clock",
-      fileName: "02_CPU_Clock.c",
-      content: `/*
- * Project name: 02_CPU_Clock.c
- * Description: System clock configuration examples.
- *
- * Purpose:
- *   This project shows how to change the default CPU clock frequency.
- *   If the default 3.333 MHz clock is suitable, this project can be ignored.
- *
- *   The examples also show how to write to Configuration Change Protection
- *   (CCP) registers using _PROTECTED_WRITE().
- *
- * Hardware response:
- *   On microcontrollers with enough pins, the CPU clock can be output on PB5
- *   for test purposes.
- *
- *   This can be useful when a high-speed output signal is needed.
- */
-
-#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
-// #include <avr/io.h> // Alternative header for AVR-GCC compiler
-
-
-/*
- * If no clock configuration function is called, the CPU clock remains
- * at the default value:
- *
- *   20 MHz / 6 = 3.333 MHz
- */
-
-
-/*
- * Set the CPU clock to 20 MHz and output the system clock on PB5.
- *
- * Note:
- *   System Clock Out on PB5 is not available on small 14-pin packages.
- */
-void CPU_Max_Clock_20MHz_Out(void)
-{
-    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLA,
-                     CLKCTRL_CLKSEL_OSC20M_gc | CLKCTRL_CLKOUT_bm);
-
-    /*
-     * Disable the clock prescaler.
-     * CPU and peripheral clock: 20 MHz.
-     */
-    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLB, 0);
-}
-
-
-/*
- * Set the CPU clock to 20 MHz without system clock output.
- */
-void CPU_Max_Clock_20MHz_NoOutputSignal(void)
-{
-    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLA, CLKCTRL_CLKSEL_OSC20M_gc);
-
-    /*
-     * Disable the clock prescaler.
-     * CPU and peripheral clock: 20 MHz.
-     */
-    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLB, 0);
-}
-
-
-/*
- * Set the CPU clock to 10 MHz without system clock output.
- *
- * The 20 MHz internal oscillator is used with a division factor of 2.
- * CPU and peripheral clock: 20 MHz / 2 = 10 MHz.
- */
-void CPU_Clock_10MHz_NoOutputSignal(void)
-{
-    /*
-     * Select the 20 MHz internal oscillator.
-     * This is the default clock source, so this line can be omitted.
-     */
-    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLA, CLKCTRL_CLKSEL_OSC20M_gc);
-
-    /*
-     * Enable the clock prescaler and select division by 2.
-     */
-    _PROTECTED_WRITE(CLKCTRL.MCLKCTRLB,
-                     CLKCTRL_PDIV_2X_gc | CLKCTRL_PEN_bm);
-
-    /*
-     * Some available prescaler values:
-     *
-     *   CLKCTRL_PDIV_2X_gc    divide by 2
-     *   CLKCTRL_PDIV_4X_gc    divide by 4
-     *   CLKCTRL_PDIV_6X_gc    divide by 6, default value
-     *   CLKCTRL_PDIV_10X_gc   divide by 10
-     *   CLKCTRL_PDIV_16X_gc   divide by 16
-     */
-}
-
-
-int main(void)
-{
-    /*
-     * This function provides a continuous clock signal on PB5
-     * for test purposes, if the selected microcontroller package supports it.
-     */
-    CPU_Max_Clock_20MHz_Out();
-
-    /*
-     * User initialization code can be placed here.
-     */
-
-    while (1)
-    {
-        /*
-         * Main application code can be placed here.
-         */
-    }
-
-    return 0;    // Normally never reached; keeps the compiler satisfied.
-}
-`,
-    },
-    {
-      id: "delay-blink",
-      fileName: "03_Delay-Based_Blink.c",
-      content: `/*
- * Project name: 03_Delay-Based_Blink.c
- * Description: LED blinking using a blocking software delay.
- *
- * Purpose:
- *   This is a simple first-run project example.
- *
- * Hardware response:
- *   PB1 is configured as output and toggled in the main loop.
- *
- *   The delay is implemented using a software blocking delay function.
- *   During the delay, the CPU cannot execute other tasks.
- *
- *   An LED with a series resistor can be connected to PB1
- *   to observe the blinking process.
- *
- *   On SOIC-14 packages, PB1 is pin 8.
- */
-
-#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
-// #include <avr/io.h> // Alternative header for AVR-GCC compiler
-
-/*
- * CPU clock remains at the default frequency:
- *
- *   20 MHz / 6 = 3.333 MHz
- *
- * See project:
- *   02_CPU_Clock.c
- */
-#define F_CPU 3333333UL
-
-#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
-
-
-int main(void)
-{
-    /*
-     * Set the output level before enabling output mode.
-     *
-     * This approach helps prevent unwanted glitches on the pin.
-     * It can be especially important when controlling MOSFET gates.
-     */
-    PORTB.OUTCLR = PIN1_bm;   // Set PB1 low
-    PORTB.DIRSET = PIN1_bm;   // Configure PB1 as output
-
-    while (1)
-    {
-        PORTB.OUTTGL = PIN1_bm;   // Toggle PB1 state
-        _delay_ms(500);           // 500 ms blocking delay
-    }
-
-    /*
-     * In embedded systems, execution normally never reaches this point.
-     * The return statement is kept to satisfy the compiler.
-     */
-    return 0;
-}
-`,
-    },
-    {
-      id: "timer-interrupt",
-      fileName: "04_Timer_Interrupt_Blink.c",
-      content: `/*
- * Project name: 04_Timer_Interrupt_Blink.c
- * Description: Non-blocking LED blinking using TCA0 timer interrupts.
- *
- * Purpose:
- *   This project demonstrates a simple periodic timer interrupt
- *   using the 16-bit TCA0 timer.
- *
- *   Unlike software delay functions, the CPU is not blocked while
- *   waiting for the next LED toggle event.
- *
- * Hardware response:
- *   PB1 is configured as output and toggled inside the interrupt
- *   service routine (ISR).
- *
- *   An LED with a series resistor can be connected to PB1
- *   to observe the blinking process.
- *
- *   On SOIC-14 packages, PB1 is pin 8.
- */
-
-#include <xc.h>                // Device-specific definitions for XC8 compiler (MPLAB X IDE)
-// #include <avr/io.h>         // Alternative header for AVR-GCC compiler
-
-#include <avr/interrupt.h>     // Interrupt handling functions
-
-#define F_CPU 3333333UL        // System clock frequency in Hz
-
-
-/*
- * Timer configuration parameters
- *
- * Prescaler:
- *   1024
- *
- * Timer period:
- *   0.5 seconds
- */
-#define TCA_PRESCALER   1024UL
-#define TCA_PERIOD_US   500000UL
-
-
-/*
- * Calculate TCA0 period register value.
- */
-#define TCA_PER_VALUE \\
-    ((uint16_t)(((F_CPU / TCA_PRESCALER) * TCA_PERIOD_US) / 1000000UL - 1UL))
-
-
-/*
- * Notes:
- *
- * 1.
- *    1000000UL is the number of microseconds in one second.
- *
- * 2.
- *    Maximum practical TCA0 period value is approximately 65535.
- *
- * 3.
- *    With:
- *
- *        F_CPU = 3333333 Hz
- *        Prescaler = 1024
- *
- *    Timer resolution is:
- *
- *        (1 / 3333333) x 1024 ~= 307 us
- *
- * 4.
- *    For a 0.5 second period:
- *
- *        TCA_PER_VALUE = 1626
- *
- * 5.
- *    Actual timer period:
- *
- *        (1626 + 1) x (1024 / 3333333)
- *        ~= 0.4998 seconds
- */
-
-
-/*
- * Initialize TCA0 in normal 16-bit mode.
- */
-void Init_TCA(void)
-{
-    /*
-     * Normal counting mode.
-     */
-    TCA0.SINGLE.CTRLB = TCA_SINGLE_WGMODE_NORMAL_gc;
-
-    /*
-     * Enable timer overflow interrupt.
-     */
-    TCA0.SINGLE.INTCTRL = TCA_SINGLE_OVF_bm;
-
-    /*
-     * Set timer period value.
-     */
-    TCA0.SINGLE.PER = TCA_PER_VALUE;
-
-    /*
-     * Select clock prescaler and start the timer.
-     */
-    TCA0.SINGLE.CTRLA =
-            TCA_SINGLE_CLKSEL_DIV1024_gc |
-            TCA_SINGLE_ENABLE_bm;
-
-    /*
-     * Available TCA clock divider options:
-     *
-     *   TCA_SINGLE_CLKSEL_DIV1_gc
-     *   TCA_SINGLE_CLKSEL_DIV2_gc
-     *   TCA_SINGLE_CLKSEL_DIV4_gc
-     *   TCA_SINGLE_CLKSEL_DIV8_gc
-     *   TCA_SINGLE_CLKSEL_DIV16_gc
-     *   TCA_SINGLE_CLKSEL_DIV64_gc
-     *   TCA_SINGLE_CLKSEL_DIV256_gc
-     *   TCA_SINGLE_CLKSEL_DIV1024_gc
-     *
-     * If the clock divider is changed here,
-     * the TCA_PRESCALER definition above must also be updated
-     * to keep the timer period calculation correct.
-     */
-}
-
-
-/*
- * TCA0 overflow interrupt service routine.
- */
-ISR(TCA0_OVF_vect)
-{
-    /*
-     * Toggle PB1 state.
-     * Any other periodic interrupt code can be placed here.
-     */
-    PORTB.OUTTGL = PIN1_bm;
-
-    /*
-     * Clear interrupt flag.
-     * This must be done to allow future interrupts.
-     */
-    TCA0.SINGLE.INTFLAGS = TCA_SINGLE_OVF_bm;
-}
-
-
-int main(void)
-{
-    /*
-     * Set output level before enabling output mode.
-     */
-    PORTB.OUTCLR = PIN1_bm;
-
-    /*
-     * Configure PB1 as output.
-     */
-    PORTB.DIRSET = PIN1_bm;
-
-    /*
-     * Initialize and start TCA0 timer.
-     */
-    Init_TCA();
-
-    /*
-     * Enable global interrupts.
-     */
-    sei();
-
-    while (1)
-    {
-        /*
-         * User code can run here simultaneously
-         * with timer interrupt processing.
-         */
-    }
-
-    /*
-     * In embedded systems, execution normally never reaches this point.
-     * The return statement is kept to satisfy the compiler.
-     */
-    return 0;
-}
-`,
-    },
-    {
-      id: "uart-tx",
-      fileName: "05_UART_Basic_Transmission.c",
-      content: `/*
- * Project name: 05_UART_Basic_Transmission.c
- * Description: Basic UART0 byte transmission.
- *
- * Purpose:
- *   This project demonstrates UART0 initialization and direct byte
- *   transmission through the hardware data register.
- *
- *   This is the simplest way to transmit a byte using UART.
- *   The example uses blocking transmission in the main while(1) loop.
- *
- * Hardware response:
- *   UART0, 115200 baud, 8 data bits, no parity, 1 stop bit.
- *
- *   TxD output is on PB2.
- *   On SOIC-14 packages, PB2 is pin 7.
- *
- *   UART transmission period: 20 ms.
- *
- *   The transmitted byte value is increased after each transmission.
- *   This creates a sawtooth byte pattern.
- *
- *   The received bytes can be observed using a serial terminal.
- *   You can also observe the waveform using uartdebug.com
- *   in the following mode:  Unsigned, 1 byte
- *
- */
-
-#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
-// #include <avr/io.h> // Alternative header for AVR-GCC compiler
-
-/*
- * CPU clock remains at the default frequency:
- *
- *   20 MHz / 6 = 3.333 MHz
- *
- * F_CPU must be defined before including <util/delay.h>.
- */
-#define F_CPU 3333333UL
-
-#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
-
-
-#define BAUD_RATE 115200UL // User-selected UART baud rate
-#define CLK_PER   F_CPU
-
-/*
- * USART baud register calculation.
- */
-#define USART_BAUD_RATE \\
-    ((uint16_t)(((float)CLK_PER * 64.0 / (16.0 * (float)BAUD_RATE)) + 0.5))
-
-
-/*
- * Initialize USART0 for basic asynchronous transmission.
- *
- * UART format:
- *   115200 baud
- *   8 data bits
- *   No parity
- *   1 stop bit
- *
- * Common notation:
- *   115200 8N1
- */
- //
-void USART_Init(void)
-{
-    /*
-     * Set asynchronous UART mode, no parity,
-     * 8 data bits, 1 stop bit.
-     */
-    USART0.CTRLC = USART_CMODE_ASYNCHRONOUS_gc |
-                   USART_PMODE_DISABLED_gc |
-                   USART_CHSIZE_8BIT_gc |
-                   USART_SBMODE_1BIT_gc;
-
-    /*
-     * Set UART baud rate.
-     */
-    USART0.BAUD = USART_BAUD_RATE;
-
-    /*
-     * Configure PB2 as UART0 TX output.
-     */
-    PORTB.DIRSET = PIN2_bm;
-
-    /*
-     * Enable USART transmitter.
-     */
-    USART0.CTRLB = USART_TXEN_bm;
-}
-
-/*
-* UART1 configuration:
-*
-* 1. Replace all occurrences of USART0. with USART1.
-*
-* 2. Replace:
-* PORTB.DIRSET = PIN2_bm;
-* with:
-* PORTA.DIRSET = PIN1_bm;
-*
-* 3. UART1 pin assignment:
-* PA1 - TxD
-* For SOIC-14 packages:
-* PA1 - TxD - pin 11
-*/
-
-
-int main(void)
-{
-    uint8_t out_data = 0;
-
-    USART_Init();
-
-    while (1)
-    {
-        /*
-         * Waiting for the transmit buffer can be omitted
-         * if enough time is guaranteed between transmissions.
-         *
-         * At 115200 baud (8N1), transmission of one byte takes
-         * approximately 87 us.
-         */
-        while (!(USART0.STATUS & USART_DREIF_bm)) // Wait until the transmit buffer is empty
-        {
-            ;
-        }
-
-        /*
-         * Send one byte through UART0.
-         */
-        USART0.TXDATAL = out_data;
-
-        /*
-         * Increase the transmitted value.
-         * After 255, the uint8_t value automatically rolls over to 0.
-         */
-        out_data++;
-
-        /*
-         * Transmission period.
-         */
-        _delay_ms(20);
-    }
-
-    /*
-     * In embedded systems, execution normally never reaches this point.
-     * The return statement is kept to satisfy the compiler.
-     */
-    return 0;
-}
-`,
-    },
-    {
-      id: "uart-rx",
-      fileName: "06_UART_Basic_Receive.c",
-      content: `/*
- * Project name: 06_UART_Basic_Receive.c
- * Description: Basic UART0 byte receive.
- *
- * Purpose:
- *   This project demonstrates UART0 initialization and direct byte
- *   reception and transmission through the hardware data registers.
- *
- *   This is the simplest way to receive a byte using UART.
- *   The example uses blocking receive in the main while(1) loop.
- *
- * Hardware response:
- *   UART0, 115200 baud, 8 data bits, no parity, 1 stop bit.
- *
- *   The microcontroller waits for one byte on the UART0 input (PB3).
- *
- *   After receiving the byte, the microcontroller increments its value by 1
- *   and transmits the result through UART0 (PB2).
- *
- *   For SOIC-14 packages:
- *   PB2 - UART0 TxD - pin 7
- *   PB3 - UART0 RxD - pin 6
- */
-
-
-#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
-// #include <avr/io.h> // Alternative header for AVR-GCC compiler
-
-/*
- * CPU clock remains at the default frequency:
- *
- *   20 MHz / 6 = 3.333 MHz
- *
- * F_CPU must be defined before including <util/delay.h>.
- */
-#define F_CPU 3333333UL
-
-#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
-
-
-#define BAUD_RATE 115200UL // User-selected UART baud rate
-#define CLK_PER   F_CPU
-
-/*
- * USART baud register calculation.
- */
-#define USART_BAUD_RATE \\
-    ((uint16_t)(((float)CLK_PER * 64.0 / (16.0 * (float)BAUD_RATE)) + 0.5))
-
-
-/*
- * Initialize USART0 for basic asynchronous reception and transmission.
- *
- * UART format:
- *   115200 baud
- *   8 data bits
- *   No parity
- *   1 stop bit
- *
- * Common notation:
- *   115200 8N1
- */
-void USART_Init(void)
-{
-    /*
-     * Set asynchronous UART mode, no parity,
-     * 8 data bits, 1 stop bit.
-     */
-    USART0.CTRLC = USART_CMODE_ASYNCHRONOUS_gc |
-                   USART_PMODE_DISABLED_gc |
-                   USART_CHSIZE_8BIT_gc |
-                   USART_SBMODE_1BIT_gc;
-
-    /*
-     * Set UART baud rate.
-     */
-    USART0.BAUD = USART_BAUD_RATE;
-
-    /*
-     * Configure PB2 as UART0 TX output.
-     */
-    PORTB.DIRSET = PIN2_bm;
-
-    /*
-     * Enable USART0 transmitter and receiver.
-     */
-    USART0.CTRLB = USART_TXEN_bm | USART_RXEN_bm;
-}
-
-/*
-* UART1 configuration:
-*
-* 1. Replace all occurrences of USART0. with USART1.
-*
-* 2. Replace:
-* PORTB.DIRSET = PIN2_bm;
-* with:
-* PORTA.DIRSET = PIN1_bm;
-*
-* 3. UART1 pin assignment:
-* PA1 - TxD
-* PA2 - RxD
-* For SOIC-14 packages:
-* PA1 - TxD - pin 11
-* PA2 - RxD - pin 12
-*/
-
-
-int main(void)
-{
-    uint8_t received_byte;
-
-    USART_Init();
-
-    while (1)
-    {
-        // Wait until the receive register gets a byte.
-        while (!(USART0.STATUS & USART_RXCIF_bm))
-        {
-            ;
-        }
-
-        /*
-         * Get the received byte from the register.
-         */
-        received_byte = USART0.RXDATAL;
-
-        // Wait until the transmit data register is empty.
-        while (!(USART0.STATUS & USART_DREIF_bm))
-        {
-            ;
-        }
-
-        /*
-         * Increment the received value and transmit it.
-         */
-        USART0.TXDATAL = received_byte + 1;
-    }
-
-    /*
-     * In embedded systems, execution normally never reaches this point.
-     * The return statement is kept to satisfy the compiler.
-     */
-    return 0;
-}
-`,
-    },
-    {
-      id: "printf-usart0",
-      fileName: "07_Printf_Redirect_USART0.c",
-      content: `/*
- * Project name: 07_Printf_Redirect_USART0.c
- * Description: Redirect printf output to USART0. No interrupts.
- *
- * Purpose:
- *   This project demonstrates printf redirection to USART0
- *   and blocking text transmission in the main while(1) loop.
- *
- *   The output is a text string with an incrementing counter.
- *
- * Hardware response:
- *   UART0, 115200 baud, 8 data bits, no parity, 1 stop bit.
- *
- *   TxD output is on PB2.
- *   On SOIC-14 packages, PB2 is pin 7.
- *
- *   UART string transmission period: 500 ms.
- *
- *   The received string can be observed using a serial terminal.
- *   On uartdebug.com, use RXD in Text mode.
- */
-
-#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
-// #include <avr/io.h> // Alternative header for AVR-GCC compiler
-
-#include <stdio.h>    // For FILE and printf
-
-/*
- * CPU clock remains at the default frequency:
- *
- *   20 MHz / 6 = 3.333 MHz
- *
- * F_CPU must be defined before including <util/delay.h>.
- */
-#define F_CPU 3333333UL
-
-#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
-
-
-#define BAUD_RATE 115200UL // User-selected UART baud rate
-#define CLK_PER   F_CPU
-
-/*
- * USART baud register calculation.
- */
-#define USART_BAUD_RATE \\
-    ((uint16_t)(((float)CLK_PER * 64.0 / (16.0 * (float)BAUD_RATE)) + 0.5))
-
-
-/*
- * This function is used by printf() to send one character through USART0.
- */
-int USART_PrintChar(char c, FILE *stream)
-{
-    while (!(USART0.STATUS & USART_DREIF_bm))
-    {
-        ;
-    }
-
-    USART0.TXDATAL = c;
-
-    return 0;
-}
-
-
-/*
- * Output stream for printf redirection.
- */
-FILE USART_stream = FDEV_SETUP_STREAM(USART_PrintChar, NULL, _FDEV_SETUP_WRITE);
-
-
-/*
- * Initialize USART0 for basic asynchronous transmission.
- *
- * UART format:
- *   115200 baud
- *   8 data bits
- *   No parity
- *   1 stop bit
- *
- * Common notation:
- *   115200 8N1
- */
-void USART_Init(void)
-{
-    /*
-     * Set asynchronous UART mode, no parity,
-     * 8 data bits, 1 stop bit.
-     */
-    USART0.CTRLC = USART_CMODE_ASYNCHRONOUS_gc |
-                   USART_PMODE_DISABLED_gc |
-                   USART_CHSIZE_8BIT_gc |
-                   USART_SBMODE_1BIT_gc;
-
-    /*
-     * Set UART baud rate.
-     */
-    USART0.BAUD = USART_BAUD_RATE;
-
-    /*
-     * Configure PB2 as UART0 TX output.
-     */
-    PORTB.DIRSET = PIN2_bm;
-
-    /*
-     * Enable USART transmitter.
-     */
-    USART0.CTRLB = USART_TXEN_bm;
-
-    /*
-     * Redirect stdout to USART0.
-     */
-    stdout = &USART_stream;
-}
-
-
-/*
- * UART1 configuration:
- *
- * 1. Replace all occurrences of USART0. with USART1.
- *
- * 2. Replace:
- *      PORTB.DIRSET = PIN2_bm;
- *
- *    with:
- *      PORTA.DIRSET = PIN1_bm;
- *
- * 3. UART1 pin assignment:
- *      PA1 - TxD
- *
- * 4. For SOIC-14 packages:
- *      PA1 - TxD - pin 11
- */
-
-
-int main(void)
-{
-    uint16_t tr_count = 0;
-
-    USART_Init();
-
-    while (1)
-    {
-        printf("Counter = %u\\r\\n", tr_count);
-
-        tr_count++;
-
-        _delay_ms(500);
-    }
-
-    /*
-     * In embedded systems, execution normally never reaches this point.
-     * The return statement is kept to satisfy the compiler.
-     */
-    return 0;
-}
-`,
-    },
-    {
-      id: "printf-usart1",
-      fileName: "08_Printf_Redirect_USART1.c",
-      content: `/*
- * Project name: 08_Printf_Redirect_USART1.c
- * Description: Redirect printf output to USART1. No interrupts.
- *
- * Purpose:
- *   This project demonstrates printf redirection to USART1
- *   and blocking text transmission in the main while(1) loop.
- *
- *   The output is a text string with an incrementing counter.
- *
- * Hardware response:
- *   UART1, 115200 baud, 8 data bits, no parity, 1 stop bit.
- *
- *   TxD output is on PA1.
- *   On SOIC-14 packages, PA1 is pin 11.
- *
- *   UART string transmission period: 500 ms.
- *
- *   The received string can be observed using a serial terminal.
- *   On uartdebug.com, use RXD in Text mode.
- */
-
-#include <xc.h>       // Device-specific definitions for XC8 compiler (MPLAB X IDE)
-// #include <avr/io.h> // Alternative header for AVR-GCC compiler
-
-#include <stdio.h>    // For FILE and printf
-
-/*
- * CPU clock remains at the default frequency:
- *
- *   20 MHz / 6 = 3.333 MHz
- *
- * F_CPU must be defined before including <util/delay.h>.
- */
-#define F_CPU 3333333UL
-
-#include <util/delay.h>   // Blocking delay functions: _delay_ms(), _delay_us()
-
-
-#define BAUD_RATE 115200UL // User-selected UART baud rate
-#define CLK_PER   F_CPU
-
-/*
- * USART baud register calculation.
- */
-#define USART_BAUD_RATE \\
-    ((uint16_t)(((float)CLK_PER * 64.0 / (16.0 * (float)BAUD_RATE)) + 0.5))
-
-
-/*
- * This function is used by printf() to send one character through USART1.
- */
-int USART_PrintChar(char c, FILE *stream)
-{
-    while (!(USART1.STATUS & USART_DREIF_bm))
-    {
-        ;
-    }
-
-    USART1.TXDATAL = c;
-
-    return 0;
-}
-
-
-/*
- * Output stream for printf redirection.
- */
-FILE USART_stream = FDEV_SETUP_STREAM(USART_PrintChar, NULL, _FDEV_SETUP_WRITE);
-
-
-/*
- * Initialize USART1 for basic asynchronous transmission.
- *
- * UART format:
- *   115200 baud
- *   8 data bits
- *   No parity
- *   1 stop bit
- *
- * Common notation:
- *   115200 8N1
- */
-void USART_Init(void)
-{
-    /*
-     * Set asynchronous UART mode, no parity,
-     * 8 data bits, 1 stop bit.
-     */
-    USART1.CTRLC = USART_CMODE_ASYNCHRONOUS_gc |
-                   USART_PMODE_DISABLED_gc |
-                   USART_CHSIZE_8BIT_gc |
-                   USART_SBMODE_1BIT_gc;
-
-    /*
-     * Set UART baud rate.
-     */
-    USART1.BAUD = USART_BAUD_RATE;
-
-    /*
-     * Configure PA1 as UART1 TX output.
-     */
-    PORTA.DIRSET = PIN1_bm;
-
-    /*
-     * Enable USART transmitter.
-     */
-    USART1.CTRLB = USART_TXEN_bm;
-
-    /*
-     * Redirect stdout to USART1.
-     */
-    stdout = &USART_stream;
-}
-
-
-int main(void)
-{
-    uint16_t tr_count = 0;
-
-    USART_Init();
-
-    while (1)
-    {
-        printf("Counter = %u\\r\\n", tr_count);
-
-        tr_count++;
-
-        _delay_ms(500);
-    }
-
-    /*
-     * In embedded systems, execution normally never reaches this point.
-     * The return statement is kept to satisfy the compiler.
-     */
-    return 0;
-}
-`,
-    },
-  ];
-
-  const AVR_FILE_TEMPLATE_MAP = new Map(
-    AVR_FILE_TEMPLATES.map((template) => {
-      const project = miniProjectCore.normalizeDefinition(template);
-      return [project.id, project];
+    builtInMiniProjectCatalogPromise = fetch(BUILTIN_MINI_PROJECT_CATALOG_URL, {
+      cache: "no-cache",
+      credentials: "same-origin",
     })
-  );
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(
+            `Mini-project catalog could not be loaded (${response.status}).`
+          );
+        }
+        const catalog = await response.json();
+        if (
+          !catalog ||
+          Number(catalog.schemaVersion) !== 1 ||
+          !Array.isArray(catalog.projects)
+        ) {
+          throw new Error("Mini-project catalog has an unsupported format.");
+        }
+
+        const projects = new Map();
+        for (const descriptor of catalog.projects) {
+          const id = String(descriptor?.id || "").trim();
+          if (!id || projects.has(id)) {
+            throw new Error("Mini-project catalog contains an invalid id.");
+          }
+          projects.set(id, descriptor);
+        }
+        return projects;
+      })
+      .catch((error) => {
+        builtInMiniProjectCatalogPromise = null;
+        throw error;
+      });
+
+    return builtInMiniProjectCatalogPromise;
+  }
+
+  async function fetchBuiltInMiniProjectText(rawUrl, label) {
+    const url = new URL(String(rawUrl || ""), window.location.href);
+    if (url.origin !== window.location.origin) {
+      throw new Error(`${label} must be served from this site.`);
+    }
+    const response = await fetch(url.href, {
+      cache: "no-cache",
+      credentials: "same-origin",
+    });
+    if (!response.ok) {
+      throw new Error(`${label} could not be loaded (${response.status}).`);
+    }
+    return response.text();
+  }
+
+  async function loadBuiltInMiniProjectDefinition(templateId) {
+    const catalog = await loadBuiltInMiniProjectCatalog();
+    const descriptor = catalog.get(String(templateId || ""));
+    if (!descriptor) return null;
+
+    const sourceDescriptor = descriptor.source;
+    if (!sourceDescriptor?.name || !sourceDescriptor?.url) {
+      throw new Error("Mini-project catalog entry is missing its source file.");
+    }
+
+    const guideDescriptors = Array.isArray(descriptor.guides)
+      ? descriptor.guides
+      : [];
+    const [sourceContent, ...guideContents] = await Promise.all([
+      fetchBuiltInMiniProjectText(sourceDescriptor.url, "Source file"),
+      ...guideDescriptors.map((guide) =>
+        fetchBuiltInMiniProjectText(guide?.url, "Guide file")
+      ),
+    ]);
+
+    return {
+      schemaVersion: 1,
+      id: descriptor.id,
+      displayName: descriptor.displayName || descriptor.title || descriptor.id,
+      title: descriptor.title || descriptor.displayName || descriptor.id,
+      summary: descriptor.summary || "",
+      version: descriptor.version ?? 1,
+      defaultLocale: descriptor.defaultLocale || "",
+      files: [
+        {
+          role: "source",
+          name: sourceDescriptor.name,
+          content: sourceContent,
+          mediaType: sourceDescriptor.mediaType || "text/x-c",
+        },
+        ...guideDescriptors.map((guide, index) => ({
+          role: "guide",
+          name: guide.name,
+          content: guideContents[index],
+          mediaType: guide.mediaType || "text/markdown",
+          locale: guide.locale,
+          label: guide.label,
+          default:
+            !!descriptor.defaultLocale &&
+            descriptor.defaultLocale.toLowerCase() ===
+              String(guide.locale || "").toLowerCase(),
+          assetBaseUrl: guide.assetBaseUrl,
+        })),
+      ],
+      aiSpecRef: descriptor.aiSpecRef,
+    };
+  }
 
   function loadState() {
     let loadedEnvelope = false;
@@ -1740,7 +871,14 @@ int main(void)
       localStorage.setItem(STORAGE_KEY, serializedFiles);
       localStorage.setItem(LEGACY_STORAGE_KEY, serializedFiles);
       localStorage.setItem(STORAGE_GROUPS, JSON.stringify(fileGroups));
-      localStorage.setItem(STORAGE_MINI_PROJECTS, JSON.stringify(miniProjects));
+      if (envelopeError) {
+        localStorage.setItem(
+          STORAGE_MINI_PROJECTS,
+          JSON.stringify(miniProjects)
+        );
+      } else {
+        localStorage.removeItem(STORAGE_MINI_PROJECTS);
+      }
       if (current) {
         localStorage.setItem(STORAGE_CURRENT, current);
         localStorage.setItem(LEGACY_STORAGE_CURRENT, current);
@@ -1778,9 +916,18 @@ int main(void)
 
       const instanceId = String(rawInstanceId || "").trim();
       if (!instanceId || normalized[instanceId]) continue;
+      const definitionId = String(rawProject.definitionId || instanceId);
+      const origin = String(rawProject.origin || "local");
+      if (
+        origin === "builtin" &&
+        LEGACY_BUILTIN_MINI_PROJECT_IDS.has(definitionId)
+      ) {
+        continue;
+      }
 
       const roleFiles = {};
       const mediaTypes = {};
+      const guides = {};
       const rawRoleFiles = rawProject.files;
       if (rawRoleFiles && typeof rawRoleFiles === "object") {
         for (const [rawRole, rawFileName] of Object.entries(rawRoleFiles)) {
@@ -1802,21 +949,119 @@ int main(void)
         }
       }
 
-      if (!Object.keys(roleFiles).length) continue;
+      const addGuide = (rawLocale, rawGuide) => {
+        const entry =
+          typeof rawGuide === "string"
+            ? { fileName: rawGuide }
+            : rawGuide && typeof rawGuide === "object"
+              ? rawGuide
+              : null;
+        if (!entry) return;
+
+        const fileName = String(
+          entry.fileName || entry.file || entry.name || ""
+        ).trim();
+        if (!fileName || !hasFile(fileName)) return;
+
+        let locale = String(
+          entry.locale || rawLocale || rawProject.defaultLocale || "und"
+        )
+          .trim()
+          .replace(/_/g, "-");
+        if (!/^[a-z]{2,8}(?:-[a-z0-9]{1,8})*$/i.test(locale)) {
+          locale = "und";
+        }
+        const baseLocale = locale;
+        let suffix = 2;
+        while (guides[locale] && guides[locale].fileName !== fileName) {
+          locale = `${baseLocale}-x-${suffix}`;
+          suffix += 1;
+        }
+
+        guides[locale] = {
+          locale,
+          fileName,
+          label: String(entry.label || locale),
+          mediaType: String(entry.mediaType || "text/markdown"),
+          assetBaseUrl: String(entry.assetBaseUrl || ""),
+          assets: normalizeProjectAssets(entry.assets),
+        };
+      };
+
+      if (rawProject.guides && typeof rawProject.guides === "object") {
+        if (Array.isArray(rawProject.guides)) {
+          for (const guide of rawProject.guides) {
+            addGuide(guide?.locale, guide);
+          }
+        } else {
+          for (const [locale, guide] of Object.entries(rawProject.guides)) {
+            addGuide(locale, guide);
+          }
+        }
+      }
+
+      if (roleFiles.guide) {
+        const alreadyLinked = Object.values(guides).some(
+          (guide) => guide.fileName === roleFiles.guide
+        );
+        if (!alreadyLinked) {
+          addGuide(rawProject.defaultLocale || "und", {
+            fileName: roleFiles.guide,
+            mediaType: mediaTypes.guide || "text/markdown",
+          });
+        }
+      }
+
+      if (!roleFiles.source) continue;
+
+      const guideLocales = Object.keys(guides);
+      let defaultLocale = String(rawProject.defaultLocale || "").trim();
+      if (!guides[defaultLocale]) defaultLocale = guideLocales[0] || "";
+      let selectedLocale = String(rawProject.selectedLocale || "").trim();
+      if (!guides[selectedLocale]) selectedLocale = defaultLocale;
+      if (selectedLocale && guides[selectedLocale]) {
+        roleFiles.guide = guides[selectedLocale].fileName;
+        mediaTypes.guide = guides[selectedLocale].mediaType;
+      } else {
+        delete roleFiles.guide;
+        delete mediaTypes.guide;
+      }
 
       normalized[instanceId] = {
         schemaVersion: 1,
-        definitionId: String(rawProject.definitionId || instanceId),
+        definitionId,
         title: String(rawProject.title || rawProject.definitionId || instanceId),
+        displayName: String(
+          rawProject.displayName ||
+            rawProject.title ||
+            rawProject.definitionId ||
+            instanceId
+        ),
         summary: String(rawProject.summary || ""),
         version: rawProject.version ?? 1,
-        origin: String(rawProject.origin || "local"),
+        origin,
         files: roleFiles,
         mediaTypes,
+        guides,
+        defaultLocale,
+        selectedLocale,
+        assets: normalizeProjectAssets(rawProject.assets),
+        aiSpecRef:
+          rawProject.aiSpecRef && typeof rawProject.aiSpecRef === "object"
+            ? cloneJsonMetadata(rawProject.aiSpecRef, null)
+            : null,
       };
     }
 
     miniProjects = normalized;
+    const activeLink = current ? getMiniProjectForFile(current) : null;
+    if (
+      activeLink &&
+      activeLink.role !== miniProjectCore.ROLES.SOURCE &&
+      hasFile(activeLink.project.files?.source)
+    ) {
+      current = activeLink.project.files.source;
+    }
   }
 
   function normalizeFileGroups() {
@@ -2247,6 +1492,7 @@ int main(void)
   function resolveUploadedFileKind(fileName) {
     const ext = getFileExtension(fileName);
 
+    if (ext === "zip") return "mini-project-archive";
     if (!ext || EDITOR_FILE_EXTENSIONS.has(ext)) return "editor";
     return "unsupported";
   }
@@ -2375,9 +1621,9 @@ int main(void)
     const defaultMediaTypes = {
       source: "text/x-c",
       guide: "text/markdown",
-      aiSpec: "text/yaml",
+      aiSpec: "text/markdown",
     };
-    const projectFiles = miniProjectCore.CANONICAL_ROLES.flatMap((role) => {
+    const projectFiles = ["source", "aiSpec"].flatMap((role) => {
       const name = project.files?.[role];
       if (!name || !hasFile(name)) return [];
       return [
@@ -2389,23 +1635,55 @@ int main(void)
         },
       ];
     });
+    const guideFiles = Object.values(project.guides || {}).flatMap((guide) => {
+      const name = guide?.fileName;
+      if (!name || !hasFile(name)) return [];
+      return [
+        {
+          role: miniProjectCore.ROLES.GUIDE,
+          name,
+          content: getLiveFileContent(name),
+          mediaType: guide.mediaType || defaultMediaTypes.guide,
+          locale: guide.locale || "",
+          label: guide.label || guide.locale || "",
+        },
+      ];
+    });
 
     return {
       schemaVersion: 1,
       instanceId,
       id: project.definitionId,
       title: project.title,
+      displayName: project.displayName || project.title,
       summary: project.summary || "",
       version: project.version,
       origin: project.origin,
-      files: projectFiles,
+      defaultLocale: project.defaultLocale || "",
+      selectedLocale: project.selectedLocale || project.defaultLocale || "",
+      files: [...projectFiles, ...guideFiles],
+      assets: normalizeProjectAssets(project.assets),
+      aiSpecRef: cloneJsonMetadata(project.aiSpecRef, null),
     };
   }
 
   function installMiniProjectDefinition(rawDefinition, { origin = "local" } = {}) {
     const definition = miniProjectCore.normalizeDefinition(rawDefinition);
     const reservedNames = new Set();
-    const pendingFiles = Object.values(definition.files).map((projectFile) => {
+    const definitionFiles = [
+      definition.files.source,
+      ...(definition.guides || []),
+      definition.files.aiSpec,
+    ].filter(Boolean);
+    const seenDefinitionFiles = new Set();
+    const pendingFiles = definitionFiles
+      .filter((projectFile) => {
+        const key = `${projectFile.role}:${projectFile.name.toLowerCase()}`;
+        if (seenDefinitionFiles.has(key)) return false;
+        seenDefinitionFiles.add(key);
+        return true;
+      })
+      .map((projectFile) => {
       const name = uniqueReservedFileName(projectFile.name, reservedNames);
       if (!name) throw new TypeError("Mini-project file name is required.");
       reservedNames.add(name);
@@ -2414,13 +1692,17 @@ int main(void)
         name,
         content: String(projectFile.content || "").replace(/\r\n?/g, "\n"),
         mediaType: projectFile.mediaType,
+        locale: projectFile.locale || "",
+        label: projectFile.label || projectFile.locale || "",
+        assetBaseUrl: projectFile.assetBaseUrl || "",
+        assets: normalizeProjectAssets(projectFile.assets),
       };
     });
 
     const instanceId = uniqueMiniProjectInstanceId(definition.id);
-    let groupName = "";
     const roleFiles = {};
     const mediaTypes = {};
+    const guides = {};
     const previousFiles = files;
     const previousGroups = fileGroups;
     const previousProjects = miniProjects;
@@ -2438,34 +1720,56 @@ int main(void)
     try {
       for (const projectFile of pendingFiles) {
         files[projectFile.name] = projectFile.content;
-        roleFiles[projectFile.role] = projectFile.name;
-        mediaTypes[projectFile.role] = projectFile.mediaType;
+        if (projectFile.role === miniProjectCore.ROLES.GUIDE) {
+          let locale =
+            projectFile.locale || definition.defaultLocale || `guide-${Object.keys(guides).length + 1}`;
+          const baseLocale = locale;
+          let suffix = 2;
+          while (guides[locale]) {
+            locale = `${baseLocale}-x-${suffix}`;
+            suffix += 1;
+          }
+          guides[locale] = {
+            locale,
+            fileName: projectFile.name,
+            label: projectFile.label || locale,
+            mediaType: projectFile.mediaType || "text/markdown",
+            assetBaseUrl: projectFile.assetBaseUrl || "",
+            assets: projectFile.assets,
+          };
+        } else {
+          roleFiles[projectFile.role] = projectFile.name;
+          mediaTypes[projectFile.role] = projectFile.mediaType;
+        }
       }
 
-      if (pendingFiles.length > 1) {
-        groupName = uniqueGroupName(
-          getSafeMiniProjectGroupBase(definition.title, definition.id)
-        );
+      const guideLocales = Object.keys(guides);
+      const defaultLocale = guides[definition.defaultLocale]
+        ? definition.defaultLocale
+        : guideLocales[0] || "";
+      if (defaultLocale) {
+        roleFiles.guide = guides[defaultLocale].fileName;
+        mediaTypes.guide = guides[defaultLocale].mediaType;
       }
 
       miniProjects[instanceId] = {
         schemaVersion: 1,
         definitionId: definition.id,
         title: definition.title,
+        displayName: String(
+          rawDefinition.displayName || definition.title || definition.id
+        ).trim(),
         summary: definition.summary,
         version: definition.version ?? 1,
         origin: String(origin || "local"),
         files: roleFiles,
         mediaTypes,
+        guides,
+        defaultLocale,
+        selectedLocale: defaultLocale,
+        assets: normalizeProjectAssets(definition.assets),
+        aiSpecRef: cloneJsonMetadata(definition.aiSpecRef, null),
       };
-
-      if (groupName) {
-        fileGroups[groupName] = {
-          files: pendingFiles.map((projectFile) => projectFile.name),
-          groups: [],
-          expanded: true,
-        };
-      }
 
       const sourceFile = roleFiles.source;
       selectionStarted = true;
@@ -2554,11 +1858,11 @@ int main(void)
     });
   }
 
-  function createFileFromTemplate(templateId) {
-    const template = AVR_FILE_TEMPLATE_MAP.get(templateId);
-    if (!template) return false;
+  async function createFileFromTemplate(templateId) {
+    const definition = await loadBuiltInMiniProjectDefinition(templateId);
+    if (!definition) return false;
 
-    installMiniProjectDefinition(template, { origin: "builtin" });
+    installMiniProjectDefinition(definition, { origin: "builtin" });
     return true;
   }
 
@@ -2584,16 +1888,27 @@ int main(void)
   async function handleUploadedFile(file) {
     if (!file) return;
 
-    const text = await readLocalFileText(file);
     const fileKind = resolveUploadedFileKind(file.name);
+    if (fileKind === "mini-project-archive") {
+      const archiveApi = window.UartDebugAvrMiniProjectArchive;
+      if (!archiveApi?.parseMiniProjectArchive) {
+        throw new Error("Mini-project archive support is not available.");
+      }
+      const definition = await archiveApi.parseMiniProjectArchive(file, {
+        limits: MINI_PROJECT_ARCHIVE_WORKSPACE_LIMITS,
+      });
+      installMiniProjectDefinition(definition, { origin: "archive" });
+      return;
+    }
 
     if (fileKind === "editor") {
+      const text = await readLocalFileText(file);
       importEditorFile(file.name, text);
       return;
     }
 
     const message =
-      'Unsupported file type. Upload a source or guide file (.c, .h, .cpp, .hpp, .ino, .s, .asm, .txt, .md) or a firmware file (.hex).';
+      'Unsupported file type. Upload a source, guide, firmware file, or a mini-project archive (.zip).';
     await showSiteAlert(message, "Unsupported file");
     console.warn(`Import rejected: "${file.name}" has an unsupported extension.`);
   }
@@ -2797,6 +2112,16 @@ int main(void)
       container.classList.toggle("is-outliner-compact", isCompact);
     }
 
+    if (
+      container &&
+      !isStackedCanvasLayout() &&
+      documentationWidth > getDocumentationMaxWidth()
+    ) {
+      applyDocumentationWidth(documentationPreferredWidth, {
+        persist: false,
+        remember: false,
+      });
+    }
     syncSplitResizerAria();
     if (persist) persistOutlinerWidth(outlinerPreferredWidth);
     refreshEditorAfterOutlinerResize();
@@ -2897,14 +2222,12 @@ int main(void)
     if (!container || isStackedCanvasLayout()) return DOCUMENTATION_MAX_WIDTH;
 
     const rect = container.getBoundingClientRect();
-    const available =
-      rect.width -
-      OUTLINER_EDITOR_MIN_WIDTH -
-      outlinerWidth -
-      SPLIT_RESIZER_TOTAL_WIDTH;
+    const editorAndDocumentationWidth =
+      rect.width - outlinerWidth - SPLIT_RESIZER_TOTAL_WIDTH;
+    const halfSplitWidth = Math.floor(editorAndDocumentationWidth / 2);
     return Math.max(
       DOCUMENTATION_MIN_WIDTH,
-      Math.min(DOCUMENTATION_MAX_WIDTH, available)
+      Math.min(DOCUMENTATION_MAX_WIDTH, halfSplitWidth)
     );
   }
 
@@ -3468,14 +2791,23 @@ int main(void)
   }
 
   function renderFileRow(list, name, groupName = "", depth = 0) {
+    const linkedProject = getMiniProjectForFile(name);
+    const isMiniProjectSource =
+      linkedProject?.role === miniProjectCore.ROLES.SOURCE;
+    const displayName = getOutlinerFileLabel(name);
     const row = document.createElement("div");
     row.className = "file-item";
     row.dataset.file = name;
-    row.dataset.fileKind = getOutlinerFileKind(name);
-    row.dataset.outlinerIcon = getOutlinerFileIcon(name);
+    row.dataset.fileKind = isMiniProjectSource
+      ? "mini-project"
+      : getOutlinerFileKind(name);
+    row.dataset.outlinerIcon = isMiniProjectSource
+      ? "P"
+      : getOutlinerFileIcon(name);
     row.draggable = true;
-    row.title = name;
+    row.title = isMiniProjectSource ? `${displayName} (${name})` : name;
     row.style.setProperty("--outliner-depth", String(depth));
+    if (isMiniProjectSource) row.classList.add("mini-project-item");
 
     if (groupName) {
       row.dataset.groupMemberOf = groupName;
@@ -3501,7 +2833,7 @@ int main(void)
 
     const label = document.createElement("div");
     label.className = "file-name";
-    label.textContent = name;
+    label.textContent = displayName;
     row.appendChild(label);
 
     const acts = document.createElement("div");
@@ -3900,7 +3232,9 @@ int main(void)
       renderGroupEntry(groupBlock, childGroupName, depth + 1);
     }
 
-    for (const fileName of (group.files || []).filter((name) => hasFile(name))) {
+    for (const fileName of (group.files || []).filter(
+      (name) => hasFile(name) && !isHiddenMiniProjectFile(name)
+    )) {
       renderFileRow(groupBlock, fileName, groupName, depth + 1);
     }
 
@@ -3948,7 +3282,9 @@ int main(void)
         name,
       })),
       ...Object.keys(files)
-        .filter((name) => !groupedFiles.has(name))
+        .filter(
+          (name) => !groupedFiles.has(name) && !isHiddenMiniProjectFile(name)
+        )
         .map((name) => ({
           type: "file",
           name,
@@ -3979,11 +3315,16 @@ int main(void)
     const leaveGroupBtn = menu.querySelector('button[data-action="leave-group"]');
     const downloadBtn = menu.querySelector('button[data-action="download"]');
     const groupName = getFileGroup(fileName);
+    const linkedProject = getMiniProjectForFile(fileName);
+    const isMiniProjectSource =
+      linkedProject?.role === miniProjectCore.ROLES.SOURCE;
 
-    if (renameBtn) renameBtn.hidden = false;
+    if (renameBtn) renameBtn.hidden = !!isMiniProjectSource;
     if (deleteBtn) {
       deleteBtn.hidden = false;
-      deleteBtn.textContent = "Delete";
+      deleteBtn.textContent = isMiniProjectSource
+        ? "Delete mini-project"
+        : "Delete";
     }
     if (leaveGroupBtn) leaveGroupBtn.hidden = !groupName;
     if (downloadBtn) downloadBtn.hidden = false;
@@ -4122,13 +3463,42 @@ int main(void)
     }
   }
 
+  function getMiniProjectGuideEntries(project) {
+    return Object.values(project?.guides || {}).filter(
+      (guide) => guide?.fileName && hasFile(guide.fileName)
+    );
+  }
+
+  function getMiniProjectLocalFileNames(project) {
+    const names = new Set();
+    for (const name of Object.values(project?.files || {})) {
+      if (typeof name === "string" && hasFile(name)) names.add(name);
+    }
+    for (const guide of getMiniProjectGuideEntries(project)) {
+      names.add(guide.fileName);
+    }
+    return [...names];
+  }
+
   function getMiniProjectForFile(fileName) {
     if (!fileName) return null;
 
     for (const [instanceId, project] of Object.entries(miniProjects)) {
       for (const [role, linkedFileName] of Object.entries(project.files || {})) {
+        if (role === miniProjectCore.ROLES.GUIDE) continue;
         if (linkedFileName === fileName) {
           return { instanceId, project, role };
+        }
+      }
+      for (const guide of getMiniProjectGuideEntries(project)) {
+        if (guide.fileName === fileName) {
+          return {
+            instanceId,
+            project,
+            role: miniProjectCore.ROLES.GUIDE,
+            locale: guide.locale || "",
+            guide,
+          };
         }
       }
     }
@@ -4136,10 +3506,37 @@ int main(void)
     return null;
   }
 
+  function isHiddenMiniProjectFile(fileName) {
+    const linkedProject = getMiniProjectForFile(fileName);
+    return !!(
+      linkedProject && linkedProject.role !== miniProjectCore.ROLES.SOURCE
+    );
+  }
+
+  function getVisibleWorkspaceFileNames() {
+    return Object.keys(files).filter((name) => !isHiddenMiniProjectFile(name));
+  }
+
+  function getOutlinerFileLabel(fileName) {
+    const linkedProject = getMiniProjectForFile(fileName);
+    if (linkedProject?.role === miniProjectCore.ROLES.SOURCE) {
+      return (
+        linkedProject.project.displayName ||
+        linkedProject.project.title ||
+        linkedProject.project.definitionId ||
+        getFileStem(fileName)
+      );
+    }
+    return fileName;
+  }
+
   function renameMiniProjectFile(oldName, newName) {
     for (const project of Object.values(miniProjects)) {
       for (const role of Object.keys(project.files || {})) {
         if (project.files[role] === oldName) project.files[role] = newName;
+      }
+      for (const guide of Object.values(project.guides || {})) {
+        if (guide?.fileName === oldName) guide.fileName = newName;
       }
     }
   }
@@ -4150,6 +3547,9 @@ int main(void)
         if (project.files[role] !== fileName) continue;
         delete project.files[role];
         if (project.mediaTypes) delete project.mediaTypes[role];
+      }
+      for (const [locale, guide] of Object.entries(project.guides || {})) {
+        if (guide?.fileName === fileName) delete project.guides[locale];
       }
       if (!Object.keys(project.files || {}).length) delete miniProjects[instanceId];
     }
@@ -4176,7 +3576,12 @@ int main(void)
   function resolveGuideFileName(fileName) {
     const linkedProject = getMiniProjectForFile(fileName);
     if (linkedProject) {
-      const linkedGuide = linkedProject.project.files?.guide;
+      const project = linkedProject.project;
+      const selectedGuide =
+        project.guides?.[project.selectedLocale] ||
+        project.guides?.[project.defaultLocale] ||
+        getMiniProjectGuideEntries(project)[0];
+      const linkedGuide = selectedGuide?.fileName || project.files?.guide;
       if (linkedGuide && hasFile(linkedGuide)) return linkedGuide;
       if (linkedProject.role === miniProjectCore.ROLES.AI_SPEC) return "";
     }
@@ -4203,6 +3608,11 @@ int main(void)
   function getDocumentationContext(fileName = current) {
     const linkedProject = getMiniProjectForFile(fileName);
     const guideFile = resolveGuideFileName(fileName);
+    const guide = linkedProject
+      ? getMiniProjectGuideEntries(linkedProject.project).find(
+          (entry) => entry.fileName === guideFile
+        ) || null
+      : null;
     return {
       guideFile,
       projectTitle:
@@ -4211,6 +3621,7 @@ int main(void)
           ? getFileStem(guideFile).replace(/\.guide$/i, "")
           : "Documentation"),
       linkedProject,
+      guide,
     };
   }
 
@@ -4233,9 +3644,76 @@ int main(void)
     }
   }
 
-  function appendMarkdownInline(parent, rawText) {
+  function normalizeDocumentationAssetPath(value) {
+    let path = String(value || "").trim().replace(/^<|>$/g, "");
+    try {
+      path = decodeURIComponent(path);
+    } catch {}
+    path = path.split(/[?#]/, 1)[0].replace(/\\/g, "/");
+    while (path.startsWith("./")) path = path.slice(2);
+    if (!path || path.startsWith("/") || /^[a-z][a-z\d+.-]*:/i.test(path)) {
+      return "";
+    }
+    const segments = path.split("/").filter((segment) => segment && segment !== ".");
+    if (segments.some((segment) => segment === "..")) return "";
+    return segments.join("/");
+  }
+
+  function isSafeRasterDataUrl(value) {
+    return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z\d+/=\s]+$/i.test(
+      String(value || "")
+    );
+  }
+
+  function resolveDocumentationImageUrl(rawUrl, context) {
+    const href = String(rawUrl || "").trim().replace(/^<|>$/g, "");
+    if (!href) return "";
+
+    const assetPath = normalizeDocumentationAssetPath(href);
+    if (assetPath) {
+      const registeredAssets = [
+        ...(Array.isArray(context?.guide?.assets) ? context.guide.assets : []),
+        ...(Array.isArray(context?.linkedProject?.project?.assets)
+          ? context.linkedProject.project.assets
+          : []),
+      ];
+      const matchedAsset = registeredAssets.find((asset) => {
+        const candidate = normalizeDocumentationAssetPath(
+          asset?.path || asset?.name || asset?.fileName
+        );
+        return candidate && candidate.toLowerCase() === assetPath.toLowerCase();
+      });
+      const embeddedUrl =
+        matchedAsset?.dataUrl || matchedAsset?.url || matchedAsset?.content || "";
+      if (isSafeRasterDataUrl(embeddedUrl)) return embeddedUrl;
+
+      const assetBaseUrl = context?.guide?.assetBaseUrl || "";
+      if (assetBaseUrl) {
+        try {
+          const base = new URL(assetBaseUrl, window.location.href);
+          const target = new URL(assetPath, base);
+          if (
+            base.origin === window.location.origin &&
+            target.origin === base.origin &&
+            target.pathname.startsWith(base.pathname)
+          ) {
+            return target.href;
+          }
+        } catch {}
+      }
+    }
+
+    try {
+      const parsed = new URL(href, window.location.href);
+      if (["http:", "https:"].includes(parsed.protocol)) return parsed.href;
+    } catch {}
+    return "";
+  }
+
+  function appendMarkdownInline(parent, rawText, context = null) {
     const text = String(rawText || "");
-    const tokenPattern = /(`[^`\n]+`|\[([^\]\n]+)\]\(([^)\n]+)\))/g;
+    const tokenPattern =
+      /(!\[([^\]\n]*)\]\(([^)\n]+)\)|`[^`\n]+`|\[([^\]\n]+)\]\(([^)\n]+)\))/g;
     let cursor = 0;
     let match;
 
@@ -4244,13 +3722,26 @@ int main(void)
         parent.appendChild(document.createTextNode(text.slice(cursor, match.index)));
       }
 
-      if (match[0].startsWith("`")) {
+      if (match[0].startsWith("![")) {
+        const alt = match[2] || "";
+        const src = resolveDocumentationImageUrl(match[3], context);
+        if (src) {
+          const image = document.createElement("img");
+          image.src = src;
+          image.alt = alt;
+          image.loading = "lazy";
+          image.decoding = "async";
+          parent.appendChild(image);
+        } else if (alt) {
+          parent.appendChild(document.createTextNode(alt));
+        }
+      } else if (match[0].startsWith("`")) {
         const code = document.createElement("code");
         code.textContent = match[0].slice(1, -1);
         parent.appendChild(code);
       } else {
-        const label = match[2];
-        const href = String(match[3] || "").trim().replace(/^<|>$/g, "");
+        const label = match[4];
+        const href = String(match[5] || "").trim().replace(/^<|>$/g, "");
         if (isSafeDocumentationUrl(href)) {
           const link = document.createElement("a");
           link.textContent = label;
@@ -4273,7 +3764,7 @@ int main(void)
     }
   }
 
-  function renderMarkdownGuide(markdown) {
+  function renderMarkdownGuide(markdown, context = null) {
     const content = $("projectDocumentationContent");
     if (!content) return;
 
@@ -4292,7 +3783,7 @@ int main(void)
     const flushParagraph = () => {
       if (!paragraphLines.length) return;
       const paragraph = document.createElement("p");
-      appendMarkdownInline(paragraph, paragraphLines.join(" ").trim());
+      appendMarkdownInline(paragraph, paragraphLines.join(" ").trim(), context);
       content.appendChild(paragraph);
       paragraphLines = [];
     };
@@ -4320,7 +3811,7 @@ int main(void)
       if (!headingText) return;
 
       const heading = document.createElement(`h${level}`);
-      appendMarkdownInline(heading, headingText);
+      appendMarkdownInline(heading, headingText, context);
       const headingKey = miniProjectCore.normalizeHeadingKey(headingText);
       const indexKey = `${level}:${headingKey}`;
       heading.dataset.documentationHeading = indexKey;
@@ -4395,7 +3886,7 @@ int main(void)
           content.appendChild(activeList);
         }
         const item = document.createElement("li");
-        appendMarkdownInline(item, (orderedMatch || unorderedMatch)[1]);
+        appendMarkdownInline(item, (orderedMatch || unorderedMatch)[1], context);
         activeList.appendChild(item);
         continue;
       }
@@ -4405,7 +3896,7 @@ int main(void)
         flushParagraph();
         flushList();
         const quote = document.createElement("blockquote");
-        appendMarkdownInline(quote, quoteMatch[1]);
+        appendMarkdownInline(quote, quoteMatch[1], context);
         content.appendChild(quote);
         continue;
       }
@@ -4448,25 +3939,121 @@ int main(void)
     notice.hidden = !message;
   }
 
+  function getDocumentationLocaleLabel(guide) {
+    if (guide?.label) return guide.label;
+    const locale = String(guide?.locale || "");
+    if (!locale) return "Guide";
+    try {
+      const names = new Intl.DisplayNames([navigator.language || "en"], {
+        type: "language",
+      });
+      return names.of(locale) || locale;
+    } catch {
+      return locale;
+    }
+  }
+
+  function refreshDocumentationControls(context) {
+    const localeSelect = $("documentationLocaleSelect");
+    const editToggle = $("documentationEditToggle");
+    const guideFile = context?.guideFile || "";
+    const project = context?.linkedProject?.project || null;
+    const guides = project ? getMiniProjectGuideEntries(project) : [];
+
+    if (localeSelect) {
+      localeSelect.replaceChildren();
+      if (guides.length) {
+        for (const guide of guides) {
+          const option = document.createElement("option");
+          option.value = guide.locale || "";
+          option.textContent = getDocumentationLocaleLabel(guide);
+          localeSelect.appendChild(option);
+        }
+        localeSelect.value =
+          project.selectedLocale || project.defaultLocale || guides[0].locale || "";
+        localeSelect.disabled = guides.length < 2;
+      } else {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = guideFile ? "Local guide" : "Localization";
+        localeSelect.appendChild(option);
+        localeSelect.disabled = true;
+      }
+    }
+
+    if (editToggle) {
+      const canEdit = !!project && !!guideFile && guideFile !== current;
+      editToggle.disabled = !canEdit;
+      editToggle.textContent = documentationEditMode ? "Preview" : "Edit";
+      editToggle.setAttribute("aria-pressed", String(documentationEditMode));
+    }
+  }
+
+  function saveDocumentationEditorValue({ persistNow = false } = {}) {
+    const markdownEditor = $("projectDocumentationEditor");
+    const guideFile = markdownEditor?.dataset.guideFile || "";
+    if (!markdownEditor || !guideFile || !hasFile(guideFile)) return;
+
+    files[guideFile] = markdownEditor.value;
+    if (documentationEditSaveTimer) {
+      window.clearTimeout(documentationEditSaveTimer);
+      documentationEditSaveTimer = null;
+    }
+    if (persistNow) {
+      persistState();
+    } else {
+      documentationEditSaveTimer = window.setTimeout(() => {
+        documentationEditSaveTimer = null;
+        persistState();
+      }, 250);
+    }
+  }
+
+  function setDocumentationEditMode(editing) {
+    const context = getDocumentationContext(current);
+    const nextMode =
+      !!editing &&
+      !!context.linkedProject?.project &&
+      !!context.guideFile &&
+      context.guideFile !== current;
+    if (documentationEditMode && !nextMode) {
+      saveDocumentationEditorValue({ persistNow: true });
+    }
+    documentationEditMode = nextMode;
+    refreshDocumentationPane({ preserveScroll: !nextMode });
+    if (nextMode) {
+      window.requestAnimationFrame(() => $("projectDocumentationEditor")?.focus());
+    }
+  }
+
   function refreshDocumentationPane({ preserveScroll = false } = {}) {
     const pane = $("projectDocumentationPane");
-    const title = $("projectDocumentationTitle");
-    const fileLabel = $("projectDocumentationFile");
     const scroll = $("projectDocumentationScroll");
-    if (!pane || !title || !fileLabel || !scroll) return;
+    const content = $("projectDocumentationContent");
+    const markdownEditor = $("projectDocumentationEditor");
+    if (!pane || !scroll || !content || !markdownEditor) return;
 
     const context = getDocumentationContext(current);
     const previousGuide = pane.dataset.guideFile || "";
     const previousScrollTop = scroll.scrollTop;
     const guideFile = context.guideFile;
 
-    title.textContent = context.projectTitle || "Documentation";
-    fileLabel.textContent = guideFile;
-    fileLabel.hidden = !guideFile;
+    if (previousGuide && previousGuide !== guideFile) {
+      if (documentationEditMode) {
+        saveDocumentationEditorValue({ persistNow: true });
+      }
+      documentationEditMode = false;
+    }
     pane.dataset.guideFile = guideFile;
+    markdownEditor.dataset.guideFile = guideFile;
     setDocumentationNotice();
+    refreshDocumentationControls(context);
 
     if (!guideFile || !hasFile(guideFile)) {
+      documentationEditMode = false;
+      content.hidden = false;
+      markdownEditor.hidden = true;
+      scroll.classList.remove("is-editing");
       showDocumentationEmpty(
         "Guide file is not connected yet",
         "When a mini-project includes a human-readable .md file, it will appear here automatically."
@@ -4475,7 +4062,20 @@ int main(void)
       return;
     }
 
-    renderMarkdownGuide(getLiveFileContent(guideFile));
+    const markdown = getLiveFileContent(guideFile);
+    if (documentationEditMode) {
+      content.hidden = true;
+      markdownEditor.hidden = false;
+      scroll.classList.add("is-editing");
+      if (markdownEditor.value !== markdown) markdownEditor.value = markdown;
+      scroll.scrollTop = 0;
+      return;
+    }
+
+    content.hidden = false;
+    markdownEditor.hidden = true;
+    scroll.classList.remove("is-editing");
+    renderMarkdownGuide(markdown, context);
     scroll.scrollTop =
       preserveScroll && previousGuide === guideFile ? previousScrollTop : 0;
   }
@@ -4494,6 +4094,12 @@ int main(void)
       setDocumentationNotice("This source file has no linked guide yet.");
       $("projectDocumentationPane")?.scrollIntoView({ block: "nearest" });
       return false;
+    }
+
+    if (documentationEditMode) {
+      saveDocumentationEditorValue({ persistNow: true });
+      documentationEditMode = false;
+      refreshDocumentationPane();
     }
 
     const pane = $("projectDocumentationPane");
@@ -4541,16 +4147,16 @@ int main(void)
     clearDocumentationMarkers();
     if (!editor || !isCFileName(current)) return;
 
+    const markerScanner = miniProjectCore.createDocumentationMarkerScanner();
     editor.operation(() => {
       for (let lineNumber = 0; lineNumber < editor.lineCount(); lineNumber += 1) {
         const line = editor.getLine(lineNumber);
-        const marker = miniProjectCore.parseDocumentationMarker(line);
+        const marker = markerScanner.parseLine(line);
         if (!marker) continue;
-        const from = line.indexOf("//");
         documentationMarkerHandles.push(
           editor.markText(
-            CodeMirror.Pos(lineNumber, Math.max(0, from)),
-            CodeMirror.Pos(lineNumber, line.length),
+            CodeMirror.Pos(lineNumber, marker.start),
+            CodeMirror.Pos(lineNumber, marker.end),
             {
               className: "cm-documentation-link",
               title: `Open guide section: ${marker.title}`,
@@ -4571,7 +4177,11 @@ int main(void)
 
   function openDocumentationMarkerAtLine(lineNumber) {
     if (!editor || !isCFileName(current)) return false;
-    const marker = miniProjectCore.parseDocumentationMarker(editor.getLine(lineNumber));
+    const markerScanner = miniProjectCore.createDocumentationMarkerScanner();
+    let marker = null;
+    for (let index = 0; index <= lineNumber; index += 1) {
+      marker = markerScanner.parseLine(editor.getLine(index));
+    }
     return marker ? navigateToDocumentationHeading(marker) : false;
   }
 
@@ -4620,6 +4230,9 @@ int main(void)
   }
 
   function renameFile(oldName) {
+    if (getMiniProjectForFile(oldName)?.role === miniProjectCore.ROLES.SOURCE) {
+      return;
+    }
     startInlineRename(oldName);
   }
 
@@ -4701,22 +4314,39 @@ int main(void)
 
   async function deleteFile(name) {
     if (!hasFile(name)) return;
+    const linkedProject = getMiniProjectForFile(name);
+    const deleteWholeProject =
+      linkedProject?.role === miniProjectCore.ROLES.SOURCE;
+    const displayName = deleteWholeProject
+      ? getOutlinerFileLabel(name)
+      : name;
     const confirmed = await showSiteConfirm({
-      title: "Delete file",
-      message: `Delete "${name}"? This cannot be undone.`,
-      confirmText: "Delete",
+      title: deleteWholeProject ? "Delete mini-project" : "Delete file",
+      message: deleteWholeProject
+        ? `Delete mini-project "${displayName}" and its local source and guide copies? This cannot be undone.`
+        : `Delete "${name}"? This cannot be undone.`,
+      confirmText: deleteWholeProject ? "Delete mini-project" : "Delete",
       cancelText: "Cancel",
       danger: true,
     });
     if (!confirmed) return;
 
-    const deletedCurrent = current === name;
-    delete files[name];
-    removeMiniProjectFile(name);
-    hexArtifactsBySource.delete(name);
-    removeFileFromGroups(name);
+    const namesToDelete = deleteWholeProject
+      ? getMiniProjectLocalFileNames(linkedProject.project)
+      : [name];
+    const deletedCurrent = namesToDelete.includes(current);
+    for (const fileName of namesToDelete) {
+      delete files[fileName];
+      hexArtifactsBySource.delete(fileName);
+      removeFileFromGroups(fileName);
+    }
+    if (deleteWholeProject) {
+      delete miniProjects[linkedProject.instanceId];
+    } else {
+      removeMiniProjectFile(name);
+    }
     if (deletedCurrent) {
-      current = Object.keys(files)[0] || null;
+      current = getVisibleWorkspaceFileNames()[0] || null;
     }
     persistState();
     if (!current) {
@@ -4772,11 +4402,14 @@ int main(void)
 
   function updateToolbarState() {
     const has = !!current;
+    const currentLink = getMiniProjectForFile(current);
+    const isMiniProjectSource =
+      currentLink?.role === miniProjectCore.ROLES.SOURCE;
     const rb = $("renameBtn");
     const db = $("deleteBtn");
     const dl = $("downloadBtn");
     const cb = $("compileBtn");
-    if (rb) rb.disabled = !has;
+    if (rb) rb.disabled = !has || isMiniProjectSource;
     if (db) db.disabled = !has;
     if (dl) dl.disabled = !has;
     if (cb) cb.disabled = !has || !/\.c$/i.test(current);
@@ -4947,9 +4580,12 @@ int main(void)
       if (saveTimer) clearTimeout(saveTimer);
 
       const codeSnapshot = editor.getValue();
+      const fileNameSnapshot = current;
 
       saveTimer = setTimeout(() => {
-        files[current] = codeSnapshot;
+        if (fileNameSnapshot && hasFile(fileNameSnapshot)) {
+          files[fileNameSnapshot] = codeSnapshot;
+        }
         persistState();
       }, 250);
     });
@@ -5138,6 +4774,9 @@ int main(void)
       const updiOptionsModal = $("canvasUpdiSection");
       const updiOptionsCloseBtn = $("updiOptionsCloseBtn");
       const mcuSelect = $("mcuSelect");
+      const documentationLocaleSelect = $("documentationLocaleSelect");
+      const documentationEditToggle = $("documentationEditToggle");
+      const documentationEditor = $("projectDocumentationEditor");
 
     initCustomSelect(mcuSelect);
     bindOutlinerDropZone();
@@ -5177,10 +4816,20 @@ int main(void)
         startInlineCreateGroup();
       });
     fileTemplateGrid &&
-      fileTemplateGrid.addEventListener("click", (event) => {
+      fileTemplateGrid.addEventListener("click", async (event) => {
         const card = event.target.closest("[data-template-id]");
         if (!card) return;
-        createFileFromTemplate(card.dataset.templateId || "");
+        card.disabled = true;
+        try {
+          await createFileFromTemplate(card.dataset.templateId || "");
+        } catch (error) {
+          await showSiteAlert(
+            `Mini-project could not be created.\n${error.message || String(error)}`,
+            "Mini-project"
+          );
+        } finally {
+          card.disabled = false;
+        }
       });
     uploadExistingFileCard &&
       uploadExistingFileCard.addEventListener("click", () => {
@@ -5188,6 +4837,33 @@ int main(void)
         if (!fileUploadInput) return;
         fileUploadInput.value = "";
         fileUploadInput.click();
+      });
+
+    documentationLocaleSelect &&
+      documentationLocaleSelect.addEventListener("change", () => {
+        const context = getDocumentationContext(current);
+        const project = context.linkedProject?.project;
+        const locale = documentationLocaleSelect.value;
+        const guide = project?.guides?.[locale];
+        if (!project || !guide?.fileName || !hasFile(guide.fileName)) return;
+
+        if (documentationEditMode) {
+          saveDocumentationEditorValue({ persistNow: true });
+          documentationEditMode = false;
+        }
+        project.selectedLocale = locale;
+        project.files.guide = guide.fileName;
+        project.mediaTypes.guide = guide.mediaType || "text/markdown";
+        persistState();
+        refreshDocumentationPane();
+      });
+    documentationEditToggle &&
+      documentationEditToggle.addEventListener("click", () => {
+        setDocumentationEditMode(!documentationEditMode);
+      });
+    documentationEditor &&
+      documentationEditor.addEventListener("input", () => {
+        saveDocumentationEditorValue();
       });
     fileAddModal &&
       fileAddModal.addEventListener("click", (event) => {
@@ -5283,6 +4959,9 @@ int main(void)
     });
 
     window.addEventListener("beforeunload", () => {
+      if (documentationEditMode) {
+        saveDocumentationEditorValue({ persistNow: true });
+      }
       if (editor && current) {
         files[current] = editor.getValue();
         persistState();
