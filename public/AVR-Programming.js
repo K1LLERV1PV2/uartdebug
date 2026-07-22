@@ -1,9 +1,13 @@
 // AVR programming canvas with local files, CodeMirror, UART, and XC8 compilation.
 (function () {
   const STORAGE_KEY = "ud_avr_programming_files_v1";
+  const STORAGE_STATE = "ud_avr_programming_state_v2";
   const STORAGE_CURRENT = "ud_avr_programming_current_v1";
   const STORAGE_GROUPS = "ud_avr_programming_file_groups_v1";
+  const STORAGE_MINI_PROJECTS = "ud_avr_programming_mini_projects_v1";
   const STORAGE_OUTLINER_WIDTH = "ud_avr_programming_outliner_width_v1";
+  const STORAGE_DOCUMENTATION_WIDTH =
+    "ud_avr_programming_documentation_width_v1";
   const LEGACY_STORAGE_KEY = "ud_c_canvas_files_v1";
   const LEGACY_STORAGE_CURRENT = "ud_c_canvas_current_v1";
   const AVR_UPDI_RUNTIME_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI__";
@@ -17,13 +21,26 @@
   const OUTLINER_COMPACT_THRESHOLD = 112;
   const OUTLINER_MIN_EXPANDED_WIDTH = 180;
   const OUTLINER_MAX_WIDTH = 460;
-  const OUTLINER_EDITOR_MIN_WIDTH = 420;
+  const OUTLINER_EDITOR_MIN_WIDTH = 440;
+  const DOCUMENTATION_DEFAULT_WIDTH = 360;
+  const DOCUMENTATION_MIN_WIDTH = 240;
+  const DOCUMENTATION_MAX_WIDTH = 620;
+  const SPLIT_RESIZER_TOTAL_WIDTH = 28;
+  const MINI_PROJECT_IMPORT_EVENT = "ud-avr-mini-project";
+  const MINI_PROJECT_INSTALLED_EVENT = "ud-avr-mini-project-installed";
+  const MINI_PROJECT_READY_EVENT = "ud-avr-mini-projects-ready";
 
   const $ = (id) => document.getElementById(id);
+  const miniProjectCore = window.UartDebugAvrMiniProjectCore;
+  let resolveMiniProjectBridgeReady = null;
+  const miniProjectBridgeReady = new Promise((resolve) => {
+    resolveMiniProjectBridgeReady = resolve;
+  });
 
   let editor = null;
-  let files = {};
-  let fileGroups = {};
+  let files = Object.create(null);
+  let fileGroups = Object.create(null);
+  let miniProjects = Object.create(null);
   let current = null;
   let saveTimer = null;
   let compileErrorLineHandle = null;
@@ -31,7 +48,18 @@
   let contextMenuGroup = null;
   let inlineFileEdit = null;
   let outlinerWidth = OUTLINER_DEFAULT_WIDTH;
+  let outlinerPreferredWidth = OUTLINER_DEFAULT_WIDTH;
   let outlinerResizeState = null;
+  let documentationWidth = DOCUMENTATION_DEFAULT_WIDTH;
+  let documentationPreferredWidth = DOCUMENTATION_DEFAULT_WIDTH;
+  let documentationResizeState = null;
+  let documentationHeadingIndex = new Map();
+  let documentationMarkerHandles = [];
+  let documentationMarkerFrame = null;
+  let documentationRenderTimer = null;
+  let documentationTargetTimer = null;
+  let workspaceResizeFrame = null;
+  let workspaceResizeObserver = null;
   let siteDialogResolve = null;
   const EDITOR_FILE_EXTENSIONS = new Set([
     "c",
@@ -43,6 +71,7 @@
     "s",
     "asm",
     "txt",
+    "md",
     "hex",
     "ihex",
   ]);
@@ -60,6 +89,14 @@
   ]);
   const COMPILE_C_SOURCE_EXTENSIONS = new Set(["c"]);
   const COMPILE_HEADER_EXTENSIONS = new Set(["h", "hpp"]);
+
+  function createDictionary(source) {
+    const dictionary = Object.create(null);
+    if (source && typeof source === "object" && !Array.isArray(source)) {
+      Object.assign(dictionary, source);
+    }
+    return dictionary;
+  }
 
   function setHexStatus(state, filename) {
     setHexStatus._state = state;
@@ -1609,59 +1646,197 @@ int main(void)
   ];
 
   const AVR_FILE_TEMPLATE_MAP = new Map(
-    AVR_FILE_TEMPLATES.map((template) => [template.id, template])
+    AVR_FILE_TEMPLATES.map((template) => {
+      const project = miniProjectCore.normalizeDefinition(template);
+      return [project.id, project];
+    })
   );
 
   function loadState() {
+    let loadedEnvelope = false;
     try {
-      const storedFiles =
-        localStorage.getItem(STORAGE_KEY) ??
-        localStorage.getItem(LEGACY_STORAGE_KEY) ??
-        "{}";
-      files = JSON.parse(storedFiles || "{}");
-      fileGroups = JSON.parse(localStorage.getItem(STORAGE_GROUPS) || "{}");
-      current =
-        localStorage.getItem(STORAGE_CURRENT) ??
-        localStorage.getItem(LEGACY_STORAGE_CURRENT) ??
-        null;
+      const rawState = localStorage.getItem(STORAGE_STATE);
+      if (rawState) {
+        const state = JSON.parse(rawState);
+        if (
+          state &&
+          state.schemaVersion === 2 &&
+          state.files &&
+          typeof state.files === "object" &&
+          !Array.isArray(state.files)
+        ) {
+          files = state.files;
+          fileGroups =
+            state.fileGroups && typeof state.fileGroups === "object"
+              ? state.fileGroups
+              : {};
+          miniProjects =
+            state.miniProjects && typeof state.miniProjects === "object"
+              ? state.miniProjects
+              : {};
+          current = typeof state.current === "string" ? state.current : null;
+          loadedEnvelope = true;
+        }
+      }
     } catch {
-      files = {};
-      fileGroups = {};
-      current = null;
+      loadedEnvelope = false;
     }
 
+    if (!loadedEnvelope) {
+      try {
+        const storedFiles =
+          localStorage.getItem(STORAGE_KEY) ??
+          localStorage.getItem(LEGACY_STORAGE_KEY) ??
+          "{}";
+        files = JSON.parse(storedFiles || "{}");
+        fileGroups = JSON.parse(localStorage.getItem(STORAGE_GROUPS) || "{}");
+        current =
+          localStorage.getItem(STORAGE_CURRENT) ??
+          localStorage.getItem(LEGACY_STORAGE_CURRENT) ??
+          null;
+      } catch {
+        files = Object.create(null);
+        fileGroups = Object.create(null);
+        current = null;
+      }
+
+      try {
+        miniProjects = JSON.parse(
+          localStorage.getItem(STORAGE_MINI_PROJECTS) || "{}"
+        );
+      } catch {
+        miniProjects = Object.create(null);
+      }
+    }
+
+    files = createDictionary(files);
     normalizeFileGroups();
+    normalizeMiniProjectInstances();
+    if (current && !hasFile(current)) current = null;
   }
 
-  function persistState() {
+  function persistState({ throwOnError = false } = {}) {
     const serializedFiles = JSON.stringify(files);
-    localStorage.setItem(STORAGE_KEY, serializedFiles);
-    localStorage.setItem(LEGACY_STORAGE_KEY, serializedFiles);
-    localStorage.setItem(STORAGE_GROUPS, JSON.stringify(fileGroups));
-    if (current) {
-      localStorage.setItem(STORAGE_CURRENT, current);
-      localStorage.setItem(LEGACY_STORAGE_CURRENT, current);
-    } else {
-      try {
+    let envelopeError = null;
+    let legacyMirrorsUpdated = false;
+
+    try {
+      localStorage.setItem(
+        STORAGE_STATE,
+        JSON.stringify({
+          schemaVersion: 2,
+          files,
+          fileGroups,
+          miniProjects,
+          current,
+        })
+      );
+    } catch (error) {
+      envelopeError = error;
+      console.warn("Failed to persist AVR workspace state:", error);
+    }
+
+    try {
+      localStorage.setItem(STORAGE_KEY, serializedFiles);
+      localStorage.setItem(LEGACY_STORAGE_KEY, serializedFiles);
+      localStorage.setItem(STORAGE_GROUPS, JSON.stringify(fileGroups));
+      localStorage.setItem(STORAGE_MINI_PROJECTS, JSON.stringify(miniProjects));
+      if (current) {
+        localStorage.setItem(STORAGE_CURRENT, current);
+        localStorage.setItem(LEGACY_STORAGE_CURRENT, current);
+      } else {
         localStorage.removeItem(STORAGE_CURRENT);
         localStorage.removeItem(LEGACY_STORAGE_CURRENT);
-      } catch {}
+      }
+      legacyMirrorsUpdated = true;
+    } catch (error) {
+      console.warn("Failed to update legacy AVR storage mirrors:", error);
     }
+
+    if (envelopeError && legacyMirrorsUpdated) {
+      try {
+        localStorage.removeItem(STORAGE_STATE);
+      } catch (error) {
+        console.warn("Failed to discard stale AVR workspace state:", error);
+      }
+    }
+
+    if (envelopeError && throwOnError) throw envelopeError;
+    return !envelopeError;
+  }
+
+  function normalizeMiniProjectInstances() {
+    const normalized = Object.create(null);
+
+    if (!miniProjects || typeof miniProjects !== "object") {
+      miniProjects = Object.create(null);
+      return;
+    }
+
+    for (const [rawInstanceId, rawProject] of Object.entries(miniProjects)) {
+      if (!rawProject || typeof rawProject !== "object") continue;
+
+      const instanceId = String(rawInstanceId || "").trim();
+      if (!instanceId || normalized[instanceId]) continue;
+
+      const roleFiles = {};
+      const mediaTypes = {};
+      const rawRoleFiles = rawProject.files;
+      if (rawRoleFiles && typeof rawRoleFiles === "object") {
+        for (const [rawRole, rawFileName] of Object.entries(rawRoleFiles)) {
+          const role = miniProjectCore.normalizeRole(rawRole);
+          const fileName = String(rawFileName || "").trim();
+          if (!role || !fileName || !hasFile(fileName) || roleFiles[role]) {
+            continue;
+          }
+          roleFiles[role] = fileName;
+        }
+      }
+
+      const rawMediaTypes = rawProject.mediaTypes;
+      if (rawMediaTypes && typeof rawMediaTypes === "object") {
+        for (const [rawRole, rawMediaType] of Object.entries(rawMediaTypes)) {
+          const role = miniProjectCore.normalizeRole(rawRole);
+          const mediaType = String(rawMediaType || "").trim();
+          if (role && roleFiles[role] && mediaType) mediaTypes[role] = mediaType;
+        }
+      }
+
+      if (!Object.keys(roleFiles).length) continue;
+
+      normalized[instanceId] = {
+        schemaVersion: 1,
+        definitionId: String(rawProject.definitionId || instanceId),
+        title: String(rawProject.title || rawProject.definitionId || instanceId),
+        summary: String(rawProject.summary || ""),
+        version: rawProject.version ?? 1,
+        origin: String(rawProject.origin || "local"),
+        files: roleFiles,
+        mediaTypes,
+      };
+    }
+
+    miniProjects = normalized;
   }
 
   function normalizeFileGroups() {
-    const normalized = {};
+    const normalized = Object.create(null);
     const assignedFiles = new Set();
     const assignedGroups = new Set();
 
     if (!fileGroups || typeof fileGroups !== "object") {
-      fileGroups = {};
+      fileGroups = Object.create(null);
       return;
     }
 
     for (const [rawName, rawGroup] of Object.entries(fileGroups)) {
       const name = String(rawName || "").trim();
-      if (!name || normalized[name]) continue;
+      if (
+        !name ||
+        Object.prototype.hasOwnProperty.call(normalized, name)
+      ) {
+        continue;
+      }
 
       normalized[name] = {
         files: [],
@@ -1867,7 +2042,7 @@ int main(void)
   }
 
   function setFilesInOrder(names) {
-    const nextFiles = {};
+    const nextFiles = Object.create(null);
     const seen = new Set();
 
     for (const name of names) {
@@ -1885,7 +2060,7 @@ int main(void)
   }
 
   function setGroupsInOrder(names) {
-    const nextGroups = {};
+    const nextGroups = Object.create(null);
     const seen = new Set();
 
     for (const name of names) {
@@ -1903,7 +2078,7 @@ int main(void)
   }
 
   function renameFileKey(oldName, newName) {
-    const nextFiles = {};
+    const nextFiles = Object.create(null);
 
     for (const name of Object.keys(files)) {
       nextFiles[name === oldName ? newName : name] = files[name];
@@ -1913,7 +2088,7 @@ int main(void)
   }
 
   function renameGroupKey(oldName, newName) {
-    const nextGroups = {};
+    const nextGroups = Object.create(null);
 
     for (const name of Object.keys(fileGroups)) {
       nextGroups[name === oldName ? newName : name] = fileGroups[name];
@@ -2123,23 +2298,267 @@ int main(void)
   }
 
   function importEditorFile(fileName, content) {
+    const requestedName = String(fileName || "").trim();
+    const safeRequestedName = isReservedStorageName(requestedName)
+      ? `_${requestedName}`
+      : requestedName;
     const normalizedName =
-      uniqueImportedName((fileName || "").trim()) || uniqueName("main.c");
+      uniqueImportedName(safeRequestedName) || uniqueName("main.c");
 
     files[normalizedName] = String(content || "").replace(/\r\n/g, "\n");
     selectFile(normalizedName);
+  }
+
+  function uniqueMiniProjectInstanceId(baseId) {
+    const safeBase =
+      String(baseId || "mini-project")
+        .trim()
+        .replace(/[^a-z0-9_-]+/gi, "-")
+        .replace(/^-+|-+$/g, "") || "mini-project";
+    if (!Object.prototype.hasOwnProperty.call(miniProjects, safeBase)) {
+      return safeBase;
+    }
+
+    let index = 2;
+    let candidate = `${safeBase}-${index}`;
+    while (Object.prototype.hasOwnProperty.call(miniProjects, candidate)) {
+      index += 1;
+      candidate = `${safeBase}-${index}`;
+    }
+    return candidate;
+  }
+
+  function getSafeMiniProjectGroupBase(title, definitionId) {
+    const reservedNames = new Set(["__proto__", "prototype", "constructor"]);
+    const cleanTitle = String(title || "")
+      .replace(/[\\/:*?"<>|\x00-\x1f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 64);
+    if (cleanTitle && !reservedNames.has(cleanTitle.toLowerCase())) {
+      return cleanTitle;
+    }
+
+    const cleanId = String(definitionId || "project")
+      .replace(/[^a-z0-9_-]+/gi, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40);
+    return `Mini project ${cleanId || "project"}`;
+  }
+
+  function uniqueReservedFileName(baseName, reservedNames) {
+    const cleanName = String(baseName || "").trim();
+    if (!cleanName) return "";
+    if (!hasFile(cleanName) && !reservedNames.has(cleanName)) return cleanName;
+
+    const lastDot = cleanName.lastIndexOf(".");
+    const hasExtension = lastDot > 0;
+    const stem = hasExtension ? cleanName.slice(0, lastDot) : cleanName;
+    const extension = hasExtension ? cleanName.slice(lastDot) : "";
+    let index = 2;
+    let candidate = `${stem}_${index}${extension}`;
+
+    while (hasFile(candidate) || reservedNames.has(candidate)) {
+      index += 1;
+      candidate = `${stem}_${index}${extension}`;
+    }
+
+    return candidate;
+  }
+
+  function getPublicMiniProjectInstance(instanceId) {
+    const project = miniProjects[instanceId];
+    if (!project || !project.files?.source || !hasFile(project.files.source)) {
+      return null;
+    }
+
+    const defaultMediaTypes = {
+      source: "text/x-c",
+      guide: "text/markdown",
+      aiSpec: "text/yaml",
+    };
+    const projectFiles = miniProjectCore.CANONICAL_ROLES.flatMap((role) => {
+      const name = project.files?.[role];
+      if (!name || !hasFile(name)) return [];
+      return [
+        {
+          role,
+          name,
+          content: getLiveFileContent(name),
+          mediaType: project.mediaTypes?.[role] || defaultMediaTypes[role],
+        },
+      ];
+    });
+
+    return {
+      schemaVersion: 1,
+      instanceId,
+      id: project.definitionId,
+      title: project.title,
+      summary: project.summary || "",
+      version: project.version,
+      origin: project.origin,
+      files: projectFiles,
+    };
+  }
+
+  function installMiniProjectDefinition(rawDefinition, { origin = "local" } = {}) {
+    const definition = miniProjectCore.normalizeDefinition(rawDefinition);
+    const reservedNames = new Set();
+    const pendingFiles = Object.values(definition.files).map((projectFile) => {
+      const name = uniqueReservedFileName(projectFile.name, reservedNames);
+      if (!name) throw new TypeError("Mini-project file name is required.");
+      reservedNames.add(name);
+      return {
+        role: projectFile.role,
+        name,
+        content: String(projectFile.content || "").replace(/\r\n?/g, "\n"),
+        mediaType: projectFile.mediaType,
+      };
+    });
+
+    const instanceId = uniqueMiniProjectInstanceId(definition.id);
+    let groupName = "";
+    const roleFiles = {};
+    const mediaTypes = {};
+    const previousFiles = files;
+    const previousGroups = fileGroups;
+    const previousProjects = miniProjects;
+    const previousCurrent = current;
+    let selectionStarted = false;
+
+    if (editor && previousCurrent && hasFile(previousCurrent)) {
+      previousFiles[previousCurrent] = editor.getValue();
+    }
+
+    files = createDictionary(files);
+    fileGroups = createDictionary(fileGroups);
+    miniProjects = createDictionary(miniProjects);
+
+    try {
+      for (const projectFile of pendingFiles) {
+        files[projectFile.name] = projectFile.content;
+        roleFiles[projectFile.role] = projectFile.name;
+        mediaTypes[projectFile.role] = projectFile.mediaType;
+      }
+
+      if (pendingFiles.length > 1) {
+        groupName = uniqueGroupName(
+          getSafeMiniProjectGroupBase(definition.title, definition.id)
+        );
+      }
+
+      miniProjects[instanceId] = {
+        schemaVersion: 1,
+        definitionId: definition.id,
+        title: definition.title,
+        summary: definition.summary,
+        version: definition.version ?? 1,
+        origin: String(origin || "local"),
+        files: roleFiles,
+        mediaTypes,
+      };
+
+      if (groupName) {
+        fileGroups[groupName] = {
+          files: pendingFiles.map((projectFile) => projectFile.name),
+          groups: [],
+          expanded: true,
+        };
+      }
+
+      const sourceFile = roleFiles.source;
+      selectionStarted = true;
+      selectFile(sourceFile);
+      persistState({ throwOnError: true });
+      closeAddFileModal();
+      return getPublicMiniProjectInstance(instanceId);
+    } catch (error) {
+      files = previousFiles;
+      fileGroups = previousGroups;
+      miniProjects = previousProjects;
+      current = previousCurrent;
+
+      if (selectionStarted && editor) {
+        editor.setOption("readOnly", previousCurrent ? false : "nocursor");
+        editor.setOption("mode", getEditorModeForFile(previousCurrent));
+        editor.setValue(
+          previousCurrent && hasFile(previousCurrent)
+            ? previousFiles[previousCurrent]
+            : ""
+        );
+      }
+
+      updateEditorFileWatermark(previousCurrent || "");
+      renderOutliner();
+      refreshDocumentationPane();
+      scheduleDocumentationMarkerRefresh();
+      try {
+        persistState();
+      } catch {}
+      throw error;
+    }
+  }
+
+  function initMiniProjectBridge() {
+    const bridge = Object.freeze({
+      schemaVersion: miniProjectCore.SCHEMA_VERSION,
+      importEvent: MINI_PROJECT_IMPORT_EVENT,
+      installedEvent: MINI_PROJECT_INSTALLED_EVENT,
+      readyEvent: MINI_PROJECT_READY_EVENT,
+      ready: miniProjectBridgeReady,
+      normalizeDefinition: miniProjectCore.normalizeDefinition,
+      async install(definition, options = {}) {
+        await miniProjectBridgeReady;
+        try {
+          const project = installMiniProjectDefinition(definition, {
+            origin: options?.origin || "api",
+          });
+          window.dispatchEvent(
+            new CustomEvent(MINI_PROJECT_INSTALLED_EVENT, {
+              detail: { ok: true, project },
+            })
+          );
+          return project;
+        } catch (error) {
+          window.dispatchEvent(
+            new CustomEvent(MINI_PROJECT_INSTALLED_EVENT, {
+              detail: {
+                ok: false,
+                error: error?.message || String(error),
+              },
+            })
+          );
+          throw error;
+        }
+      },
+      getInstances() {
+        return Object.keys(miniProjects)
+          .map(getPublicMiniProjectInstance)
+          .filter(Boolean);
+      },
+      getInstance(instanceId) {
+        return getPublicMiniProjectInstance(String(instanceId || ""));
+      },
+    });
+
+    window.UartDebugAvrMiniProjects = bridge;
+    window.addEventListener(MINI_PROJECT_IMPORT_EVENT, (event) => {
+      bridge
+        .install(event.detail, {
+          origin: "api-event",
+        })
+        .catch((error) => {
+          console.error("Failed to install AVR mini-project:", error);
+        });
+    });
   }
 
   function createFileFromTemplate(templateId) {
     const template = AVR_FILE_TEMPLATE_MAP.get(templateId);
     if (!template) return false;
 
-    const fileName = uniqueImportedName(template.fileName);
-    if (!fileName) return false;
-
-    files[fileName] = String(template.content || "").replace(/\r\n/g, "\n");
-    closeAddFileModal();
-    selectFile(fileName);
+    installMiniProjectDefinition(template, { origin: "builtin" });
     return true;
   }
 
@@ -2174,7 +2593,7 @@ int main(void)
     }
 
     const message =
-      'Unsupported file type. Upload a source file (.c, .h, .cpp, .hpp, .ino, .s, .asm, .txt) or a firmware file (.hex).';
+      'Unsupported file type. Upload a source or guide file (.c, .h, .cpp, .hpp, .ino, .s, .asm, .txt, .md) or a firmware file (.hex).';
     await showSiteAlert(message, "Unsupported file");
     console.warn(`Import rejected: "${file.name}" has an unsupported extension.`);
   }
@@ -2188,11 +2607,18 @@ int main(void)
     }
   }
 
+  function isReservedStorageName(name) {
+    return ["__proto__", "prototype", "constructor"].includes(
+      String(name || "").trim().toLowerCase()
+    );
+  }
+
   function validateInlineFileName(fileName, originalName = "") {
     const name = String(fileName || "").trim();
 
     if (!name) return "Enter a file name.";
     if (name === "." || name === "..") return "Use a regular file name.";
+    if (isReservedStorageName(name)) return "Use a different file name.";
     if (/[\\/:*?"<>|\x00-\x1f]/.test(name)) {
       return 'Do not use path separators or these characters: \\ / : * ? " < > |';
     }
@@ -2208,6 +2634,7 @@ int main(void)
     const name = String(groupName || "").trim();
 
     if (!name) return "Enter a group name.";
+    if (isReservedStorageName(name)) return "Use a different group name.";
     if (name.length > 64) return "Keep the group name under 64 characters.";
     if (/[\\/:*?"<>|\x00-\x1f]/.test(name)) {
       return 'Do not use path separators or these characters: \\ / : * ? " < > |';
@@ -2311,12 +2738,21 @@ int main(void)
     return document.querySelector(".canvas-split-container");
   }
 
+  function isStackedCanvasLayout() {
+    return window.matchMedia?.("(max-width: 940px)")?.matches || false;
+  }
+
   function getOutlinerMaxWidth() {
     const container = getCanvasSplitContainer();
     if (!container) return OUTLINER_MAX_WIDTH;
+    if (isStackedCanvasLayout()) return OUTLINER_MAX_WIDTH;
 
     const rect = container.getBoundingClientRect();
-    const available = rect.width - OUTLINER_EDITOR_MIN_WIDTH;
+    const available =
+      rect.width -
+      OUTLINER_EDITOR_MIN_WIDTH -
+      documentationWidth -
+      SPLIT_RESIZER_TOTAL_WIDTH;
     return Math.max(
       OUTLINER_MIN_EXPANDED_WIDTH,
       Math.min(OUTLINER_MAX_WIDTH, available)
@@ -2346,8 +2782,12 @@ int main(void)
     window.requestAnimationFrame(() => editor.refresh());
   }
 
-  function applyOutlinerWidth(width, { persist = true } = {}) {
+  function applyOutlinerWidth(
+    width,
+    { persist = true, remember = true } = {}
+  ) {
     const container = getCanvasSplitContainer();
+    if (remember) outlinerPreferredWidth = normalizeOutlinerPreference(width);
     const normalized = normalizeOutlinerWidth(width);
     outlinerWidth = normalized;
 
@@ -2357,14 +2797,8 @@ int main(void)
       container.classList.toggle("is-outliner-compact", isCompact);
     }
 
-    const resizer = $("fileListResizer");
-    if (resizer) {
-      resizer.setAttribute("aria-valuemin", String(OUTLINER_COMPACT_WIDTH));
-      resizer.setAttribute("aria-valuemax", String(getOutlinerMaxWidth()));
-      resizer.setAttribute("aria-valuenow", String(normalized));
-    }
-
-    if (persist) persistOutlinerWidth(normalized);
+    syncSplitResizerAria();
+    if (persist) persistOutlinerWidth(outlinerPreferredWidth);
     refreshEditorAfterOutlinerResize();
   }
 
@@ -2398,7 +2832,10 @@ int main(void)
       outlinerResizeState = null;
       container.classList.remove("is-outliner-resizing");
       document.body.classList.remove("is-outliner-resizing");
-      applyOutlinerWidth(outlinerWidth);
+      applyOutlinerWidth(outlinerPreferredWidth, {
+        persist: true,
+        remember: false,
+      });
       event?.preventDefault?.();
     };
 
@@ -2449,7 +2886,226 @@ int main(void)
       applyOutlinerWidth(nextWidth);
     });
 
-    applyOutlinerWidth(outlinerWidth, { persist: false });
+    applyOutlinerWidth(outlinerPreferredWidth, {
+      persist: false,
+      remember: false,
+    });
+  }
+
+  function getDocumentationMaxWidth() {
+    const container = getCanvasSplitContainer();
+    if (!container || isStackedCanvasLayout()) return DOCUMENTATION_MAX_WIDTH;
+
+    const rect = container.getBoundingClientRect();
+    const available =
+      rect.width -
+      OUTLINER_EDITOR_MIN_WIDTH -
+      outlinerWidth -
+      SPLIT_RESIZER_TOTAL_WIDTH;
+    return Math.max(
+      DOCUMENTATION_MIN_WIDTH,
+      Math.min(DOCUMENTATION_MAX_WIDTH, available)
+    );
+  }
+
+  function normalizeOutlinerPreference(width) {
+    const numeric = Number(width);
+    if (!Number.isFinite(numeric)) return OUTLINER_DEFAULT_WIDTH;
+    if (numeric <= OUTLINER_COMPACT_THRESHOLD) return OUTLINER_COMPACT_WIDTH;
+    return Math.max(
+      OUTLINER_MIN_EXPANDED_WIDTH,
+      Math.min(OUTLINER_MAX_WIDTH, numeric)
+    );
+  }
+
+  function normalizeDocumentationWidth(width) {
+    const numeric = Number(width);
+    if (!Number.isFinite(numeric)) return DOCUMENTATION_DEFAULT_WIDTH;
+    return Math.max(
+      DOCUMENTATION_MIN_WIDTH,
+      Math.min(getDocumentationMaxWidth(), numeric)
+    );
+  }
+
+  function normalizeDocumentationPreference(width) {
+    const numeric = Number(width);
+    if (!Number.isFinite(numeric)) return DOCUMENTATION_DEFAULT_WIDTH;
+    return Math.max(
+      DOCUMENTATION_MIN_WIDTH,
+      Math.min(DOCUMENTATION_MAX_WIDTH, numeric)
+    );
+  }
+
+  function syncSplitResizerAria() {
+    const outlinerResizer = $("fileListResizer");
+    if (outlinerResizer) {
+      outlinerResizer.setAttribute(
+        "aria-valuemin",
+        String(OUTLINER_COMPACT_WIDTH)
+      );
+      outlinerResizer.setAttribute("aria-valuemax", String(getOutlinerMaxWidth()));
+      outlinerResizer.setAttribute("aria-valuenow", String(outlinerWidth));
+    }
+
+    const documentationResizer = $("documentationResizer");
+    if (documentationResizer) {
+      documentationResizer.setAttribute(
+        "aria-valuemin",
+        String(DOCUMENTATION_MIN_WIDTH)
+      );
+      documentationResizer.setAttribute(
+        "aria-valuemax",
+        String(getDocumentationMaxWidth())
+      );
+      documentationResizer.setAttribute(
+        "aria-valuenow",
+        String(documentationWidth)
+      );
+    }
+  }
+
+  function persistDocumentationWidth(width) {
+    try {
+      localStorage.setItem(STORAGE_DOCUMENTATION_WIDTH, String(width));
+    } catch (error) {
+      console.warn("Failed to persist project guide width:", error);
+    }
+  }
+
+  function applyDocumentationWidth(
+    width,
+    { persist = true, remember = true } = {}
+  ) {
+    const container = getCanvasSplitContainer();
+    if (remember) {
+      documentationPreferredWidth = normalizeDocumentationPreference(width);
+    }
+    const normalized = normalizeDocumentationWidth(width);
+    documentationWidth = normalized;
+
+    if (container) {
+      container.style.setProperty("--documentation-width", `${normalized}px`);
+    }
+
+    syncSplitResizerAria();
+    if (persist) persistDocumentationWidth(documentationPreferredWidth);
+    refreshEditorAfterOutlinerResize();
+  }
+
+  function restoreDocumentationWidth() {
+    let stored = DOCUMENTATION_DEFAULT_WIDTH;
+    try {
+      const raw = localStorage.getItem(STORAGE_DOCUMENTATION_WIDTH);
+      stored = raw === null ? DOCUMENTATION_DEFAULT_WIDTH : Number(raw);
+    } catch (error) {
+      console.warn("Failed to restore project guide width:", error);
+    }
+
+    applyDocumentationWidth(
+      Number.isFinite(stored) ? stored : DOCUMENTATION_DEFAULT_WIDTH,
+      { persist: false }
+    );
+  }
+
+  function bindDocumentationResizer() {
+    const resizer = $("documentationResizer");
+    const container = getCanvasSplitContainer();
+    if (!resizer || !container) return;
+
+    const finishResize = (event) => {
+      if (!documentationResizeState) return;
+      resizer.releasePointerCapture?.(documentationResizeState.pointerId);
+      documentationResizeState = null;
+      container.classList.remove("is-documentation-resizing");
+      document.body.classList.remove("is-documentation-resizing");
+      applyDocumentationWidth(documentationPreferredWidth, {
+        persist: true,
+        remember: false,
+      });
+      event?.preventDefault?.();
+    };
+
+    resizer.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      documentationResizeState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startWidth: documentationWidth,
+      };
+      resizer.setPointerCapture?.(event.pointerId);
+      container.classList.add("is-documentation-resizing");
+      document.body.classList.add("is-documentation-resizing");
+    });
+
+    resizer.addEventListener("pointermove", (event) => {
+      if (!documentationResizeState) return;
+      event.preventDefault();
+      const nextWidth =
+        documentationResizeState.startWidth -
+        (event.clientX - documentationResizeState.startX);
+      applyDocumentationWidth(nextWidth, { persist: false });
+    });
+
+    resizer.addEventListener("pointerup", finishResize);
+    resizer.addEventListener("pointercancel", finishResize);
+
+    resizer.addEventListener("keydown", (event) => {
+      const step = event.shiftKey ? 48 : 24;
+      let nextWidth = documentationWidth;
+
+      if (event.key === "ArrowLeft") {
+        nextWidth += step;
+      } else if (event.key === "ArrowRight") {
+        nextWidth -= step;
+      } else if (event.key === "Home") {
+        nextWidth = DOCUMENTATION_MIN_WIDTH;
+      } else if (event.key === "End") {
+        nextWidth = getDocumentationMaxWidth();
+      } else {
+        return;
+      }
+
+      event.preventDefault();
+      applyDocumentationWidth(nextWidth);
+    });
+
+    applyDocumentationWidth(documentationPreferredWidth, {
+      persist: false,
+      remember: false,
+    });
+  }
+
+  function bindWorkspaceResizeObserver() {
+    const container = getCanvasSplitContainer();
+    if (!container) return;
+
+    const scheduleResize = () => {
+      if (workspaceResizeFrame !== null) return;
+      workspaceResizeFrame = window.requestAnimationFrame(() => {
+        workspaceResizeFrame = null;
+        applyDocumentationWidth(documentationPreferredWidth, {
+          persist: false,
+          remember: false,
+        });
+        applyOutlinerWidth(outlinerPreferredWidth, {
+          persist: false,
+          remember: false,
+        });
+        applyDocumentationWidth(documentationPreferredWidth, {
+          persist: false,
+          remember: false,
+        });
+        syncSplitResizerAria();
+      });
+    };
+
+    if (typeof ResizeObserver === "function") {
+      workspaceResizeObserver = new ResizeObserver(scheduleResize);
+      workspaceResizeObserver.observe(container);
+    } else {
+      window.addEventListener("resize", scheduleResize);
+    }
   }
 
   function getOutlinerFileKind(fileName) {
@@ -2459,6 +3115,7 @@ int main(void)
     if (["s", "asm"].includes(ext)) return "asm";
     if (["hex", "ihex"].includes(ext)) return "hex";
     if (ext === "txt") return "txt";
+    if (ext === "md") return "md";
     return "file";
   }
 
@@ -2469,6 +3126,7 @@ int main(void)
     if (kind === "asm") return "ASM";
     if (kind === "hex") return "HEX";
     if (kind === "txt") return "TXT";
+    if (kind === "md") return "MD";
     return "F";
   }
 
@@ -2559,18 +3217,8 @@ int main(void)
 
     if (inlineFileEdit.mode === "create") {
       files[nextName] = getNewFileContent(nextName);
-      current = nextName;
       inlineFileEdit = null;
-      persistState();
-      renderOutliner();
-      if (editor) {
-        editor.setOption("readOnly", false);
-        editor.setOption("mode", getEditorModeForFile(nextName));
-        editor.setValue(files[nextName]);
-      }
-      updateEditorFileWatermark(nextName);
-      resetHexArtifact();
-      updateCompilePanelState(true);
+      selectFile(nextName);
       return true;
     }
 
@@ -2624,6 +3272,7 @@ int main(void)
     );
     persistState();
     renderOutliner();
+    refreshDocumentationPane({ preserveScroll: true });
     return true;
   }
 
@@ -2637,6 +3286,7 @@ int main(void)
     group.expanded = true;
     persistState();
     renderOutliner();
+    refreshDocumentationPane({ preserveScroll: true });
     return true;
   }
 
@@ -2649,6 +3299,7 @@ int main(void)
     );
     persistState();
     renderOutliner();
+    refreshDocumentationPane({ preserveScroll: true });
     return true;
   }
 
@@ -2705,6 +3356,7 @@ int main(void)
 
     persistState();
     renderOutliner();
+    refreshDocumentationPane({ preserveScroll: true });
     return true;
   }
 
@@ -3470,6 +4122,475 @@ int main(void)
     }
   }
 
+  function getMiniProjectForFile(fileName) {
+    if (!fileName) return null;
+
+    for (const [instanceId, project] of Object.entries(miniProjects)) {
+      for (const [role, linkedFileName] of Object.entries(project.files || {})) {
+        if (linkedFileName === fileName) {
+          return { instanceId, project, role };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function renameMiniProjectFile(oldName, newName) {
+    for (const project of Object.values(miniProjects)) {
+      for (const role of Object.keys(project.files || {})) {
+        if (project.files[role] === oldName) project.files[role] = newName;
+      }
+    }
+  }
+
+  function removeMiniProjectFile(fileName) {
+    for (const [instanceId, project] of Object.entries(miniProjects)) {
+      for (const role of Object.keys(project.files || {})) {
+        if (project.files[role] !== fileName) continue;
+        delete project.files[role];
+        if (project.mediaTypes) delete project.mediaTypes[role];
+      }
+      if (!Object.keys(project.files || {}).length) delete miniProjects[instanceId];
+    }
+  }
+
+  function isAiSpecMarkdownFile(fileName) {
+    const linkedProject = getMiniProjectForFile(fileName);
+    if (linkedProject) {
+      return linkedProject.role === miniProjectCore.ROLES.AI_SPEC;
+    }
+
+    return (
+      miniProjectCore.inferFileRole(String(fileName || "")) ===
+      miniProjectCore.ROLES.AI_SPEC
+    );
+  }
+
+  function findFileNameCaseInsensitive(candidate) {
+    const wanted = String(candidate || "").toLowerCase();
+    if (!wanted) return "";
+    return Object.keys(files).find((name) => name.toLowerCase() === wanted) || "";
+  }
+
+  function resolveGuideFileName(fileName) {
+    const linkedProject = getMiniProjectForFile(fileName);
+    if (linkedProject) {
+      const linkedGuide = linkedProject.project.files?.guide;
+      if (linkedGuide && hasFile(linkedGuide)) return linkedGuide;
+      if (linkedProject.role === miniProjectCore.ROLES.AI_SPEC) return "";
+    }
+
+    if (/\.md$/i.test(fileName || "") && !isAiSpecMarkdownFile(fileName)) {
+      return fileName;
+    }
+
+    const stem = getFileStem(fileName);
+    for (const candidate of [`${stem}.guide.md`, `${stem}.md`]) {
+      const match = findFileNameCaseInsensitive(candidate);
+      if (match && !isAiSpecMarkdownFile(match)) return match;
+    }
+
+    const groupName = getFileGroup(fileName);
+    const groupFiles = groupName ? fileGroups[groupName]?.files || [] : [];
+    return (
+      groupFiles.find(
+        (name) => /\.md$/i.test(name) && !isAiSpecMarkdownFile(name) && hasFile(name)
+      ) || ""
+    );
+  }
+
+  function getDocumentationContext(fileName = current) {
+    const linkedProject = getMiniProjectForFile(fileName);
+    const guideFile = resolveGuideFileName(fileName);
+    return {
+      guideFile,
+      projectTitle:
+        linkedProject?.project?.title ||
+        (guideFile
+          ? getFileStem(guideFile).replace(/\.guide$/i, "")
+          : "Documentation"),
+      linkedProject,
+    };
+  }
+
+  function getLiveFileContent(fileName) {
+    if (editor && current === fileName) return editor.getValue();
+    return String(fileName && hasFile(fileName) ? files[fileName] || "" : "");
+  }
+
+  function isSafeDocumentationUrl(url) {
+    const value = String(url || "").trim();
+    if (!value) return false;
+    if (value.startsWith("#") || value.startsWith("/") || value.startsWith("./")) {
+      return true;
+    }
+    try {
+      const parsed = new URL(value, window.location.href);
+      return ["http:", "https:", "mailto:"].includes(parsed.protocol);
+    } catch {
+      return false;
+    }
+  }
+
+  function appendMarkdownInline(parent, rawText) {
+    const text = String(rawText || "");
+    const tokenPattern = /(`[^`\n]+`|\[([^\]\n]+)\]\(([^)\n]+)\))/g;
+    let cursor = 0;
+    let match;
+
+    while ((match = tokenPattern.exec(text))) {
+      if (match.index > cursor) {
+        parent.appendChild(document.createTextNode(text.slice(cursor, match.index)));
+      }
+
+      if (match[0].startsWith("`")) {
+        const code = document.createElement("code");
+        code.textContent = match[0].slice(1, -1);
+        parent.appendChild(code);
+      } else {
+        const label = match[2];
+        const href = String(match[3] || "").trim().replace(/^<|>$/g, "");
+        if (isSafeDocumentationUrl(href)) {
+          const link = document.createElement("a");
+          link.textContent = label;
+          link.href = href;
+          if (/^https?:/i.test(href)) {
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+          }
+          parent.appendChild(link);
+        } else {
+          parent.appendChild(document.createTextNode(label));
+        }
+      }
+
+      cursor = tokenPattern.lastIndex;
+    }
+
+    if (cursor < text.length) {
+      parent.appendChild(document.createTextNode(text.slice(cursor)));
+    }
+  }
+
+  function renderMarkdownGuide(markdown) {
+    const content = $("projectDocumentationContent");
+    if (!content) return;
+
+    content.replaceChildren();
+    documentationHeadingIndex = new Map();
+
+    const lines = String(markdown || "")
+      .replace(/\r\n?/g, "\n")
+      .split("\n");
+    let paragraphLines = [];
+    let activeList = null;
+    let activeListType = "";
+    let codeFence = null;
+    let codeLines = [];
+
+    const flushParagraph = () => {
+      if (!paragraphLines.length) return;
+      const paragraph = document.createElement("p");
+      appendMarkdownInline(paragraph, paragraphLines.join(" ").trim());
+      content.appendChild(paragraph);
+      paragraphLines = [];
+    };
+
+    const flushList = () => {
+      activeList = null;
+      activeListType = "";
+    };
+
+    const flushCode = () => {
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      code.textContent = codeLines.join("\n");
+      if (codeFence?.language) code.dataset.language = codeFence.language;
+      pre.appendChild(code);
+      content.appendChild(pre);
+      codeFence = null;
+      codeLines = [];
+    };
+
+    const appendHeading = (level, rawHeadingText) => {
+      const headingText = String(rawHeadingText || "")
+        .replace(/[ \t]+#+[ \t]*$/, "")
+        .trim();
+      if (!headingText) return;
+
+      const heading = document.createElement(`h${level}`);
+      appendMarkdownInline(heading, headingText);
+      const headingKey = miniProjectCore.normalizeHeadingKey(headingText);
+      const indexKey = `${level}:${headingKey}`;
+      heading.dataset.documentationHeading = indexKey;
+      heading.tabIndex = -1;
+      if (headingKey && !documentationHeadingIndex.has(indexKey)) {
+        documentationHeadingIndex.set(indexKey, heading);
+      }
+      content.appendChild(heading);
+    };
+
+    for (const line of lines) {
+      if (codeFence !== null) {
+        const closingFence = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
+        if (
+          closingFence &&
+          closingFence[1][0] === codeFence.character &&
+          closingFence[1].length >= codeFence.length
+        ) {
+          flushCode();
+          continue;
+        }
+        codeLines.push(line);
+        continue;
+      }
+
+      const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})\s*([^\s`~]*)?.*$/);
+      if (openingFence) {
+        flushParagraph();
+        flushList();
+        codeFence = {
+          character: openingFence[1][0],
+          length: openingFence[1].length,
+          language: openingFence[2] || "plain",
+        };
+        codeLines = [];
+        continue;
+      }
+
+      const headingMatch = line.match(/^ {0,3}(#{1,6})[ \t]+(.+?)\s*$/);
+      if (headingMatch) {
+        flushParagraph();
+        flushList();
+        appendHeading(headingMatch[1].length, headingMatch[2]);
+        continue;
+      }
+
+      const setextMatch = line.match(/^ {0,3}(=+|-+)[ \t]*$/);
+      if (setextMatch && paragraphLines.length) {
+        const headingText = paragraphLines.join(" ").trim();
+        paragraphLines = [];
+        flushList();
+        appendHeading(setextMatch[1][0] === "=" ? 1 : 2, headingText);
+        continue;
+      }
+
+      if (/^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line)) {
+        flushParagraph();
+        flushList();
+        content.appendChild(document.createElement("hr"));
+        continue;
+      }
+
+      const unorderedMatch = line.match(/^\s*[-*+]\s+(.+)$/);
+      const orderedMatch = line.match(/^\s*\d+[.)]\s+(.+)$/);
+      if (unorderedMatch || orderedMatch) {
+        flushParagraph();
+        const listType = orderedMatch ? "ol" : "ul";
+        if (!activeList || activeListType !== listType) {
+          flushList();
+          activeList = document.createElement(listType);
+          activeListType = listType;
+          content.appendChild(activeList);
+        }
+        const item = document.createElement("li");
+        appendMarkdownInline(item, (orderedMatch || unorderedMatch)[1]);
+        activeList.appendChild(item);
+        continue;
+      }
+
+      const quoteMatch = line.match(/^\s*>\s?(.*)$/);
+      if (quoteMatch) {
+        flushParagraph();
+        flushList();
+        const quote = document.createElement("blockquote");
+        appendMarkdownInline(quote, quoteMatch[1]);
+        content.appendChild(quote);
+        continue;
+      }
+
+      if (!line.trim()) {
+        flushParagraph();
+        flushList();
+        continue;
+      }
+
+      flushList();
+      paragraphLines.push(line.trim());
+    }
+
+    flushParagraph();
+    flushList();
+    if (codeFence !== null || codeLines.length) flushCode();
+  }
+
+  function showDocumentationEmpty(title, message) {
+    const content = $("projectDocumentationContent");
+    if (!content) return;
+    documentationHeadingIndex = new Map();
+    content.replaceChildren();
+
+    const empty = document.createElement("div");
+    empty.className = "project-documentation-empty";
+    const strong = document.createElement("strong");
+    strong.textContent = title;
+    const copy = document.createElement("p");
+    copy.textContent = message;
+    empty.append(strong, copy);
+    content.appendChild(empty);
+  }
+
+  function setDocumentationNotice(message = "") {
+    const notice = $("projectDocumentationNotice");
+    if (!notice) return;
+    notice.textContent = message;
+    notice.hidden = !message;
+  }
+
+  function refreshDocumentationPane({ preserveScroll = false } = {}) {
+    const pane = $("projectDocumentationPane");
+    const title = $("projectDocumentationTitle");
+    const fileLabel = $("projectDocumentationFile");
+    const scroll = $("projectDocumentationScroll");
+    if (!pane || !title || !fileLabel || !scroll) return;
+
+    const context = getDocumentationContext(current);
+    const previousGuide = pane.dataset.guideFile || "";
+    const previousScrollTop = scroll.scrollTop;
+    const guideFile = context.guideFile;
+
+    title.textContent = context.projectTitle || "Documentation";
+    fileLabel.textContent = guideFile;
+    fileLabel.hidden = !guideFile;
+    pane.dataset.guideFile = guideFile;
+    setDocumentationNotice();
+
+    if (!guideFile || !hasFile(guideFile)) {
+      showDocumentationEmpty(
+        "Guide file is not connected yet",
+        "When a mini-project includes a human-readable .md file, it will appear here automatically."
+      );
+      scroll.scrollTop = 0;
+      return;
+    }
+
+    renderMarkdownGuide(getLiveFileContent(guideFile));
+    scroll.scrollTop =
+      preserveScroll && previousGuide === guideFile ? previousScrollTop : 0;
+  }
+
+  function scheduleDocumentationPaneRefresh() {
+    if (documentationRenderTimer) window.clearTimeout(documentationRenderTimer);
+    documentationRenderTimer = window.setTimeout(() => {
+      documentationRenderTimer = null;
+      refreshDocumentationPane({ preserveScroll: true });
+    }, 180);
+  }
+
+  function navigateToDocumentationHeading(marker) {
+    const context = getDocumentationContext(current);
+    if (!context.guideFile || !hasFile(context.guideFile)) {
+      setDocumentationNotice("This source file has no linked guide yet.");
+      $("projectDocumentationPane")?.scrollIntoView({ block: "nearest" });
+      return false;
+    }
+
+    const pane = $("projectDocumentationPane");
+    if (pane?.dataset.guideFile !== context.guideFile) refreshDocumentationPane();
+
+    const headingKey = miniProjectCore.normalizeHeadingKey(marker.title);
+    const target = documentationHeadingIndex.get(`${marker.level}:${headingKey}`);
+    if (!target) {
+      setDocumentationNotice(`Section not found: ${marker.title}`);
+      return false;
+    }
+
+    setDocumentationNotice();
+    document
+      .querySelectorAll(".is-documentation-target")
+      .forEach((element) => element.classList.remove("is-documentation-target"));
+    target.classList.add("is-documentation-target");
+    target.scrollIntoView({
+      block: "start",
+      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+        ? "auto"
+        : "smooth",
+    });
+    target.focus({ preventScroll: true });
+
+    if (documentationTargetTimer) window.clearTimeout(documentationTargetTimer);
+    documentationTargetTimer = window.setTimeout(() => {
+      target.classList.remove("is-documentation-target");
+      documentationTargetTimer = null;
+    }, 1800);
+    return true;
+  }
+
+  function clearDocumentationMarkers() {
+    for (const marker of documentationMarkerHandles) marker.clear?.();
+    documentationMarkerHandles = [];
+  }
+
+  function refreshDocumentationMarkers() {
+    if (documentationMarkerFrame !== null) {
+      window.cancelAnimationFrame(documentationMarkerFrame);
+      documentationMarkerFrame = null;
+    }
+
+    clearDocumentationMarkers();
+    if (!editor || !isCFileName(current)) return;
+
+    editor.operation(() => {
+      for (let lineNumber = 0; lineNumber < editor.lineCount(); lineNumber += 1) {
+        const line = editor.getLine(lineNumber);
+        const marker = miniProjectCore.parseDocumentationMarker(line);
+        if (!marker) continue;
+        const from = line.indexOf("//");
+        documentationMarkerHandles.push(
+          editor.markText(
+            CodeMirror.Pos(lineNumber, Math.max(0, from)),
+            CodeMirror.Pos(lineNumber, line.length),
+            {
+              className: "cm-documentation-link",
+              title: `Open guide section: ${marker.title}`,
+            }
+          )
+        );
+      }
+    });
+  }
+
+  function scheduleDocumentationMarkerRefresh() {
+    if (documentationMarkerFrame !== null) return;
+    documentationMarkerFrame = window.requestAnimationFrame(() => {
+      documentationMarkerFrame = null;
+      refreshDocumentationMarkers();
+    });
+  }
+
+  function openDocumentationMarkerAtLine(lineNumber) {
+    if (!editor || !isCFileName(current)) return false;
+    const marker = miniProjectCore.parseDocumentationMarker(editor.getLine(lineNumber));
+    return marker ? navigateToDocumentationHeading(marker) : false;
+  }
+
+  function bindDocumentationMarkerNavigation() {
+    if (!editor) return;
+    const wrapper = editor.getWrapperElement();
+    editor
+      .getInputField()
+      ?.setAttribute("aria-describedby", "editorDocumentationHint");
+    wrapper.addEventListener("click", (event) => {
+      if (!event.target.closest?.(".cm-documentation-link")) return;
+      const position = editor.coordsChar(
+        { left: event.clientX, top: event.clientY },
+        "window"
+      );
+      openDocumentationMarkerAtLine(position.line);
+    });
+  }
+
   function selectFile(name) {
     if (!hasFile(name)) return;
     if (editor && current && current !== name && hasFile(current)) {
@@ -3487,10 +4608,11 @@ int main(void)
     updateCompilePanelState(true);
 
     updateEditorFileWatermark(name);
+    refreshDocumentationPane();
+    scheduleDocumentationMarkerRefresh();
     persistState();
     renderOutliner();
     if (editor) setTimeout(() => editor.refresh(), 0);
-
   }
 
   function newCanvas() {
@@ -3509,6 +4631,7 @@ int main(void)
     }
 
     renameFileKey(oldName, newName);
+    renameMiniProjectFile(oldName, newName);
     if (hexArtifactsBySource.has(oldName)) {
       hexArtifactsBySource.set(newName, hexArtifactsBySource.get(oldName));
       hexArtifactsBySource.delete(oldName);
@@ -3522,6 +4645,8 @@ int main(void)
     if (renamedCurrent) current = newName;
     persistState();
     renderOutliner();
+    refreshDocumentationPane({ preserveScroll: true });
+    scheduleDocumentationMarkerRefresh();
     if (renamedCurrent) {
       if (editor) {
         editor.setOption("mode", getEditorModeForFile(newName));
@@ -3571,6 +4696,7 @@ int main(void)
     delete fileGroups[groupName];
     persistState();
     renderOutliner();
+    refreshDocumentationPane({ preserveScroll: true });
   }
 
   async function deleteFile(name) {
@@ -3586,6 +4712,7 @@ int main(void)
 
     const deletedCurrent = current === name;
     delete files[name];
+    removeMiniProjectFile(name);
     hexArtifactsBySource.delete(name);
     removeFileFromGroups(name);
     if (deletedCurrent) {
@@ -3611,6 +4738,8 @@ int main(void)
       updateEditorFileWatermark(current);
     }
     renderOutliner();
+    refreshDocumentationPane();
+    scheduleDocumentationMarkerRefresh();
     if (deletedCurrent) {
       resetHexArtifact();
       updateCompilePanelState(true);
@@ -3775,8 +4904,10 @@ int main(void)
       extraKeys: {
         "Ctrl-Space": "autocomplete",
         "Alt-Space": "autocomplete",
+        "Alt-Enter": (cm) => openDocumentationMarkerAtLine(cm.getCursor().line),
       },
     });
+    bindDocumentationMarkerNavigation();
     editor.on("inputRead", function (cm, change) {
       if (!isCFileName(current)) return;
       if (!change || !change.text || !change.text.length) return;
@@ -3809,6 +4940,10 @@ int main(void)
     editor.on("change", () => {
       clearCompileErrorHighlight();
       if (!current) return;
+      scheduleDocumentationMarkerRefresh();
+      if (resolveGuideFileName(current) === current) {
+        scheduleDocumentationPaneRefresh();
+      }
       if (saveTimer) clearTimeout(saveTimer);
 
       const codeSnapshot = editor.getValue();
@@ -3818,6 +4953,7 @@ int main(void)
         persistState();
       }, 250);
     });
+    scheduleDocumentationMarkerRefresh();
     editor.addKeyMap({
       "Ctrl-S": function () {
         downloadCurrent();
@@ -4006,6 +5142,8 @@ int main(void)
     initCustomSelect(mcuSelect);
     bindOutlinerDropZone();
     bindFileListResizer();
+    bindDocumentationResizer();
+    bindWorkspaceResizeObserver();
     newBtn && newBtn.addEventListener("click", startInlineCreate);
     renameBtn &&
       renameBtn.addEventListener("click", () => current && renameFile(current));
@@ -4683,7 +5821,16 @@ int main(void)
   function boot() {
     loadState();
     ensureAtLeastOneFile();
+    restoreDocumentationWidth();
     restoreOutlinerWidth();
+    applyOutlinerWidth(outlinerPreferredWidth, {
+      persist: false,
+      remember: false,
+    });
+    applyDocumentationWidth(documentationPreferredWidth, {
+      persist: false,
+      remember: false,
+    });
     renderOutliner();
     if (!current) current = Object.keys(files)[0];
     initUpdiBridge();
@@ -4696,7 +5843,17 @@ int main(void)
     dispatchCanvasSerialState();
     dispatchUpdiHexArtifact();
     selectFile(current);
+
+    const bridge = window.UartDebugAvrMiniProjects;
+    resolveMiniProjectBridgeReady?.(bridge);
+    resolveMiniProjectBridgeReady = null;
+    window.dispatchEvent(
+      new CustomEvent(MINI_PROJECT_READY_EVENT, {
+        detail: { bridge },
+      })
+    );
   }
 
+  initMiniProjectBridge();
   document.addEventListener("DOMContentLoaded", boot);
 })();

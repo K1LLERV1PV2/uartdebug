@@ -10,6 +10,7 @@ const APP_SHELL_ASSETS = [
   "/uart.css",
   "/uart.js",
   "/AVR-Programming.css",
+  "/avr-mini-projects.js",
   "/AVR-Programming.js",
   "/updi-test.js",
   "/updi-test.css",

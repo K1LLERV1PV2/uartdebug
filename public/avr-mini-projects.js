@@ -1,0 +1,469 @@
+(function (root, factory) {
+  "use strict";
+
+  const core = factory();
+
+  if (typeof module === "object" && module.exports) {
+    module.exports = core;
+  }
+
+  if (root) {
+    root.UartDebugAvrMiniProjectCore = core;
+  }
+})(typeof window !== "undefined" ? window : null, function () {
+  "use strict";
+
+  const SCHEMA_VERSION = 1;
+  const ROLES = Object.freeze({
+    SOURCE: "source",
+    GUIDE: "guide",
+    AI_SPEC: "aiSpec",
+  });
+  const CANONICAL_ROLES = Object.freeze([
+    ROLES.SOURCE,
+    ROLES.GUIDE,
+    ROLES.AI_SPEC,
+  ]);
+
+  const ROLE_ALIASES = Object.freeze({
+    source: ROLES.SOURCE,
+    src: ROLES.SOURCE,
+    code: ROLES.SOURCE,
+    c: ROLES.SOURCE,
+    csource: ROLES.SOURCE,
+    program: ROLES.SOURCE,
+    firmware: ROLES.SOURCE,
+
+    guide: ROLES.GUIDE,
+    doc: ROLES.GUIDE,
+    docs: ROLES.GUIDE,
+    documentation: ROLES.GUIDE,
+    human: ROLES.GUIDE,
+    explanation: ROLES.GUIDE,
+    readme: ROLES.GUIDE,
+
+    aispec: ROLES.AI_SPEC,
+    ai: ROLES.AI_SPEC,
+    agent: ROLES.AI_SPEC,
+    api: ROLES.AI_SPEC,
+    yaml: ROLES.AI_SPEC,
+    metadata: ROLES.AI_SPEC,
+    machine: ROLES.AI_SPEC,
+    prompt: ROLES.AI_SPEC,
+    spec: ROLES.AI_SPEC,
+  });
+
+  const DEFAULT_MEDIA_TYPES = Object.freeze({
+    [ROLES.SOURCE]: "text/x-c",
+    [ROLES.GUIDE]: "text/markdown",
+    [ROLES.AI_SPEC]: "text/yaml",
+  });
+
+  function normalizeRole(value) {
+    if (typeof value !== "string") return null;
+
+    const key = value
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_.-]+/g, "");
+
+    return Object.prototype.hasOwnProperty.call(ROLE_ALIASES, key)
+      ? ROLE_ALIASES[key]
+      : null;
+  }
+
+  function inferFileRole(fileOrName, explicitRole) {
+    let name = fileOrName;
+    let role = explicitRole;
+
+    if (fileOrName && typeof fileOrName === "object") {
+      name = fileOrName.name;
+      role = fileOrName.role;
+    } else if (
+      arguments.length > 1 &&
+      normalizeRole(fileOrName) &&
+      typeof explicitRole === "string" &&
+      /\.[^.]+$/i.test(explicitRole)
+    ) {
+      name = explicitRole;
+      role = fileOrName;
+    }
+
+    const normalizedExplicitRole = normalizeRole(role);
+    if (normalizedExplicitRole) return normalizedExplicitRole;
+    if (typeof name !== "string") return null;
+
+    const normalizedName = name.trim().toLowerCase();
+    if (/\.c$/i.test(normalizedName)) return ROLES.SOURCE;
+    if (
+      /\.(?:ai|agent|ya?ml|api)\.md$/i.test(normalizedName) ||
+      /\.(?:ai|agent|ya?ml|api)$/i.test(normalizedName)
+    ) {
+      return ROLES.AI_SPEC;
+    }
+    if (/\.md$/i.test(normalizedName)) return ROLES.GUIDE;
+
+    return null;
+  }
+
+  function normalizeDefinition(definition) {
+    if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
+      throw new TypeError("Mini-project definition must be an object.");
+    }
+
+    if (
+      definition.schemaVersion !== undefined &&
+      Number(definition.schemaVersion) !== SCHEMA_VERSION
+    ) {
+      throw new Error(
+        `Unsupported mini-project schema version: ${definition.schemaVersion}.`
+      );
+    }
+
+    const id = normalizeRequiredText(definition.id, "Mini-project id");
+    const title =
+      definition.title === undefined
+        ? id
+        : normalizeRequiredText(definition.title, "Mini-project title");
+    const summary = normalizeOptionalText(
+      definition.summary,
+      "Mini-project summary"
+    );
+    const version = normalizeVersion(definition.version);
+    const rawFiles = collectDefinitionFiles(definition);
+    const filesByRole = {};
+    const usedNames = new Set();
+
+    for (let index = 0; index < rawFiles.length; index += 1) {
+      const entry = rawFiles[index];
+      const file = normalizeFile(entry.file, entry.roleHint, index);
+      const nameKey = file.name.toLocaleLowerCase();
+
+      if (usedNames.has(nameKey)) {
+        throw new Error(`Duplicate mini-project file name: ${file.name}.`);
+      }
+      usedNames.add(nameKey);
+
+      if (filesByRole[file.role]) {
+        if (file.role === ROLES.SOURCE) {
+          throw new Error("Mini-project definition has duplicate source files.");
+        }
+        throw new Error(
+          `Mini-project definition has duplicate ${file.role} files.`
+        );
+      }
+
+      filesByRole[file.role] = file;
+    }
+
+    if (!filesByRole[ROLES.SOURCE]) {
+      throw new Error("Mini-project definition is missing a source file.");
+    }
+
+    const files = {};
+    for (const role of CANONICAL_ROLES) {
+      if (filesByRole[role]) files[role] = filesByRole[role];
+    }
+
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      id,
+      title,
+      summary,
+      version,
+      files,
+    };
+  }
+
+  function collectDefinitionFiles(definition) {
+    if (Array.isArray(definition.files)) {
+      return definition.files.map((file) => ({ file, roleHint: null }));
+    }
+
+    if (
+      definition.files &&
+      typeof definition.files === "object" &&
+      !Array.isArray(definition.files)
+    ) {
+      return Object.entries(definition.files).map(([roleName, file]) => {
+        const roleHint = normalizeRole(roleName);
+        if (!roleHint) {
+          throw new Error(`Unknown mini-project file role: ${roleName}.`);
+        }
+        return { file, roleHint };
+      });
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(definition, "fileName") ||
+      Object.prototype.hasOwnProperty.call(definition, "content")
+    ) {
+      return [
+        {
+          roleHint: ROLES.SOURCE,
+          file: {
+            role: ROLES.SOURCE,
+            name: definition.fileName,
+            content: definition.content,
+            mediaType: definition.mediaType,
+          },
+        },
+      ];
+    }
+
+    return [];
+  }
+
+  function normalizeFile(rawFile, roleHint, index) {
+    if (!rawFile || typeof rawFile !== "object" || Array.isArray(rawFile)) {
+      throw new TypeError(`Mini-project file ${index + 1} must be an object.`);
+    }
+
+    let explicitRole = null;
+    if (rawFile.role !== undefined && rawFile.role !== null) {
+      explicitRole = normalizeRole(rawFile.role);
+      if (!explicitRole) {
+        throw new Error(`Unknown mini-project file role: ${rawFile.role}.`);
+      }
+    }
+
+    if (roleHint && explicitRole && roleHint !== explicitRole) {
+      throw new Error(
+        `Mini-project file role conflicts with its "${roleHint}" key.`
+      );
+    }
+
+    const name = normalizeFileName(rawFile.name);
+    const role = roleHint || explicitRole || inferFileRole(name);
+    if (!role) {
+      throw new Error(`Cannot infer a role for mini-project file: ${name}.`);
+    }
+    if (role === ROLES.SOURCE && !/\.c$/i.test(name)) {
+      throw new Error(`Mini-project source file must use the .c extension: ${name}.`);
+    }
+    if (
+      (role === ROLES.GUIDE || role === ROLES.AI_SPEC) &&
+      !/\.md$/i.test(name)
+    ) {
+      throw new Error(
+        `Mini-project ${role} file must use the .md extension: ${name}.`
+      );
+    }
+
+    if (typeof rawFile.content !== "string") {
+      throw new TypeError(
+        `Mini-project file content must be a string: ${name}.`
+      );
+    }
+
+    let mediaType = DEFAULT_MEDIA_TYPES[role];
+    if (rawFile.mediaType !== undefined && rawFile.mediaType !== null) {
+      if (typeof rawFile.mediaType !== "string" || !rawFile.mediaType.trim()) {
+        throw new TypeError(
+          `Mini-project file mediaType must be a non-empty string: ${name}.`
+        );
+      }
+      mediaType = rawFile.mediaType.trim();
+    }
+
+    return {
+      role,
+      name,
+      content: rawFile.content.replace(/\r\n?/g, "\n"),
+      mediaType,
+    };
+  }
+
+  function normalizeFileName(value) {
+    if (typeof value !== "string") {
+      throw new TypeError("Mini-project file name must be a string.");
+    }
+
+    const name = value.trim();
+    if (!name || name === "." || name === "..") {
+      throw new Error("Mini-project file name is invalid.");
+    }
+    if (name.length > 96) {
+      throw new Error("Mini-project file name must be 96 characters or fewer.");
+    }
+    if (/[\\/:*?"<>|\x00-\x1f]/.test(name)) {
+      throw new Error(`Mini-project file name is invalid: ${name}.`);
+    }
+
+    return name;
+  }
+
+  function normalizeRequiredText(value, label) {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new TypeError(`${label} must be a non-empty string.`);
+    }
+    return value.trim();
+  }
+
+  function normalizeOptionalText(value, label) {
+    if (value === undefined || value === null) return "";
+    if (typeof value !== "string") {
+      throw new TypeError(`${label} must be a string.`);
+    }
+    return value.trim();
+  }
+
+  function normalizeVersion(value) {
+    if (value === undefined || value === null) return 1;
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim()) return value.trim();
+    throw new TypeError("Mini-project version must be a positive number or string.");
+  }
+
+  function parseDocumentationMarker(line) {
+    if (typeof line !== "string") return null;
+
+    const match = /^\s*\/\/(#{1,6})[ \t]+(.+?)\s*$/.exec(line);
+    if (!match) return null;
+
+    const title = match[2].trim();
+    if (!title) return null;
+
+    return {
+      level: match[1].length,
+      title,
+      key: normalizeHeadingKey(title),
+    };
+  }
+
+  function normalizeHeadingKey(value) {
+    if (value === undefined || value === null) return "";
+
+    let text = String(value).trim();
+    text = text
+      .replace(/^\s{0,3}#{1,6}[ \t]+/, "")
+      .replace(/[ \t]+#+[ \t]*$/, "")
+      .replace(/[ \t]+\{(?:#[\w-]+|\.[\w-]+)(?:[ \t]+[.#][\w-]+)*\}[ \t]*$/, "")
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\[[^\]]*\]/g, "$1")
+      .replace(/`+([^`]*?)`+/g, "$1")
+      .replace(/<(?:https?:\/\/|mailto:)([^>]+)>/gi, "$1")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\\([\\`*_[\]{}()#+\-.!])/g, "$1")
+      .replace(/[*_~]/g, " ");
+
+    text = decodeHtmlEntities(text);
+    if (typeof text.normalize === "function") {
+      text = text.normalize("NFKD");
+    }
+
+    text = text.toLocaleLowerCase().replace(/\p{M}+/gu, "");
+    const words = text.match(/[\p{L}\p{N}]+/gu);
+    return words ? words.join(" ") : "";
+  }
+
+  function decodeHtmlEntities(value) {
+    const namedEntities = {
+      amp: "&",
+      apos: "'",
+      gt: ">",
+      lt: "<",
+      nbsp: " ",
+      quot: '"',
+    };
+
+    return value
+      .replace(/&#(\d+);/g, (match, digits) =>
+        decodeCodePoint(match, Number.parseInt(digits, 10))
+      )
+      .replace(/&#x([\da-f]+);/gi, (match, digits) =>
+        decodeCodePoint(match, Number.parseInt(digits, 16))
+      )
+      .replace(/&(amp|apos|gt|lt|nbsp|quot);/gi, (match, name) =>
+        namedEntities[name.toLowerCase()]
+      );
+  }
+
+  function decodeCodePoint(fallback, codePoint) {
+    try {
+      return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function extractMarkdownHeadings(markdown) {
+    if (typeof markdown !== "string") return [];
+
+    const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+    const headings = [];
+    let activeFence = null;
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+
+      if (activeFence) {
+        if (isClosingFence(line, activeFence)) activeFence = null;
+        continue;
+      }
+
+      const openingFence = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+      if (openingFence) {
+        activeFence = {
+          character: openingFence[2][0],
+          length: openingFence[2].length,
+        };
+        continue;
+      }
+
+      const atx = /^ {0,3}(#{1,6})[ \t]+(.+?)\s*$/.exec(line);
+      if (atx) {
+        const title = atx[2].replace(/[ \t]+#+[ \t]*$/, "").trim();
+        if (title) {
+          headings.push({
+            level: atx[1].length,
+            title,
+            key: normalizeHeadingKey(title),
+          });
+        }
+        continue;
+      }
+
+      const setext =
+        index + 1 < lines.length
+          ? /^ {0,3}(=+|-+)[ \t]*$/.exec(lines[index + 1])
+          : null;
+      const title = line.trim();
+      if (setext && title && !/^ {4}/.test(line)) {
+        headings.push({
+          level: setext[1][0] === "=" ? 1 : 2,
+          title,
+          key: normalizeHeadingKey(title),
+        });
+        index += 1;
+      }
+    }
+
+    return headings;
+  }
+
+  function isClosingFence(line, fence) {
+    const escapedCharacter = fence.character === "`" ? "`" : "~";
+    const pattern = new RegExp(
+      `^ {0,3}${escapedCharacter}{${fence.length},}[ \\t]*$`
+    );
+    return pattern.test(line);
+  }
+
+  return Object.freeze({
+    SCHEMA_VERSION,
+    ROLES,
+    CANONICAL_ROLES,
+    normalizeRole,
+    inferFileRole,
+    normalizeDefinition,
+    parseDocumentationMarker,
+    normalizeHeadingKey,
+    extractMarkdownHeadings,
+  });
+});
