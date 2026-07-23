@@ -93,7 +93,7 @@
   }
 
   function shouldSuppressTooltip(element, text) {
-    if (!text || element.hasAttribute("data-tooltip-disabled")) {
+    if (!text || element.closest?.("[data-tooltip-disabled]")) {
       return true;
     }
 

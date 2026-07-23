@@ -1312,10 +1312,27 @@
   }
 
   function getGroupFileCount(groupName) {
-    const group = fileGroups[groupName];
-    const fileCount = (group?.files || []).filter((name) => hasFile(name)).length;
-    const groupCount = (group?.groups || []).filter((name) => hasGroup(name)).length;
-    return fileCount + groupCount;
+    const visitedGroups = new Set();
+    const visibleFiles = new Set();
+
+    const collectVisibleFiles = (name) => {
+      if (!hasGroup(name) || visitedGroups.has(name)) return;
+      visitedGroups.add(name);
+
+      const group = fileGroups[name];
+      for (const fileName of group.files || []) {
+        if (hasFile(fileName) && !isHiddenMiniProjectFile(fileName)) {
+          visibleFiles.add(fileName);
+        }
+      }
+
+      for (const childGroupName of group.groups || []) {
+        collectVisibleFiles(childGroupName);
+      }
+    };
+
+    collectVisibleFiles(groupName);
+    return visibleFiles.size;
   }
 
   function getFileGroup(fileName) {
@@ -3003,10 +3020,12 @@
   }
 
   function renderGroupRow(list, groupName, depth = 0) {
+    const groupFileCount = getGroupFileCount(groupName);
     const row = document.createElement("div");
     row.className = "file-item file-group";
     row.dataset.group = groupName;
     row.dataset.outlinerIcon = "";
+    row.dataset.groupCount = String(groupFileCount);
     row.draggable = true;
     row.title = groupName;
     row.style.setProperty("--outliner-depth", String(depth));
@@ -3033,8 +3052,8 @@
 
     const count = document.createElement("span");
     count.className = "file-group-count";
-    count.textContent = `+${getGroupFileCount(groupName)}`;
-    count.title = "Items in group";
+    count.textContent = `+${groupFileCount}`;
+    count.title = "Files in group";
     row.appendChild(count);
 
     const acts = document.createElement("div");

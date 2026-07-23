@@ -562,6 +562,43 @@ body.is-documentation-resizing * {
     color 140ms ease;
 }
 
+.file-item[data-file]::before {
+  display: grid;
+  flex: 0 0 28px;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--avr-text-soft);
+  content: attr(data-outliner-icon);
+  font: 800 12px/1 Inter, Arial, sans-serif;
+}
+
+.file-item[data-file-kind="c"]::before,
+.file-item[data-file-kind="h"]::before {
+  color: var(--avr-text);
+}
+
+.file-item.file-group::before {
+  display: block;
+  flex: 0 0 27px;
+  width: 27px;
+  height: 22px;
+  border: 0;
+  border-radius: 0;
+  background: var(--avr-text-soft);
+  content: "";
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 22'%3E%3Cpath fill='black' d='M2 5.5C2 3.6 3.6 2 5.5 2h5.1l2.2 2.4h9.7c1.9 0 3.5 1.6 3.5 3.5v8.6c0 1.9-1.6 3.5-3.5 3.5h-17C3.6 20 2 18.4 2 16.5z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 22'%3E%3Cpath fill='black' d='M2 5.5C2 3.6 3.6 2 5.5 2h5.1l2.2 2.4h9.7c1.9 0 3.5 1.6 3.5 3.5v8.6c0 1.9-1.6 3.5-3.5 3.5h-17C3.6 20 2 18.4 2 16.5z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.file-item.file-group.expanded::before,
+.file-item.file-group:hover::before {
+  background: var(--avr-text);
+}
+
 .file-item:hover {
   background: rgba(129, 159, 141, 0.08);
   border-color: rgba(129, 159, 141, 0.22);
@@ -786,19 +823,6 @@ body.is-documentation-resizing * {
   border-radius: 10px;
 }
 
-.canvas-split-container.is-outliner-compact .file-item::before {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--avr-text-soft);
-  content: attr(data-outliner-icon);
-  font: 800 12px/1 Inter, Arial, sans-serif;
-}
-
 .canvas-split-container.is-outliner-compact .file-item.new-item {
   width: 44px;
   height: 44px;
@@ -806,6 +830,8 @@ body.is-documentation-resizing * {
 }
 
 .canvas-split-container.is-outliner-compact .file-item.new-item::before {
+  display: grid;
+  place-items: center;
   width: auto;
   height: auto;
   color: var(--avr-text);
@@ -813,28 +839,15 @@ body.is-documentation-resizing * {
   font-size: 18px;
 }
 
-.canvas-split-container.is-outliner-compact .file-item[data-file-kind="c"]::before {
-  color: var(--avr-text);
-}
-
-.canvas-split-container.is-outliner-compact .file-item[data-file-kind="h"]::before {
-  color: var(--avr-text);
-}
-
-.canvas-split-container.is-outliner-compact .file-item.file-group::before {
-  width: 27px;
-  height: 22px;
-  border: 0;
-  border-radius: 0;
-  background: var(--avr-text-soft);
-  content: "";
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 22'%3E%3Cpath fill='black' d='M2 5.5C2 3.6 3.6 2 5.5 2h5.1l2.2 2.4h9.7c1.9 0 3.5 1.6 3.5 3.5v8.6c0 1.9-1.6 3.5-3.5 3.5h-17C3.6 20 2 18.4 2 16.5z'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 22'%3E%3Cpath fill='black' d='M2 5.5C2 3.6 3.6 2 5.5 2h5.1l2.2 2.4h9.7c1.9 0 3.5 1.6 3.5 3.5v8.6c0 1.9-1.6 3.5-3.5 3.5h-17C3.6 20 2 18.4 2 16.5z'/%3E%3C/svg%3E") center / contain no-repeat;
-}
-
-.canvas-split-container.is-outliner-compact .file-item.file-group.expanded::before,
-.canvas-split-container.is-outliner-compact .file-item.file-group:hover::before {
-  background: var(--avr-text);
+.canvas-split-container.is-outliner-compact .file-item.file-group:not(.editing)::after {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  color: var(--avr-window-bg);
+  content: attr(data-group-count);
+  font: 800 9px/1 Inter, Arial, sans-serif;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
 }
 
 .canvas-split-container.is-outliner-compact .file-name,
@@ -874,6 +887,10 @@ body.is-documentation-resizing * {
 }
 
 .canvas-split-container.is-outliner-compact .file-item.editing::before {
+  display: none;
+}
+
+.canvas-split-container.is-outliner-compact .file-item.editing::after {
   display: none;
 }
 

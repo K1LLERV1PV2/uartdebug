@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260723-session-frame-v3";
+const CACHE_NAME = "uartdebug-shell-20260723-avr-pane-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
