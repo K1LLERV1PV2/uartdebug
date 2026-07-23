@@ -79,6 +79,8 @@
   let documentationEditSaveTimer = null;
   let workspaceResizeFrame = null;
   let workspaceResizeObserver = null;
+  let watermarkFitFrame = null;
+  let watermarkResizeObserver = null;
   let siteDialogResolve = null;
   const EDITOR_FILE_EXTENSIONS = new Set([
     "c",
@@ -200,10 +202,64 @@
     markHexDownloadReady(!!hasHex);
   }
 
+  function fitEditorFileWatermark() {
+    const watermark = $("editorFileWatermark");
+    const container = watermark?.closest(".editor-container");
+    if (!watermark || !container) return;
+
+    watermark.style.removeProperty("font-size");
+    if (!watermark.textContent) return;
+
+    const maximumWidth = container.clientWidth * 0.66;
+    const preferredFontSize = Number.parseFloat(
+      window.getComputedStyle(watermark).fontSize
+    );
+    const naturalWidth = watermark.scrollWidth;
+    if (
+      !Number.isFinite(preferredFontSize) ||
+      preferredFontSize <= 0 ||
+      maximumWidth <= 0 ||
+      naturalWidth <= maximumWidth
+    ) {
+      return;
+    }
+
+    const safeMaximumWidth = Math.max(1, maximumWidth - 1);
+    const fittedFontSize =
+      preferredFontSize * (safeMaximumWidth / naturalWidth);
+    watermark.style.fontSize = `${Math.max(1, fittedFontSize)}px`;
+
+    const correctedWidth = watermark.scrollWidth;
+    if (correctedWidth > maximumWidth) {
+      const currentFontSize = Number.parseFloat(watermark.style.fontSize);
+      watermark.style.fontSize = `${Math.max(
+        1,
+        currentFontSize * (safeMaximumWidth / correctedWidth)
+      )}px`;
+    }
+  }
+
+  function scheduleEditorFileWatermarkFit() {
+    if (watermarkFitFrame !== null) return;
+    watermarkFitFrame = window.requestAnimationFrame(() => {
+      watermarkFitFrame = null;
+      fitEditorFileWatermark();
+    });
+  }
+
+  function refreshFontDependentMeasurements() {
+    scheduleEditorFileWatermarkFit();
+    document
+      .querySelectorAll(".custom-select")
+      .forEach(updateCustomSelectIntrinsicWidth);
+  }
+
   function updateEditorFileWatermark(fileName) {
-    const el = $("editorFileWatermark");
-    if (!el) return;
-    el.textContent = fileName || "";
+    const watermark = $("editorFileWatermark");
+    if (!watermark) return;
+    watermark.style.removeProperty("font-size");
+    watermark.textContent = fileName || "";
+    scheduleEditorFileWatermarkFit();
   }
 
   function setCompileLogText(text) {
@@ -2093,8 +2149,10 @@
   }
 
   function refreshEditorAfterOutlinerResize() {
-    if (!editor) return;
-    window.requestAnimationFrame(() => editor.refresh());
+    window.requestAnimationFrame(() => {
+      editor?.refresh();
+      fitEditorFileWatermark();
+    });
   }
 
   function applyOutlinerWidth(
@@ -2420,15 +2478,29 @@
           remember: false,
         });
         syncSplitResizerAria();
+        fitEditorFileWatermark();
       });
     };
 
     if (typeof ResizeObserver === "function") {
       workspaceResizeObserver = new ResizeObserver(scheduleResize);
       workspaceResizeObserver.observe(container);
+      const editorContainer = document.querySelector(".editor-container");
+      if (editorContainer) {
+        watermarkResizeObserver = new ResizeObserver(
+          scheduleEditorFileWatermarkFit
+        );
+        watermarkResizeObserver.observe(editorContainer);
+      }
     } else {
       window.addEventListener("resize", scheduleResize);
     }
+
+    document.fonts?.ready.then(refreshFontDependentMeasurements);
+    document.fonts?.addEventListener?.(
+      "loadingdone",
+      refreshFontDependentMeasurements
+    );
   }
 
   function getOutlinerFileKind(fileName) {
@@ -4088,11 +4160,29 @@
     }, 180);
   }
 
+  function scrollDocumentationTargetIntoView(target, behavior = "auto") {
+    const scroll = $("projectDocumentationScroll");
+    if (!scroll || !target || !scroll.contains(target)) return false;
+
+    const scrollRect = scroll.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const unclampedTop =
+      scroll.scrollTop + targetRect.top - scrollRect.top - 20;
+    const maximumTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    const top = Math.max(0, Math.min(maximumTop, unclampedTop));
+
+    if (typeof scroll.scrollTo === "function") {
+      scroll.scrollTo({ top, behavior });
+    } else {
+      scroll.scrollTop = top;
+    }
+    return true;
+  }
+
   function navigateToDocumentationHeading(marker) {
     const context = getDocumentationContext(current);
     if (!context.guideFile || !hasFile(context.guideFile)) {
       setDocumentationNotice("This source file has no linked guide yet.");
-      $("projectDocumentationPane")?.scrollIntoView({ block: "nearest" });
       return false;
     }
 
@@ -4117,12 +4207,12 @@
       .querySelectorAll(".is-documentation-target")
       .forEach((element) => element.classList.remove("is-documentation-target"));
     target.classList.add("is-documentation-target");
-    target.scrollIntoView({
-      block: "start",
-      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+    scrollDocumentationTargetIntoView(
+      target,
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
         ? "auto"
-        : "smooth",
-    });
+        : "smooth"
+    );
     target.focus({ preventScroll: true });
 
     if (documentationTargetTimer) window.clearTimeout(documentationTargetTimer);
@@ -4193,6 +4283,7 @@
       ?.setAttribute("aria-describedby", "editorDocumentationHint");
     wrapper.addEventListener("click", (event) => {
       if (!event.target.closest?.(".cm-documentation-link")) return;
+      event.preventDefault();
       const position = editor.coordsChar(
         { left: event.clientX, top: event.clientY },
         "window"
@@ -4606,6 +4697,17 @@
     return selected ? selected.textContent.trim() : "";
   }
 
+  function updateCustomSelectIntrinsicWidth(custom) {
+    const label = custom?.querySelector(".custom-select-value");
+    if (!custom || !label) return;
+    custom.style.removeProperty("--custom-select-width");
+    const textWidth = Math.ceil(label.scrollWidth);
+    custom.style.setProperty(
+      "--custom-select-width",
+      `${Math.max(72, textWidth + 58)}px`
+    );
+  }
+
   function renderCustomSelectOptions(select, custom) {
     const list = custom.querySelector(".custom-select-list");
     const label = custom.querySelector(".custom-select-value");
@@ -4613,6 +4715,7 @@
 
     list.innerHTML = "";
     label.textContent = getSelectDisplayText(select) || "Select MCU";
+    updateCustomSelectIntrinsicWidth(custom);
 
     const addOption = (option) => {
       const item = document.createElement("button");
@@ -4659,9 +4762,12 @@
 
   function updateCustomSelect(select, custom) {
     if (!select || !custom) return;
+    const trigger = custom.querySelector(".custom-select-trigger");
+    if (trigger) trigger.disabled = !!select.disabled;
     custom.classList.toggle("is-disabled", !!select.disabled);
     custom.setAttribute("aria-disabled", String(!!select.disabled));
     renderCustomSelectOptions(select, custom);
+    if (select.disabled) closeCustomSelect(custom);
   }
 
   function closeCustomSelect(custom) {
@@ -4689,6 +4795,8 @@
 
     select.dataset.customized = "true";
     select.classList.add("native-select-hidden");
+    select.tabIndex = -1;
+    select.setAttribute("aria-hidden", "true");
 
     const custom = document.createElement("div");
     custom.className = "custom-select";
@@ -4699,6 +4807,11 @@
     trigger.className = "custom-select-trigger";
     trigger.setAttribute("aria-haspopup", "listbox");
     trigger.setAttribute("aria-expanded", "false");
+    const accessibleLabel =
+      select.getAttribute("aria-label") ||
+      select.labels?.[0]?.textContent?.trim() ||
+      "Select option";
+    trigger.setAttribute("aria-label", accessibleLabel);
 
     const value = document.createElement("span");
     value.className = "custom-select-value";
@@ -4710,6 +4823,10 @@
     const list = document.createElement("div");
     list.className = "custom-select-list";
     list.setAttribute("role", "listbox");
+    if (select.id) {
+      list.id = `${select.id}CustomListbox`;
+      trigger.setAttribute("aria-controls", list.id);
+    }
     menu.appendChild(list);
 
     custom.appendChild(trigger);
@@ -4779,6 +4896,7 @@
       const documentationEditor = $("projectDocumentationEditor");
 
     initCustomSelect(mcuSelect);
+    initCustomSelect(documentationLocaleSelect);
     bindOutlinerDropZone();
     bindFileListResizer();
     bindDocumentationResizer();
