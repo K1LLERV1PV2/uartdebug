@@ -838,7 +838,11 @@
           assetBaseUrl: guide.assetBaseUrl,
         })),
       ],
-      aiSpecRef: descriptor.aiSpecRef,
+      ...(descriptor.aiSpecRef &&
+        typeof descriptor.aiSpecRef === "object" &&
+        !Array.isArray(descriptor.aiSpecRef)
+        ? { aiSpecRef: descriptor.aiSpecRef }
+        : {}),
     };
   }
 
@@ -1743,6 +1747,22 @@
     };
   }
 
+  function renameMiniProjectInstance(instanceId, displayName) {
+    const normalizedInstanceId = String(instanceId || "");
+    const project = miniProjects[normalizedInstanceId];
+    if (!project) throw new Error("Mini-project was not found.");
+
+    const name = String(displayName || "").trim();
+    const error = validateMiniProjectDisplayName(name, normalizedInstanceId);
+    if (error) throw new Error(error);
+
+    project.displayName = name;
+    persistState();
+    renderOutliner();
+    refreshDocumentationPane({ preserveScroll: true });
+    return getPublicMiniProjectInstance(normalizedInstanceId);
+  }
+
   function installMiniProjectDefinition(rawDefinition, { origin = "local" } = {}) {
     const definition = miniProjectCore.normalizeDefinition(rawDefinition);
     const reservedNames = new Set();
@@ -1920,6 +1940,9 @@
       getInstance(instanceId) {
         return getPublicMiniProjectInstance(String(instanceId || ""));
       },
+      renameInstance(instanceId, displayName) {
+        return renameMiniProjectInstance(instanceId, displayName);
+      },
     });
 
     window.UartDebugAvrMiniProjects = bridge;
@@ -2037,6 +2060,35 @@
     return "";
   }
 
+  function validateMiniProjectDisplayName(displayName, instanceId = "") {
+    const name = String(displayName || "").trim();
+
+    if (!name) return "Enter a mini-project name.";
+    if (isReservedStorageName(name)) {
+      return "Use a different mini-project name.";
+    }
+    if (name.length > 64) {
+      return "Keep the mini-project name under 64 characters.";
+    }
+    if (/[\\/:*?"<>|\x00-\x1f]/.test(name)) {
+      return 'Do not use path separators or these characters: \\ / : * ? " < > |';
+    }
+
+    const normalizedName = name.toLocaleLowerCase();
+    const duplicateProject = Object.entries(miniProjects).some(
+      ([otherInstanceId, project]) =>
+        otherInstanceId !== instanceId &&
+        String(project?.displayName || project?.title || "")
+          .trim()
+          .toLocaleLowerCase() === normalizedName
+    );
+    if (duplicateProject || hasFile(name) || hasGroup(name)) {
+      return "A file, group, or mini-project with this name already exists.";
+    }
+
+    return "";
+  }
+
   function normalizeInlineFileName(fileName) {
     const name = String(fileName || "").trim();
     if (!name || name === "." || name === "..") return name;
@@ -2063,7 +2115,7 @@
       const input = document.querySelector(".file-inline-input");
       if (!input) return;
       input.focus();
-      if (isInlineGroupEdit()) {
+      if (isInlineGroupEdit() || inlineFileEdit?.mode === "rename-project") {
         input.select();
         return;
       }
@@ -2087,6 +2139,8 @@
         ? "Rename group"
         : edit.mode === "create-group"
           ? "New group name"
+          : edit.mode === "rename-project"
+            ? "Rename mini-project"
           : edit.mode === "rename"
             ? "Rename file"
             : "New file name"
@@ -2300,12 +2354,14 @@
     if (!container || isStackedCanvasLayout()) return DOCUMENTATION_MAX_WIDTH;
 
     const rect = container.getBoundingClientRect();
-    const editorAndDocumentationWidth =
-      rect.width - outlinerWidth - SPLIT_RESIZER_TOTAL_WIDTH;
-    const halfSplitWidth = Math.floor(editorAndDocumentationWidth / 2);
+    const availableDocumentationWidth =
+      rect.width -
+      outlinerWidth -
+      OUTLINER_EDITOR_MIN_WIDTH -
+      SPLIT_RESIZER_TOTAL_WIDTH;
     return Math.max(
       DOCUMENTATION_MIN_WIDTH,
-      Math.min(DOCUMENTATION_MAX_WIDTH, halfSplitWidth)
+      Math.min(DOCUMENTATION_MAX_WIDTH, availableDocumentationWidth)
     );
   }
 
@@ -2576,6 +2632,23 @@
     closeFileContextMenu();
     closeAddFileModal();
     expandOutlinerForEditing();
+    const linkedProject = getMiniProjectForFile(fileName);
+    if (linkedProject?.role === miniProjectCore.ROLES.SOURCE) {
+      inlineFileEdit = {
+        mode: "rename-project",
+        instanceId: linkedProject.instanceId,
+        originalName: fileName,
+        value:
+          linkedProject.project.displayName ||
+          linkedProject.project.title ||
+          linkedProject.project.definitionId ||
+          getFileStem(fileName),
+        error: "",
+      };
+      renderOutliner();
+      focusInlineFileInput();
+      return;
+    }
     inlineFileEdit = {
       mode: "rename",
       originalName: fileName,
@@ -2617,10 +2690,16 @@
     const isGroupEdit =
       inlineFileEdit.mode === "create-group" ||
       inlineFileEdit.mode === "rename-group";
-    const nextName = isGroupEdit ? rawName : normalizeInlineFileName(rawName);
-    const error = isGroupEdit
-      ? validateInlineGroupName(nextName, originalName)
-      : validateInlineFileName(nextName, originalName);
+    const isProjectEdit = inlineFileEdit.mode === "rename-project";
+    const nextName =
+      isGroupEdit || isProjectEdit
+        ? rawName
+        : normalizeInlineFileName(rawName);
+    const error = isProjectEdit
+      ? validateMiniProjectDisplayName(nextName, inlineFileEdit.instanceId)
+      : isGroupEdit
+        ? validateInlineGroupName(nextName, originalName)
+        : validateInlineFileName(nextName, originalName);
 
     if (error) {
       inlineFileEdit.value = nextName;
@@ -2658,6 +2737,13 @@
     if (inlineFileEdit.mode === "rename-group") {
       inlineFileEdit = null;
       applyGroupRename(originalName, nextName);
+      return true;
+    }
+
+    if (inlineFileEdit.mode === "rename-project") {
+      const instanceId = inlineFileEdit.instanceId;
+      inlineFileEdit = null;
+      renameMiniProjectInstance(instanceId, nextName);
       return true;
     }
 
@@ -2913,7 +2999,8 @@
 
     const editingThisFile =
       inlineFileEdit &&
-      inlineFileEdit.mode === "rename" &&
+      (inlineFileEdit.mode === "rename" ||
+        inlineFileEdit.mode === "rename-project") &&
       inlineFileEdit.originalName === name;
 
     if (editingThisFile) {
@@ -3413,7 +3500,12 @@
     const isMiniProjectSource =
       linkedProject?.role === miniProjectCore.ROLES.SOURCE;
 
-    if (renameBtn) renameBtn.hidden = !!isMiniProjectSource;
+    if (renameBtn) {
+      renameBtn.hidden = false;
+      renameBtn.textContent = isMiniProjectSource
+        ? "Rename mini-project"
+        : "Rename";
+    }
     if (deleteBtn) {
       deleteBtn.hidden = false;
       deleteBtn.textContent = isMiniProjectSource
@@ -3472,7 +3564,10 @@
       'button[data-action="download-hex"]'
     );
 
-    if (renameBtn) renameBtn.hidden = false;
+    if (renameBtn) {
+      renameBtn.hidden = false;
+      renameBtn.textContent = "Rename group";
+    }
     if (deleteBtn) {
       deleteBtn.hidden = false;
       deleteBtn.textContent = "Delete group";
@@ -4038,25 +4133,6 @@
     }
   }
 
-  function refreshProjectAiContext() {
-    const fileLabel = $("projectAiContextFile");
-    const mcuLabel = $("projectAiContextMcu");
-    const mcuSelect = $("mcuSelect");
-
-    if (fileLabel) {
-      fileLabel.textContent =
-        current && hasFile(current)
-          ? getOutlinerFileLabel(current)
-          : "No file selected";
-    }
-    if (mcuLabel) {
-      const selectedOption =
-        mcuSelect?.options?.[mcuSelect.selectedIndex] || null;
-      mcuLabel.textContent =
-        selectedOption?.textContent?.trim() || mcuSelect?.value || "Auto detect";
-    }
-  }
-
   function appendProjectAiMessage(kind, message, title = "") {
     const history = $("projectAiHistory");
     if (!history) return null;
@@ -4132,10 +4208,9 @@
           ? getLiveFileContent(documentation.guideFile)
           : "",
       aiSpecRef:
-        publicProject?.aiSpecRef &&
-        typeof publicProject.aiSpecRef === "object" &&
-        !Array.isArray(publicProject.aiSpecRef)
-          ? cloneJsonMetadata(publicProject.aiSpecRef, null)
+        typeof publicProject?.aiSpecRef?.id === "string" &&
+        publicProject.aiSpecRef.id.trim()
+          ? { id: publicProject.aiSpecRef.id.trim() }
           : null,
     };
     const payload = {
@@ -4334,7 +4409,6 @@
       );
       setProjectAiStatus("Draft installed", "ready");
       if (prompt) prompt.value = "";
-      refreshProjectAiContext();
     } catch (error) {
       const message = error?.message || "The AI request could not be completed.";
       appendProjectAiMessage("system", message);
@@ -4367,7 +4441,6 @@
     );
 
     if (aiMode) {
-      refreshProjectAiContext();
       refreshProjectAiApiStatus();
       if (focusPrompt) {
         window.requestAnimationFrame(() => {
@@ -4706,7 +4779,6 @@
 
     updateEditorFileWatermark(name);
     refreshDocumentationPane();
-    refreshProjectAiContext();
     scheduleDocumentationMarkerRefresh();
     persistState();
     renderOutliner();
@@ -4718,9 +4790,6 @@
   }
 
   function renameFile(oldName) {
-    if (getMiniProjectForFile(oldName)?.role === miniProjectCore.ROLES.SOURCE) {
-      return;
-    }
     startInlineRename(oldName);
   }
 
@@ -4890,14 +4959,11 @@
 
   function updateToolbarState() {
     const has = !!current;
-    const currentLink = getMiniProjectForFile(current);
-    const isMiniProjectSource =
-      currentLink?.role === miniProjectCore.ROLES.SOURCE;
     const rb = $("renameBtn");
     const db = $("deleteBtn");
     const dl = $("downloadBtn");
     const cb = $("compileBtn");
-    if (rb) rb.disabled = !has || isMiniProjectSource;
+    if (rb) rb.disabled = !has;
     if (db) db.disabled = !has;
     if (dl) dl.disabled = !has;
     if (cb) cb.disabled = !has || !/\.c$/i.test(current);
@@ -5390,8 +5456,6 @@
       projectAiForm.addEventListener("submit", handleProjectAiSubmit);
     projectAiClearBtn &&
       projectAiClearBtn.addEventListener("click", clearProjectAiHistory);
-    mcuSelect &&
-      mcuSelect.addEventListener("change", refreshProjectAiContext);
     documentationEditor &&
       documentationEditor.addEventListener("input", () => {
         saveDocumentationEditorValue();

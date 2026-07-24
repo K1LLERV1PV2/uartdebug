@@ -1161,9 +1161,14 @@ body.is-documentation-resizing * {
 }
 
 .project-documentation-content a {
-  color: var(--avr-border-hot);
-  text-decoration-color: rgba(70, 255, 120, 0.45);
+  color: var(--avr-text-soft);
+  text-decoration-color: rgba(129, 159, 141, 0.42);
   text-underline-offset: 0.18em;
+}
+
+.project-documentation-content a:hover {
+  color: var(--avr-text);
+  text-decoration-color: rgba(191, 215, 199, 0.66);
 }
 
 .project-documentation-content img {
@@ -1212,13 +1217,7 @@ body.is-documentation-resizing * {
   gap: 12px;
   border: 1px solid rgba(129, 159, 141, 0.24);
   border-radius: var(--avr-radius);
-  background:
-    radial-gradient(
-      circle at 90% 0,
-      rgba(70, 255, 120, 0.1),
-      transparent 38%
-    ),
-    var(--avr-window-bg);
+  background: var(--avr-window-bg);
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
@@ -1322,30 +1321,6 @@ body.is-documentation-resizing * {
   }
 }
 
-.project-ai-context {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid rgba(129, 159, 141, 0.18);
-  border-radius: 10px;
-  background: rgba(7, 13, 20, 0.18);
-  color: var(--avr-text-muted);
-  font-size: 11px;
-  line-height: 1.2;
-}
-
-.project-ai-context strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--avr-text-soft);
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .project-ai-history {
   display: flex;
   flex: 1 1 auto;
@@ -1408,15 +1383,12 @@ body.is-documentation-resizing * {
   gap: 7px;
 }
 
-.project-ai-form input,
-.project-ai-form textarea {
+.project-ai-form input {
   width: 100%;
-  min-height: 88px;
-  max-height: 190px;
-  padding: 11px 12px;
-  resize: vertical;
+  min-height: 40px;
+  padding: 9px 12px;
   border: 1px solid rgba(129, 159, 141, 0.28);
-  border-radius: 12px;
+  border-radius: 10px;
   outline: 0;
   background: rgba(7, 13, 20, 0.28);
   color: var(--avr-text);
@@ -1424,20 +1396,45 @@ body.is-documentation-resizing * {
   font: 12px/1.48 Inter, Arial, sans-serif;
 }
 
-.project-ai-form input {
-  min-height: 40px;
-  padding: 9px 12px;
-}
-
 .project-ai-form input::placeholder,
-.project-ai-form textarea::placeholder {
+#projectAiPrompt::placeholder {
   color: var(--avr-text-muted);
 }
 
-.project-ai-form input:focus,
-.project-ai-form textarea:focus {
+.project-ai-form input:focus {
   border-color: var(--avr-border-hover);
   box-shadow: 0 0 0 3px rgba(70, 255, 120, 0.12);
+}
+
+.project-ai-composer {
+  --scroll-frame-bg: rgba(7, 13, 20, 0.28);
+  --scroll-frame-border: rgba(129, 159, 141, 0.28);
+
+  display: flex;
+  min-height: 118px;
+  flex-direction: column;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.project-ai-composer:focus-within {
+  border-color: var(--avr-border-hover);
+  box-shadow: 0 0 0 3px rgba(70, 255, 120, 0.1);
+}
+
+#projectAiPrompt {
+  width: 100%;
+  min-height: 76px;
+  max-height: 190px;
+  padding: 13px 14px 6px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--avr-text);
+  caret-color: var(--avr-border-hot);
+  font: 12px/1.5 Inter, Arial, sans-serif;
 }
 
 .project-ai-form-footer {
@@ -1445,6 +1442,7 @@ body.is-documentation-resizing * {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  padding: 4px 7px 7px;
 }
 
 .project-ai-form-footer .connect-btn {
@@ -1913,17 +1911,17 @@ body.is-documentation-resizing * {
 }
 
 .cm-s-material-darker span.cm-documentation-link {
-  color: #7dff9f !important;
+  color: var(--avr-text-soft) !important;
   cursor: pointer;
   text-decoration: underline;
-  text-decoration-color: rgba(70, 255, 120, 0.58);
+  text-decoration-color: rgba(129, 159, 141, 0.42);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
 
 .cm-s-material-darker span.cm-documentation-link:hover {
-  color: #e7ffed !important;
-  text-decoration-color: var(--avr-border-hot);
+  color: var(--avr-text) !important;
+  text-decoration-color: rgba(191, 215, 199, 0.66);
 }
 
 .cm-s-material-darker span.cm-variable,

@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -23,6 +24,25 @@ const miniProjectCatalogPath = path.join(
   "mini-projects",
   "catalog.json"
 );
+
+async function readStaticReferenceIds() {
+  const catalog = JSON.parse(await fs.readFile(miniProjectCatalogPath, "utf8"));
+  return catalog.projects.map((entry) => entry.id);
+}
+
+function countSubstring(text, fragment) {
+  return String(text).split(fragment).length - 1;
+}
+
+function assertReferenceIncludedOnce(instructions, projectId) {
+  assert.equal(
+    countSubstring(
+      instructions,
+      `TRUSTED MINI-PROJECT AI REFERENCE ${projectId} (`
+    ),
+    1
+  );
+}
 
 function makeGeneratedBundle() {
   return {
@@ -60,6 +80,7 @@ test("loads the checked-in immutable rule pack and verifies its hashes", async (
 });
 
 test("reports a present rule pack but stays unconfigured without a key", async () => {
+  const staticReferenceIds = await readStaticReferenceIds();
   const service = createAvrAiService({
     environment: { AI_ENABLED: "1" },
     rulePackRoot,
@@ -74,9 +95,13 @@ test("reports a present rule pack but stays unconfigured without a key", async (
   assert.equal(status.model, "gpt-5.6-terra");
   assert.equal(status.accessConfigured, false);
   assert.equal(status.rules.packageId, "uartdebug-rules-2026-07-23.2");
+  assert.equal(status.references.count, staticReferenceIds.length);
+  assert.match(status.references.digest, /^[a-f0-9]{64}$/);
+  assert.equal(status.referencesError, null);
 });
 
 test("uses Responses structured output, stores only the private AI file, and returns two public files", async (t) => {
+  const staticReferenceIds = await readStaticReferenceIds();
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "uartdebug-ai-test-"));
   t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
   const draftRoot = path.join(tempRoot, "drafts");
@@ -128,7 +153,6 @@ test("uses Responses structured output, stores only the private AI file, and ret
     prompt: "Create a timer-driven status LED example.",
     mcu: "attiny1624",
     locale: "en",
-    baseProjectId: "01_Minimum",
   });
 
   const capturedRequest = capturedRequests[0];
@@ -138,10 +162,9 @@ test("uses Responses structured output, stores only the private AI file, and ret
   assert.equal(capturedRequest.body.text.format.type, "json_schema");
   assert.equal(capturedRequest.body.text.format.strict, true);
   assert.match(capturedRequest.body.safety_identifier, /^ud_[a-f0-9]{40}$/);
-  assert.match(
-    capturedRequest.body.instructions,
-    /TRUSTED MINI-PROJECT AI REFERENCE 01_Minimum/
-  );
+  for (const projectId of staticReferenceIds) {
+    assertReferenceIncludedOnce(capturedRequest.body.instructions, projectId);
+  }
   assert.equal(result.project.files.length, 2);
   assert.deepEqual(
     result.project.files.map((file) => file.role),
@@ -180,6 +203,16 @@ test("uses Responses structured output, stores only the private AI file, and ret
     capturedRequests[1].body.instructions,
     /BEGIN TRUSTED MINI-PROJECT AI REFERENCE draft:20260723-11111111/
   );
+  for (const projectId of staticReferenceIds) {
+    assertReferenceIncludedOnce(
+      capturedRequests[1].body.instructions,
+      projectId
+    );
+  }
+  assertReferenceIncludedOnce(
+    capturedRequests[1].body.instructions,
+    `draft:${result.project.aiSpecRef.id}`
+  );
   assert.equal(
     Object.prototype.hasOwnProperty.call(
       JSON.parse(capturedRequests[1].body.input).currentProject,
@@ -192,9 +225,19 @@ test("uses Responses structured output, stores only the private AI file, and ret
 test("rejects a static AI reference whose content hash does not match its catalog", async (t) => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "uartdebug-ai-reference-"));
   t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  const safeDirectory = path.join(tempRoot, "safe");
   const referenceDirectory = path.join(tempRoot, "project");
   const catalogPath = path.join(tempRoot, "catalog.json");
-  await fs.mkdir(referenceDirectory);
+  await Promise.all([
+    fs.mkdir(safeDirectory),
+    fs.mkdir(referenceDirectory),
+  ]);
+  const safeContent = "# Safe private reference\n";
+  await fs.writeFile(
+    path.join(safeDirectory, "safe_AI.md"),
+    safeContent,
+    "utf8"
+  );
   await fs.writeFile(
     path.join(referenceDirectory, "project_AI.md"),
     "# Private reference\n",
@@ -205,6 +248,16 @@ test("rejects a static AI reference whose content hash does not match its catalo
     JSON.stringify({
       schemaVersion: 1,
       projects: [
+        {
+          id: "safe",
+          version: "1",
+          file: "safe/safe_AI.md",
+          mediaType: "text/markdown",
+          sha256: crypto
+            .createHash("sha256")
+            .update(safeContent)
+            .digest("hex"),
+        },
         {
           id: "project",
           version: "1",
@@ -238,13 +291,51 @@ test("rejects a static AI reference whose content hash does not match its catalo
       prompt: "Use the reference.",
       mcu: "attiny1624",
       locale: "en",
-      baseProjectId: "project",
+      baseProjectId: "safe",
     }),
     (error) =>
       error instanceof AiServiceError &&
       error.code === "reference_catalog_invalid"
   );
   assert.equal(fetchCalled, false);
+});
+
+test("ignores legacy static paths but keeps opaque draft ids strict", () => {
+  const service = createAvrAiService({
+    environment: {},
+    rulePackRoot,
+    miniProjectCatalogPath,
+  });
+
+  assert.doesNotThrow(() =>
+    service.validateGenerationInput({
+      prompt: "Create a project.",
+      mcu: "attiny1624",
+      locale: "en",
+      currentProject: {
+        id: "01_Minimum",
+        aiSpecRef: {
+          path: "01_Minimum/01_Minimum_AI_1.2.3-d.md",
+          mediaType: "text/markdown",
+        },
+      },
+    })
+  );
+  assert.throws(
+    () =>
+      service.validateGenerationInput({
+        prompt: "Create a project.",
+        mcu: "attiny1624",
+        locale: "en",
+        currentProject: {
+          id: "01_Minimum",
+          aiSpecRef: { id: "../../etc/passwd" },
+        },
+      }),
+    (error) =>
+      error instanceof AiServiceError &&
+      error.code === "invalid_ai_reference"
+  );
 });
 
 test("rejects generated source markers without matching guide headings", () => {

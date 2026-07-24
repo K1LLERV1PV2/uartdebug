@@ -7,6 +7,13 @@
       "file": "01_Minimum/01_Minimum_AI_1.2.3-d.md",
       "mediaType": "text/markdown",
       "sha256": "650abdc59c60d5443cded0475b8e1b1d785162b5876c9a1fbb2b66ee4bc32a9d"
+    },
+    {
+      "id": "02_CPU_Clock",
+      "version": "1.2.3-a",
+      "file": "02_CPU_Clock/02_CPU_Clock_AI_1.2.3-a.md",
+      "mediaType": "text/markdown",
+      "sha256": "cde5e719ae3c6efedf350421497321420583feecb8a2e3cd77071b09e0826618"
     }
   ]
 }

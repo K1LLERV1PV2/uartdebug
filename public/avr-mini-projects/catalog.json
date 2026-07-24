@@ -22,11 +22,30 @@
           "url": "/avr-mini-projects/01_Minimum/01_Minimum_help_1.2.3-d.md",
           "assetBaseUrl": "/avr-mini-projects/01_Minimum/"
         }
-      ],
-      "aiSpecRef": {
-        "path": "01_Minimum/01_Minimum_AI_1.2.3-d.md",
-        "mediaType": "text/markdown"
-      }
+      ]
+    },
+    {
+      "id": "02_CPU_Clock",
+      "displayName": "02_CPU_Clock",
+      "title": "02_CPU_Clock",
+      "summary": "CPU clock configuration examples for 20 MHz, 10 MHz and so on.",
+      "version": "1.2.3-b",
+      "defaultLocale": "en",
+      "source": {
+        "name": "02_CPU_Clock_1.2.3-b.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/02_CPU_Clock/02_CPU_Clock_1.2.3-b.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "02_CPU_Clock_help_1.2.3-b.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/02_CPU_Clock/02_CPU_Clock_help_1.2.3-b.md",
+          "assetBaseUrl": "/avr-mini-projects/02_CPU_Clock/"
+        }
+      ]
     }
   ]
 }
