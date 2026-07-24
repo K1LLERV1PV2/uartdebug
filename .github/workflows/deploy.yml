@@ -113,7 +113,11 @@ jobs:
             [ -z "${PM2_NAME:-}" ] && PM2_NAME="uartdebug-backend"
 
             HC_URL="${{ secrets.HC_URL || '' }}"
-            [ -z "${HC_URL:-}" ] && HC_URL="http://68.183.170.241/health"
+            HC_RESOLVE=""
+            if [ -z "${HC_URL:-}" ]; then
+              HC_URL="https://uartdebug.com/avr"
+              HC_RESOLVE="uartdebug.com:443:127.0.0.1"
+            fi
 
             BACKEND_HC_URL="${{ secrets.BACKEND_HC_URL || '' }}"
             BACKEND_PORT="${{ secrets.BACKEND_PORT || '8082' }}"
@@ -121,6 +125,10 @@ jobs:
             [ -z "${BACKEND_PORT:-}" ] && BACKEND_PORT="8082"
             [ -z "${BACKEND_BIND_HOST:-}" ] && BACKEND_BIND_HOST="127.0.0.1"
             [ -z "${BACKEND_HC_URL:-}" ] && BACKEND_HC_URL="http://127.0.0.1:${BACKEND_PORT}/health"
+            AI_PORT="${{ secrets.AI_PORT || '8083' }}"
+            AI_HC_URL="${{ secrets.AI_HC_URL || '' }}"
+            [ -z "${AI_PORT:-}" ] && AI_PORT="8083"
+            [ -z "${AI_HC_URL:-}" ] && AI_HC_URL="http://127.0.0.1:${AI_PORT}/health"
             EXPECTED_COMPILE_SERVER_VERSION=""
             XC8_CC="${{ secrets.XC8_CC || '' }}"
             AVR_OBJCOPY="${{ secrets.AVR_OBJCOPY || '' }}"
@@ -329,6 +337,22 @@ jobs:
               BE_SRC="/tmp/deploy/${SHA}/backend"
               PY_SRC="/tmp/deploy/${SHA}/python"
 
+              if [ -f "${BE_SRC}/ai-server.js" ]; then
+                if ! command -v systemctl >/dev/null 2>&1 ||
+                  ! systemctl list-unit-files --type=service --no-pager | awk '{print $1}' | grep -qx "uartdebug-ai.service"; then
+                  echo "AI service is not bootstrapped; refusing to switch release symlinks"
+                  echo "Run backend/deploy/install-ai-service.sh once, then deploy again"
+                  exit 1
+                fi
+                [ -f "${BE_SRC}/deploy/install-ai-rule-pack.sh" ] || {
+                  echo "Missing AI rule-pack installer in staged backend"
+                  exit 1
+                }
+                run_sudo /bin/bash \
+                  "${BE_SRC}/deploy/install-ai-rule-pack.sh" \
+                  "${BE_SRC}"
+              fi
+
               NOW="$(date +%Y%m%d-%H%M%S)-${SHA:0:7}"
               PUB_NEW="${PUB_RLS}/${NOW}"
               BE_NEW="${BE_RLS}/${NOW}"
@@ -427,6 +451,86 @@ jobs:
                 echo "pm2 not found - backend cannot be restarted"
                 exit 1
               fi
+
+              if command -v systemctl >/dev/null 2>&1 &&
+                systemctl list-unit-files --type=service --no-pager | awk '{print $1}' | grep -qx "uartdebug-ai.service"; then
+                if [ -f "${BE_DIR}/ai-server.js" ]; then
+                  [ -f "${BE_DIR}/deploy/install-ai-rule-pack.sh" ] || {
+                    echo "Missing AI rule-pack installer in ${BE_DIR}"
+                    exit 1
+                  }
+                  run_sudo /bin/bash \
+                    "${BE_DIR}/deploy/install-ai-rule-pack.sh" \
+                    "${BE_DIR}"
+
+                  expected_ai_server_version="$(
+                    sed -nE 's/.*AI_SERVER_VERSION[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "${BE_DIR}/ai-server.js" | head -n 1
+                  )"
+                  [ -n "${expected_ai_server_version:-}" ] || {
+                    echo "Could not resolve AI_SERVER_VERSION from ${BE_DIR}/ai-server.js"
+                    exit 1
+                  }
+                  expected_ai_rule_package="$(
+                    /usr/bin/node -e '
+                      const fs = require("fs");
+                      const active = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                      process.stdout.write(active.packageId || "");
+                    ' "${BE_DIR}/ai/rule-packs/active.json"
+                  )"
+                  [ -n "${expected_ai_rule_package:-}" ] || {
+                    echo "Could not resolve the active AI rule package"
+                    exit 1
+                  }
+
+                  echo "Restarting uartdebug-ai.service"
+                  run_sudo systemctl restart uartdebug-ai.service
+                  run_sudo systemctl is-active --quiet uartdebug-ai.service
+
+                  ai_hc_body="$(mktemp)"
+                  ai_code="000"
+                  for attempt in $(seq 1 20); do
+                    : > "${ai_hc_body}"
+                    if ai_code="$(curl -sS -o "${ai_hc_body}" -w '%{http_code}' --max-time 10 "${AI_HC_URL}")"; then
+                      if [ "${ai_code}" = "200" ] && grep -q "${expected_ai_server_version}" "${ai_hc_body}"; then
+                        break
+                      fi
+                    else
+                      ai_code="000"
+                    fi
+                    echo "AI healthcheck attempt ${attempt}/20 failed with HTTP ${ai_code}; retrying..."
+                    sleep 1
+                  done
+                  [ "${ai_code}" = "200" ] && grep -q "${expected_ai_server_version}" "${ai_hc_body}" || {
+                    echo "AI healthcheck failed"
+                    cat "${ai_hc_body}" || true
+                    run_sudo systemctl status uartdebug-ai.service --no-pager -l || true
+                    rm -f "${ai_hc_body}"
+                    exit 1
+                  }
+                  rm -f "${ai_hc_body}"
+
+                  ai_status_url="${AI_HC_URL%/health}/api/avr/ai/status"
+                  ai_status_body="$(mktemp)"
+                  ai_status_code="$(
+                    curl -sS -o "${ai_status_body}" -w '%{http_code}' --max-time 15 "${ai_status_url}" || true
+                  )"
+                  [ "${ai_status_code}" = "200" ] &&
+                    grep -q "\"rules\":{\"packageId\":\"${expected_ai_rule_package}\"" "${ai_status_body}" &&
+                    grep -q '"accessConfigured":true' "${ai_status_body}" || {
+                      echo "AI readiness metadata check failed with HTTP ${ai_status_code}"
+                      cat "${ai_status_body}" || true
+                      rm -f "${ai_status_body}"
+                      exit 1
+                    }
+                  rm -f "${ai_status_body}"
+                else
+                  echo "No AI entrypoint found in ${BE_DIR}; stopping optional uartdebug-ai.service"
+                  run_sudo systemctl stop uartdebug-ai.service || true
+                fi
+              elif [ -f "${BE_DIR}/ai-server.js" ]; then
+                echo "AI entrypoint is deployed but uartdebug-ai.service is not installed"
+                exit 1
+              fi
             fi
 
             if [ -z "${ROLLBACK}" ] && [ -d "${BE_DIR}" ] && [ -f "${BE_DIR}/compile-server.js" ]; then
@@ -480,7 +584,11 @@ jobs:
               echo "Healthcheck: ${HC_URL}"
               hc_body="$(mktemp)"
               code="000"
-              if ! code="$(curl -sS -o "${hc_body}" -w '%{http_code}' --max-time 10 "${HC_URL}")"; then
+              if [ -n "${HC_RESOLVE}" ]; then
+                if ! code="$(curl -sS -o "${hc_body}" -w '%{http_code}' --max-time 10 --resolve "${HC_RESOLVE}" "${HC_URL}")"; then
+                  code="000"
+                fi
+              elif ! code="$(curl -sS -o "${hc_body}" -w '%{http_code}' --max-time 10 "${HC_URL}")"; then
                 code="000"
               fi
               echo "HTTP ${code}"

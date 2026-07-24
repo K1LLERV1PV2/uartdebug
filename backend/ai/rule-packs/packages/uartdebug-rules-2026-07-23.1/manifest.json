@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "packageId": "uartdebug-rules-2026-07-23.1",
+  "projectVersion": "1.2",
+  "generatorContract": "uartdebug-mini-project/v1",
+  "sourceArchiveSha256": "acb6e4ca0c6277459d06289b70d0432c48d24a1509d64db47c6464edcead5baf",
+  "readingOrder": [
+    "foundation/01_START_HERE_FOR_AI.md",
+    "foundation/02_PROJECT_VERSIONING.md",
+    "foundation/03_DEVELOPMENT_RULES.md",
+    "foundation/04_HELP_FILE_RULES.md",
+    "foundation/05_AI_FILE_RULES.md",
+    "foundation/06_ACTIVE_RULE_UPDATES.md"
+  ],
+  "runtimeFiles": [
+    "foundation/02_PROJECT_VERSIONING.md",
+    "foundation/03_DEVELOPMENT_RULES.md",
+    "foundation/04_HELP_FILE_RULES.md",
+    "foundation/05_AI_FILE_RULES.md",
+    "foundation/06_ACTIVE_RULE_UPDATES.md"
+  ],
+  "files": [
+    {
+      "path": "foundation/01_START_HERE_FOR_AI.md",
+      "sha256": "c91886238817ff04a25595c9563f390a429430e6ba5c6be579dd49181202f937",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": false
+    },
+    {
+      "path": "foundation/02_PROJECT_VERSIONING.md",
+      "sha256": "3184a89ed31449cc616aba24509d2603fab386747c04882974c310428d88c8ad",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": true
+    },
+    {
+      "path": "foundation/03_DEVELOPMENT_RULES.md",
+      "sha256": "48495add4e4fbb78ef0f5bc0cb493de5a3696334d8bbdd4d9b955203638bdf82",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": true
+    },
+    {
+      "path": "foundation/04_HELP_FILE_RULES.md",
+      "sha256": "acd27d5a9fd373027f0e4a2f497fe6af705e4e7e24b9e82742c6c41455507d80",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": true
+    },
+    {
+      "path": "foundation/05_AI_FILE_RULES.md",
+      "sha256": "a239b64a88a07dc11cbae4f6d9da0f3a9a3fea89d7c502dfbadcd5d871d1d281",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": true
+    },
+    {
+      "path": "foundation/06_ACTIVE_RULE_UPDATES.md",
+      "sha256": "aebc5fa21502bf7f52f24cdda03afdce61c1b994e2778d9c0642fb4d0a3d23fb",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": true
+    },
+    {
+      "path": "codex/AGENTS.md",
+      "sha256": "6aa7992dad239dcdcd0dee8c9e65c25172baa670eaad2287e1c617676c14cc23",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": false
+    },
+    {
+      "path": "templates/mini-project.c",
+      "sha256": "6d80202a1e9753cef814f7a9b52e926f6e70a03a2c1321a3928c5e6dc8f51db7",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": false
+    },
+    {
+      "path": "templates/mini-project-help.md",
+      "sha256": "ae6f3883cc0faed6a5ec6eaf4898c4f0b266254ca97fe1608d22e11422ef82b7",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": false
+    },
+    {
+      "path": "templates/mini-project-ai.md",
+      "sha256": "79ce4bb6e235dbc905e53698d224d45c53c11f44ed79731526be22b47c1f8646",
+      "internalVersion": "Revision 1.2.3",
+      "runtime": false
+    }
+  ]
+}

@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="uart.css?v=20260709-terminal-polish-v3" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260723-outliner-badges-v1"
+      href="AVR-Programming.css?v=20260723-ai-pane-v2"
     />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
 
@@ -198,34 +198,142 @@
                 >
                   Edit
                 </button>
+
+                <button
+                  class="connect-btn secondary-btn project-ai-toggle"
+                  id="projectAiToggle"
+                  type="button"
+                  aria-label="Open AI project assistant"
+                  aria-pressed="false"
+                  aria-controls="projectDocumentationView projectAiWorkspace"
+                >
+                  <img
+                    src="icons/logo-512.png"
+                    alt=""
+                    width="24"
+                    height="24"
+                    aria-hidden="true"
+                  />
+                </button>
               </div>
 
               <div
-                class="project-documentation-notice"
-                id="projectDocumentationNotice"
-                role="status"
-                aria-live="polite"
-                hidden
-              ></div>
-              <div
-                class="project-documentation-scroll"
-                id="projectDocumentationScroll"
-                role="region"
-                aria-label="Project documentation content"
-                tabindex="0"
+                class="project-documentation-view"
+                id="projectDocumentationView"
               >
-                <article
-                  class="project-documentation-content"
-                  id="projectDocumentationContent"
-                ></article>
-                <textarea
-                  class="project-documentation-editor"
-                  id="projectDocumentationEditor"
-                  aria-label="Edit project guide Markdown"
-                  spellcheck="false"
+                <div
+                  class="project-documentation-notice"
+                  id="projectDocumentationNotice"
+                  role="status"
+                  aria-live="polite"
                   hidden
-                ></textarea>
+                ></div>
+                <div
+                  class="project-documentation-scroll"
+                  id="projectDocumentationScroll"
+                  role="region"
+                  aria-label="Project documentation content"
+                  tabindex="0"
+                >
+                  <article
+                    class="project-documentation-content"
+                    id="projectDocumentationContent"
+                  ></article>
+                  <textarea
+                    class="project-documentation-editor"
+                    id="projectDocumentationEditor"
+                    aria-label="Edit project guide Markdown"
+                    spellcheck="false"
+                    hidden
+                  ></textarea>
+                </div>
               </div>
+
+              <section
+                class="project-ai-workspace"
+                id="projectAiWorkspace"
+                role="region"
+                aria-labelledby="projectAiTitle"
+                hidden
+              >
+                <div class="project-ai-intro">
+                  <div>
+                    <p class="project-ai-eyebrow">AVR project assistant</p>
+                    <h2 id="projectAiTitle">Build with Uart Debug AI</h2>
+                    <p>
+                      Describe the mini-project you need. The assistant will use
+                      the current MCU, source, and versioned AI rules to prepare
+                      a three-file draft.
+                    </p>
+                  </div>
+                  <span
+                    class="project-ai-status"
+                    id="projectAiStatus"
+                    role="status"
+                    aria-live="polite"
+                    data-state="offline"
+                  >
+                    <span aria-hidden="true"></span>
+                    <span class="project-ai-status-label">Checking API</span>
+                  </span>
+                </div>
+
+                <div class="project-ai-context" aria-label="AI project context">
+                  <span>Context</span>
+                  <strong id="projectAiContextFile">No file selected</strong>
+                  <span aria-hidden="true">·</span>
+                  <strong id="projectAiContextMcu">Auto detect</strong>
+                </div>
+
+                <div
+                  class="project-ai-history"
+                  id="projectAiHistory"
+                  role="log"
+                  aria-live="polite"
+                  aria-relevant="additions"
+                >
+                  <article class="project-ai-message is-assistant">
+                    <span class="sr-only">AI assistant</span>
+                    <p>
+                      Tell me what the AVR should do and which peripherals or
+                      constraints matter. I will keep the C source, human guide,
+                      and private AI specification synchronized.
+                    </p>
+                  </article>
+                </div>
+
+                <form class="project-ai-form" id="projectAiForm">
+                  <div class="project-ai-access">
+                    <label for="projectAiAccessToken">Owner access code</label>
+                    <input
+                      id="projectAiAccessToken"
+                      type="password"
+                      inputmode="text"
+                      autocomplete="off"
+                      placeholder="Stored for this browser session only"
+                    />
+                  </div>
+                  <label for="projectAiPrompt">Project request</label>
+                  <textarea
+                    id="projectAiPrompt"
+                    rows="4"
+                    placeholder="For example: Create a UART echo mini-project with a configurable baud rate."
+                    spellcheck="true"
+                  ></textarea>
+                  <div class="project-ai-form-footer">
+                    <button
+                      class="connect-btn secondary-btn project-ai-clear"
+                      id="projectAiClearBtn"
+                      type="button"
+                    >
+                      Clear
+                    </button>
+                    <button class="connect-btn" type="submit">
+                      Generate project
+                    </button>
+                  </div>
+                </form>
+              </section>
             </aside>
           </div>
 
@@ -482,7 +590,7 @@
     <script defer src="ui-tooltips.js?v=20260723-pane-optout-v1"></script>
     <script defer src="avr-mini-projects.js?v=20260722-schema-v2"></script>
     <script defer src="avr-mini-project-archive.js?v=20260722-zip-v1"></script>
-    <script defer src="AVR-Programming.js?v=20260723-outliner-badges-v1"></script>
+    <script defer src="AVR-Programming.js?v=20260723-ai-pane-v2"></script>
     <script defer src="updi-test.js?v=20260709-terminal-avr-sync-v1"></script>
   </body>
 </html>

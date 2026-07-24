@@ -29,6 +29,7 @@
   const MINI_PROJECT_IMPORT_EVENT = "ud-avr-mini-project";
   const MINI_PROJECT_INSTALLED_EVENT = "ud-avr-mini-project-installed";
   const MINI_PROJECT_READY_EVENT = "ud-avr-mini-projects-ready";
+  const PROJECT_AI_ACCESS_STORAGE_KEY = "ud.avr.ai.ownerAccess";
   const LEGACY_BUILTIN_MINI_PROJECT_IDS = new Set([
     "minimum",
     "cpu-clock",
@@ -77,6 +78,8 @@
   let documentationTargetTimer = null;
   let documentationEditMode = false;
   let documentationEditSaveTimer = null;
+  let projectPaneMode = "documentation";
+  let projectAiGenerationInFlight = false;
   let workspaceResizeFrame = null;
   let workspaceResizeObserver = null;
   let watermarkFitFrame = null;
@@ -2891,7 +2894,7 @@
       ? "mini-project"
       : getOutlinerFileKind(name);
     row.dataset.outlinerIcon = isMiniProjectSource
-      ? "P"
+      ? "MP"
       : getOutlinerFileIcon(name);
     row.draggable = true;
     row.title = isMiniProjectSource ? `${displayName} (${name})` : name;
@@ -4007,6 +4010,377 @@
     if (codeFence !== null || codeLines.length) flushCode();
   }
 
+  function setProjectAiStatus(message, state = "offline") {
+    const status = $("projectAiStatus");
+    if (!status) return;
+    status.dataset.state = state;
+    const label = status.querySelector(".project-ai-status-label");
+    if (label) label.textContent = String(message || "");
+  }
+
+  function readProjectAiAccessToken() {
+    const input = $("projectAiAccessToken");
+    const entered = input?.value?.trim() || "";
+    if (entered) {
+      try {
+        window.sessionStorage.setItem(PROJECT_AI_ACCESS_STORAGE_KEY, entered);
+      } catch {}
+      return entered;
+    }
+    try {
+      const stored =
+        window.sessionStorage.getItem(PROJECT_AI_ACCESS_STORAGE_KEY)?.trim() ||
+        "";
+      if (input && stored) input.value = stored;
+      return stored;
+    } catch {
+      return "";
+    }
+  }
+
+  function refreshProjectAiContext() {
+    const fileLabel = $("projectAiContextFile");
+    const mcuLabel = $("projectAiContextMcu");
+    const mcuSelect = $("mcuSelect");
+
+    if (fileLabel) {
+      fileLabel.textContent =
+        current && hasFile(current)
+          ? getOutlinerFileLabel(current)
+          : "No file selected";
+    }
+    if (mcuLabel) {
+      const selectedOption =
+        mcuSelect?.options?.[mcuSelect.selectedIndex] || null;
+      mcuLabel.textContent =
+        selectedOption?.textContent?.trim() || mcuSelect?.value || "Auto detect";
+    }
+  }
+
+  function appendProjectAiMessage(kind, message, title = "") {
+    const history = $("projectAiHistory");
+    if (!history) return null;
+
+    const article = document.createElement("article");
+    article.className = `project-ai-message is-${kind}`;
+    article.dataset.aiTransient = "true";
+
+    const speaker = document.createElement("span");
+    speaker.className = "sr-only";
+    speaker.textContent =
+      kind === "user"
+        ? "You"
+        : kind === "assistant"
+          ? "AI assistant"
+          : "System";
+    article.appendChild(speaker);
+
+    if (title) {
+      const heading = document.createElement("strong");
+      heading.textContent = title;
+      article.appendChild(heading);
+    }
+
+    const paragraph = document.createElement("p");
+    paragraph.textContent = String(message || "");
+    article.appendChild(paragraph);
+    history.appendChild(article);
+    history.scrollTop = history.scrollHeight;
+    return article;
+  }
+
+  function clearProjectAiHistory() {
+    $("projectAiHistory")
+      ?.querySelectorAll("[data-ai-transient]")
+      .forEach((message) => message.remove());
+    setProjectAiStatus("Checking API", "busy");
+    refreshProjectAiApiStatus();
+    $("projectAiPrompt")?.focus({ preventScroll: true });
+  }
+
+  function setProjectAiFormBusy(busy) {
+    projectAiGenerationInFlight = !!busy;
+    const form = $("projectAiForm");
+    if (!form) return;
+    for (const control of form.elements) {
+      control.disabled = !!busy;
+    }
+    const clearButton = $("projectAiClearBtn");
+    if (clearButton) clearButton.disabled = !!busy;
+    form.setAttribute("aria-busy", String(!!busy));
+  }
+
+  function getProjectAiRequestPayload(prompt) {
+    const mcuSelect = $("mcuSelect");
+    const localeSelect = $("documentationLocaleSelect");
+    const linkedProject = getMiniProjectForFile(current);
+    const publicProject = linkedProject
+      ? getPublicMiniProjectInstance(linkedProject.instanceId)
+      : null;
+    const documentation = getDocumentationContext(current);
+    const currentProject = {
+      id: String(publicProject?.id || ""),
+      title: String(
+        publicProject?.displayName ||
+          publicProject?.title ||
+          (current ? getOutlinerFileLabel(current) : "")
+      ),
+      source:
+        current && isCFileName(current) ? getLiveFileContent(current) : "",
+      guide:
+        documentation.guideFile && hasFile(documentation.guideFile)
+          ? getLiveFileContent(documentation.guideFile)
+          : "",
+      aiSpecRef:
+        publicProject?.aiSpecRef &&
+        typeof publicProject.aiSpecRef === "object" &&
+        !Array.isArray(publicProject.aiSpecRef)
+          ? cloneJsonMetadata(publicProject.aiSpecRef, null)
+          : null,
+    };
+    const payload = {
+      prompt: String(prompt || "").trim(),
+      mcu: String(mcuSelect?.value || "auto"),
+      locale: String(
+        localeSelect?.value ||
+          publicProject?.selectedLocale ||
+          document.documentElement.lang ||
+          navigator.language ||
+          "en"
+      ),
+    };
+    if (
+      currentProject.id ||
+      currentProject.title ||
+      currentProject.source ||
+      currentProject.guide
+    ) {
+      payload.currentProject = currentProject;
+    }
+    return payload;
+  }
+
+  function normalizeGeneratedAiProject(project) {
+    if (!project || typeof project !== "object" || Array.isArray(project)) {
+      throw new Error("The AI response did not include a mini-project.");
+    }
+
+    const files = Array.isArray(project.files)
+      ? project.files.map((rawFile) => {
+          const role =
+            rawFile?.role === "humanGuide"
+              ? miniProjectCore.ROLES.GUIDE
+              : rawFile?.role;
+          const file = {
+            role,
+            name: String(rawFile?.name || ""),
+            content: String(rawFile?.content || ""),
+          };
+          if (role === miniProjectCore.ROLES.GUIDE) {
+            file.locale = String(rawFile?.locale || "en");
+            file.mediaType = "text/markdown";
+          } else if (role === miniProjectCore.ROLES.SOURCE) {
+            file.mediaType = "text/x-c";
+          }
+          return file;
+        })
+      : [];
+    const displayName = String(
+      project.displayName || project.name || project.id || "AI mini-project"
+    ).trim();
+
+    const definition = {
+      schemaVersion: Number(project.schemaVersion) || 1,
+      id: String(project.id || project.name || "ai-mini-project").trim(),
+      title: displayName,
+      displayName,
+      summary: String(project.summary || ""),
+      version: project.version ?? 1,
+      files,
+      defaultLocale:
+        files.find((file) => file.role === miniProjectCore.ROLES.GUIDE)
+          ?.locale || "en",
+    };
+    if (
+      project.aiSpecRef &&
+      typeof project.aiSpecRef === "object" &&
+      !Array.isArray(project.aiSpecRef)
+    ) {
+      definition.aiSpecRef = cloneJsonMetadata(project.aiSpecRef, null);
+    }
+    return definition;
+  }
+
+  async function refreshProjectAiApiStatus() {
+    if (projectAiGenerationInFlight) return;
+    setProjectAiStatus("Checking API", "busy");
+
+    try {
+      const response = await fetch("/api/avr/ai/status", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data?.ok !== true) {
+        setProjectAiStatus(
+          response.status === 503
+            ? "API key is not configured"
+            : "AI server unavailable",
+          response.status === 503 ? "offline" : "error"
+        );
+        return;
+      }
+      if (!data.configured) {
+        setProjectAiStatus("API key is not configured", "offline");
+        return;
+      }
+      if (!data.accessConfigured) {
+        setProjectAiStatus("Owner access is not configured", "error");
+        return;
+      }
+      if (!data.enabled) {
+        setProjectAiStatus("AI API is disabled", "offline");
+        return;
+      }
+      if (data.ready === false) {
+        setProjectAiStatus("AI rules are unavailable", "error");
+        return;
+      }
+
+      const rulesLabel =
+        data.rules?.packageId || data.rules?.projectVersion || "";
+      if (!readProjectAiAccessToken()) {
+        setProjectAiStatus("Owner access code required", "offline");
+      } else {
+        setProjectAiStatus(
+          rulesLabel ? `AI ready · rules ${rulesLabel}` : "AI ready",
+          "ready"
+        );
+      }
+    } catch {
+      setProjectAiStatus("AI server unavailable", "error");
+    }
+  }
+
+  async function handleProjectAiSubmit(event) {
+    event.preventDefault();
+    if (projectAiGenerationInFlight) return;
+
+    const prompt = $("projectAiPrompt");
+    const request = prompt?.value?.trim() || "";
+    if (!request) {
+      prompt?.focus({ preventScroll: true });
+      return;
+    }
+
+    appendProjectAiMessage("user", request);
+    setProjectAiFormBusy(true);
+    setProjectAiStatus("Generating project", "busy");
+
+    try {
+      const accessToken = readProjectAiAccessToken();
+      const response = await fetch("/api/avr/ai/generate", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(accessToken
+            ? { "X-UartDebug-AI-Token": accessToken }
+            : {}),
+        },
+        credentials: "same-origin",
+        body: JSON.stringify(getProjectAiRequestPayload(request)),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || data?.ok !== true) {
+        const apiKeyMissing =
+          data?.code === "api_key_not_configured" ||
+          (response.status === 503 &&
+            /api key is not configured/i.test(String(data?.message || "")));
+        const message =
+          response.status === 401
+            ? "Owner access code is required or incorrect"
+            : apiKeyMissing
+            ? "API key is not configured"
+            : String(
+                data?.error?.message ||
+                  data?.error ||
+                  data?.message ||
+                  `AI request failed (${response.status}).`
+              );
+        appendProjectAiMessage("system", message);
+        setProjectAiStatus(
+          message,
+          response.status === 401 || response.status === 503
+            ? "offline"
+            : "error"
+        );
+        if (response.status === 401) {
+          $("projectAiAccessToken")?.focus({ preventScroll: true });
+        }
+        return;
+      }
+
+      const definition = normalizeGeneratedAiProject(data.project);
+      const installed = await window.UartDebugAvrMiniProjects.install(definition, {
+        origin: "ai",
+      });
+      appendProjectAiMessage(
+        "assistant",
+        "The generated source and human guide were installed as local editable copies. Compile and review the draft before flashing it. Use the logo button to return to the guide.",
+        installed?.displayName || definition.displayName
+      );
+      setProjectAiStatus("Draft installed", "ready");
+      if (prompt) prompt.value = "";
+      refreshProjectAiContext();
+    } catch (error) {
+      const message = error?.message || "The AI request could not be completed.";
+      appendProjectAiMessage("system", message);
+      setProjectAiStatus("Generation failed", "error");
+    } finally {
+      setProjectAiFormBusy(false);
+    }
+  }
+
+  function setProjectPaneMode(mode, { focusPrompt = false } = {}) {
+    const aiMode = mode === "ai";
+    const pane = $("projectDocumentationPane");
+    const documentationView = $("projectDocumentationView");
+    const aiWorkspace = $("projectAiWorkspace");
+    const toggle = $("projectAiToggle");
+    const localeControl = pane?.querySelector(".documentation-locale-control");
+    const editToggle = $("documentationEditToggle");
+    if (!documentationView || !aiWorkspace || !toggle) return;
+
+    projectPaneMode = aiMode ? "ai" : "documentation";
+    documentationView.hidden = aiMode;
+    aiWorkspace.hidden = !aiMode;
+    if (localeControl) localeControl.hidden = aiMode;
+    if (editToggle) editToggle.hidden = aiMode;
+    pane.dataset.view = projectPaneMode;
+    toggle.setAttribute("aria-pressed", String(aiMode));
+    toggle.setAttribute(
+      "aria-label",
+      aiMode ? "Return to project guide" : "Open AI project assistant"
+    );
+
+    if (aiMode) {
+      refreshProjectAiContext();
+      refreshProjectAiApiStatus();
+      if (focusPrompt) {
+        window.requestAnimationFrame(() => {
+          const accessToken = readProjectAiAccessToken();
+          (accessToken
+            ? $("projectAiPrompt")
+            : $("projectAiAccessToken")
+          )?.focus({ preventScroll: true });
+        });
+      }
+    }
+  }
+
   function showDocumentationEmpty(title, message) {
     const content = $("projectDocumentationContent");
     if (!content) return;
@@ -4199,6 +4573,9 @@
   }
 
   function navigateToDocumentationHeading(marker) {
+    if (projectPaneMode === "ai") {
+      setProjectPaneMode("documentation");
+    }
     const context = getDocumentationContext(current);
     if (!context.guideFile || !hasFile(context.guideFile)) {
       setDocumentationNotice("This source file has no linked guide yet.");
@@ -4329,6 +4706,7 @@
 
     updateEditorFileWatermark(name);
     refreshDocumentationPane();
+    refreshProjectAiContext();
     scheduleDocumentationMarkerRefresh();
     persistState();
     renderOutliner();
@@ -4913,6 +5291,9 @@
       const documentationLocaleSelect = $("documentationLocaleSelect");
       const documentationEditToggle = $("documentationEditToggle");
       const documentationEditor = $("projectDocumentationEditor");
+      const projectAiToggle = $("projectAiToggle");
+      const projectAiForm = $("projectAiForm");
+      const projectAiClearBtn = $("projectAiClearBtn");
 
     initCustomSelect(mcuSelect);
     initCustomSelect(documentationLocaleSelect);
@@ -4998,6 +5379,19 @@
       documentationEditToggle.addEventListener("click", () => {
         setDocumentationEditMode(!documentationEditMode);
       });
+    projectAiToggle &&
+      projectAiToggle.addEventListener("click", () => {
+        setProjectPaneMode(
+          projectPaneMode === "ai" ? "documentation" : "ai",
+          { focusPrompt: projectPaneMode !== "ai" }
+        );
+      });
+    projectAiForm &&
+      projectAiForm.addEventListener("submit", handleProjectAiSubmit);
+    projectAiClearBtn &&
+      projectAiClearBtn.addEventListener("click", clearProjectAiHistory);
+    mcuSelect &&
+      mcuSelect.addEventListener("change", refreshProjectAiContext);
     documentationEditor &&
       documentationEditor.addEventListener("input", () => {
         saveDocumentationEditorValue();
@@ -5653,6 +6047,7 @@
 
     setMoreOptionsExpanded(false);
     bindUI();
+    setProjectPaneMode("documentation");
     initEditor();
 
     updateHexUI(false);
