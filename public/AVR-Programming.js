@@ -29,7 +29,6 @@
   const MINI_PROJECT_IMPORT_EVENT = "ud-avr-mini-project";
   const MINI_PROJECT_INSTALLED_EVENT = "ud-avr-mini-project-installed";
   const MINI_PROJECT_READY_EVENT = "ud-avr-mini-projects-ready";
-  const PROJECT_AI_ACCESS_STORAGE_KEY = "ud.avr.ai.ownerAccess";
   const LEGACY_BUILTIN_MINI_PROJECT_IDS = new Set([
     "minimum",
     "cpu-clock",
@@ -4113,26 +4112,6 @@
     if (label) label.textContent = String(message || "");
   }
 
-  function readProjectAiAccessToken() {
-    const input = $("projectAiAccessToken");
-    const entered = input?.value?.trim() || "";
-    if (entered) {
-      try {
-        window.sessionStorage.setItem(PROJECT_AI_ACCESS_STORAGE_KEY, entered);
-      } catch {}
-      return entered;
-    }
-    try {
-      const stored =
-        window.sessionStorage.getItem(PROJECT_AI_ACCESS_STORAGE_KEY)?.trim() ||
-        "";
-      if (input && stored) input.value = stored;
-      return stored;
-    } catch {
-      return "";
-    }
-  }
-
   function appendProjectAiMessage(kind, message, title = "") {
     const history = $("projectAiHistory");
     if (!history) return null;
@@ -4165,15 +4144,6 @@
     return article;
   }
 
-  function clearProjectAiHistory() {
-    $("projectAiHistory")
-      ?.querySelectorAll("[data-ai-transient]")
-      .forEach((message) => message.remove());
-    setProjectAiStatus("Checking API", "busy");
-    refreshProjectAiApiStatus();
-    $("projectAiPrompt")?.focus({ preventScroll: true });
-  }
-
   function setProjectAiFormBusy(busy) {
     projectAiGenerationInFlight = !!busy;
     const form = $("projectAiForm");
@@ -4181,8 +4151,6 @@
     for (const control of form.elements) {
       control.disabled = !!busy;
     }
-    const clearButton = $("projectAiClearBtn");
-    if (clearButton) clearButton.disabled = !!busy;
     form.setAttribute("aria-busy", String(!!busy));
   }
 
@@ -4310,10 +4278,6 @@
         setProjectAiStatus("API key is not configured", "offline");
         return;
       }
-      if (!data.accessConfigured) {
-        setProjectAiStatus("Owner access is not configured", "error");
-        return;
-      }
       if (!data.enabled) {
         setProjectAiStatus("AI API is disabled", "offline");
         return;
@@ -4325,14 +4289,10 @@
 
       const rulesLabel =
         data.rules?.packageId || data.rules?.projectVersion || "";
-      if (!readProjectAiAccessToken()) {
-        setProjectAiStatus("Owner access code required", "offline");
-      } else {
-        setProjectAiStatus(
-          rulesLabel ? `AI ready · rules ${rulesLabel}` : "AI ready",
-          "ready"
-        );
-      }
+      setProjectAiStatus(
+        rulesLabel ? `AI ready · rules ${rulesLabel}` : "AI ready",
+        "ready"
+      );
     } catch {
       setProjectAiStatus("AI server unavailable", "error");
     }
@@ -4354,15 +4314,11 @@
     setProjectAiStatus("Generating project", "busy");
 
     try {
-      const accessToken = readProjectAiAccessToken();
       const response = await fetch("/api/avr/ai/generate", {
         method: "POST",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          ...(accessToken
-            ? { "X-UartDebug-AI-Token": accessToken }
-            : {}),
         },
         credentials: "same-origin",
         body: JSON.stringify(getProjectAiRequestPayload(request)),
@@ -4375,9 +4331,7 @@
           (response.status === 503 &&
             /api key is not configured/i.test(String(data?.message || "")));
         const message =
-          response.status === 401
-            ? "Owner access code is required or incorrect"
-            : apiKeyMissing
+          apiKeyMissing
             ? "API key is not configured"
             : String(
                 data?.error?.message ||
@@ -4388,13 +4342,8 @@
         appendProjectAiMessage("system", message);
         setProjectAiStatus(
           message,
-          response.status === 401 || response.status === 503
-            ? "offline"
-            : "error"
+          response.status === 503 ? "offline" : "error"
         );
-        if (response.status === 401) {
-          $("projectAiAccessToken")?.focus({ preventScroll: true });
-        }
         return;
       }
 
@@ -4422,15 +4371,17 @@
     const aiMode = mode === "ai";
     const pane = $("projectDocumentationPane");
     const documentationView = $("projectDocumentationView");
-    const aiWorkspace = $("projectAiWorkspace");
+    const aiView = $("projectAiView");
+    const aiHeader = $("projectAiHeader");
     const toggle = $("projectAiToggle");
     const localeControl = pane?.querySelector(".documentation-locale-control");
     const editToggle = $("documentationEditToggle");
-    if (!documentationView || !aiWorkspace || !toggle) return;
+    if (!documentationView || !aiView || !toggle) return;
 
     projectPaneMode = aiMode ? "ai" : "documentation";
     documentationView.hidden = aiMode;
-    aiWorkspace.hidden = !aiMode;
+    aiView.hidden = !aiMode;
+    if (aiHeader) aiHeader.hidden = !aiMode;
     if (localeControl) localeControl.hidden = aiMode;
     if (editToggle) editToggle.hidden = aiMode;
     pane.dataset.view = projectPaneMode;
@@ -4444,11 +4395,7 @@
       refreshProjectAiApiStatus();
       if (focusPrompt) {
         window.requestAnimationFrame(() => {
-          const accessToken = readProjectAiAccessToken();
-          (accessToken
-            ? $("projectAiPrompt")
-            : $("projectAiAccessToken")
-          )?.focus({ preventScroll: true });
+          $("projectAiPrompt")?.focus({ preventScroll: true });
         });
       }
     }
@@ -5359,7 +5306,6 @@
       const documentationEditor = $("projectDocumentationEditor");
       const projectAiToggle = $("projectAiToggle");
       const projectAiForm = $("projectAiForm");
-      const projectAiClearBtn = $("projectAiClearBtn");
 
     initCustomSelect(mcuSelect);
     initCustomSelect(documentationLocaleSelect);
@@ -5454,8 +5400,6 @@
       });
     projectAiForm &&
       projectAiForm.addEventListener("submit", handleProjectAiSubmit);
-    projectAiClearBtn &&
-      projectAiClearBtn.addEventListener("click", clearProjectAiHistory);
     documentationEditor &&
       documentationEditor.addEventListener("input", () => {
         saveDocumentationEditorValue();

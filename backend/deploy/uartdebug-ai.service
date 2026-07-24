@@ -13,6 +13,7 @@ Environment=HOST=127.0.0.1
 Environment=PORT=8083
 Environment=ALLOWED_ORIGINS=https://uartdebug.com
 Environment=AI_ENABLED=1
+Environment=AI_REQUIRE_ACCESS_TOKEN=0
 Environment=AI_RULE_PACK_ROOT=/var/lib/uartdebug-ai/rule-packs
 Environment=AI_DRAFTS_DIR=/var/lib/uartdebug-ai/drafts
 Environment=AI_BUDGET_FILE=/var/lib/uartdebug-ai/drafts/daily-budget.json

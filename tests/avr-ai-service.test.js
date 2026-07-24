@@ -93,11 +93,65 @@ test("reports a present rule pack but stays unconfigured without a key", async (
   assert.equal(status.configured, false);
   assert.equal(status.ready, false);
   assert.equal(status.model, "gpt-5.6-terra");
+  assert.equal(status.accessRequired, false);
   assert.equal(status.accessConfigured, false);
+  assert.equal(service.authorizeAccessToken(""), true);
+  assert.equal(service.authorizeAccessToken("any-public-value"), true);
   assert.equal(status.rules.packageId, "uartdebug-rules-2026-07-23.2");
   assert.equal(status.references.count, staticReferenceIds.length);
   assert.match(status.references.digest, /^[a-f0-9]{64}$/);
   assert.equal(status.referencesError, null);
+});
+
+test("supports future opt-in access without requiring a token in public mode", async () => {
+  const publicService = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+  });
+  const publicStatus = await publicService.getStatus();
+  assert.equal(publicStatus.accessRequired, false);
+  assert.equal(publicStatus.accessConfigured, false);
+  assert.equal(publicStatus.ready, true);
+  assert.equal(publicService.authorizeAccessToken(""), true);
+
+  const privateServiceWithoutToken = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      AI_REQUIRE_ACCESS_TOKEN: "1",
+      OPENAI_API_KEY: "test-key",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+  });
+  const missingTokenStatus = await privateServiceWithoutToken.getStatus();
+  assert.equal(missingTokenStatus.accessRequired, true);
+  assert.equal(missingTokenStatus.accessConfigured, false);
+  assert.equal(missingTokenStatus.ready, false);
+  assert.equal(privateServiceWithoutToken.authorizeAccessToken(""), false);
+
+  const privateService = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      AI_REQUIRE_ACCESS_TOKEN: "1",
+      OPENAI_API_KEY: "test-key",
+      AI_ACCESS_TOKEN: "owner-test-token",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+  });
+  const privateStatus = await privateService.getStatus();
+  assert.equal(privateStatus.accessRequired, true);
+  assert.equal(privateStatus.accessConfigured, true);
+  assert.equal(privateStatus.ready, true);
+  assert.equal(privateService.authorizeAccessToken("wrong-token"), false);
+  assert.equal(
+    privateService.authorizeAccessToken("owner-test-token"),
+    true
+  );
 });
 
 test("uses Responses structured output, stores only the private AI file, and returns two public files", async (t) => {

@@ -65,12 +65,14 @@ else
 fi
 if [ ! -e "${access_credential_file}" ]; then
   command -v openssl >/dev/null || {
-    echo "openssl is required to create the owner access credential" >&2
+    echo "openssl is required to create the optional AI access credential" >&2
     exit 69
   }
   umask 0077
   openssl rand -hex 32 > "${access_credential_file}"
 fi
+# Keep this dormant credential ready for a future AI_REQUIRE_ACCESS_TOKEN=1
+# deployment. Public mode never sends it to the browser.
 chown root:root "${access_credential_file}"
 chmod 0400 "${access_credential_file}"
 

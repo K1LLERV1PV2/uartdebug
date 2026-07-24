@@ -24,16 +24,22 @@ sudo systemctl restart uartdebug-ai.service
 Never put the key in browser code, Git, shell history, or an `Environment=`
 line.
 
-Generation is owner-only during the prototype stage. A separate random access
-code is stored in:
+Generation is public to visitors of the AVR page during the prototype stage.
+The OpenAI key remains server-only; the browser never receives it. Same-origin
+checks and the nginx and Node.js usage limits still apply.
+
+The service also keeps a dormant random access credential in:
 
 ```text
 /etc/uartdebug/secrets/ai-access-token
 ```
 
-Read it from an SSH session with
-`sudo cat /etc/uartdebug/secrets/ai-access-token`, then enter it in the AI pane.
-The browser keeps it only in `sessionStorage`; it is not the OpenAI API key.
+The credential is not used or sent to the browser while
+`AI_REQUIRE_ACCESS_TOKEN=0`. To opt in to private access later, set
+`AI_REQUIRE_ACCESS_TOKEN=1` in `uartdebug-ai.service`, restart the service, and
+have the authorized client send the credential in the
+`X-UartDebug-AI-Token` request header. Never use the OpenAI API key as that
+access credential.
 
 Before the first GitHub deployment that contains `ai-server.js`, bootstrap the
 service once with `deploy/install-ai-service.sh`. The workflow checks for the

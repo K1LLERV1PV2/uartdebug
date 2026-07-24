@@ -158,6 +158,10 @@ function createAvrAiService(options = {}) {
       enabled: readBoolean(environment.AI_ENABLED, false),
       configured: !!apiKey,
       apiKey,
+      requireAccessToken: readBoolean(
+        environment.AI_REQUIRE_ACCESS_TOKEN,
+        false
+      ),
       accessConfigured: !!accessToken,
       accessToken,
       safetyIdentifier: accessToken
@@ -216,11 +220,12 @@ function createAvrAiService(options = {}) {
       ok: true,
       enabled: config.enabled,
       configured: config.configured,
+      accessRequired: config.requireAccessToken,
       accessConfigured: config.accessConfigured,
       ready:
         config.enabled &&
         config.configured &&
-        config.accessConfigured &&
+        (!config.requireAccessToken || config.accessConfigured) &&
         !!rules &&
         !!references,
       model: config.model,
@@ -302,8 +307,11 @@ function createAvrAiService(options = {}) {
 
   return {
     authorizeAccessToken(providedToken) {
-      const expectedToken = getRuntimeConfig().accessToken;
-      return timingSafeSecretEqual(expectedToken, providedToken);
+      const config = getRuntimeConfig();
+      return (
+        !config.requireAccessToken ||
+        timingSafeSecretEqual(config.accessToken, providedToken)
+      );
     },
     generate,
     getStatus,

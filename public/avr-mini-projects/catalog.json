@@ -46,6 +46,29 @@
           "assetBaseUrl": "/avr-mini-projects/02_CPU_Clock/"
         }
       ]
+    },
+    {
+      "id": "03_Delay-Based_Blink",
+      "displayName": "03_Delay-Based_Blink",
+      "title": "03_Delay-Based_Blink",
+      "summary": "LED blinking is the “Hello, World!” of microcontroller programming.",
+      "version": "1.2.3-b",
+      "defaultLocale": "en",
+      "source": {
+        "name": "03_Delay-Based_Blink_1.2.3-b.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/03_Delay-Based_Blink/03_Delay-Based_Blink_1.2.3-b.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "03_Delay-Based_Blink_help_1.2.3-b.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/03_Delay-Based_Blink/03_Delay-Based_Blink_help_1.2.3-b.md",
+          "assetBaseUrl": "/avr-mini-projects/03_Delay-Based_Blink/"
+        }
+      ]
     }
   ]
 }

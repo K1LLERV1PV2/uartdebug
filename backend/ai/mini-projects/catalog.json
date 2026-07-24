@@ -14,6 +14,13 @@
       "file": "02_CPU_Clock/02_CPU_Clock_AI_1.2.3-a.md",
       "mediaType": "text/markdown",
       "sha256": "cde5e719ae3c6efedf350421497321420583feecb8a2e3cd77071b09e0826618"
+    },
+    {
+      "id": "03_Delay-Based_Blink",
+      "version": "1.2.3-b",
+      "file": "03_Delay-Based_Blink/03_Delay-Based_Blink_AI_1.2.3-b.md",
+      "mediaType": "text/markdown",
+      "sha256": "48aa1815948ba006bcd4bd7e93e0e18d19f3c66b62ff1665af0918f23d554db6"
     }
   ]
 }

@@ -516,7 +516,7 @@ jobs:
                   )"
                   [ "${ai_status_code}" = "200" ] &&
                     grep -q "\"rules\":{\"packageId\":\"${expected_ai_rule_package}\"" "${ai_status_body}" &&
-                    grep -q '"accessConfigured":true' "${ai_status_body}" || {
+                    grep -q '"accessRequired":false' "${ai_status_body}" || {
                       echo "AI readiness metadata check failed with HTTP ${ai_status_code}"
                       cat "${ai_status_body}" || true
                       rm -f "${ai_status_body}"

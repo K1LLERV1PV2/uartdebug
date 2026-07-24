@@ -9,7 +9,7 @@ const {
   createAvrAiService,
 } = require("./avr-ai-service");
 
-const AI_SERVER_VERSION = "20260723-avr-ai-v2";
+const AI_SERVER_VERSION = "20260724-avr-ai-v3";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 384 * 1024;
@@ -194,7 +194,7 @@ function createAiHttpServer(options = {}) {
             "AI generation is currently disabled."
           );
         }
-        if (!status.accessConfigured) {
+        if (status.accessRequired && !status.accessConfigured) {
           throw new AiServiceError(
             503,
             "owner_access_not_configured",

@@ -36,6 +36,7 @@ test("serves safe AI status metadata and health from a separate server", async (
         ok: true,
         enabled: true,
         configured: false,
+        accessRequired: false,
         ready: false,
         model: "gpt-5.6-terra",
         rules: { packageId: "rules-v1" },
@@ -59,6 +60,7 @@ test("serves safe AI status metadata and health from a separate server", async (
   assert.equal(status.headers.get("cache-control"), "no-store");
   const body = await status.json();
   assert.equal(body.configured, false);
+  assert.equal(body.accessRequired, false);
   assert.equal(body.model, "gpt-5.6-terra");
   assert.equal(body.rules.packageId, "rules-v1");
   assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
@@ -68,14 +70,15 @@ test("requires JSON and never sends a malformed request to the AI service", asyn
   let generateCalls = 0;
   const aiService = {
     authorizeAccessToken(token) {
-      return token === "owner-token";
+      return token === "";
     },
     async getStatus() {
       return {
         ok: true,
         enabled: true,
         configured: true,
-        accessConfigured: true,
+        accessRequired: false,
+        accessConfigured: false,
         rules: { packageId: "rules-v1" },
       };
     },
@@ -97,7 +100,6 @@ test("requires JSON and never sends a malformed request to the AI service", asyn
     headers: {
       "Content-Type": "text/plain",
       Origin: baseUrl,
-      "X-UartDebug-AI-Token": "owner-token",
     },
     body: "{}",
   });
@@ -108,7 +110,6 @@ test("requires JSON and never sends a malformed request to the AI service", asyn
     headers: {
       "Content-Type": "application/json",
       Origin: baseUrl,
-      "X-UartDebug-AI-Token": "owner-token",
     },
     body: "{",
   });
@@ -120,7 +121,6 @@ test("requires JSON and never sends a malformed request to the AI service", asyn
     headers: {
       "Content-Type": "application/json",
       Origin: baseUrl,
-      "X-UartDebug-AI-Token": "owner-token",
     },
     body: JSON.stringify({ prompt: "Blink" }),
   });
@@ -128,7 +128,7 @@ test("requires JSON and never sends a malformed request to the AI service", asyn
   assert.equal(generateCalls, 1);
 });
 
-test("requires owner access and returns 413 without resetting an oversized request", async (t) => {
+test("supports opt-in owner access and returns 413 without resetting an oversized request", async (t) => {
   const aiService = {
     authorizeAccessToken(token) {
       return token === "owner-token";
@@ -138,6 +138,7 @@ test("requires owner access and returns 413 without resetting an oversized reque
         ok: true,
         enabled: true,
         configured: true,
+        accessRequired: true,
         accessConfigured: true,
         rules: { packageId: "rules-v1" },
       };
@@ -147,7 +148,7 @@ test("requires owner access and returns 413 without resetting an oversized reque
     },
   };
   const server = createAiHttpServer({
-    environment: {},
+    environment: { AI_REQUIRE_ACCESS_TOKEN: "1" },
     aiService,
     log: { info() {}, warn() {} },
   });
@@ -233,14 +234,15 @@ test("enforces both per-client and daily generation limits", () => {
 test("handles an AI generation response through the HTTP boundary", async (t) => {
   const aiService = {
     authorizeAccessToken(token) {
-      return token === "owner-token";
+      return token === "";
     },
     async getStatus() {
       return {
         ok: true,
         enabled: true,
         configured: true,
-        accessConfigured: true,
+        accessRequired: false,
+        accessConfigured: false,
         rules: { packageId: "rules-v1" },
       };
     },
@@ -265,7 +267,6 @@ test("handles an AI generation response through the HTTP boundary", async (t) =>
         headers: {
           "Content-Type": "application/json",
           Origin: baseUrl,
-          "X-UartDebug-AI-Token": "owner-token",
         },
       },
       resolve

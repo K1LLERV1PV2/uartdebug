@@ -930,6 +930,10 @@ body.is-documentation-resizing * {
   flex-wrap: nowrap;
 }
 
+.documentation-action-strip > [hidden] {
+  display: none !important;
+}
+
 .documentation-locale-control {
   flex: 0 0 auto;
   min-width: 0;
@@ -939,6 +943,44 @@ body.is-documentation-resizing * {
   flex: 0 0 auto;
   min-width: 88px;
   width: auto !important;
+}
+
+.project-ai-heading {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+  height: 44px;
+  overflow: hidden;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-ai-heading[hidden] {
+  display: none !important;
+}
+
+.project-ai-heading .project-ai-eyebrow {
+  margin: 0;
+  overflow: hidden;
+  color: var(--avr-border-hot);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.project-ai-heading h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--avr-text);
+  font-size: 14px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .documentation-action-strip .project-ai-toggle {
@@ -982,7 +1024,7 @@ body.is-documentation-resizing * {
 }
 
 .project-documentation-view[hidden],
-.project-ai-workspace[hidden] {
+.project-ai-view[hidden] {
   display: none !important;
 }
 
@@ -1207,55 +1249,31 @@ body.is-documentation-resizing * {
   margin: 0;
 }
 
-.project-ai-workspace {
+.project-ai-view {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  flex-direction: column;
+}
+
+.project-ai-workspace {
+  --scroll-frame-bg: var(--avr-window-bg);
+  --scroll-frame-border: rgba(129, 159, 141, 0.24);
+
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 96px;
   padding: 14px;
-  overflow: auto;
+  overflow: hidden;
   flex-direction: column;
   gap: 12px;
-  border: 1px solid rgba(129, 159, 141, 0.24);
-  border-radius: var(--avr-radius);
-  background: var(--avr-window-bg);
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
 }
 
-.project-ai-intro {
+.project-ai-status-row {
   display: flex;
   flex: 0 0 auto;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.project-ai-intro > div {
-  min-width: 0;
-}
-
-.project-ai-eyebrow {
-  margin: 0 0 5px;
-  color: var(--avr-border-hot);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-}
-
-.project-ai-intro h2 {
-  margin: 0;
-  color: var(--avr-text);
-  font-size: 17px;
-  line-height: 1.25;
-}
-
-.project-ai-intro p:not(.project-ai-eyebrow) {
-  margin: 7px 0 0;
-  color: var(--avr-text-muted);
-  font-size: 12px;
-  line-height: 1.45;
+  justify-content: flex-end;
 }
 
 .project-ai-status {
@@ -1365,45 +1383,15 @@ body.is-documentation-resizing * {
 
 .project-ai-form {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 0 136px;
   min-width: 0;
+  min-height: 112px;
+  margin-top: 12px;
   flex-direction: column;
-  gap: 7px;
 }
 
-.project-ai-form label {
-  color: var(--avr-text-soft);
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.project-ai-access {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.project-ai-form input {
-  width: 100%;
-  min-height: 40px;
-  padding: 9px 12px;
-  border: 1px solid rgba(129, 159, 141, 0.28);
-  border-radius: 10px;
-  outline: 0;
-  background: rgba(7, 13, 20, 0.28);
-  color: var(--avr-text);
-  caret-color: var(--avr-border-hot);
-  font: 12px/1.48 Inter, Arial, sans-serif;
-}
-
-.project-ai-form input::placeholder,
 #projectAiPrompt::placeholder {
   color: var(--avr-text-muted);
-}
-
-.project-ai-form input:focus {
-  border-color: var(--avr-border-hover);
-  box-shadow: 0 0 0 3px rgba(70, 255, 120, 0.12);
 }
 
 .project-ai-composer {
@@ -1411,7 +1399,9 @@ body.is-documentation-resizing * {
   --scroll-frame-border: rgba(129, 159, 141, 0.28);
 
   display: flex;
-  min-height: 118px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   flex-direction: column;
   transition:
     border-color 0.16s ease,
@@ -1424,6 +1414,7 @@ body.is-documentation-resizing * {
 }
 
 #projectAiPrompt {
+  flex: 1 1 auto;
   width: 100%;
   min-height: 76px;
   max-height: 190px;
@@ -1450,10 +1441,6 @@ body.is-documentation-resizing * {
   height: 38px;
   padding-inline: 12px;
   font-size: 12px;
-}
-
-.project-ai-form-footer .project-ai-clear {
-  min-width: 68px;
 }
 
 .avr-action-strip {

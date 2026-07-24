@@ -107,6 +107,10 @@ test("keeps the AI toggle at the right edge of Project guide controls", () => {
     css,
     /\.documentation-action-strip \.project-ai-toggle\s*\{[\s\S]*?width:\s*44px !important;[\s\S]*?min-width:\s*44px !important;[\s\S]*?margin-left:\s*auto !important;/
   );
+  assert.match(
+    css,
+    /\.documentation-action-strip\s*>\s*\[hidden\]\s*\{[\s\S]*?display:\s*none !important;/
+  );
 });
 
 test("wires the project AI pane to the AVR AI API contract", () => {
@@ -119,15 +123,22 @@ test("wires the project AI pane to the AVR AI API contract", () => {
     "utf8"
   );
 
+  assert.match(html, /id="projectAiHeader"[^>]*hidden/);
+  assert.match(html, /id="projectAiTitle">Build with Uart Debug AI/);
+  assert.match(html, /id="projectAiView"/);
   assert.match(html, /id="projectAiWorkspace"/);
   assert.match(html, /id="projectAiHistory"[\s\S]*role="log"/);
   assert.match(html, /id="projectAiForm"/);
-  assert.match(html, /id="projectAiAccessToken"[\s\S]*type="password"/);
+  assert.doesNotMatch(html, /id="projectAiAccessToken"/);
+  assert.doesNotMatch(html, /id="projectAiClearBtn"/);
+  assert.doesNotMatch(html, /Describe the mini-project you need/);
   assert.match(source, /fetch\("\/api\/avr\/ai\/status"/);
   assert.match(source, /fetch\("\/api\/avr\/ai\/generate"/);
   assert.match(source, /"API key is not configured"/);
-  assert.match(source, /"X-UartDebug-AI-Token"/);
-  assert.match(source, /sessionStorage/);
+  assert.doesNotMatch(source, /"X-UartDebug-AI-Token"/);
+  assert.doesNotMatch(source, /PROJECT_AI_ACCESS_STORAGE_KEY/);
+  assert.doesNotMatch(source, /readProjectAiAccessToken/);
+  assert.doesNotMatch(source, /clearProjectAiHistory/);
   assert.match(source, /typeof publicProject\?\.aiSpecRef\?\.id === "string"/);
   assert.doesNotMatch(
     source,
@@ -187,7 +198,7 @@ test("lets the guide pane grow until the editor reaches its minimum width", () =
   assert.doesNotMatch(source, /availableDocumentationWidth\s*\/\s*2/);
 });
 
-test("uses one framed AI request composer", () => {
+test("uses sibling framed AI workspace and request composer", () => {
   const html = fs.readFileSync(
     path.join(__dirname, "../public/avr.html"),
     "utf8"
@@ -196,22 +207,35 @@ test("uses one framed AI request composer", () => {
     path.join(__dirname, "../public/AVR-Programming.css"),
     "utf8"
   );
+  const viewStart = html.indexOf('id="projectAiView"');
+  const viewEnd = html.indexOf("</aside>", viewStart);
+  const view = html.slice(viewStart, viewEnd);
+  const workspace = view.indexOf('id="projectAiWorkspace"');
   const formStart = html.indexOf('id="projectAiForm"');
   const formEnd = html.indexOf("</form>", formStart);
   const form = html.slice(formStart, formEnd);
-  const access = form.indexOf('id="projectAiAccessToken"');
   const composer = form.indexOf("project-ai-composer");
   const prompt = form.indexOf('id="projectAiPrompt"');
-  const clear = form.indexOf('id="projectAiClearBtn"');
   const submit = form.indexOf('id="projectAiSubmitBtn"');
 
-  assert.ok(access >= 0 && access < composer);
+  assert.ok(viewStart >= 0);
+  assert.ok(workspace >= 0);
+  assert.ok(view.indexOf('id="projectAiForm"') > workspace);
   assert.ok(composer < prompt);
-  assert.ok(prompt < clear);
-  assert.ok(clear < submit);
+  assert.ok(prompt < submit);
+  assert.doesNotMatch(form, /projectAiAccessToken|projectAiClearBtn/);
+  assert.match(
+    view,
+    /project-ai-workspace[^"]*scroll-frame|scroll-frame[^"]*project-ai-workspace/
+  );
   assert.match(
     form,
     /project-ai-composer[^"]*scroll-frame|scroll-frame[^"]*project-ai-composer/
+  );
+  assert.match(css, /\.project-ai-view\s*\{[\s\S]*?flex-direction:\s*column;/);
+  assert.match(
+    css,
+    /\.project-ai-form\s*\{[\s\S]*?margin-top:\s*12px;/
   );
   assert.match(css, /\.project-ai-composer:focus-within\s*\{/);
   assert.match(css, /#projectAiPrompt\s*\{[\s\S]*?border:\s*0;/);
@@ -239,7 +263,7 @@ test("renames a mini-project display name without renaming its linked files", ()
   );
 });
 
-test("wires the 02 CPU Clock card to its public files and private AI reference", () => {
+test("wires every built-in card to public files and a private AI reference", () => {
   const html = fs.readFileSync(
     path.join(__dirname, "../public/avr.html"),
     "utf8"
@@ -260,61 +284,100 @@ test("wires the 02 CPU Clock card to its public files and private AI reference",
       "utf8"
     )
   );
-  const project = publicCatalog.projects.find(
+  assert.deepEqual(
+    publicCatalog.projects.map((entry) => entry.id),
+    ["01_Minimum", "02_CPU_Clock", "03_Delay-Based_Blink"]
+  );
+
+  for (const project of publicCatalog.projects) {
+    const privateReference = privateCatalog.projects.find(
+      (entry) => entry.id === project.id
+    );
+    assert.equal(
+      (html.match(new RegExp(`data-template-id="${project.id}"`, "g")) || [])
+        .length,
+      1
+    );
+    assert.equal(project.aiSpecRef, undefined);
+    assert.ok(privateReference, `missing private AI reference for ${project.id}`);
+
+    const sourcePath = path.join(
+      __dirname,
+      "../public",
+      project.source.url.replace(/^\/+/, "")
+    );
+    const guidePath = path.join(
+      __dirname,
+      "../public",
+      project.guides[0].url.replace(/^\/+/, "")
+    );
+    const aiPath = path.join(
+      __dirname,
+      "../backend/ai/mini-projects",
+      privateReference.file
+    );
+    assert.ok(fs.existsSync(sourcePath), sourcePath);
+    assert.ok(fs.existsSync(guidePath), guidePath);
+    assert.ok(fs.existsSync(aiPath), aiPath);
+    assert.equal(
+      crypto.createHash("sha256").update(fs.readFileSync(aiPath)).digest("hex"),
+      privateReference.sha256
+    );
+    assert.ok(sw.includes(project.source.url));
+    assert.ok(sw.includes(project.guides[0].url));
+
+    const markers = extractDocumentationMarkers(
+      fs.readFileSync(sourcePath, "utf8")
+    );
+    const headings = new Set(
+      extractMarkdownHeadings(fs.readFileSync(guidePath, "utf8")).map(
+        (heading) => heading.key
+      )
+    );
+    for (const marker of markers) {
+      assert.ok(headings.has(marker.key), `${project.id}: ${marker.key}`);
+    }
+  }
+
+  const cpuClock = publicCatalog.projects.find(
     (entry) => entry.id === "02_CPU_Clock"
   );
-  const privateReference = privateCatalog.projects.find(
+  const delayBlink = publicCatalog.projects.find(
+    (entry) => entry.id === "03_Delay-Based_Blink"
+  );
+  const cpuClockReference = privateCatalog.projects.find(
     (entry) => entry.id === "02_CPU_Clock"
   );
-
-  assert.equal(
-    (html.match(/data-template-id="02_CPU_Clock"/g) || []).length,
-    1
-  );
-  assert.ok(project);
-  assert.equal(project.displayName, "02_CPU_Clock");
-  assert.equal(project.version, "1.2.3-b");
-  assert.equal(project.source.name, "02_CPU_Clock_1.2.3-b.c");
-  assert.equal(project.guides[0].name, "02_CPU_Clock_help_1.2.3-b.md");
-  assert.equal(project.aiSpecRef, undefined);
-  assert.ok(privateReference);
-  assert.equal(privateReference.version, "1.2.3-a");
-  assert.equal(
-    privateReference.file,
-    "02_CPU_Clock/02_CPU_Clock_AI_1.2.3-a.md"
+  const delayBlinkReference = privateCatalog.projects.find(
+    (entry) => entry.id === "03_Delay-Based_Blink"
   );
 
-  const sourcePath = path.join(
+  assert.equal(cpuClock.version, "1.2.3-b");
+  assert.equal(cpuClockReference.version, "1.2.3-a");
+  assert.equal(delayBlink.displayName, "03_Delay-Based_Blink");
+  assert.equal(delayBlink.version, "1.2.3-b");
+  assert.equal(
+    delayBlink.source.name,
+    "03_Delay-Based_Blink_1.2.3-b.c"
+  );
+  assert.equal(
+    delayBlink.guides[0].name,
+    "03_Delay-Based_Blink_help_1.2.3-b.md"
+  );
+  assert.equal(delayBlinkReference.version, "1.2.3-b");
+  assert.equal(
+    delayBlinkReference.file,
+    "03_Delay-Based_Blink/03_Delay-Based_Blink_AI_1.2.3-b.md"
+  );
+  const delayBlinkSourcePath = path.join(
     __dirname,
     "../public",
-    project.source.url.replace(/^\/+/, "")
+    delayBlink.source.url.replace(/^\/+/, "")
   );
-  const guidePath = path.join(
-    __dirname,
-    "../public",
-    project.guides[0].url.replace(/^\/+/, "")
-  );
-  const aiPath = path.join(
-    __dirname,
-    "../backend/ai/mini-projects",
-    privateReference.file
-  );
-  assert.ok(fs.existsSync(sourcePath));
-  assert.ok(fs.existsSync(guidePath));
-  assert.ok(fs.existsSync(aiPath));
   assert.equal(
-    crypto.createHash("sha256").update(fs.readFileSync(aiPath)).digest("hex"),
-    privateReference.sha256
+    extractDocumentationMarkers(
+      fs.readFileSync(delayBlinkSourcePath, "utf8")
+    ).length,
+    14
   );
-  assert.match(sw, /02_CPU_Clock_1\.2\.3-b\.c/);
-  assert.match(sw, /02_CPU_Clock_help_1\.2\.3-b\.md/);
-
-  const markers = extractDocumentationMarkers(fs.readFileSync(sourcePath, "utf8"));
-  const headings = new Set(
-    extractMarkdownHeadings(fs.readFileSync(guidePath, "utf8")).map(
-      (heading) => heading.key
-    )
-  );
-  assert.equal(markers.length, 15);
-  for (const marker of markers) assert.ok(headings.has(marker.key));
 });

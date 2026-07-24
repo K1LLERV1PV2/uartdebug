@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260724-ai-corpus-v3";
+const CACHE_NAME = "uartdebug-shell-20260724-ai-layout-v5";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -21,6 +21,8 @@ const APP_SHELL_ASSETS = [
   "/avr-mini-projects/01_Minimum/Pasted%20image%2020260720203813.png",
   "/avr-mini-projects/02_CPU_Clock/02_CPU_Clock_1.2.3-b.c",
   "/avr-mini-projects/02_CPU_Clock/02_CPU_Clock_help_1.2.3-b.md",
+  "/avr-mini-projects/03_Delay-Based_Blink/03_Delay-Based_Blink_1.2.3-b.c",
+  "/avr-mini-projects/03_Delay-Based_Blink/03_Delay-Based_Blink_help_1.2.3-b.md",
   "/AVR-Programming.js",
   "/updi-test.js",
   "/updi-test.css",
