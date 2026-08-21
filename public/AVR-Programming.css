@@ -1379,7 +1379,6 @@ body.is-documentation-resizing * {
 
 .project-ai-message p {
   margin: 0;
-  white-space: pre-wrap;
 }
 
 .project-ai-form {
