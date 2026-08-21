@@ -9,7 +9,7 @@ const {
   createAvrAiService,
 } = require("./avr-ai-service");
 
-const AI_SERVER_VERSION = "20260724-avr-ai-v3";
+const AI_SERVER_VERSION = "20260821-avr-ai-chat-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 384 * 1024;
@@ -129,7 +129,9 @@ function createAiHttpServer(options = {}) {
 
     if (
       req.method === "POST" &&
-      requestUrl.pathname === "/api/avr/ai/generate"
+      ["/api/avr/ai/respond", "/api/avr/ai/generate"].includes(
+        requestUrl.pathname
+      )
     ) {
       if (
         requireBrowserOrigin &&
@@ -183,15 +185,17 @@ function createAiHttpServer(options = {}) {
       }
 
       try {
-        if (typeof aiService.validateGenerationInput === "function") {
-          aiService.validateGenerationInput(requestBody);
+        const validateInput =
+          aiService.validateRequestInput || aiService.validateGenerationInput;
+        if (typeof validateInput === "function") {
+          validateInput.call(aiService, requestBody);
         }
         const status = await aiService.getStatus();
         if (!status.enabled) {
           throw new AiServiceError(
             503,
             "ai_disabled",
-            "AI generation is currently disabled."
+            "The AI assistant is currently disabled."
           );
         }
         if (status.accessRequired && !status.accessConfigured) {
@@ -230,7 +234,7 @@ function createAiHttpServer(options = {}) {
         return sendJson(res, 429, {
           ok: false,
           code: "ai_busy",
-          message: "AI generation is busy. Try again shortly.",
+          message: "The AI assistant is busy. Try again shortly.",
           requestId,
         });
       }
@@ -251,7 +255,7 @@ function createAiHttpServer(options = {}) {
         return sendJson(res, 429, {
           ok: false,
           code: limitResult.code,
-          message: "AI generation limit reached. Try again later.",
+          message: "AI request limit reached. Try again later.",
           requestId,
         });
       }
@@ -268,7 +272,15 @@ function createAiHttpServer(options = {}) {
 
       concurrentRequests += 1;
       try {
-        const result = await aiService.generate(requestBody);
+        const respond = aiService.respond || aiService.generate;
+        if (typeof respond !== "function") {
+          throw new AiServiceError(
+            503,
+            "ai_unavailable",
+            "The AI assistant is unavailable."
+          );
+        }
+        const result = await respond.call(aiService, requestBody);
         log.info?.(
           `[avr-ai] request=${requestId} status=200 duration_ms=${Math.max(
             0,

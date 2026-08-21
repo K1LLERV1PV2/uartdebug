@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260821-mini-projects-v1";
+const CACHE_NAME = "uartdebug-shell-20260821-ai-chat-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",

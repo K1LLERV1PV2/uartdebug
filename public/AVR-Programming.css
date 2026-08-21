@@ -1379,6 +1379,7 @@ body.is-documentation-resizing * {
 
 .project-ai-message p {
   margin: 0;
+  white-space: pre-wrap;
 }
 
 .project-ai-form {
@@ -2165,7 +2166,7 @@ body.is-documentation-resizing * {
 .file-add-dialog {
   display: flex;
   flex-direction: column;
-  width: min(92vw, 680px);
+  width: min(96vw, 1100px);
   max-height: min(86vh, 720px);
   overflow: visible;
   border: 1px solid rgba(129, 159, 141, 0.24);
@@ -2325,7 +2326,7 @@ body.is-documentation-resizing * {
 
 .file-template-card {
   display: grid;
-  grid-template-columns: minmax(126px, 0.36fr) minmax(0, 1fr);
+  grid-template-columns: minmax(250px, 0.42fr) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   min-height: 42px;
@@ -2355,9 +2356,8 @@ body.is-documentation-resizing * {
 .file-template-card .file-add-card-title,
 .file-template-card .file-add-card-copy {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .template-minimum::before {
@@ -3308,6 +3308,11 @@ body.is-documentation-resizing * {
   .file-template-grid,
   .summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .file-template-card {
+    grid-template-columns: 1fr;
+    align-items: start;
   }
 
   .compile-log-section {

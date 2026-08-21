@@ -124,7 +124,7 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   );
 
   assert.match(html, /id="projectAiHeader"[^>]*hidden/);
-  assert.match(html, /id="projectAiTitle">Build with Uart Debug AI/);
+  assert.match(html, /id="projectAiTitle">Uart Debug AI/);
   assert.match(html, /id="projectAiView"/);
   assert.match(html, /id="projectAiWorkspace"/);
   assert.match(html, /id="projectAiHistory"[\s\S]*role="log"/);
@@ -133,7 +133,11 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.doesNotMatch(html, /id="projectAiClearBtn"/);
   assert.doesNotMatch(html, /Describe the mini-project you need/);
   assert.match(source, /fetch\("\/api\/avr\/ai\/status"/);
-  assert.match(source, /fetch\("\/api\/avr\/ai\/generate"/);
+  assert.match(source, /fetch\("\/api\/avr\/ai\/respond"/);
+  assert.match(source, /data\.kind === "answer"/);
+  assert.match(source, /rememberProjectAiExchange\(request, answer\)/);
+  assert.match(source, /data\.kind !== "project" && !data\.project/);
+  assert.match(source, /projectAiForm\?\.requestSubmit\(\)/);
   assert.match(source, /"API key is not configured"/);
   assert.doesNotMatch(source, /"X-UartDebug-AI-Token"/);
   assert.doesNotMatch(source, /PROJECT_AI_ACCESS_STORAGE_KEY/);
@@ -159,6 +163,31 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.match(
     source,
     /rawFile\?\.role === "humanGuide"[\s\S]*miniProjectCore\.ROLES\.GUIDE/
+  );
+  assert.match(
+    html,
+    /placeholder="Ask a question or request an AVR mini-project"/
+  );
+  assert.match(html, />\s*Send\s*<\/button>/);
+});
+
+test("gives Add file enough width and lets catalog text wrap", () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.css"),
+    "utf8"
+  );
+
+  assert.match(
+    css,
+    /\.file-add-dialog\s*\{[\s\S]*?width:\s*min\(96vw,\s*1100px\);/
+  );
+  assert.match(
+    css,
+    /\.file-template-card\s*\{[\s\S]*?grid-template-columns:\s*minmax\(250px,\s*0\.42fr\)\s*minmax\(0,\s*1fr\);/
+  );
+  assert.match(
+    css,
+    /\.file-template-card \.file-add-card-title,[\s\S]*?\.file-template-card \.file-add-card-copy\s*\{[\s\S]*?overflow-wrap:\s*anywhere;[\s\S]*?white-space:\s*normal;/
   );
 });
 

@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="uart.css?v=20260709-terminal-polish-v3" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260724-ai-layout-v5"
+      href="AVR-Programming.css?v=20260821-ai-chat-v1"
     />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
 
@@ -205,7 +205,7 @@
                   hidden
                 >
                   <span class="project-ai-eyebrow">AVR project assistant</span>
-                  <h2 id="projectAiTitle">Build with Uart Debug AI</h2>
+                  <h2 id="projectAiTitle">Uart Debug AI</h2>
                 </div>
 
                 <button
@@ -293,9 +293,9 @@
                     <article class="project-ai-message is-assistant">
                       <span class="sr-only">AI assistant</span>
                       <p>
-                        Tell me what the AVR should do and which peripherals or
-                        constraints matter. I will keep the C source, human
-                        guide, and private AI specification synchronized.
+                        Ask an AVR question or describe a mini-project. I will
+                        answer normally unless you explicitly ask me to create
+                        or change a project.
                       </p>
                     </article>
                   </div>
@@ -304,12 +304,12 @@
                 <form class="project-ai-form" id="projectAiForm">
                   <div class="project-ai-composer scroll-frame">
                     <label class="sr-only" for="projectAiPrompt">
-                      Project request
+                      Message
                     </label>
                     <textarea
                       id="projectAiPrompt"
                       rows="3"
-                      placeholder="Ask Uart Debug AI to build or adapt an AVR mini-project"
+                      placeholder="Ask a question or request an AVR mini-project"
                       spellcheck="true"
                     ></textarea>
                     <div class="project-ai-form-footer">
@@ -318,7 +318,7 @@
                         id="projectAiSubmitBtn"
                         type="submit"
                       >
-                        Generate project
+                        Send
                       </button>
                     </div>
                   </div>
@@ -572,7 +572,7 @@
     <script defer src="ui-tooltips.js?v=20260723-pane-optout-v1"></script>
     <script defer src="avr-mini-projects.js?v=20260821-mini-projects-v1"></script>
     <script defer src="avr-mini-project-archive.js?v=20260821-localized-zip-v1"></script>
-    <script defer src="AVR-Programming.js?v=20260821-mini-projects-v1"></script>
+    <script defer src="AVR-Programming.js?v=20260821-ai-chat-v1"></script>
     <script defer src="updi-test.js?v=20260709-terminal-avr-sync-v1"></script>
   </body>
 </html>

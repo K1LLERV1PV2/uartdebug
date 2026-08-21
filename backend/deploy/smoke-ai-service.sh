@@ -22,7 +22,7 @@ grep -q '"accessRequired":false' "${status_file}"
 grep -q '"rules":{"packageId":' "${status_file}"
 
 if ! grep -q '"configured":false' "${status_file}"; then
-  echo "OpenAI is configured; the paid generation smoke test was intentionally skipped." >&2
+  echo "OpenAI is configured; the paid assistant smoke test was intentionally skipped." >&2
   exit 78
 fi
 
@@ -35,7 +35,7 @@ public_code="$(
     --header "Origin: ${base_url}" \
     --header 'Content-Type: application/json' \
     --data-binary '{"prompt":"Service smoke test"}' \
-    "${base_url}/api/avr/ai/generate"
+    "${base_url}/api/avr/ai/respond"
 )"
 [ "${public_code}" = "503" ]
 grep -q '"code":"api_key_not_configured"' "${public_file}"

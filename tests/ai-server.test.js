@@ -231,7 +231,7 @@ test("enforces both per-client and daily generation limits", () => {
   assert.equal(daily.code, "daily_limit_reached");
 });
 
-test("handles an AI generation response through the HTTP boundary", async (t) => {
+test("handles a conversational AI response through the HTTP boundary", async (t) => {
   const aiService = {
     authorizeAccessToken(token) {
       return token === "";
@@ -246,9 +246,13 @@ test("handles an AI generation response through the HTTP boundary", async (t) =>
         rules: { packageId: "rules-v1" },
       };
     },
-    async generate(body) {
-      assert.equal(body.prompt, "Blink");
-      return { ok: true, project: { id: "generated-1" } };
+    async respond(body) {
+      assert.equal(body.prompt, "What is TCA0?");
+      return {
+        ok: true,
+        kind: "answer",
+        message: "TCA0 is a 16-bit timer/counter.",
+      };
     },
   };
   const server = createAiHttpServer({
@@ -261,7 +265,7 @@ test("handles an AI generation response through the HTTP boundary", async (t) =>
 
   const response = await new Promise((resolve, reject) => {
     const request = http.request(
-      `${baseUrl}/api/avr/ai/generate`,
+      `${baseUrl}/api/avr/ai/respond`,
       {
         method: "POST",
         headers: {
@@ -272,13 +276,14 @@ test("handles an AI generation response through the HTTP boundary", async (t) =>
       resolve
     );
     request.on("error", reject);
-    request.end(JSON.stringify({ prompt: "Blink" }));
+    request.end(JSON.stringify({ prompt: "What is TCA0?" }));
   });
   const chunks = [];
   for await (const chunk of response) chunks.push(chunk);
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 
   assert.equal(response.statusCode, 200);
-  assert.equal(body.project.id, "generated-1");
+  assert.equal(body.kind, "answer");
+  assert.equal(body.message, "TCA0 is a 16-bit timer/counter.");
   assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
 });

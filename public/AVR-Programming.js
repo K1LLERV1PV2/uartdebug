@@ -78,7 +78,9 @@
   let documentationEditMode = false;
   let documentationEditSaveTimer = null;
   let projectPaneMode = "documentation";
-  let projectAiGenerationInFlight = false;
+  const PROJECT_AI_MAX_CONVERSATION_MESSAGES = 12;
+  const projectAiConversation = [];
+  let projectAiRequestInFlight = false;
   let workspaceResizeFrame = null;
   let workspaceResizeObserver = null;
   let watermarkFitFrame = null;
@@ -4283,7 +4285,7 @@
   }
 
   function setProjectAiFormBusy(busy) {
-    projectAiGenerationInFlight = !!busy;
+    projectAiRequestInFlight = !!busy;
     const form = $("projectAiForm");
     if (!form) return;
     for (const control of form.elements) {
@@ -4329,6 +4331,12 @@
           navigator.language ||
           "en"
       ),
+      conversation: projectAiConversation
+        .slice(-PROJECT_AI_MAX_CONVERSATION_MESSAGES)
+        .map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
     };
     if (
       currentProject.id ||
@@ -4339,6 +4347,16 @@
       payload.currentProject = currentProject;
     }
     return payload;
+  }
+
+  function rememberProjectAiExchange(userMessage, assistantMessage) {
+    projectAiConversation.push(
+      { role: "user", content: String(userMessage || "").trim() },
+      { role: "assistant", content: String(assistantMessage || "").trim() }
+    );
+    const excess =
+      projectAiConversation.length - PROJECT_AI_MAX_CONVERSATION_MESSAGES;
+    if (excess > 0) projectAiConversation.splice(0, excess);
   }
 
   function normalizeGeneratedAiProject(project) {
@@ -4393,7 +4411,7 @@
   }
 
   async function refreshProjectAiApiStatus() {
-    if (projectAiGenerationInFlight) return;
+    if (projectAiRequestInFlight) return;
     setProjectAiStatus("Checking API", "busy");
 
     try {
@@ -4438,7 +4456,7 @@
 
   async function handleProjectAiSubmit(event) {
     event.preventDefault();
-    if (projectAiGenerationInFlight) return;
+    if (projectAiRequestInFlight) return;
 
     const prompt = $("projectAiPrompt");
     const request = prompt?.value?.trim() || "";
@@ -4449,10 +4467,10 @@
 
     appendProjectAiMessage("user", request);
     setProjectAiFormBusy(true);
-    setProjectAiStatus("Generating project", "busy");
+    setProjectAiStatus("Thinking", "busy");
 
     try {
-      const response = await fetch("/api/avr/ai/generate", {
+      const response = await fetch("/api/avr/ai/respond", {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -4485,21 +4503,40 @@
         return;
       }
 
+      if (data.kind === "answer") {
+        const answer = String(data.message || "").trim();
+        if (!answer) {
+          throw new Error("The AI response did not include an answer.");
+        }
+        appendProjectAiMessage("assistant", answer);
+        rememberProjectAiExchange(request, answer);
+        setProjectAiStatus("Ready", "ready");
+        if (prompt) prompt.value = "";
+        return;
+      }
+
+      if (data.kind !== "project" && !data.project) {
+        throw new Error("The AI response did not include an answer or project.");
+      }
       const definition = normalizeGeneratedAiProject(data.project);
       const installed = await window.UartDebugAvrMiniProjects.install(definition, {
         origin: "ai",
       });
+      const projectMessage =
+        String(data.message || "").trim() ||
+        "The generated source and human guide were installed as local editable copies. Compile and review the draft before flashing it. Use the logo button to return to the guide.";
       appendProjectAiMessage(
         "assistant",
-        "The generated source and human guide were installed as local editable copies. Compile and review the draft before flashing it. Use the logo button to return to the guide.",
+        projectMessage,
         installed?.displayName || definition.displayName
       );
+      rememberProjectAiExchange(request, projectMessage);
       setProjectAiStatus("Draft installed", "ready");
       if (prompt) prompt.value = "";
     } catch (error) {
       const message = error?.message || "The AI request could not be completed.";
       appendProjectAiMessage("system", message);
-      setProjectAiStatus("Generation failed", "error");
+      setProjectAiStatus("Request failed", "error");
     } finally {
       setProjectAiFormBusy(false);
     }
@@ -5444,6 +5481,7 @@
       const documentationEditor = $("projectDocumentationEditor");
       const projectAiToggle = $("projectAiToggle");
       const projectAiForm = $("projectAiForm");
+      const projectAiPrompt = $("projectAiPrompt");
 
     initCustomSelect(mcuSelect);
     initCustomSelect(documentationLocaleSelect);
@@ -5538,6 +5576,19 @@
       });
     projectAiForm &&
       projectAiForm.addEventListener("submit", handleProjectAiSubmit);
+    projectAiPrompt &&
+      projectAiPrompt.addEventListener("keydown", (event) => {
+        if (
+          event.key !== "Enter" ||
+          event.shiftKey ||
+          event.isComposing ||
+          projectAiRequestInFlight
+        ) {
+          return;
+        }
+        event.preventDefault();
+        projectAiForm?.requestSubmit();
+      });
     documentationEditor &&
       documentationEditor.addEventListener("input", () => {
         saveDocumentationEditorValue();
