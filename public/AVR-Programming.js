@@ -730,6 +730,8 @@
 
   const BUILTIN_MINI_PROJECT_CATALOG_URL = "/avr-mini-projects/catalog.json";
   let builtInMiniProjectCatalogPromise = null;
+  let builtInMiniProjectCardsPromise = null;
+  let builtInMiniProjectCardsReady = false;
 
   async function loadBuiltInMiniProjectCatalog() {
     if (builtInMiniProjectCatalogPromise) {
@@ -788,6 +790,131 @@
     return response.text();
   }
 
+  function normalizeBuiltInMiniProjectLocale(value) {
+    return String(value || "").trim().replace(/_/g, "-").toLowerCase();
+  }
+
+  function getBuiltInMiniProjectDefaultGuide(descriptor) {
+    const guides = Array.isArray(descriptor?.guides)
+      ? descriptor.guides.filter(
+          (guide) => guide && typeof guide === "object" && guide.url
+        )
+      : [];
+    if (!guides.length) return null;
+
+    const defaultLocale = normalizeBuiltInMiniProjectLocale(
+      descriptor?.defaultLocale
+    );
+    if (!defaultLocale) return guides[0];
+
+    return (
+      guides.find(
+        (guide) =>
+          normalizeBuiltInMiniProjectLocale(guide.locale) === defaultLocale
+      ) || guides[0]
+    );
+  }
+
+  function createBuiltInMiniProjectCard(descriptor) {
+    const card = document.createElement("button");
+    card.className = "file-add-card file-template-card";
+    card.type = "button";
+    card.dataset.templateId = descriptor.id;
+    card.disabled = true;
+
+    const title = document.createElement("span");
+    title.className = "file-add-card-title";
+    title.textContent = String(descriptor.displayName || descriptor.id);
+    card.appendChild(title);
+
+    const copy = document.createElement("span");
+    copy.className = "file-add-card-copy";
+    copy.hidden = true;
+    card.appendChild(copy);
+
+    return { card, copy };
+  }
+
+  async function renderBuiltInMiniProjectCards() {
+    if (builtInMiniProjectCardsReady) return;
+    if (builtInMiniProjectCardsPromise) {
+      return builtInMiniProjectCardsPromise;
+    }
+
+    const grid = $("fileTemplateGrid");
+    if (!grid) return;
+
+    builtInMiniProjectCardsPromise = (async () => {
+      grid.setAttribute("aria-busy", "true");
+      const loading = document.createElement("span");
+      loading.textContent = "Loading mini-projects...";
+      grid.replaceChildren(loading);
+
+      try {
+        const catalog = await loadBuiltInMiniProjectCatalog();
+        const records = Array.from(catalog.values()).map((descriptor) => ({
+          descriptor,
+          ...createBuiltInMiniProjectCard(descriptor),
+        }));
+
+        if (!records.length) {
+          const empty = document.createElement("span");
+          empty.textContent = "No mini-projects are available.";
+          grid.replaceChildren(empty);
+          builtInMiniProjectCardsReady = true;
+          return;
+        }
+
+        grid.replaceChildren(...records.map((record) => record.card));
+        let descriptionsReady = true;
+
+        await Promise.all(
+          records.map(async ({ descriptor, card, copy }) => {
+            try {
+              const guide = getBuiltInMiniProjectDefaultGuide(descriptor);
+              if (!guide) {
+                throw new Error("The default guide is missing.");
+              }
+              const markdown = await fetchBuiltInMiniProjectText(
+                guide.url,
+                "Guide file"
+              );
+              const description =
+                miniProjectCore.extractShortProjectDescription(markdown);
+              if (!description) {
+                throw new Error(
+                  'The default guide has no "Short Project Description" section.'
+                );
+              }
+              copy.textContent = description;
+              copy.hidden = false;
+            } catch (error) {
+              descriptionsReady = false;
+              console.warn(
+                `Mini-project description could not be loaded for ${descriptor.id}:`,
+                error
+              );
+            } finally {
+              card.disabled = false;
+            }
+          })
+        );
+
+        builtInMiniProjectCardsReady = descriptionsReady;
+      } catch (error) {
+        const failure = document.createElement("span");
+        failure.textContent = "Mini-projects could not be loaded.";
+        grid.replaceChildren(failure);
+        console.warn("Mini-project catalog could not be rendered:", error);
+      } finally {
+        grid.removeAttribute("aria-busy");
+        builtInMiniProjectCardsPromise = null;
+      }
+    })();
+
+    return builtInMiniProjectCardsPromise;
+  }
+
   async function loadBuiltInMiniProjectDefinition(templateId) {
     const catalog = await loadBuiltInMiniProjectCatalog();
     const descriptor = catalog.get(String(templateId || ""));
@@ -807,13 +934,23 @@
         fetchBuiltInMiniProjectText(guide?.url, "Guide file")
       ),
     ]);
+    const defaultGuide = getBuiltInMiniProjectDefaultGuide(descriptor);
+    const defaultGuideIndex = defaultGuide
+      ? guideDescriptors.indexOf(defaultGuide)
+      : -1;
+    const summary =
+      defaultGuideIndex >= 0
+        ? miniProjectCore.extractShortProjectDescription(
+            guideContents[defaultGuideIndex]
+          )
+        : "";
 
     return {
       schemaVersion: 1,
       id: descriptor.id,
       displayName: descriptor.displayName || descriptor.title || descriptor.id,
       title: descriptor.title || descriptor.displayName || descriptor.id,
-      summary: descriptor.summary || "",
+      summary,
       version: descriptor.version ?? 1,
       defaultLocale: descriptor.defaultLocale || "",
       files: [
@@ -1597,6 +1734,7 @@
 
     closeFileContextMenu();
     modal.hidden = false;
+    void renderBuiltInMiniProjectCards();
 
     requestAnimationFrame(() => {
       const primaryAction = $("uploadExistingFileCard");
@@ -6055,6 +6193,7 @@
 
     setMoreOptionsExpanded(false);
     bindUI();
+    void renderBuiltInMiniProjectCards();
     setProjectPaneMode("documentation");
     initEditor();
 

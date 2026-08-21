@@ -764,6 +764,49 @@
     return pattern.test(line);
   }
 
+  function extractShortProjectDescription(markdown) {
+    const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+    const paragraph = [];
+    let collecting = false;
+    let fence = null;
+
+    for (const line of lines) {
+      if (fence) {
+        if (isClosingFence(line, fence)) fence = null;
+        continue;
+      }
+
+      const openingFence = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      if (openingFence) {
+        fence = {
+          character: openingFence[1][0],
+          length: openingFence[1].length,
+        };
+        continue;
+      }
+
+      if (!collecting) {
+        if (
+          /^ {0,3}##[ \t]+Short Project Description[ \t]*#*[ \t]*$/i.test(
+            line
+          )
+        ) {
+          collecting = true;
+        }
+        continue;
+      }
+
+      if (/^ {0,3}#{1,6}[ \t]+/.test(line)) break;
+      if (!line.trim()) {
+        if (paragraph.length) break;
+        continue;
+      }
+      paragraph.push(line.trim());
+    }
+
+    return paragraph.join(" ");
+  }
+
   return Object.freeze({
     SCHEMA_VERSION,
     ROLES,
@@ -775,5 +818,6 @@
     createDocumentationMarkerScanner,
     normalizeHeadingKey,
     extractMarkdownHeadings,
+    extractShortProjectDescription,
   });
 });

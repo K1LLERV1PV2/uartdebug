@@ -263,9 +263,13 @@ test("renames a mini-project display name without renaming its linked files", ()
   );
 });
 
-test("wires every built-in card to public files and a private AI reference", () => {
+test("renders every built-in card from its catalog and default guide", () => {
   const html = fs.readFileSync(
     path.join(__dirname, "../public/avr.html"),
+    "utf8"
+  );
+  const source = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.js"),
     "utf8"
   );
   const sw = fs.readFileSync(
@@ -284,19 +288,40 @@ test("wires every built-in card to public files and a private AI reference", () 
       "utf8"
     )
   );
+  const templateGridStart = html.indexOf('id="fileTemplateGrid"');
+  const templateGridEnd = html.indexOf("</div>", templateGridStart);
+  const templateGridMarkup = html.slice(templateGridStart, templateGridEnd);
+
+  assert.ok(templateGridStart >= 0);
+  assert.doesNotMatch(templateGridMarkup, /data-template-id|file-add-card-copy/);
+  assert.match(source, /function renderBuiltInMiniProjectCards\(\)/);
+  assert.match(
+    source,
+    /title\.textContent\s*=\s*String\(descriptor\.displayName\s*\|\|\s*descriptor\.id\)/
+  );
+  assert.match(
+    source,
+    /copy\.textContent\s*=\s*description/
+  );
+  assert.doesNotMatch(source, /copy\.innerHTML/);
+  assert.doesNotMatch(source, /summary:\s*descriptor\.summary/);
   assert.deepEqual(
     publicCatalog.projects.map((entry) => entry.id),
-    ["01_Minimum", "02_CPU_Clock", "03_Delay-Based_Blink"]
+    [
+      "01_Minimum",
+      "02_CPU_Clock",
+      "03_Delay-Based_Blink",
+      "04_Timer_Interrupt_Blink",
+      "05_UART_Basic_Transmission",
+      "06_UART_Basic_Receive",
+      "07_Printf_Redirect_USART0",
+      "08_Printf_Redirect_USART1",
+    ]
   );
 
   for (const project of publicCatalog.projects) {
     const privateReference = privateCatalog.projects.find(
       (entry) => entry.id === project.id
-    );
-    assert.equal(
-      (html.match(new RegExp(`data-template-id="${project.id}"`, "g")) || [])
-        .length,
-      1
     );
     assert.equal(project.aiSpecRef, undefined);
     assert.ok(privateReference, `missing private AI reference for ${project.id}`);
@@ -306,36 +331,76 @@ test("wires every built-in card to public files and a private AI reference", () 
       "../public",
       project.source.url.replace(/^\/+/, "")
     );
-    const guidePath = path.join(
-      __dirname,
-      "../public",
-      project.guides[0].url.replace(/^\/+/, "")
-    );
     const aiPath = path.join(
       __dirname,
       "../backend/ai/mini-projects",
       privateReference.file
     );
     assert.ok(fs.existsSync(sourcePath), sourcePath);
-    assert.ok(fs.existsSync(guidePath), guidePath);
     assert.ok(fs.existsSync(aiPath), aiPath);
+    const defaultGuide =
+      project.guides.find(
+        (guide) =>
+          String(guide.locale || "").toLowerCase() ===
+          String(project.defaultLocale || "").toLowerCase()
+      ) || project.guides[0];
+    const defaultGuidePath = path.join(
+      __dirname,
+      "../public",
+      defaultGuide.url.replace(/^\/+/, "")
+    );
+    const extractedDescription = core.extractShortProjectDescription(
+      fs.readFileSync(defaultGuidePath, "utf8")
+    );
+    assert.ok(
+      extractedDescription,
+      `${project.id}: missing Short Project Description in the default guide`
+    );
+    if (Object.hasOwn(project, "summary")) {
+      assert.equal(project.summary, extractedDescription);
+    }
     assert.equal(
       crypto.createHash("sha256").update(fs.readFileSync(aiPath)).digest("hex"),
       privateReference.sha256
     );
     assert.ok(sw.includes(project.source.url));
-    assert.ok(sw.includes(project.guides[0].url));
 
     const markers = extractDocumentationMarkers(
       fs.readFileSync(sourcePath, "utf8")
     );
-    const headings = new Set(
-      extractMarkdownHeadings(fs.readFileSync(guidePath, "utf8")).map(
-        (heading) => heading.key
-      )
-    );
-    for (const marker of markers) {
-      assert.ok(headings.has(marker.key), `${project.id}: ${marker.key}`);
+    for (const guide of project.guides) {
+      const guidePath = path.join(
+        __dirname,
+        "../public",
+        guide.url.replace(/^\/+/, "")
+      );
+      assert.ok(fs.existsSync(guidePath), guidePath);
+      assert.ok(sw.includes(guide.url), `${guide.url}: missing from service worker`);
+
+      const guideMarkdown = fs.readFileSync(guidePath, "utf8");
+      const headings = new Set(
+        extractMarkdownHeadings(guideMarkdown).map((heading) => heading.key)
+      );
+      for (const marker of markers) {
+        assert.ok(
+          headings.has(marker.key),
+          `${project.id}/${guide.locale}: ${marker.key}`
+        );
+      }
+
+      for (const image of guideMarkdown.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
+        const assetUrl = new URL(
+          image[1],
+          new URL(guide.assetBaseUrl || guide.url, "https://uartdebug.test")
+        ).pathname;
+        const assetPath = path.join(
+          __dirname,
+          "../public",
+          decodeURIComponent(assetUrl).replace(/^\/+/, "")
+        );
+        assert.ok(fs.existsSync(assetPath), assetPath);
+        assert.ok(sw.includes(assetUrl), `${assetUrl}: missing from service worker`);
+      }
     }
   }
 

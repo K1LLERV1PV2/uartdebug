@@ -172,7 +172,7 @@ test("exports the browser UMD global", () => {
     "utf8"
   );
   const context = {
-    window: {},
+    window: { UartDebugAvrMiniProjectCore: miniProjectCore },
     Uint8Array,
     Uint32Array,
     DataView,
@@ -220,6 +220,50 @@ test("supports stored entries as well as deflate", async () => {
   );
   assert.equal(parsed.files.source.content.includes("int main"), true);
   assert.equal(parsed.assets[0].byteLength, PNG_1X1.length);
+});
+
+test("parses localized help files and chooses English card copy by default", async () => {
+  const localized = validEntries();
+  localized[2] = {
+    ...localized[2],
+    name: "01_Minimum/01_Minimum_help(en)_1.2.3-d.md",
+  };
+  localized.splice(
+    3,
+    0,
+    {
+      name: "01_Minimum/01_Minimum_help(es)_1.2.3-d.md",
+      content: PROJECT_GUIDE.replace(
+        "A minimal AVR project.",
+        "Un proyecto AVR mínimo."
+      ),
+    },
+    {
+      name: "01_Minimum/01_Minimum_help(ru)_1.2.3-d.md",
+      content: PROJECT_GUIDE.replace(
+        "A minimal AVR project.",
+        "Минимальный проект AVR."
+      ),
+    }
+  );
+
+  const parsed = await archive.parseMiniProjectArchive(makeZip(localized));
+
+  assert.equal(parsed.defaultLocale, "en");
+  assert.equal(parsed.summary, "A minimal AVR project.");
+  assert.ok(Array.isArray(parsed.files.guide));
+  assert.deepEqual(
+    parsed.files.guide.map((guide) => guide.locale),
+    ["en", "es", "ru"]
+  );
+  assert.deepEqual(
+    parsed.files.guide.map((guide) => guide.label),
+    ["English", "Español", "Русский"]
+  );
+
+  const normalized = miniProjectCore.normalizeDefinition(parsed);
+  assert.equal(normalized.guides.length, 3);
+  assert.equal(normalized.files.guide.locale, "en");
 });
 
 test("rejects traversal, absolute paths, and case-insensitive duplicates", async () => {
@@ -320,7 +364,7 @@ test("verifies CRC-32 and raster image signatures", async () => {
   await expectCode(makeZip(badImage), "INVALID_IMAGE");
 });
 
-test("requires exactly one matching source, help, and AI file", async () => {
+test("requires one source, one or more matching guides, and one AI file", async () => {
   await expectCode(makeZip(validEntries().slice(0, -2)), "INVALID_PROJECT");
 
   const duplicateSource = validEntries();

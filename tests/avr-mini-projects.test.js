@@ -22,6 +22,39 @@ test("exports schema version and installs the browser UMD global", () => {
     context.window.UartDebugAvrMiniProjectCore.SCHEMA_VERSION,
     1
   );
+  assert.equal(
+    typeof context.window.UartDebugAvrMiniProjectCore
+      .extractShortProjectDescription,
+    "function"
+  );
+});
+
+test("extracts card copy only from the first paragraph under the exact H2", () => {
+  const markdown = [
+    "```md",
+    "## Short Project Description",
+    "Ignored fenced text.",
+    "```",
+    "",
+    "### Short Project Description",
+    "Ignored H3 text.",
+    "",
+    "## Short Project Description",
+    "",
+    "First line",
+    "continues here.",
+    "",
+    "A second paragraph is not card copy.",
+  ].join("\n");
+
+  assert.equal(
+    core.extractShortProjectDescription(markdown),
+    "First line continues here."
+  );
+  assert.equal(
+    core.extractShortProjectDescription("# Short Project Description\nWrong level."),
+    ""
+  );
 });
 
 test("normalizes a legacy one-file mini-project", () => {

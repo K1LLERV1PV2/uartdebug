@@ -69,6 +69,180 @@
           "assetBaseUrl": "/avr-mini-projects/03_Delay-Based_Blink/"
         }
       ]
+    },
+    {
+      "id": "04_Timer_Interrupt_Blink",
+      "displayName": "04_Timer_Interrupt_Blink",
+      "title": "04_Timer_Interrupt_Blink",
+      "version": "1.2.3-d",
+      "defaultLocale": "en",
+      "source": {
+        "name": "04_Timer_Interrupt_Blink_1.2.3-d.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/04_Timer_Interrupt_Blink/04_Timer_Interrupt_Blink_1.2.3-d.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "04_Timer_Interrupt_Blink_help(en)_1.2.3-d.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/04_Timer_Interrupt_Blink/04_Timer_Interrupt_Blink_help(en)_1.2.3-d.md",
+          "assetBaseUrl": "/avr-mini-projects/04_Timer_Interrupt_Blink/"
+        },
+        {
+          "locale": "es",
+          "label": "Español",
+          "name": "04_Timer_Interrupt_Blink_help(es)_1.2.3-d.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/04_Timer_Interrupt_Blink/04_Timer_Interrupt_Blink_help(es)_1.2.3-d.md",
+          "assetBaseUrl": "/avr-mini-projects/04_Timer_Interrupt_Blink/"
+        },
+        {
+          "locale": "ru",
+          "label": "Русский",
+          "name": "04_Timer_Interrupt_Blink_help(ru)_1.2.3-d.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/04_Timer_Interrupt_Blink/04_Timer_Interrupt_Blink_help(ru)_1.2.3-d.md",
+          "assetBaseUrl": "/avr-mini-projects/04_Timer_Interrupt_Blink/"
+        }
+      ]
+    },
+    {
+      "id": "05_UART_Basic_Transmission",
+      "displayName": "05_UART_Basic_Transmission",
+      "title": "05_UART_Basic_Transmission",
+      "version": "1.2.3-c",
+      "defaultLocale": "en",
+      "source": {
+        "name": "05_UART_Basic_Transmission_1.2.3-c.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/05_UART_Basic_Transmission/05_UART_Basic_Transmission_1.2.3-c.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "05_UART_Basic_Transmission_help(en)_1.2.3-c.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/05_UART_Basic_Transmission/05_UART_Basic_Transmission_help(en)_1.2.3-c.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        },
+        {
+          "locale": "es",
+          "label": "Español",
+          "name": "05_UART_Basic_Transmission_help(es)_1.2.3-c.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/05_UART_Basic_Transmission/05_UART_Basic_Transmission_help(es)_1.2.3-c.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        },
+        {
+          "locale": "ru",
+          "label": "Русский",
+          "name": "05_UART_Basic_Transmission_help(ru)_1.2.3-c.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/05_UART_Basic_Transmission/05_UART_Basic_Transmission_help(ru)_1.2.3-c.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        }
+      ]
+    },
+    {
+      "id": "06_UART_Basic_Receive",
+      "displayName": "06_UART_Basic_Receive",
+      "title": "06_UART_Basic_Receive",
+      "version": "1.2.3-a",
+      "defaultLocale": "en",
+      "source": {
+        "name": "06_UART_Basic_Receive_1.2.3-a.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/06_UART_Basic_Receive/06_UART_Basic_Receive_1.2.3-a.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "06_UART_Basic_Receive_help(en)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/06_UART_Basic_Receive/06_UART_Basic_Receive_help(en)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        },
+        {
+          "locale": "es",
+          "label": "Español",
+          "name": "06_UART_Basic_Receive_help(es)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/06_UART_Basic_Receive/06_UART_Basic_Receive_help(es)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        },
+        {
+          "locale": "ru",
+          "label": "Русский",
+          "name": "06_UART_Basic_Receive_help(ru)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/06_UART_Basic_Receive/06_UART_Basic_Receive_help(ru)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        }
+      ]
+    },
+    {
+      "id": "07_Printf_Redirect_USART0",
+      "displayName": "07_Printf_Redirect_USART0",
+      "title": "07_Printf_Redirect_USART0",
+      "version": "1.2.3-a",
+      "defaultLocale": "en",
+      "source": {
+        "name": "07_Printf_Redirect_USART0_1.2.3-a.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/07_Printf_Redirect_USART0/07_Printf_Redirect_USART0_1.2.3-a.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "07_Printf_Redirect_USART0_help(en)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/07_Printf_Redirect_USART0/07_Printf_Redirect_USART0_help(en)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        },
+        {
+          "locale": "ru",
+          "label": "Русский",
+          "name": "07_Printf_Redirect_USART0_help(ru)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/07_Printf_Redirect_USART0/07_Printf_Redirect_USART0_help(ru)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        }
+      ]
+    },
+    {
+      "id": "08_Printf_Redirect_USART1",
+      "displayName": "08_Printf_Redirect_USART1",
+      "title": "08_Printf_Redirect_USART1",
+      "version": "1.2.3-a",
+      "defaultLocale": "en",
+      "source": {
+        "name": "08_Printf_Redirect_USART1_1.2.3-a.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_1.2.3-a.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "08_Printf_Redirect_USART1_help(en)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_help(en)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        },
+        {
+          "locale": "ru",
+          "label": "Русский",
+          "name": "08_Printf_Redirect_USART1_help(ru)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_help(ru)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        }
+      ]
     }
   ]
 }

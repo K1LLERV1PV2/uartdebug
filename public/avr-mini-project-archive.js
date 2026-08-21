@@ -1,7 +1,11 @@
 (function (root, factory) {
   "use strict";
 
-  const archive = factory();
+  const miniProjectCore =
+    typeof module === "object" && module.exports
+      ? require("./avr-mini-projects.js")
+      : root?.UartDebugAvrMiniProjectCore;
+  const archive = factory(miniProjectCore);
 
   if (typeof module === "object" && module.exports) {
     module.exports = archive;
@@ -10,8 +14,15 @@
   if (root) {
     root.UartDebugAvrMiniProjectArchive = archive;
   }
-})(typeof window !== "undefined" ? window : null, function () {
+})(typeof window !== "undefined" ? window : null, function (miniProjectCore) {
   "use strict";
+
+  if (
+    !miniProjectCore ||
+    typeof miniProjectCore.extractShortProjectDescription !== "function"
+  ) {
+    throw new Error("AVR mini-project core must be loaded before ZIP support.");
+  }
 
   const SIGNATURES = Object.freeze({
     LOCAL_FILE: 0x04034b50,
@@ -590,13 +601,18 @@
       );
     }
     requireExactlyOne(classified.source, ".c source");
-    requireExactlyOne(classified.guide, "_help Markdown");
+    if (!classified.guide.length) {
+      fail(
+        "INVALID_PROJECT",
+        "Mini-project archive must contain at least one _help Markdown file."
+      );
+    }
     requireExactlyOne(classified.aiSpec, "_AI Markdown");
 
     const sourceEntry = classified.source[0];
-    const guideEntry = classified.guide[0];
+    const guideEntries = classified.guide;
     const aiEntry = classified.aiSpec[0];
-    for (const entry of [sourceEntry, guideEntry, aiEntry]) {
+    for (const entry of [sourceEntry, ...guideEntries, aiEntry]) {
       if (entry.baseName.length > 96) {
         fail(
           "INVALID_PROJECT",
@@ -605,7 +621,7 @@
       }
     }
     const coreDirectories = new Set(
-      [sourceEntry, guideEntry, aiEntry].map((entry) =>
+      [sourceEntry, ...guideEntries, aiEntry].map((entry) =>
         canonicalPathKey(dirname(entry.relativePath))
       )
     );
@@ -614,14 +630,22 @@
     }
 
     const sourceText = decodeProjectText(sourceEntry, limits);
-    const guideText = decodeProjectText(guideEntry, limits);
+    const decodedGuides = guideEntries.map((entry) => ({
+      entry,
+      content: decodeProjectText(entry, limits),
+      locale: extractGuideLocale(entry.baseName),
+    }));
     const aiText = decodeProjectText(aiEntry, limits);
     const sourceLogicalName = logicalProjectName(sourceEntry.baseName, "source");
-    const guideLogicalName = logicalProjectName(guideEntry.baseName, "guide");
-    const aiLogicalName = logicalProjectName(aiEntry.baseName, "aiSpec");
-    const logicalNames = [sourceLogicalName, guideLogicalName, aiLogicalName].map(
-      canonicalTextKey
+    const guideLogicalNames = guideEntries.map((entry) =>
+      logicalProjectName(entry.baseName, "guide")
     );
+    const aiLogicalName = logicalProjectName(aiEntry.baseName, "aiSpec");
+    const logicalNames = [
+      sourceLogicalName,
+      ...guideLogicalNames,
+      aiLogicalName,
+    ].map(canonicalTextKey);
 
     if (new Set(logicalNames).size !== 1) {
       fail(
@@ -630,18 +654,54 @@
       );
     }
 
+    const guideLocales = new Set();
+    for (const guide of decodedGuides) {
+      const key = guide.locale.toLowerCase();
+      if (guideLocales.has(key)) {
+        fail(
+          "INVALID_PROJECT",
+          `Mini-project archive has duplicate guide locale: ${guide.locale}.`
+        );
+      }
+      guideLocales.add(key);
+    }
+
     const assets = classified.assets
       .map((entry) => buildImageAsset(entry, limits))
       .sort((left, right) => left.path.localeCompare(right.path));
     const version = extractProjectVersion(sourceText);
+    const defaultLocale = guideLocales.has("en")
+      ? "en"
+      : decodedGuides[0].locale;
+    const defaultGuide =
+      decodedGuides.find((guide) => guide.locale === defaultLocale) ||
+      decodedGuides[0];
+    const summary = miniProjectCore.extractShortProjectDescription(
+      defaultGuide.content
+    );
+    if (!summary) {
+      fail(
+        "INVALID_PROJECT",
+        `Guide ${defaultGuide.entry.baseName} is missing a non-empty ## Short Project Description section.`
+      );
+    }
+    const guideFiles = decodedGuides.map((guide) => ({
+      role: "guide",
+      name: guide.entry.baseName,
+      content: guide.content,
+      mediaType: "text/markdown",
+      locale: guide.locale,
+      label: getLocaleLabel(guide.locale),
+      default: guide.locale === defaultLocale,
+    }));
 
     return {
       schemaVersion: 1,
       id: sourceLogicalName,
       title: sourceLogicalName,
-      summary: extractShortDescription(guideText),
+      summary,
       version,
-      defaultLocale: "en",
+      defaultLocale,
       files: {
         source: {
           role: "source",
@@ -649,15 +709,7 @@
           content: sourceText,
           mediaType: "text/x-c",
         },
-        guide: {
-          role: "guide",
-          name: guideEntry.baseName,
-          content: guideText,
-          mediaType: "text/markdown",
-          locale: "en",
-          label: "English",
-          default: true,
-        },
+        guide: guideFiles.length === 1 ? guideFiles[0] : guideFiles,
         aiSpec: {
           role: "aiSpec",
           name: aiEntry.baseName,
@@ -794,11 +846,39 @@
   function logicalProjectName(fileName, role) {
     let stem = fileName.replace(/\.[^.]+$/, "").replace(/\(\d+\)$/, "");
     stem = stem.replace(/[_-]\d+\.\d+\.\d+(?:-[a-z0-9]+)?$/i, "");
-    if (role === "guide") stem = stem.replace(/_help(?:[._-].*)?$/i, "");
+    if (role === "guide") {
+      stem = stem.replace(/_help(?:\([^)]+\))?(?:[._-].*)?$/i, "");
+    }
     if (role === "aiSpec") stem = stem.replace(/_ai(?:[._-].*)?$/i, "");
     stem = stem.trim();
     if (!stem) fail("INVALID_PROJECT", `Cannot determine project name from ${fileName}.`);
     return stem;
+  }
+
+  function extractGuideLocale(fileName) {
+    const match = /_help\(([A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8})*)\)/i.exec(
+      fileName
+    );
+    if (!match) return "en";
+    const locale = match[1].replace(/_/g, "-");
+    if (!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(locale)) {
+      fail("INVALID_PROJECT", `Invalid guide locale in file name: ${fileName}.`);
+    }
+    return locale
+      .split("-")
+      .map((part, index) =>
+        index === 0
+          ? part.toLowerCase()
+          : part.length === 2
+            ? part.toUpperCase()
+            : part
+      )
+      .join("-");
+  }
+
+  function getLocaleLabel(locale) {
+    const labels = { en: "English", es: "Español", ru: "Русский" };
+    return labels[locale.toLowerCase()] || locale;
   }
 
   function extractProjectVersion(sourceText) {
@@ -806,28 +886,6 @@
       sourceText
     );
     return match ? match[1] : 1;
-  }
-
-  function extractShortDescription(markdown) {
-    const lines = markdown.split("\n");
-    let collecting = false;
-    const paragraph = [];
-
-    for (const line of lines) {
-      if (!collecting) {
-        if (/^ {0,3}#{1,6}[ \t]+Short Project Description[ \t]*#*[ \t]*$/i.test(line)) {
-          collecting = true;
-        }
-        continue;
-      }
-      if (/^ {0,3}#{1,6}[ \t]+/.test(line)) break;
-      if (!line.trim()) {
-        if (paragraph.length) break;
-        continue;
-      }
-      paragraph.push(line.trim());
-    }
-    return paragraph.join(" ");
   }
 
   function requireExactlyOne(entries, label) {

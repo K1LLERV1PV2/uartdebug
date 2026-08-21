@@ -21,6 +21,41 @@
       "file": "03_Delay-Based_Blink/03_Delay-Based_Blink_AI_1.2.3-b.md",
       "mediaType": "text/markdown",
       "sha256": "48aa1815948ba006bcd4bd7e93e0e18d19f3c66b62ff1665af0918f23d554db6"
+    },
+    {
+      "id": "04_Timer_Interrupt_Blink",
+      "version": "1.2.3-d",
+      "file": "04_Timer_Interrupt_Blink/04_Timer_Interrupt_Blink_AI_1.2.3-d.md",
+      "mediaType": "text/markdown",
+      "sha256": "8fe5db8189dbddedc0647610a8a6f9fa681e8c7ff4b07b45335ef3aec4c8994b"
+    },
+    {
+      "id": "05_UART_Basic_Transmission",
+      "version": "1.2.3-c",
+      "file": "05_UART_Basic_Transmission/05_UART_Basic_Transmission_AI_1.2.3-c.md",
+      "mediaType": "text/markdown",
+      "sha256": "7b0b1c9c4890c9f183776ad7f8dba6b1a2765c1b04195ac802b6d697ce9a1f3c"
+    },
+    {
+      "id": "06_UART_Basic_Receive",
+      "version": "1.2.3-a",
+      "file": "06_UART_Basic_Receive/06_UART_Basic_Receive_AI_1.2.3-a.md",
+      "mediaType": "text/markdown",
+      "sha256": "327a549b2789d2b29c713830bff9067d7356f1ff94f5a6b8f0cc5463c85570d3"
+    },
+    {
+      "id": "07_Printf_Redirect_USART0",
+      "version": "1.2.3-a",
+      "file": "07_Printf_Redirect_USART0/07_Printf_Redirect_USART0_AI_1.2.3-a.md",
+      "mediaType": "text/markdown",
+      "sha256": "af80e492cf188f4a515e037b5a56be0c438d546913dcef3401f5304594f7c176"
+    },
+    {
+      "id": "08_Printf_Redirect_USART1",
+      "version": "1.2.3-a",
+      "file": "08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_AI_1.2.3-a.md",
+      "mediaType": "text/markdown",
+      "sha256": "3a34ce9197ea1159745653dd9d1a1b8c0264b2bca3fc87b5ec5092ae761573b1"
     }
   ]
 }
