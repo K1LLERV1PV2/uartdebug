@@ -24,9 +24,34 @@ sudo systemctl restart uartdebug-ai.service
 Never put the key in browser code, Git, shell history, or an `Environment=`
 line.
 
+## Local development
+
+The production unit uses a systemd credential, but local development can point
+to a protected key file outside the repository. Set these variables in the
+shell that starts the service:
+
+```text
+AI_ENABLED=1
+OPENAI_API_KEY_FILE=/absolute/path/to/openai-api-key
+ALLOWED_ORIGINS=http://localhost:8000
+```
+
+Then run:
+
+```sh
+npm run start:ai --prefix backend
+```
+
+The checked-in rule pack and AI-reference catalog are used by default, and
+generated drafts go to the operating system's temporary directory. Set
+`AI_RULE_PACK_ROOT` or `AI_DRAFTS_DIR` only when testing alternate locations.
+Starting the process without `AI_ENABLED=1` and a readable key file keeps the
+health and status endpoints available but disables assistant responses.
+
 Generation is public to visitors of the AVR page during the prototype stage.
 The OpenAI key remains server-only; the browser never receives it. Same-origin
-checks and the nginx and Node.js usage limits still apply.
+checks and technical request safeguards still apply. There is currently no
+per-IP request quota, conversation-message quota, or daily usage quota.
 
 The service also keeps a dormant random access credential in:
 
@@ -69,12 +94,18 @@ every package file. The foundation rules and three mini-project templates are
 included in the runtime prompt. `codex/AGENTS.md` stays maintenance-only and is
 never sent to the model.
 
-## Runtime limits
+## Runtime safeguards and retention
 
-The default service unit allows one concurrent generation, three attempts per
-IP per 30 minutes, and ten attempts per UTC day. The daily counter survives
-service restarts. The OpenAI Responses request uses Structured Outputs with
-`store: false`. User prompts and generated content are not written to logs.
-Only the private generated `_AI.md` file and a small non-secret manifest are
-stored in `/var/lib/uartdebug-ai/drafts`; drafts expire after 30 days and the
-default quota is 100 drafts.
+The production service unit allows one concurrent generation. The HTTP server
+also enforces a 384 KiB request-body ceiling, bounded individual fields, a model
+timeout, and an output-token ceiling. nginx keeps a connection-concurrency
+safeguard, but request-rate and daily quotas are currently disabled.
+
+The OpenAI Responses request uses Structured Outputs with `store: false`.
+Application logs contain request identifiers, status codes, error codes, and
+durations, not user prompts or generated content.
+
+For a create or update action, only the generated server-side `_AI.md` reference
+and a small non-secret manifest are stored in `/var/lib/uartdebug-ai/drafts`.
+With the checked-in service defaults, drafts expire after 30 days and the
+directory is capped at 100 drafts.

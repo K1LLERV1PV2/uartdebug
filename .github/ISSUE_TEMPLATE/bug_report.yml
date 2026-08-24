@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible problem in Uart Debug
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Remove secrets and private serial data before submitting.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - UART Terminal
+        - AVR Programming
+        - Mini-projects and guides
+        - AI assistant
+        - Compiler or deployment
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Problem
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Chrome 140
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and hardware
+      description: Include adapter and MCU details only when relevant.
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs, screenshots, or sample files
+      description: Redact credentials, private paths, and sensitive UART data.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched for an existing issue.
+          required: true
+        - label: I removed secrets and sensitive data from this report.
+          required: true

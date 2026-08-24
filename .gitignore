@@ -1,0 +1,39 @@
+# Dependencies and test output
+node_modules/
+coverage/
+.nyc_output/
+
+# Runtime output and temporary files
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+backend/ai/drafts/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+backend/secrets/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editor and OS state
+.idea/
+.obsidian/
+.vscode/*
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*~

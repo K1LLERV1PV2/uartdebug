@@ -1,148 +1,165 @@
-# Uartdebug — UART Terminal (Web)
+# Uart Debug
 
-A fast, modern UART terminal that runs **entirely in your browser** using the Web Serial API — no drivers or extra software to install.
-It features text and hex transmission, auto‑scrolling logs, log export, **oscilloscope‑style live plotting** (1‑byte / 2‑byte BE/LE, signed/unsigned), and a clean dark UI.
+Browser-based tools for working with UART connections and tinyAVR microcontrollers.
 
-> Works on Chromium‑based browsers (Chrome, Edge, Opera) over **HTTPS** or **localhost**.
+[Open Uart Debug](https://uartdebug.com) · [UART Terminal](https://uartdebug.com/uart) · [AVR Programming](https://uartdebug.com/avr) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
----
+Uart Debug combines two related tools in one installable web app:
 
-## Table of Contents
+- **UART Terminal** communicates directly with a serial adapter through the Web Serial API.
+- **AVR Programming** provides a browser editor, guided mini-projects, server-side XC8 compilation, and UPDI flashing. Its optional AI assistant can answer AVR questions and create or update mini-project drafts.
 
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [Quick Start](#quick-start)
-- [Usage](#usage)
-  - [Connect](#connect)
-  - [Transmit (TXD)](#transmit-txd)
-  - [Receive (RXD)](#receive-rxd)
-  - [Oscilloscope View](#oscilloscope-view)
-  - [Keyboard Shortcuts](#keyboard-shortcuts)
-- [Requirements & Browser Support](#requirements--browser-support)
-- [Troubleshooting](#troubleshooting)
-- [Project Structure](#project-structure)
-- [Security & Privacy](#security--privacy)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
-
----
+The repository is under active development. Hardware access requires a browser that implements Web Serial and a secure context (`https://` or `localhost`).
 
 ## Features
 
-- **One‑click connect** to any serial device supported by your OS.
-- **Baud rates**: 9600, 19200, 38400, 57600, 115200, 230400, 460800, **921600**.
-- **Friendly device names** for common USB‑to‑UART chips (CH340/341/343, CP210x, FT232, PL2303, Espressif, Arduino, etc.).
-- **TXD/RXD terminals**:
-  - ASCII and HEX input modes.
-  - Optional timestamps; auto‑scroll.
-  - **Save log** to a `.txt` file.
-- **Looped sending** with adjustable interval (100–10000 ms).
-- **Oscilloscope view**:
-  - Signed/Unsigned.
-  - **1 byte**, **2 byte (Big‑Endian / Little‑Endian)**.
-  - Live pause/play, clear graph, **reset zoom/pan**.
-- Fully client‑side. No server required.
+### UART Terminal
 
----
+- Connect to USB-to-UART adapters without a desktop terminal application.
+- Send and receive ASCII or hexadecimal data.
+- Configure baud rate, data bits, stop bits, and parity.
+- Repeat transmissions at a configurable interval.
+- Generate sine, triangle, and square sample streams.
+- View received 1-byte or 2-byte signed/unsigned values as a live plot.
+- Export TX/RX logs and captured graphs.
 
-## Quick Start
+### AVR Programming
 
-Just open **https://uartdebug.com** in a supported browser and launch **UART Terminal** from the home page.
+- Edit C source and related project files in a CodeMirror workspace.
+- Keep local working copies in the browser and organize files into groups.
+- Import individual source, guide, firmware, or Uart Debug mini-project ZIP files.
+- Browse localized, image-capable Markdown guides beside the editor.
+- Follow `//# Heading` through `//###### Heading` comment links from C code to matching guide sections.
+- Compile supported tinyAVR projects with Microchip XC8 on the compiler service.
+- Detect a supported chip and flash Intel HEX over UPDI from the browser.
+- Ask the AVR assistant ordinary questions, create a new mini-project, or update the currently open mini-project.
 
-> The app runs entirely in your browser via the Web Serial API. Uartdebug is served over **HTTPS**, so Web Serial permissions will work out of the box on Chromium‑based browsers (Chrome, Edge, Opera).
+## Browser and hardware requirements
 
-### Landing
+- A browser with the Web Serial API. Chromium-based desktop browsers are the primary supported environment.
+- HTTPS on a hosted installation, or `localhost` during development.
+- An OS driver for the selected USB-to-UART adapter, when the operating system requires one.
+- Suitable UART or UPDI wiring and target hardware for device operations.
+- Microchip XC8, the matching ATtiny Device Family Pack, and `avr-objcopy` on the compiler host. These tools are not bundled with this repository.
 
-![Landing](docs/screens/landing.png)
+Editing, guides, and imported files work without connected hardware. Compilation and AI features require their corresponding backend services.
 
-## Usage
+## How data is handled
 
-### Connect
+The old README described the entire project as client-only. That is true for serial communication, but not for every AVR feature:
 
-1. Click **Connect**.
-2. Choose your serial device from the browser’s port picker.
-3. Select **Baud rate** (default: 115200). Optional parameters are in **Settings** (gear icon).
-4. The status line turns **green** with the device name when connected.
+- UART and UPDI bytes travel directly between the browser and the serial port selected in the browser permission prompt.
+- AVR working copies and preferences are stored in browser `localStorage`.
+- Compiling sends the selected source and linked project files to the Uart Debug compiler service. The service builds in a temporary directory and removes it after the request.
+- Using the AI assistant sends the prompt, conversation, selected MCU, and current mini-project context to the Uart Debug AI service and then to the configured OpenAI API. The API request uses `store: false`.
+- When the assistant creates or updates a project, the default server configuration retains the generated AI specification as a draft for up to 30 days, with a maximum of 100 drafts. Source and human-guide copies are returned to the browser.
+- The OpenAI API key is a server-side systemd credential and is never sent to browser code.
 
-#### Disconnected State
+Do not put secrets in editor files, prompts, issues, pull requests, or repository configuration. See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
-![Disconnected](docs/screens/disconnected.png)
+## Architecture
 
-#### Connected State (friendly name shown)
+```mermaid
+flowchart LR
+  Browser[Browser UI] -->|Web Serial| Hardware[UART / UPDI hardware]
+  Browser -->|Static assets| Nginx[nginx]
+  Browser -->|/api/avr/compile| Nginx
+  Browser -->|/api/avr/ai/*| Nginx
+  Nginx --> Static[public/]
+  Nginx --> Compiler[compile-server.js :8082]
+  Compiler --> Toolchain[XC8 + DFP + avr-objcopy]
+  Nginx --> AI[ai-server.js :8083]
+  Rules[Versioned rules and AI references] --> AI
+  AI --> OpenAI[OpenAI Responses API]
+```
 
-![Connected](docs/screens/connected.png)
+The compiler and AI services bind to loopback by default. nginx is the public same-origin boundary and routes only the required API paths to them.
 
-### Transmit (TXD)
+## AVR mini-project format
 
-- Pick **ASCII** or **HEX** (left radio group under the TXD editor).
-- **ASCII**: type text and click **Send** (CR/LF handling per settings).
-- **HEX**: enter bytes like `05 B9 FF 8A` (two hex digits per byte, **space‑separated**).
-- **Loop sending**: click the circular arrows; set the interval (ms).
+A mini-project has three synchronized roles:
 
-#### Input Mode Switch (ASCII / HEX)
+1. **Source** — a `.c` file with code and minimal inline commentary.
+2. **Human guide** — one or more `_help...md` files, optionally differentiated by locale, plus optional raster images.
+3. **AI specification** — an `_AI_<version>.md` file used by the server when the assistant reasons about or derives projects.
 
-![ASCII vs HEX](docs/screens/ascii-hex.png)
+The public source and human guides live under [`public/avr-mini-projects`](public/avr-mini-projects). AI references live under [`backend/ai/mini-projects`](backend/ai/mini-projects) and are not served as static browser assets, although they remain visible in this public source repository.
 
-#### Loop Sending Control
+The two catalogs keep the browser and server views synchronized:
 
-![Loop sending](docs/screens/loop-sending.png)
+- [`public/avr-mini-projects/catalog.json`](public/avr-mini-projects/catalog.json) lists source files, localized guides, and asset locations.
+- [`backend/ai/mini-projects/catalog.json`](backend/ai/mini-projects/catalog.json) lists AI files and verifies them with SHA-256 hashes.
 
-### Receive (RXD)
+The first paragraph below the exact `## Short Project Description` heading in the default human guide becomes the Add file card description. New public mini-project assets must also be added to the service-worker app shell in [`public/sw.js`](public/sw.js).
 
-- The right terminal shows incoming data.
-- Use **Auto‑scroll** and **Show time** toggles.
-- **Save log** exports TX and RX streams to a text file.
+Built-in projects are copied into the browser workspace before editing; repository originals are not modified by the page.
 
-### Oscilloscope View
+## Local development
 
-- Switch RXD from **Text** to **Graphic** to enable live plotting.
-- Choose **Signed/Unsigned** and **1 byte / 2 byte (BE/LE)** to interpret the data.
-- Controls: **Pause/Play**, **Clear graph**, **Reset zoom**.
+Prerequisites: Git, Node.js 20 or newer, npm, Python 3, and a compatible browser.
 
-> Tip: In 2‑byte modes, values are parsed from consecutive byte pairs using the selected endianness.
+```sh
+git clone https://github.com/K1LLERV1PV2/uartdebug.git
+cd uartdebug
+npm ci --prefix backend
+npm test --prefix backend
+python -m http.server 8000 --directory public
+```
 
-#### Oscilloscope View (live plot)
+Open `http://localhost:8000`. A static server is enough for the UART terminal and client-side AVR workspace. Compilation and AI calls also need a same-origin reverse proxy to their local services.
 
-![Oscilloscope](docs/screens/oscilloscope.png)
+Start the compiler service after installing XC8 and `avr-objcopy`:
 
-### Keyboard Shortcuts
+```sh
+npm run start:compiler --prefix backend
+```
 
-- **Ctrl + Enter** — Send current input
-- **Ctrl + L** — Clear terminals
-- **Ctrl + S** — Save log
-- **Space** — Pause/Play graph (when active)
-- **R** — Reset graph zoom/pan
+It listens on `127.0.0.1:8082` by default. Tool paths can be overridden with `XC8_CC`, `XC8_DFP`, and `AVR_OBJCOPY`.
 
----
+The AI service is optional:
 
-## Requirements & Browser Support
+```sh
+npm run start:ai --prefix backend
+```
 
-- **Chromium‑based browser** with Web Serial API (Chrome, Edge, Opera).
-- **Secure context**: page must be served from **HTTPS** or **localhost**.
-- OS‑level drivers for your adapter (CH34x, CP210x, FT232, etc.) as needed.
+The command starts the HTTP service, but generation remains disabled until `AI_ENABLED=1` and `OPENAI_API_KEY_FILE` points to a protected key file outside the repository. Configure `ALLOWED_ORIGINS` for the local frontend origin as well. Local variables, rule packs, systemd credentials, and production setup are documented in [`backend/AI-SETUP.md`](backend/AI-SETUP.md). Never commit an API key or place it in public browser code.
 
-If **Connect** is disabled or the page cannot access serial ports, check that your browser supports Web Serial and that you’re on HTTPS/localhost.
+## Tests
 
----
+The test suite uses Node's built-in test runner:
 
-## Troubleshooting
+```sh
+npm test --prefix backend
+```
 
-- **No ports listed / “Connect” does nothing** — Use Chrome/Edge on HTTPS or localhost. Ensure the OS has a driver for your adapter.
-- **“Port already open” or “Permission denied”** — Close other apps using the same COM/tty port and reconnect.
-- **Garbled characters** — Baud rate or framing mismatch. Match the device’s settings.
-- **HEX input errors** — Use `AA 01 0F` style: two hex digits per byte, separated by spaces.
-- **Flat or noisy plot** — Verify **byte size** and **signed/unsigned** interpretation.
+Tests cover the AI HTTP boundary, rule packs, project actions, mini-project normalization and ZIP validation, documentation markers, catalog rendering, and AVR page wiring. Pull requests and pushes to `main` are checked by [GitHub Actions](.github/workflows/ci.yml).
 
----
+## Deployment
 
-## Security & Privacy
+The production workflow in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) deploys pushes to `main` into versioned server releases, validates health endpoints, and supports rollback. Deployment credentials stay in GitHub Actions secrets; the OpenAI key stays in a restricted systemd credential file on the host.
 
-- Runs **entirely in your browser**; data never leaves your machine.
-- Browser prompts you to **grant access** to a serial port; you can revoke permissions at any time.
+Production setup is intentionally not a copy-and-paste local quick start: it also requires nginx, systemd services, XC8/DFP installation, filesystem permissions, DNS, and TLS configuration.
 
----
+## Repository structure
 
-## Contributing
+| Path | Purpose |
+| --- | --- |
+| `public/` | Static PWA, UART terminal, AVR editor/programmer, mini-project source and guides, vendored browser libraries |
+| `backend/` | Compiler service, AI service, versioned rules, AI references, and deployment files |
+| `tests/` | Node test suite |
+| `.github/workflows/` | CI and production deployment workflows |
+| `.github/scripts/` | Build metadata tooling used by deployment |
 
-Issues and PRs are welcome. Please keep the UI consistent with the existing style and update documentation for new features.
+## Contributing and support
+
+Bug reports and focused pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before participating. Use GitHub Issues for reproducible bugs and feature proposals, and email [uartdebug@gmail.com](mailto:uartdebug@gmail.com) for support that should not be public.
+
+Security vulnerabilities must not be posted in a public issue; follow [SECURITY.md](SECURITY.md).
+
+## Third-party software
+
+The browser bundle includes vendored Chart.js and CodeMirror files. Their versions, upstream links, and license copies are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Those licenses apply only to the named third-party components.
+
+## Project license
+
+This repository does not currently declare an open-source license for Uart Debug's own code and content. Public visibility alone does not grant permission to use, modify, or redistribute that material. A project license should be added only after the copyright owner chooses the intended terms.

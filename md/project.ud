@@ -1,6 +1,0 @@
-// Comments can be placed anywhere.
-MyPORT USART
-    Number - USART1
-    Pins location - USART_LOCATION_DEFAULT
-
-"Hello World!" -> MyPORT

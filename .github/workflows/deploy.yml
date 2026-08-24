@@ -11,12 +11,25 @@ on:
         type: boolean
         default: false
       to_release:
-        description: "Rollback to a specific release tag, e.g. 20240810-153000"
+        description: "Rollback to a specific release directory, e.g. 20260824-153000-a1b2c3d"
         required: false
         type: string
 
+permissions:
+  contents: read
+
+concurrency:
+  group: uartdebug-production
+  cancel-in-progress: false
+
 jobs:
+  validate:
+    if: ${{ !inputs.rollback }}
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: validate
+    if: ${{ always() && (inputs.rollback || needs.validate.result == 'success') }}
     runs-on: ubuntu-latest
     env:
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN || '' }}
@@ -24,17 +37,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Debug SSH connectivity (temporary)
-        run: |
-          set -euo pipefail
-          KEY_FILE="$(mktemp)"
-          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > "$KEY_FILE"
-          chmod 600 "$KEY_FILE"
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-              -i "$KEY_FILE" -p "${{ secrets.SSH_PORT || 22 }}" \
-              "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" 'whoami && hostname'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Stamp frontend service worker build id
         if: ${{ (hashFiles('public/**') != '') && (!inputs.rollback) }}
@@ -44,13 +47,14 @@ jobs:
 
       - name: Upload public/ if exists and not rollback
         if: ${{ (hashFiles('public/**') != '') && (!inputs.rollback) }}
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
           source: "public"
           target: "/tmp/deploy/${{ github.sha }}/public"
           strip_components: 1
@@ -58,13 +62,14 @@ jobs:
 
       - name: Upload backend/ if exists and not rollback
         if: ${{ (hashFiles('backend/**') != '') && (!inputs.rollback) }}
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
           source: "backend"
           target: "/tmp/deploy/${{ github.sha }}/backend"
           strip_components: 1
@@ -72,26 +77,32 @@ jobs:
 
       - name: Upload python/ if exists and not rollback
         if: ${{ (hashFiles('python/**') != '') && (!inputs.rollback) }}
-        uses: appleboy/scp-action@v0.1.7
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
           source: "python"
           target: "/tmp/deploy/${{ github.sha }}/python"
           strip_components: 1
           rm: true
 
       - name: Run remote deploy / rollback
-        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_ROLLBACK: ${{ inputs.rollback && '1' || '' }}
+          DEPLOY_TO_RELEASE: ${{ inputs.to_release || '' }}
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          envs: DEPLOY_ROLLBACK,DEPLOY_TO_RELEASE
           script: |
             set -euo pipefail
 
@@ -292,8 +303,16 @@ jobs:
             }
 
             KEEP="${{ secrets.RELEASES_KEEP || '10' }}"
-            ROLLBACK="${{ inputs.rollback && '1' || '' }}"
-            TO_RELEASE="${{ inputs.to_release || '' }}"
+            ROLLBACK="${DEPLOY_ROLLBACK:-}"
+            TO_RELEASE="${DEPLOY_TO_RELEASE:-}"
+
+            if [ -n "${TO_RELEASE}" ]; then
+              if ! printf '%s\n' "${TO_RELEASE}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$' ||
+                printf '%s\n' "${TO_RELEASE}" | grep -q '\.\.'; then
+                echo "Invalid release name"
+                exit 1
+              fi
+            fi
 
             sudo mkdir -p "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
             sudo chown -R "$USER":"$USER" "${ROOT}" "${RLS}" "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
@@ -383,6 +402,9 @@ jobs:
                 mkdir -p "$BE_NEW"
                 rsync -a --delete "$BE_SRC"/ "$BE_NEW"/
                 printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$BE_NEW/RELEASE.txt"
+                if [ -f "${BE_NEW}/package.json" ]; then
+                  npm ci --prefix "${BE_NEW}" --omit=dev --ignore-scripts
+                fi
                 ln -sfn "$BE_NEW" "$BE_DIR"
               else
                 echo "No backend artifacts at $BE_SRC (skip)"
@@ -404,10 +426,6 @@ jobs:
             fi
 
             if [ -d "${BE_DIR}" ]; then
-              if [ -f "${BE_DIR}/package.json" ]; then
-                cd "${BE_DIR}"
-                npm ci --omit=dev || npm install --omit=dev
-              fi
               resolve_backend_tools
               if [ -z "${ROLLBACK}" ] && [ -f "${BE_DIR}/compile-server.js" ]; then
                 resolve_expected_compile_server_version
@@ -627,13 +645,14 @@ jobs:
 
       - name: Cleanup temp on server
         if: ${{ always() && !inputs.rollback }}
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
           script: |
             rm -rf "/tmp/deploy/${{ github.sha }}" || true
 

@@ -1,0 +1,21 @@
+{
+  "name": "uartdebug-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Compiler and AVR AI services for Uart Debug",
+  "type": "commonjs",
+  "main": "compile-server.js",
+  "scripts": {
+    "start": "node compile-server.js",
+    "start:compiler": "node compile-server.js",
+    "start:ai": "node ai-server.js",
+    "test": "node --test ../tests/*.test.js",
+    "check": "node --check compile-server.js && node --check ai-server.js && node --check avr-ai-service.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "express": "4.22.2"
+  }
+}
