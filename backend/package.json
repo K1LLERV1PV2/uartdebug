@@ -2,6 +2,7 @@
   "name": "uartdebug-backend",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Compiler and AVR AI services for Uart Debug",
   "type": "commonjs",
   "main": "compile-server.js",
