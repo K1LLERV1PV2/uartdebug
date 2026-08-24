@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260821-ai-chat-v1";
+const CACHE_NAME = "uartdebug-shell-20260824-ai-project-actions-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -47,6 +47,12 @@ const APP_SHELL_ASSETS = [
   "/avr-mini-projects/08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_1.2.3-a.c",
   "/avr-mini-projects/08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_help(en)_1.2.3-a.md",
   "/avr-mini-projects/08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_help(ru)_1.2.3-a.md",
+  "/avr-mini-projects/09_UART0_Interrupt_Transmission/09_UART0_Interrupt_Transmission_1.2.3-a.c",
+  "/avr-mini-projects/09_UART0_Interrupt_Transmission/09_UART0_Interrupt_Transmission_help(en)_1.2.3-a.md",
+  "/avr-mini-projects/09_UART0_Interrupt_Transmission/09_UART0_Interrupt_Transmission_help(ru)_1.2.3-a.md",
+  "/avr-mini-projects/10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_1.2.3-a.c",
+  "/avr-mini-projects/10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_help(en)_1.2.3-a.md",
+  "/avr-mini-projects/10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_help(ru)_1.2.3-a.md",
   "/AVR-Programming.js",
   "/updi-test.js",
   "/updi-test.css",

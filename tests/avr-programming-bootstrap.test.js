@@ -50,6 +50,7 @@ test("exposes the mini-project bridge before DOMContentLoaded", () => {
   assert.ok(bridge);
   assert.equal(bridge.schemaVersion, core.SCHEMA_VERSION);
   assert.equal(typeof bridge.install, "function");
+  assert.equal(typeof bridge.updateInstance, "function");
   assert.equal(typeof bridge.renameInstance, "function");
   assert.equal(typeof bridge.ready?.then, "function");
   assert.equal(typeof windowListeners.get(bridge.importEvent), "function");
@@ -131,19 +132,33 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.match(html, /id="projectAiForm"/);
   assert.doesNotMatch(html, /id="projectAiAccessToken"/);
   assert.doesNotMatch(html, /id="projectAiClearBtn"/);
+  assert.doesNotMatch(html, /project-ai-status-label/);
+  assert.doesNotMatch(html, /id="projectAiStatus"/);
   assert.doesNotMatch(html, /Describe the mini-project you need/);
-  assert.match(source, /fetch\("\/api\/avr\/ai\/status"/);
+  assert.doesNotMatch(source, /fetch\("\/api\/avr\/ai\/status"/);
   assert.match(source, /fetch\("\/api\/avr\/ai\/respond"/);
   assert.match(source, /data\.kind === "answer"/);
   assert.match(source, /rememberProjectAiExchange\(request, answer\)/);
+  assert.match(source, /appendProjectAiThinking\(\)/);
+  assert.match(source, /removeProjectAiThinking\(thinkingIndicator\)/);
   assert.match(source, /data\.kind !== "project" && !data\.project/);
+  assert.match(source, /operation === "update"/);
+  assert.match(source, /responseTarget !== expectedTarget/);
+  assert.match(source, /assertProjectAiUpdateIsFresh\(requestPayload\)/);
+  assert.match(source, /Newer local edits were not overwritten/);
+  assert.match(
+    source,
+    /UartDebugAvrMiniProjects\.updateInstance\([\s\S]*?expectedTarget/
+  );
   assert.match(source, /projectAiForm\?\.requestSubmit\(\)/);
   assert.match(source, /"API key is not configured"/);
   assert.doesNotMatch(source, /"X-UartDebug-AI-Token"/);
   assert.doesNotMatch(source, /PROJECT_AI_ACCESS_STORAGE_KEY/);
   assert.doesNotMatch(source, /readProjectAiAccessToken/);
   assert.doesNotMatch(source, /clearProjectAiHistory/);
-  assert.match(source, /typeof publicProject\?\.aiSpecRef\?\.id === "string"/);
+  assert.match(source, /typeof publicProject\.aiSpecRef\?\.id === "string"/);
+  assert.doesNotMatch(source, /PROJECT_AI_MAX_CONVERSATION_MESSAGES/);
+  assert.doesNotMatch(source, /projectAiConversation\.slice\(/);
   assert.doesNotMatch(
     source,
     /cloneJsonMetadata\(publicProject\.aiSpecRef/
@@ -158,7 +173,7 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   );
   assert.match(
     source,
-    /window\.UartDebugAvrMiniProjects\.install\(definition/
+    /window\.UartDebugAvrMiniProjects\.install\(\s*definition/
   );
   assert.match(
     source,
@@ -169,6 +184,40 @@ test("wires the project AI pane to the AVR AI API contract", () => {
     /placeholder="Ask a question or request an AVR mini-project"/
   );
   assert.match(html, />\s*Send\s*<\/button>/);
+});
+
+test("keeps only technical AI concurrency safeguards", () => {
+  const serverSource = fs.readFileSync(
+    path.join(__dirname, "../backend/ai-server.js"),
+    "utf8"
+  );
+  const serviceUnit = fs.readFileSync(
+    path.join(__dirname, "../backend/deploy/uartdebug-ai.service"),
+    "utf8"
+  );
+  const nginxLocation = fs.readFileSync(
+    path.join(__dirname, "../backend/deploy/nginx-avr-ai-location.conf"),
+    "utf8"
+  );
+  const nginxCleanup = fs.readFileSync(
+    path.join(__dirname, "../backend/deploy/remove-ai-request-limits.sh"),
+    "utf8"
+  );
+  const deployWorkflow = fs.readFileSync(
+    path.join(__dirname, "../.github/workflows/deploy.yml"),
+    "utf8"
+  );
+
+  assert.doesNotMatch(serverSource, /AI_(?:RATE|DAILY)_/);
+  assert.doesNotMatch(serviceUnit, /AI_(?:RATE|DAILY)_/);
+  assert.doesNotMatch(nginxLocation, /^\s*limit_req\s/m);
+  assert.match(nginxLocation, /^\s*limit_conn\s+uartdebug_conn_per_ip\s+2;/m);
+  assert.match(serverSource, /AI_MAX_CONCURRENT/);
+  assert.match(nginxCleanup, /zone=uartdebug_ai_per_ip/);
+  assert.match(
+    deployWorkflow,
+    /run_sudo \/bin\/bash[\s\\\n]+"\$\{BE_SRC\}\/deploy\/remove-ai-request-limits\.sh"/
+  );
 });
 
 test("gives Add file enough width and lets catalog text wrap", () => {
@@ -345,6 +394,8 @@ test("renders every built-in card from its catalog and default guide", () => {
       "06_UART_Basic_Receive",
       "07_Printf_Redirect_USART0",
       "08_Printf_Redirect_USART1",
+      "09_UART0_Interrupt_Transmission",
+      "10_UART1_Interrupt_Transmission",
     ]
   );
 

@@ -2,20 +2,15 @@
 
 const http = require("http");
 const crypto = require("crypto");
-const fs = require("fs");
-const path = require("path");
 const {
   AiServiceError,
   createAvrAiService,
 } = require("./avr-ai-service");
 
-const AI_SERVER_VERSION = "20260821-avr-ai-chat-v1";
+const AI_SERVER_VERSION = "20260824-avr-ai-project-actions-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 384 * 1024;
-const DEFAULT_WINDOW_MS = 15 * 60 * 1000;
-const DEFAULT_REQUESTS_PER_WINDOW = 5;
-const DEFAULT_DAILY_LIMIT = 50;
 const DEFAULT_MAX_CONCURRENT = 2;
 
 function createAiHttpServer(options = {}) {
@@ -35,24 +30,6 @@ function createAiHttpServer(options = {}) {
       .map((origin) => origin.trim())
       .filter(Boolean)
   );
-  const windowMs = readInteger(
-    environment.AI_RATE_WINDOW_MS,
-    1000,
-    24 * 60 * 60 * 1000,
-    DEFAULT_WINDOW_MS
-  );
-  const requestsPerWindow = readInteger(
-    environment.AI_RATE_REQUESTS,
-    1,
-    1000,
-    DEFAULT_REQUESTS_PER_WINDOW
-  );
-  const dailyLimit = readInteger(
-    environment.AI_DAILY_LIMIT,
-    1,
-    100000,
-    DEFAULT_DAILY_LIMIT
-  );
   const maxConcurrent = readInteger(
     environment.AI_MAX_CONCURRENT,
     1,
@@ -63,18 +40,6 @@ function createAiHttpServer(options = {}) {
     environment.AI_ALLOW_NO_ORIGIN,
     false
   );
-  const budgetFile =
-    options.budgetFile === false
-      ? ""
-      : String(
-          options.budgetFile ||
-            environment.AI_BUDGET_FILE ||
-            (environment.AI_DRAFTS_DIR
-              ? path.join(environment.AI_DRAFTS_DIR, "daily-budget.json")
-              : "")
-        ).trim();
-  const rateBuckets = new Map();
-  let dailyBucket = loadDailyBucket(budgetFile, now());
   let concurrentRequests = 0;
 
   const server = http.createServer(async (req, res) => {
@@ -239,37 +204,6 @@ function createAiHttpServer(options = {}) {
         });
       }
 
-      const clientKey = getClientKey(req);
-      const limitResult = takeRateLimit({
-        clientKey,
-        now: now(),
-        rateBuckets,
-        windowMs,
-        requestsPerWindow,
-        dailyBucket,
-        dailyLimit,
-      });
-      dailyBucket = limitResult.dailyBucket;
-      if (!limitResult.allowed) {
-        res.setHeader("Retry-After", String(limitResult.retryAfterSeconds));
-        return sendJson(res, 429, {
-          ok: false,
-          code: limitResult.code,
-          message: "AI request limit reached. Try again later.",
-          requestId,
-        });
-      }
-      try {
-        persistDailyBucket(budgetFile, dailyBucket);
-      } catch {
-        return sendJson(res, 503, {
-          ok: false,
-          code: "budget_store_unavailable",
-          message: "The AI usage budget cannot be updated.",
-          requestId,
-        });
-      }
-
       concurrentRequests += 1;
       try {
         const respond = aiService.respond || aiService.generate;
@@ -323,76 +257,6 @@ function createAiHttpServer(options = {}) {
   return server;
 }
 
-function takeRateLimit({
-  clientKey,
-  now,
-  rateBuckets,
-  windowMs,
-  requestsPerWindow,
-  dailyBucket,
-  dailyLimit,
-}) {
-  const dayKey = getUtcDayKey(now);
-  const currentDaily =
-    dailyBucket.key === dayKey ? dailyBucket : { key: dayKey, count: 0 };
-  if (currentDaily.count >= dailyLimit) {
-    return {
-      allowed: false,
-      code: "daily_limit_reached",
-      retryAfterSeconds: secondsUntilNextUtcDay(now),
-      dailyBucket: currentDaily,
-    };
-  }
-
-  const previous = rateBuckets.get(clientKey);
-  const bucket =
-    previous && now - previous.startedAt < windowMs
-      ? previous
-      : { startedAt: now, count: 0 };
-  if (bucket.count >= requestsPerWindow) {
-    return {
-      allowed: false,
-      code: "rate_limit_reached",
-      retryAfterSeconds: Math.max(
-        1,
-        Math.ceil((bucket.startedAt + windowMs - now) / 1000)
-      ),
-      dailyBucket: currentDaily,
-    };
-  }
-
-  bucket.count += 1;
-  currentDaily.count += 1;
-  rateBuckets.set(clientKey, bucket);
-  pruneRateBuckets(rateBuckets, now, windowMs);
-  return {
-    allowed: true,
-    dailyBucket: currentDaily,
-    retryAfterSeconds: 0,
-  };
-}
-
-function pruneRateBuckets(rateBuckets, now, windowMs) {
-  if (rateBuckets.size < 1000) return;
-  for (const [key, bucket] of rateBuckets) {
-    if (now - bucket.startedAt >= windowMs) rateBuckets.delete(key);
-  }
-}
-
-function getUtcDayKey(timestamp) {
-  return new Date(timestamp).toISOString().slice(0, 10);
-}
-
-function secondsUntilNextUtcDay(timestamp) {
-  const current = new Date(timestamp);
-  const next = Date.UTC(
-    current.getUTCFullYear(),
-    current.getUTCMonth(),
-    current.getUTCDate() + 1
-  );
-  return Math.max(1, Math.ceil((next - timestamp) / 1000));
-}
-
 function applySecurityHeaders(res, requestId) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
@@ -429,24 +293,6 @@ function parseRequestUrl(req) {
   } catch {
     return null;
   }
-}
-
-function getClientKey(req) {
-  const remote = String(req.socket.remoteAddress || "unknown");
-  const realIp = isLoopbackAddress(remote)
-    ? getFirstHeaderValue(req.headers["x-real-ip"])
-    : "";
-  const candidate = realIp || remote;
-  return candidate.replace(/[^A-Fa-f0-9:.,_-]/g, "").slice(0, 96) || "unknown";
-}
-
-function isLoopbackAddress(value) {
-  const address = String(value || "").toLowerCase();
-  return (
-    address === "127.0.0.1" ||
-    address === "::1" ||
-    address === "::ffff:127.0.0.1"
-  );
 }
 
 function getFirstHeaderValue(value) {
@@ -544,46 +390,6 @@ function readBoolean(value, fallback) {
   return /^(?:1|true|yes|on)$/i.test(String(value).trim());
 }
 
-function loadDailyBucket(budgetFile, timestamp) {
-  const fallback = { key: getUtcDayKey(timestamp), count: 0 };
-  if (!budgetFile) return fallback;
-  try {
-    const stored = JSON.parse(fs.readFileSync(budgetFile, "utf8"));
-    if (
-      stored?.key === fallback.key &&
-      Number.isInteger(stored.count) &&
-      stored.count >= 0
-    ) {
-      return { key: stored.key, count: stored.count };
-    }
-  } catch {}
-  return fallback;
-}
-
-function persistDailyBucket(budgetFile, dailyBucket) {
-  if (!budgetFile) return;
-  const directory = path.dirname(budgetFile);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const temporaryFile = `${budgetFile}.${crypto.randomUUID()}.tmp`;
-  try {
-    fs.writeFileSync(
-      temporaryFile,
-      `${JSON.stringify({
-        schemaVersion: 1,
-        key: dailyBucket.key,
-        count: dailyBucket.count,
-      })}\n`,
-      { encoding: "utf8", mode: 0o600, flag: "wx" }
-    );
-    fs.renameSync(temporaryFile, budgetFile);
-  } catch (error) {
-    try {
-      fs.rmSync(temporaryFile, { force: true });
-    } catch {}
-    throw error;
-  }
-}
-
 if (require.main === module) {
   const host = String(process.env.HOST || process.env.BIND_HOST || DEFAULT_HOST);
   const port = readInteger(process.env.PORT, 1, 65535, DEFAULT_PORT);
@@ -598,5 +404,4 @@ if (require.main === module) {
 module.exports = {
   AI_SERVER_VERSION,
   createAiHttpServer,
-  takeRateLimit,
 };

@@ -7,7 +7,6 @@ const test = require("node:test");
 const {
   AI_SERVER_VERSION,
   createAiHttpServer,
-  takeRateLimit,
 } = require("../backend/ai-server");
 
 function listen(server) {
@@ -66,7 +65,7 @@ test("serves safe AI status metadata and health from a separate server", async (
   assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
 });
 
-test("requires JSON and never sends a malformed request to the AI service", async (t) => {
+test("requires JSON and does not apply legacy request or daily quotas", async (t) => {
   let generateCalls = 0;
   const aiService = {
     authorizeAccessToken(token) {
@@ -88,7 +87,10 @@ test("requires JSON and never sends a malformed request to the AI service", asyn
     },
   };
   const server = createAiHttpServer({
-    environment: { AI_DAILY_LIMIT: "1" },
+    environment: {
+      AI_RATE_REQUESTS: "1",
+      AI_DAILY_LIMIT: "1",
+    },
     aiService,
     log: { info() {}, warn() {} },
   });
@@ -126,6 +128,17 @@ test("requires JSON and never sends a malformed request to the AI service", asyn
   });
   assert.equal(validJson.status, 200);
   assert.equal(generateCalls, 1);
+
+  const secondValidJson = await fetch(`${baseUrl}/api/avr/ai/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: baseUrl,
+    },
+    body: JSON.stringify({ prompt: "Blink again" }),
+  });
+  assert.equal(secondValidJson.status, 200);
+  assert.equal(generateCalls, 2);
 });
 
 test("supports opt-in owner access and returns 413 without resetting an oversized request", async (t) => {
@@ -175,60 +188,74 @@ test("supports opt-in owner access and returns 413 without resetting an oversize
   assert.equal((await oversized.json()).code, "body_too_large");
 });
 
-test("enforces both per-client and daily generation limits", () => {
-  const rateBuckets = new Map();
-  let dailyBucket = { key: "2026-07-23", count: 0 };
-  const base = Date.parse("2026-07-23T12:00:00.000Z");
+test("keeps the concurrency safeguard without limiting sequential requests", async (t) => {
+  let calls = 0;
+  let markFirstStarted;
+  let releaseFirst;
+  const firstStarted = new Promise((resolve) => {
+    markFirstStarted = resolve;
+  });
+  const aiService = {
+    authorizeAccessToken() {
+      return true;
+    },
+    async getStatus() {
+      return {
+        ok: true,
+        enabled: true,
+        configured: true,
+        accessRequired: false,
+        rules: { packageId: "rules-v1" },
+      };
+    },
+    async respond() {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise((resolve) => {
+          releaseFirst = resolve;
+          markFirstStarted();
+        });
+      }
+      return { ok: true, kind: "answer", message: "Ready" };
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {
+      AI_MAX_CONCURRENT: "1",
+      AI_RATE_REQUESTS: "1",
+      AI_DAILY_LIMIT: "1",
+    },
+    aiService,
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
 
-  for (let index = 0; index < 2; index += 1) {
-    const result = takeRateLimit({
-      clientKey: "client-a",
-      now: base,
-      rateBuckets,
-      windowMs: 60000,
-      requestsPerWindow: 2,
-      dailyBucket,
-      dailyLimit: 3,
+  const post = (prompt) =>
+    fetch(`${baseUrl}/api/avr/ai/respond`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: baseUrl,
+      },
+      body: JSON.stringify({ prompt }),
     });
-    assert.equal(result.allowed, true);
-    dailyBucket = result.dailyBucket;
+
+  const firstRequest = post("First");
+  await firstStarted;
+
+  try {
+    const concurrent = await post("Concurrent");
+    assert.equal(concurrent.status, 429);
+    assert.equal((await concurrent.json()).code, "ai_busy");
+  } finally {
+    releaseFirst();
   }
+  assert.equal((await firstRequest).status, 200);
 
-  const perClient = takeRateLimit({
-    clientKey: "client-a",
-    now: base,
-    rateBuckets,
-    windowMs: 60000,
-    requestsPerWindow: 2,
-    dailyBucket,
-    dailyLimit: 3,
-  });
-  assert.equal(perClient.allowed, false);
-  assert.equal(perClient.code, "rate_limit_reached");
-
-  const differentClient = takeRateLimit({
-    clientKey: "client-b",
-    now: base,
-    rateBuckets,
-    windowMs: 60000,
-    requestsPerWindow: 2,
-    dailyBucket,
-    dailyLimit: 3,
-  });
-  assert.equal(differentClient.allowed, true);
-  dailyBucket = differentClient.dailyBucket;
-
-  const daily = takeRateLimit({
-    clientKey: "client-c",
-    now: base,
-    rateBuckets,
-    windowMs: 60000,
-    requestsPerWindow: 2,
-    dailyBucket,
-    dailyLimit: 3,
-  });
-  assert.equal(daily.allowed, false);
-  assert.equal(daily.code, "daily_limit_reached");
+  const sequential = await post("Sequential");
+  assert.equal(sequential.status, 200);
+  assert.equal(calls, 2);
 });
 
 test("handles a conversational AI response through the HTTP boundary", async (t) => {
@@ -256,7 +283,7 @@ test("handles a conversational AI response through the HTTP boundary", async (t)
     },
   };
   const server = createAiHttpServer({
-    environment: { AI_RATE_REQUESTS: "10", AI_DAILY_LIMIT: "10" },
+    environment: {},
     aiService,
     log: { info() {}, warn() {} },
   });

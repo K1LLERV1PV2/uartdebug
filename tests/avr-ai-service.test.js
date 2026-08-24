@@ -50,6 +50,7 @@ function makeGeneratedBundle() {
     title: "Blink status LED",
     summary: "Blinks a status LED using a timer.",
     version: "1.0.0-d",
+    assistantMessage: "I created the requested mini-project.",
     source: {
       name: "BlinkStatus.c",
       content:
@@ -155,11 +156,15 @@ test("supports future opt-in access without requiring a token in public mode", a
   );
 });
 
-test("answers questions without creating or storing a mini-project", async (t) => {
+test("answers a Russian question in Russian and accepts more than 12 conversation messages", async (t) => {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "uartdebug-ai-chat-"));
   t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
   const draftRoot = path.join(tempRoot, "drafts");
   let capturedRequest;
+  const conversation = Array.from({ length: 16 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" : "assistant",
+    content: `Conversation message ${index + 1}`,
+  }));
   const service = createAvrAiService({
     environment: {
       AI_ENABLED: "1",
@@ -183,7 +188,7 @@ test("answers questions without creating or storing a mini-project", async (t) =
                 content: [
                   {
                     type: "output_text",
-                    text: "TCA0 can provide periodic timer interrupts.",
+                    text: "TCA0 может создавать периодические прерывания таймера.",
                   },
                 ],
               },
@@ -195,30 +200,37 @@ test("answers questions without creating or storing a mini-project", async (t) =
   });
 
   const result = await service.respond({
-    prompt: "What is TCA0?",
+    prompt: "Что такое TCA0?",
     mcu: "attiny1624",
     locale: "en",
-    conversation: [
-      { role: "user", content: "Which timer is available?" },
-      { role: "assistant", content: "TCA0 and TCB0 are available." },
-    ],
+    conversation,
   });
 
   assert.equal(result.kind, "answer");
-  assert.equal(result.message, "TCA0 can provide periodic timer interrupts.");
+  assert.equal(
+    result.message,
+    "TCA0 может создавать периодические прерывания таймера."
+  );
   assert.equal(result.project, undefined);
   assert.equal(capturedRequest.url, "https://api.openai.com/v1/responses");
   assert.equal(capturedRequest.body.tool_choice, "auto");
+  assert.equal(capturedRequest.body.tools.length, 1);
   assert.equal(capturedRequest.body.tools[0].name, "create_avr_mini_project");
   assert.equal(capturedRequest.body.tools[0].strict, true);
   assert.equal(capturedRequest.body.text, undefined);
-  assert.deepEqual(
-    JSON.parse(capturedRequest.body.input).conversation,
-    [
-      { role: "user", content: "Which timer is available?" },
-      { role: "assistant", content: "TCA0 and TCB0 are available." },
-    ]
+  assert.match(
+    capturedRequest.body.instructions,
+    /same natural language as the latest visitor task/i
   );
+  assert.match(
+    capturedRequest.body.instructions,
+    /guide locale does not override/i
+  );
+  const input = JSON.parse(capturedRequest.body.input);
+  assert.equal(input.responseLocale, "ru");
+  assert.equal(input.responseLanguage, "Russian");
+  assert.equal(input.humanGuideLocale, "en");
+  assert.deepEqual(input.conversation, conversation);
   await assert.rejects(fs.stat(draftRoot), { code: "ENOENT" });
 });
 
@@ -228,23 +240,37 @@ test("uses an explicit project tool call and stores only the private AI file", a
   t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
   const draftRoot = path.join(tempRoot, "drafts");
   const capturedRequests = [];
-  const responsePayload = {
-    output: [
-      {
-        type: "function_call",
-        name: "create_avr_mini_project",
-        call_id: "call-create-project",
-        arguments: JSON.stringify(makeGeneratedBundle()),
-      },
-    ],
-  };
+  const updateBundle = makeGeneratedBundle();
+  updateBundle.assistantMessage = "I updated the current mini-project.";
+  const responsePayloads = [
+    {
+      output: [
+        {
+          type: "function_call",
+          name: "create_avr_mini_project",
+          call_id: "call-create-project",
+          arguments: JSON.stringify(makeGeneratedBundle()),
+        },
+      ],
+    },
+    {
+      output: [
+        {
+          type: "function_call",
+          name: "update_current_avr_mini_project",
+          call_id: "call-update-project",
+          arguments: JSON.stringify(updateBundle),
+        },
+      ],
+    },
+  ];
   const fakeFetch = async (url, request) => {
     capturedRequests.push({ url, request, body: JSON.parse(request.body) });
     return {
       ok: true,
       status: 200,
       async json() {
-        return responsePayload;
+        return responsePayloads[capturedRequests.length - 1];
       },
     };
   };
@@ -287,6 +313,8 @@ test("uses an explicit project tool call and stores only the private AI file", a
     assertReferenceIncludedOnce(capturedRequest.body.instructions, projectId);
   }
   assert.equal(result.kind, "project");
+  assert.equal(result.operation, "create");
+  assert.equal(result.targetInstanceId, null);
   assert.match(result.message, /created/i);
   assert.equal(result.project.files.length, 2);
   assert.deepEqual(
@@ -310,18 +338,35 @@ test("uses an explicit project tool call and stores only the private AI file", a
   );
   assert.deepEqual(storedNames.sort(), ["BlinkStatus_AI.md", "manifest.json"]);
 
-  await service.respond({
+  const updated = await service.respond({
     prompt: "Change the timer interval.",
     mcu: "attiny1624",
     locale: "en",
     currentProject: {
+      instanceId: "installed-project-1",
       id: result.project.id,
       title: result.project.title,
+      displayName: "My status LED",
+      sourceName: result.project.files[0].name,
+      guideName: result.project.files[1].name,
+      guideLocale: result.project.files[1].locale,
       source: result.project.files[0].content,
       guide: result.project.files[1].content,
       aiSpecRef: result.project.aiSpecRef,
     },
   });
+  assert.equal(updated.kind, "project");
+  assert.equal(updated.operation, "update");
+  assert.equal(updated.targetInstanceId, "installed-project-1");
+  assert.match(updated.message, /updated/i);
+  assert.deepEqual(
+    capturedRequests[1].body.tools.map((tool) => tool.name),
+    ["create_avr_mini_project", "update_current_avr_mini_project"]
+  );
+  assert.match(
+    capturedRequests[1].body.instructions,
+    /keep the exact current source file name BlinkStatus\.c, guide file name BlinkStatus_help\.md, and guide locale en/i
+  );
   assert.match(
     capturedRequests[1].body.instructions,
     /BEGIN TRUSTED MINI-PROJECT AI REFERENCE draft:20260723-11111111/
@@ -343,6 +388,90 @@ test("uses an explicit project tool call and stores only the private AI file", a
     ),
     false
   );
+  assert.deepEqual(
+    JSON.parse(capturedRequests[1].body.input).currentProject,
+    {
+      instanceId: "installed-project-1",
+      id: result.project.id,
+      title: result.project.title,
+      displayName: "My status LED",
+      sourceName: result.project.files[0].name,
+      guideName: result.project.files[1].name,
+      guideLocale: result.project.files[1].locale,
+      source: result.project.files[0].content,
+      guide: result.project.files[1].content,
+    }
+  );
+});
+
+test("rejects update actions without a target and rejects renamed current-project files", async (t) => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "uartdebug-ai-update-")
+  );
+  t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  const draftRoot = path.join(tempRoot, "drafts");
+  const renamedBundle = makeGeneratedBundle();
+  renamedBundle.source.name = "RenamedBlinkStatus.c";
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    draftRoot,
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          output: [
+            {
+              type: "function_call",
+              name: "update_current_avr_mini_project",
+              arguments: JSON.stringify(renamedBundle),
+            },
+          ],
+        };
+      },
+    }),
+  });
+
+  await assert.rejects(
+    service.respond({
+      prompt: "Update the current project.",
+      mcu: "attiny1624",
+      locale: "en",
+    }),
+    (error) =>
+      error instanceof AiServiceError &&
+      error.code === "invalid_ai_response" &&
+      /without an editable current mini-project/i.test(error.message)
+  );
+
+  await assert.rejects(
+    service.respond({
+      prompt: "Update the current project.",
+      mcu: "attiny1624",
+      locale: "en",
+      currentProject: {
+        instanceId: "installed-project-2",
+        id: "BlinkStatus",
+        title: "Blink status LED",
+        displayName: "My blink",
+        sourceName: "BlinkStatus.c",
+        guideName: "BlinkStatus_help.md",
+        guideLocale: "en",
+        source: makeGeneratedBundle().source.content,
+        guide: makeGeneratedBundle().guide.content,
+      },
+    }),
+    (error) =>
+      error instanceof AiServiceError &&
+      error.code === "invalid_generated_project" &&
+      /source file name/i.test(error.message)
+  );
+  await assert.rejects(fs.stat(draftRoot), { code: "ENOENT" });
 });
 
 test("rejects a static AI reference whose content hash does not match its catalog", async (t) => {
@@ -563,16 +692,43 @@ test("parses REST Responses output and rejects a refusal", () => {
     }),
     { kind: "answer", message: "Plain AVR answer." }
   );
-  assert.equal(
-    parseAssistantResponse({
-      output: [
-        {
-          type: "function_call",
-          name: "create_avr_mini_project",
-          arguments: JSON.stringify(makeGeneratedBundle()),
-        },
-      ],
-    }).kind,
-    "project"
+  const created = parseAssistantResponse({
+    output: [
+      {
+        type: "function_call",
+        name: "create_avr_mini_project",
+        arguments: JSON.stringify(makeGeneratedBundle()),
+      },
+    ],
+  });
+  assert.equal(created.kind, "project");
+  assert.equal(created.operation, "create");
+
+  const updated = parseAssistantResponse({
+    output: [
+      {
+        type: "function_call",
+        name: "update_current_avr_mini_project",
+        arguments: JSON.stringify(makeGeneratedBundle()),
+      },
+    ],
+  });
+  assert.equal(updated.kind, "project");
+  assert.equal(updated.operation, "update");
+
+  assert.throws(
+    () =>
+      parseAssistantResponse({
+        output: [
+          {
+            type: "function_call",
+            name: "replace_every_project",
+            arguments: JSON.stringify(makeGeneratedBundle()),
+          },
+        ],
+      }),
+    (error) =>
+      error instanceof AiServiceError &&
+      error.code === "invalid_ai_response"
   );
 });

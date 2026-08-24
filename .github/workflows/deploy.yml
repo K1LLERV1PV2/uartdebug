@@ -348,9 +348,19 @@ jobs:
                   echo "Missing AI rule-pack installer in staged backend"
                   exit 1
                 }
+                [ -f "${BE_SRC}/deploy/remove-ai-request-limits.sh" ] || {
+                  echo "Missing AI request-limit cleanup in staged backend"
+                  exit 1
+                }
                 run_sudo /bin/bash \
                   "${BE_SRC}/deploy/install-ai-rule-pack.sh" \
                   "${BE_SRC}"
+                nginx_cleanup_backup="/var/backups/uartdebug-ai/$(date -u +%Y%m%dT%H%M%SZ)-request-limits"
+                run_sudo /bin/bash \
+                  "${BE_SRC}/deploy/remove-ai-request-limits.sh" \
+                  "/etc/nginx/conf.d/uartdebug-limits.conf" \
+                  "/etc/nginx/sites-available/uartdebug.com" \
+                  "${nginx_cleanup_backup}"
               fi
 
               NOW="$(date +%Y%m%d-%H%M%S)-${SHA:0:7}"

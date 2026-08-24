@@ -243,6 +243,66 @@
           "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
         }
       ]
+    },
+    {
+      "id": "09_UART0_Interrupt_Transmission",
+      "displayName": "09_UART0_Interrupt_Transmission",
+      "title": "09_UART0_Interrupt_Transmission",
+      "version": "1.2.3-a",
+      "defaultLocale": "en",
+      "source": {
+        "name": "09_UART0_Interrupt_Transmission_1.2.3-a.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/09_UART0_Interrupt_Transmission/09_UART0_Interrupt_Transmission_1.2.3-a.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "09_UART0_Interrupt_Transmission_help(en)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/09_UART0_Interrupt_Transmission/09_UART0_Interrupt_Transmission_help(en)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        },
+        {
+          "locale": "ru",
+          "label": "Русский",
+          "name": "09_UART0_Interrupt_Transmission_help(ru)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/09_UART0_Interrupt_Transmission/09_UART0_Interrupt_Transmission_help(ru)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        }
+      ]
+    },
+    {
+      "id": "10_UART1_Interrupt_Transmission",
+      "displayName": "10_UART1_Interrupt_Transmission",
+      "title": "10_UART1_Interrupt_Transmission",
+      "version": "1.2.3-a",
+      "defaultLocale": "en",
+      "source": {
+        "name": "10_UART1_Interrupt_Transmission_1.2.3-a.c",
+        "mediaType": "text/x-c",
+        "url": "/avr-mini-projects/10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_1.2.3-a.c"
+      },
+      "guides": [
+        {
+          "locale": "en",
+          "label": "English",
+          "name": "10_UART1_Interrupt_Transmission_help(en)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_help(en)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        },
+        {
+          "locale": "ru",
+          "label": "Русский",
+          "name": "10_UART1_Interrupt_Transmission_help(ru)_1.2.3-a.md",
+          "mediaType": "text/markdown",
+          "url": "/avr-mini-projects/10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_help(ru)_1.2.3-a.md",
+          "assetBaseUrl": "/avr-mini-projects/05_UART_Basic_Transmission/"
+        }
+      ]
     }
   ]
 }

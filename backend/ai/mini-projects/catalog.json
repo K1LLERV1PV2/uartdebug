@@ -56,6 +56,20 @@
       "file": "08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_AI_1.2.3-a.md",
       "mediaType": "text/markdown",
       "sha256": "3a34ce9197ea1159745653dd9d1a1b8c0264b2bca3fc87b5ec5092ae761573b1"
+    },
+    {
+      "id": "09_UART0_Interrupt_Transmission",
+      "version": "1.2.3-a",
+      "file": "09_UART0_Interrupt_Transmission/09_UART0_Interrupt_Transmission_AI_1.2.3-a.md",
+      "mediaType": "text/markdown",
+      "sha256": "e72576a6660257f5586af60d085c6c1c7ecc0554716c657cc13bd65dee82d0a3"
+    },
+    {
+      "id": "10_UART1_Interrupt_Transmission",
+      "version": "1.2.3-a",
+      "file": "10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_AI_1.2.3-a.md",
+      "mediaType": "text/markdown",
+      "sha256": "7e9ca6fd48f49ca851ed8b8e468e38e1bf36377fa858d233ca6d215ac559fe60"
     }
   ]
 }

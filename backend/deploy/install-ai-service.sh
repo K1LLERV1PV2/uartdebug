@@ -26,6 +26,7 @@ required=(
   "${stage}/deploy/uartdebug-ai.service"
   "${stage}/deploy/nginx-avr-ai-location.conf"
   "${stage}/deploy/install-ai-rule-pack.sh"
+  "${stage}/deploy/remove-ai-request-limits.sh"
 )
 for required_file in "${required[@]}"; do
   [ -f "${required_file}" ] || {
@@ -94,15 +95,9 @@ install -o root -g root -m 0644 \
   "${stage}/deploy/uartdebug-ai.service" \
   "${unit_file}"
 
-if ! grep -q "zone=uartdebug_ai_per_ip:" "${limits_file}"; then
-  limits_tmp="$(mktemp)"
-  cp "${limits_file}" "${limits_tmp}"
-  printf '%s\n' \
-    'limit_req_zone $binary_remote_addr zone=uartdebug_ai_per_ip:10m rate=10r/m;' \
-    >> "${limits_tmp}"
-  install -o root -g root -m 0644 "${limits_tmp}" "${limits_file}"
-  rm -f "${limits_tmp}"
-fi
+/bin/bash "${stage}/deploy/remove-ai-request-limits.sh" \
+  "${limits_file}" \
+  "${site_file}"
 
 if ! grep -q 'location \^~ /api/avr/ai/' "${site_file}"; then
   site_tmp="$(mktemp)"

@@ -78,7 +78,6 @@
   let documentationEditMode = false;
   let documentationEditSaveTimer = null;
   let projectPaneMode = "documentation";
-  const PROJECT_AI_MAX_CONVERSATION_MESSAGES = 12;
   const projectAiConversation = [];
   let projectAiRequestInFlight = false;
   let workspaceResizeFrame = null;
@@ -2039,6 +2038,135 @@
     }
   }
 
+  function updateMiniProjectInstance(
+    instanceId,
+    rawDefinition,
+    { origin = "ai" } = {}
+  ) {
+    const normalizedInstanceId = String(instanceId || "").trim();
+    const existingProject = miniProjects[normalizedInstanceId];
+    if (!existingProject) throw new Error("Mini-project was not found.");
+
+    const definition = miniProjectCore.normalizeDefinition(rawDefinition);
+    const sourceName = existingProject.files?.source;
+    if (!sourceName || !hasFile(sourceName)) {
+      throw new Error("The current mini-project source file was not found.");
+    }
+
+    const selectedLocale =
+      existingProject.selectedLocale || existingProject.defaultLocale || "";
+    const generatedGuide =
+      definition.guides.find((guide) => guide.locale === selectedLocale) ||
+      definition.guides.find(
+        (guide) => guide.locale === definition.defaultLocale
+      ) ||
+      definition.files.guide ||
+      definition.guides[0] ||
+      null;
+    const existingGuide =
+      existingProject.guides?.[generatedGuide?.locale] ||
+      existingProject.guides?.[selectedLocale] ||
+      existingProject.guides?.[existingProject.defaultLocale] ||
+      getMiniProjectGuideEntries(existingProject)[0] ||
+      null;
+
+    if (
+      !generatedGuide ||
+      !existingGuide?.fileName ||
+      !hasFile(existingGuide.fileName)
+    ) {
+      throw new Error("The current mini-project guide file was not found.");
+    }
+
+    const previousFiles = files;
+    const previousGroups = fileGroups;
+    const previousProjects = miniProjects;
+    const previousCurrent = current;
+    let selectionStarted = false;
+
+    if (editor && previousCurrent && hasFile(previousCurrent)) {
+      previousFiles[previousCurrent] = editor.getValue();
+    }
+
+    files = createDictionary(files);
+    fileGroups = createDictionary(cloneJsonMetadata(fileGroups, {}));
+    miniProjects = createDictionary(cloneJsonMetadata(miniProjects, {}));
+
+    try {
+      const project = miniProjects[normalizedInstanceId];
+      const guide =
+        project.guides?.[generatedGuide.locale] ||
+        project.guides?.[selectedLocale] ||
+        project.guides?.[project.defaultLocale] ||
+        Object.values(project.guides || {}).find(
+          (entry) => entry?.fileName === existingGuide.fileName
+        );
+      if (!guide?.fileName || !hasFile(guide.fileName)) {
+        throw new Error("The current mini-project guide file was not found.");
+      }
+
+      files[sourceName] = String(definition.files.source.content || "").replace(
+        /\r\n?/g,
+        "\n"
+      );
+      files[guide.fileName] = String(generatedGuide.content || "").replace(
+        /\r\n?/g,
+        "\n"
+      );
+
+      project.title = definition.title || project.title;
+      project.summary = definition.summary;
+      project.version = definition.version ?? project.version;
+      project.origin = project.origin || String(origin || "ai");
+      project.mediaTypes = project.mediaTypes || {};
+      project.mediaTypes.source =
+        definition.files.source.mediaType ||
+        project.mediaTypes.source ||
+        "text/x-c";
+      guide.label = guide.label || generatedGuide.label || guide.locale || "";
+      guide.mediaType =
+        generatedGuide.mediaType || guide.mediaType || "text/markdown";
+      if (generatedGuide.assetBaseUrl) {
+        guide.assetBaseUrl = generatedGuide.assetBaseUrl;
+      }
+      const generatedAssets = normalizeProjectAssets(generatedGuide.assets);
+      if (generatedAssets.length) guide.assets = generatedAssets;
+      project.aiSpecRef = cloneJsonMetadata(
+        definition.aiSpecRef,
+        cloneJsonMetadata(project.aiSpecRef, null)
+      );
+
+      selectionStarted = true;
+      selectFile(sourceName);
+      persistState({ throwOnError: true });
+      return getPublicMiniProjectInstance(normalizedInstanceId);
+    } catch (error) {
+      files = previousFiles;
+      fileGroups = previousGroups;
+      miniProjects = previousProjects;
+      current = previousCurrent;
+
+      if (selectionStarted && editor) {
+        editor.setOption("readOnly", previousCurrent ? false : "nocursor");
+        editor.setOption("mode", getEditorModeForFile(previousCurrent));
+        editor.setValue(
+          previousCurrent && hasFile(previousCurrent)
+            ? previousFiles[previousCurrent]
+            : ""
+        );
+      }
+
+      updateEditorFileWatermark(previousCurrent || "");
+      renderOutliner();
+      refreshDocumentationPane();
+      scheduleDocumentationMarkerRefresh();
+      try {
+        persistState();
+      } catch {}
+      throw error;
+    }
+  }
+
   function initMiniProjectBridge() {
     const bridge = Object.freeze({
       schemaVersion: miniProjectCore.SCHEMA_VERSION,
@@ -2064,6 +2192,31 @@
             new CustomEvent(MINI_PROJECT_INSTALLED_EVENT, {
               detail: {
                 ok: false,
+                error: error?.message || String(error),
+              },
+            })
+          );
+          throw error;
+        }
+      },
+      async updateInstance(instanceId, definition, options = {}) {
+        await miniProjectBridgeReady;
+        try {
+          const project = updateMiniProjectInstance(instanceId, definition, {
+            origin: options?.origin || "api",
+          });
+          window.dispatchEvent(
+            new CustomEvent(MINI_PROJECT_INSTALLED_EVENT, {
+              detail: { ok: true, operation: "update", project },
+            })
+          );
+          return project;
+        } catch (error) {
+          window.dispatchEvent(
+            new CustomEvent(MINI_PROJECT_INSTALLED_EVENT, {
+              detail: {
+                ok: false,
+                operation: "update",
                 error: error?.message || String(error),
               },
             })
@@ -4244,14 +4397,6 @@
     if (codeFence !== null || codeLines.length) flushCode();
   }
 
-  function setProjectAiStatus(message, state = "offline") {
-    const status = $("projectAiStatus");
-    if (!status) return;
-    status.dataset.state = state;
-    const label = status.querySelector(".project-ai-status-label");
-    if (label) label.textContent = String(message || "");
-  }
-
   function appendProjectAiMessage(kind, message, title = "") {
     const history = $("projectAiHistory");
     if (!history) return null;
@@ -4284,6 +4429,38 @@
     return article;
   }
 
+  function appendProjectAiThinking() {
+    const history = $("projectAiHistory");
+    if (!history) return null;
+
+    const article = document.createElement("article");
+    article.className = "project-ai-message is-assistant is-thinking";
+    article.dataset.aiTransient = "true";
+    article.setAttribute("role", "status");
+
+    const label = document.createElement("span");
+    label.className = "sr-only";
+    label.textContent = "AI assistant is thinking";
+
+    const dots = document.createElement("span");
+    dots.className = "project-ai-thinking-dots";
+    dots.setAttribute("aria-hidden", "true");
+    dots.append(
+      document.createElement("span"),
+      document.createElement("span"),
+      document.createElement("span")
+    );
+
+    article.append(label, dots);
+    history.appendChild(article);
+    history.scrollTop = history.scrollHeight;
+    return article;
+  }
+
+  function removeProjectAiThinking(indicator) {
+    indicator?.remove();
+  }
+
   function setProjectAiFormBusy(busy) {
     projectAiRequestInFlight = !!busy;
     const form = $("projectAiForm");
@@ -4302,25 +4479,41 @@
       ? getPublicMiniProjectInstance(linkedProject.instanceId)
       : null;
     const documentation = getDocumentationContext(current);
-    const currentProject = {
-      id: String(publicProject?.id || ""),
-      title: String(
-        publicProject?.displayName ||
-          publicProject?.title ||
-          (current ? getOutlinerFileLabel(current) : "")
-      ),
-      source:
-        current && isCFileName(current) ? getLiveFileContent(current) : "",
-      guide:
-        documentation.guideFile && hasFile(documentation.guideFile)
-          ? getLiveFileContent(documentation.guideFile)
-          : "",
-      aiSpecRef:
-        typeof publicProject?.aiSpecRef?.id === "string" &&
-        publicProject.aiSpecRef.id.trim()
-          ? { id: publicProject.aiSpecRef.id.trim() }
-          : null,
-    };
+    const sourceEntry = publicProject?.files?.find(
+      (file) => file.role === miniProjectCore.ROLES.SOURCE
+    );
+    const guideEntry = publicProject?.files?.find(
+      (file) =>
+        file.role === miniProjectCore.ROLES.GUIDE &&
+        file.name === documentation.guideFile
+    );
+    const currentProject = publicProject
+      ? {
+          instanceId: String(publicProject.instanceId || ""),
+          id: String(publicProject.id || ""),
+          title: String(publicProject.title || ""),
+          displayName: String(
+            publicProject.displayName || publicProject.title || ""
+          ),
+          sourceName: String(sourceEntry?.name || ""),
+          guideName: String(guideEntry?.name || documentation.guideFile || ""),
+          guideLocale: String(
+            guideEntry?.locale || publicProject.selectedLocale || ""
+          ),
+          source: sourceEntry?.name
+            ? getLiveFileContent(sourceEntry.name)
+            : "",
+          guide:
+            documentation.guideFile && hasFile(documentation.guideFile)
+              ? getLiveFileContent(documentation.guideFile)
+              : "",
+          aiSpecRef:
+            typeof publicProject.aiSpecRef?.id === "string" &&
+            publicProject.aiSpecRef.id.trim()
+              ? { id: publicProject.aiSpecRef.id.trim() }
+              : null,
+        }
+      : null;
     const payload = {
       prompt: String(prompt || "").trim(),
       mcu: String(mcuSelect?.value || "auto"),
@@ -4331,19 +4524,12 @@
           navigator.language ||
           "en"
       ),
-      conversation: projectAiConversation
-        .slice(-PROJECT_AI_MAX_CONVERSATION_MESSAGES)
-        .map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
+      conversation: projectAiConversation.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
     };
-    if (
-      currentProject.id ||
-      currentProject.title ||
-      currentProject.source ||
-      currentProject.guide
-    ) {
+    if (currentProject?.instanceId) {
       payload.currentProject = currentProject;
     }
     return payload;
@@ -4354,9 +4540,37 @@
       { role: "user", content: String(userMessage || "").trim() },
       { role: "assistant", content: String(assistantMessage || "").trim() }
     );
-    const excess =
-      projectAiConversation.length - PROJECT_AI_MAX_CONVERSATION_MESSAGES;
-    if (excess > 0) projectAiConversation.splice(0, excess);
+  }
+
+  function assertProjectAiUpdateIsFresh(requestPayload) {
+    const snapshot = requestPayload?.currentProject;
+    const linkedProject = getMiniProjectForFile(current);
+    const liveProject = snapshot?.instanceId
+      ? getPublicMiniProjectInstance(snapshot.instanceId)
+      : null;
+    const liveSource = liveProject?.files?.find(
+      (file) => file.role === miniProjectCore.ROLES.SOURCE
+    );
+    const liveGuide = liveProject?.files?.find(
+      (file) =>
+        file.role === miniProjectCore.ROLES.GUIDE &&
+        file.name === snapshot.guideName
+    );
+    const unchanged =
+      snapshot &&
+      linkedProject?.instanceId === snapshot.instanceId &&
+      liveProject?.selectedLocale === snapshot.guideLocale &&
+      liveSource?.name === snapshot.sourceName &&
+      liveGuide?.name === snapshot.guideName &&
+      getLiveFileContent(snapshot.sourceName) === snapshot.source &&
+      getLiveFileContent(snapshot.guideName) === snapshot.guide;
+    if (unchanged) return;
+
+    throw new Error(
+      /[\u0400-\u04ff]/u.test(String(requestPayload?.prompt || ""))
+        ? "Текущий мини-проект изменился, пока ИИ готовил ответ. Новые локальные правки не были перезаписаны. Отправьте запрос ещё раз."
+        : "The current mini-project changed while the AI was responding. Newer local edits were not overwritten. Submit the request again."
+    );
   }
 
   function normalizeGeneratedAiProject(project) {
@@ -4410,50 +4624,6 @@
     return definition;
   }
 
-  async function refreshProjectAiApiStatus() {
-    if (projectAiRequestInFlight) return;
-    setProjectAiStatus("Checking API", "busy");
-
-    try {
-      const response = await fetch("/api/avr/ai/status", {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.ok !== true) {
-        setProjectAiStatus(
-          response.status === 503
-            ? "API key is not configured"
-            : "AI server unavailable",
-          response.status === 503 ? "offline" : "error"
-        );
-        return;
-      }
-      if (!data.configured) {
-        setProjectAiStatus("API key is not configured", "offline");
-        return;
-      }
-      if (!data.enabled) {
-        setProjectAiStatus("AI API is disabled", "offline");
-        return;
-      }
-      if (data.ready === false) {
-        setProjectAiStatus("AI rules are unavailable", "error");
-        return;
-      }
-
-      const rulesLabel =
-        data.rules?.packageId || data.rules?.projectVersion || "";
-      setProjectAiStatus(
-        rulesLabel ? `AI ready · rules ${rulesLabel}` : "AI ready",
-        "ready"
-      );
-    } catch {
-      setProjectAiStatus("AI server unavailable", "error");
-    }
-  }
-
   async function handleProjectAiSubmit(event) {
     event.preventDefault();
     if (projectAiRequestInFlight) return;
@@ -4465,9 +4635,10 @@
       return;
     }
 
+    const requestPayload = getProjectAiRequestPayload(request);
     appendProjectAiMessage("user", request);
+    let thinkingIndicator = appendProjectAiThinking();
     setProjectAiFormBusy(true);
-    setProjectAiStatus("Thinking", "busy");
 
     try {
       const response = await fetch("/api/avr/ai/respond", {
@@ -4477,9 +4648,11 @@
           "Content-Type": "application/json",
         },
         credentials: "same-origin",
-        body: JSON.stringify(getProjectAiRequestPayload(request)),
+        body: JSON.stringify(requestPayload),
       });
       const data = await response.json().catch(() => ({}));
+      removeProjectAiThinking(thinkingIndicator);
+      thinkingIndicator = null;
 
       if (!response.ok || data?.ok !== true) {
         const apiKeyMissing =
@@ -4496,10 +4669,6 @@
                   `AI request failed (${response.status}).`
               );
         appendProjectAiMessage("system", message);
-        setProjectAiStatus(
-          message,
-          response.status === 503 ? "offline" : "error"
-        );
         return;
       }
 
@@ -4510,7 +4679,6 @@
         }
         appendProjectAiMessage("assistant", answer);
         rememberProjectAiExchange(request, answer);
-        setProjectAiStatus("Ready", "ready");
         if (prompt) prompt.value = "";
         return;
       }
@@ -4519,25 +4687,53 @@
         throw new Error("The AI response did not include an answer or project.");
       }
       const definition = normalizeGeneratedAiProject(data.project);
-      const installed = await window.UartDebugAvrMiniProjects.install(definition, {
-        origin: "ai",
-      });
+      const operation = String(data.operation || "");
+      let savedProject = null;
+      if (operation === "update") {
+        const expectedTarget = String(
+          requestPayload.currentProject?.instanceId || ""
+        );
+        const responseTarget = String(data.targetInstanceId || "");
+        if (!expectedTarget || responseTarget !== expectedTarget) {
+          throw new Error(
+            "The AI response did not match the current mini-project. Nothing was changed."
+          );
+        }
+        assertProjectAiUpdateIsFresh(requestPayload);
+        savedProject = await window.UartDebugAvrMiniProjects.updateInstance(
+          expectedTarget,
+          definition,
+          { origin: "ai" }
+        );
+      } else if (operation === "create") {
+        savedProject = await window.UartDebugAvrMiniProjects.install(
+          definition,
+          {
+            origin: "ai",
+          }
+        );
+      } else {
+        throw new Error("The AI response did not specify a project action.");
+      }
       const projectMessage =
         String(data.message || "").trim() ||
-        "The generated source and human guide were installed as local editable copies. Compile and review the draft before flashing it. Use the logo button to return to the guide.";
+        (operation === "update"
+          ? "The current source and guide were updated in their local editable copies."
+          : "The generated source and guide were installed as local editable copies.");
       appendProjectAiMessage(
         "assistant",
         projectMessage,
-        installed?.displayName || definition.displayName
+        savedProject?.displayName || definition.displayName
       );
       rememberProjectAiExchange(request, projectMessage);
-      setProjectAiStatus("Draft installed", "ready");
       if (prompt) prompt.value = "";
     } catch (error) {
+      removeProjectAiThinking(thinkingIndicator);
+      thinkingIndicator = null;
       const message = error?.message || "The AI request could not be completed.";
       appendProjectAiMessage("system", message);
-      setProjectAiStatus("Request failed", "error");
     } finally {
+      removeProjectAiThinking(thinkingIndicator);
       setProjectAiFormBusy(false);
     }
   }
@@ -4566,13 +4762,10 @@
       aiMode ? "Return to project guide" : "Open AI project assistant"
     );
 
-    if (aiMode) {
-      refreshProjectAiApiStatus();
-      if (focusPrompt) {
-        window.requestAnimationFrame(() => {
-          $("projectAiPrompt")?.focus({ preventScroll: true });
-        });
-      }
+    if (aiMode && focusPrompt) {
+      window.requestAnimationFrame(() => {
+        $("projectAiPrompt")?.focus({ preventScroll: true });
+      });
     }
   }
 

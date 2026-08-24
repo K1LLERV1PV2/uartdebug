@@ -1270,75 +1270,6 @@ body.is-documentation-resizing * {
   overscroll-behavior: contain;
 }
 
-.project-ai-status-row {
-  display: flex;
-  flex: 0 0 auto;
-  justify-content: flex-end;
-}
-
-.project-ai-status {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  padding: 0 9px;
-  border: 1px solid rgba(242, 164, 68, 0.28);
-  border-radius: 999px;
-  background: rgba(242, 164, 68, 0.08);
-  color: #ffe0aa;
-  font-size: 10px;
-  font-weight: 750;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-.project-ai-status > span:first-child {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--avr-warning);
-  box-shadow: 0 0 8px rgba(242, 164, 68, 0.46);
-}
-
-.project-ai-status-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.project-ai-status[data-state="ready"] {
-  border-color: rgba(70, 255, 120, 0.28);
-  background: rgba(39, 174, 96, 0.1);
-  color: var(--avr-text-soft);
-}
-
-.project-ai-status[data-state="ready"] > span:first-child {
-  background: var(--avr-border-hot);
-  box-shadow: 0 0 8px rgba(70, 255, 120, 0.46);
-}
-
-.project-ai-status[data-state="busy"] > span:first-child {
-  animation: project-ai-status-pulse 1s ease-in-out infinite alternate;
-}
-
-.project-ai-status[data-state="error"] {
-  border-color: rgba(232, 95, 92, 0.34);
-  background: rgba(232, 95, 92, 0.08);
-  color: #ffd0d0;
-}
-
-.project-ai-status[data-state="error"] > span:first-child {
-  background: var(--avr-danger);
-  box-shadow: 0 0 8px rgba(232, 95, 92, 0.44);
-}
-
-@keyframes project-ai-status-pulse {
-  to {
-    opacity: 0.45;
-    transform: scale(0.72);
-  }
-}
-
 .project-ai-history {
   display: flex;
   flex: 1 1 auto;
@@ -1375,6 +1306,50 @@ body.is-documentation-resizing * {
   border-style: dashed;
   background: rgba(242, 164, 68, 0.06);
   color: #ffe0aa;
+}
+
+.project-ai-message.is-thinking {
+  display: inline-flex;
+  width: max-content;
+  min-width: 42px;
+  align-items: center;
+  padding: 11px 13px;
+}
+
+.project-ai-thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.project-ai-thinking-dots > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: project-ai-thinking-bounce 1.15s ease-in-out infinite;
+}
+
+.project-ai-thinking-dots > span:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.project-ai-thinking-dots > span:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes project-ai-thinking-bounce {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
 }
 
 .project-ai-message p {
@@ -3330,7 +3305,7 @@ body.is-documentation-resizing * {
 @media (prefers-reduced-motion: reduce) {
   .file-template-card::before,
   .file-template-card::after,
-  .project-ai-status > span:first-child {
+  .project-ai-thinking-dots > span {
     animation: none !important;
   }
 }
