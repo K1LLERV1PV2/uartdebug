@@ -73,4 +73,4 @@ Include:
 - hardware and browser details when the change affects Web Serial, UART, or UPDI;
 - deployment or compatibility notes when backend behavior changes.
 
-By submitting a contribution, you confirm that you have the right to submit it. The repository does not yet declare a project license, so maintainers may wait for explicit licensing terms before accepting outside contributions.
+By submitting a contribution, you confirm that you have the right to submit it and agree that it will be licensed under the repository's [GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`).

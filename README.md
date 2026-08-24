@@ -2,7 +2,7 @@
 
 Browser-based tools for working with UART connections and tinyAVR microcontrollers.
 
-[Open Uart Debug](https://uartdebug.com) · [UART Terminal](https://uartdebug.com/uart) · [AVR Programming](https://uartdebug.com/avr) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+[Open Uart Debug](https://uartdebug.com) · [UART Terminal](https://uartdebug.com/uart) · [AVR Programming](https://uartdebug.com/avr) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE)
 
 Uart Debug combines two related tools in one installable web app:
 
@@ -162,4 +162,6 @@ The browser bundle includes vendored Chart.js and CodeMirror files. Their versio
 
 ## Project license
 
-This repository does not currently declare an open-source license for Uart Debug's own code and content. Public visibility alone does not grant permission to use, modify, or redistribute that material. A project license should be added only after the copyright owner chooses the intended terms.
+Except for the third-party components identified in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), Uart Debug's original source code, documentation, and mini-projects are licensed under the [GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`).
+
+The license permits use, modification, and redistribution, including commercial use. Operators of modified network-accessible versions must offer their users the corresponding source code under the same license. The license does not grant rights to Uart Debug names, logos, or other trademarks.
