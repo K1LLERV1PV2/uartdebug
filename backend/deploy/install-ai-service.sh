@@ -124,8 +124,10 @@ ensure_random_credential() {
       echo "openssl is required to create ${credential_label}" >&2
       exit 69
     }
-    umask 0077
-    openssl rand -hex 32 > "${credential_path}"
+    (
+      umask 0077
+      openssl rand -hex 32 > "${credential_path}"
+    )
   fi
   chown root:root "${credential_path}"
   chmod 0400 "${credential_path}"

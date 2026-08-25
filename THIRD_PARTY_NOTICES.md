@@ -9,6 +9,10 @@ Uart Debug vendors browser dependencies so the UART and AVR pages can load witho
 
 The license copies linked above continue to govern those third-party components. Uart Debug's `AGPL-3.0-only` project license does not replace or alter their terms.
 
+The vendored CodeMirror Markdown mode includes a local linear-time HTML-tag
+lookahead hardening patch. CodeMirror remains governed by its upstream MIT
+license.
+
 The backend installs these direct runtime dependencies from npm; their own
 licenses continue to apply to those packages and their transitive dependencies:
 

@@ -115,6 +115,11 @@
   let projectInstructionSaveAttempts = 0;
   let projectInstructionStorageReadFailed = false;
   let projectInstructionRenderFrame = null;
+  let projectInstructionEditor = null;
+  let projectInstructionEditorSyncing = false;
+  let projectInstructionCompositionActive = false;
+  let projectInstructionPreviewMarks = [];
+  let projectInstructionPreviewLineClasses = [];
   const projectAiSkills = new Map();
   let projectAiSkillsLoaded = false;
   let devicePanelCollapsed = false;
@@ -4561,6 +4566,15 @@
     };
   }
 
+  function setProjectInstructionSaveState(message = "", { error = false } = {}) {
+    const saveState = $("projectInstructionSaveState");
+    if (!saveState) return;
+    const visibleMessage = String(message || "").trim();
+    saveState.textContent = visibleMessage;
+    saveState.hidden = !visibleMessage;
+    saveState.classList.toggle("is-error", error && !!visibleMessage);
+  }
+
   function restoreProjectInstruction() {
     try {
       const stored = window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION);
@@ -4585,12 +4599,9 @@
     } catch {
       projectInstructionDocument = normalizeProjectInstructionDocument(null);
       projectInstructionStorageReadFailed = true;
-      const saveState = $("projectInstructionSaveState");
-      if (saveState) {
-        saveState.textContent = "Stored instruction is unreadable";
-        saveState.classList.remove("is-saving");
-        saveState.classList.add("is-error");
-      }
+      setProjectInstructionSaveState("Stored instruction is unreadable", {
+        error: true,
+      });
       console.warn("The stored project instruction could not be read.");
     }
   }
@@ -4598,26 +4609,21 @@
   function persistProjectInstruction(
     { immediate = false, recover = false } = {}
   ) {
-    const saveState = $("projectInstructionSaveState");
     if (projectInstructionStorageReadFailed && !recover) {
-      if (saveState) {
-        saveState.textContent = "Stored instruction is unreadable";
-        saveState.classList.remove("is-saving");
-        saveState.classList.add("is-error");
-      }
+      setProjectInstructionSaveState("Stored instruction is unreadable", {
+        error: true,
+      });
       return;
     }
-    if (recover) projectInstructionStorageReadFailed = false;
+    if (recover) {
+      projectInstructionStorageReadFailed = false;
+      setProjectInstructionSaveState();
+    }
     if (projectInstructionSaveTimer) {
       window.clearTimeout(projectInstructionSaveTimer);
       projectInstructionSaveTimer = null;
     }
     projectInstructionSaveAttempts = 0;
-    if (saveState) {
-      saveState.textContent = "Saving locally";
-      saveState.classList.add("is-saving");
-      saveState.classList.remove("is-error");
-    }
 
     const save = () => {
       projectInstructionSaveTimer = null;
@@ -4629,13 +4635,10 @@
       } catch {
         projectInstructionSaveAttempts += 1;
         const retrying = projectInstructionSaveAttempts < 3;
-        if (saveState) {
-          saveState.textContent = retrying
-            ? "Save failed — retrying"
-            : "Save failed";
-          saveState.classList.remove("is-saving");
-          saveState.classList.add("is-error");
-        }
+        setProjectInstructionSaveState(
+          retrying ? "Save failed — retrying" : "Save failed",
+          { error: true }
+        );
         console.warn("The project instruction could not be saved locally.");
         if (retrying) {
           projectInstructionSaveTimer = window.setTimeout(
@@ -4646,38 +4649,309 @@
         return;
       }
       projectInstructionSaveAttempts = 0;
-      if (saveState) {
-        saveState.textContent = "Saved locally";
-        saveState.classList.remove("is-saving", "is-error");
-      }
+      setProjectInstructionSaveState();
     };
 
     if (immediate) save();
     else projectInstructionSaveTimer = window.setTimeout(save, 240);
   }
 
-  function renderProjectInstructionPreview() {
-    projectInstructionRenderFrame = null;
-    const preview = $("projectInstructionPreview");
-    if (!preview) return;
-    renderMarkdownInto(preview, projectInstructionDocument.markdown, null, {
-      allowImages: false,
+  function clearProjectInstructionPreviewDecorations() {
+    for (const marker of projectInstructionPreviewMarks) {
+      try {
+        marker.clear();
+      } catch {}
+    }
+    projectInstructionPreviewMarks = [];
+    if (projectInstructionEditor) {
+      for (const { line, where, className } of
+        projectInstructionPreviewLineClasses) {
+        try {
+          projectInstructionEditor.removeLineClass(line, where, className);
+        } catch {}
+      }
+    }
+    projectInstructionPreviewLineClasses = [];
+  }
+
+  function addProjectInstructionPreviewMark(from, to, options) {
+    if (!projectInstructionEditor) return null;
+    if (from.line === to.line && from.ch >= to.ch) return null;
+    const marker = projectInstructionEditor.markText(from, to, {
+      clearOnEnter: true,
+      ...options,
     });
-    if (!preview.childElementCount && !preview.textContent) {
-      const empty = document.createElement("div");
-      empty.className = "project-documentation-empty";
-      const copy = document.createElement("p");
-      copy.textContent = "The formatted instruction will appear here.";
-      empty.appendChild(copy);
-      preview.appendChild(empty);
+    projectInstructionPreviewMarks.push(marker);
+    return marker;
+  }
+
+  function addProjectInstructionPreviewLineClass(line, where, className) {
+    if (!projectInstructionEditor) return;
+    const lineHandle = projectInstructionEditor.getLineHandle(line);
+    if (!lineHandle) return;
+    projectInstructionEditor.addLineClass(lineHandle, where, className);
+    projectInstructionPreviewLineClasses.push({
+      line: lineHandle,
+      where,
+      className,
+    });
+  }
+
+  function getProjectInstructionActiveLines() {
+    const activeLines = new Set();
+    if (!projectInstructionEditor) return activeLines;
+    for (const selection of projectInstructionEditor.listSelections()) {
+      const from = Math.min(selection.anchor.line, selection.head.line);
+      const to = Math.max(selection.anchor.line, selection.head.line);
+      for (let line = from; line <= to; line += 1) activeLines.add(line);
+    }
+    return activeLines;
+  }
+
+  function decorateProjectInstructionInline(lineNumber, lineText) {
+    const occupied = [];
+    const rangeIsFree = (start, end) =>
+      start < end &&
+      !occupied.some(
+        ([occupiedStart, occupiedEnd]) =>
+          start < occupiedEnd && end > occupiedStart
+      );
+    const reserve = (start, end) => {
+      occupied.push([start, end]);
+      occupied.sort((left, right) => left[0] - right[0]);
+    };
+    const collapse = (start, end) =>
+      addProjectInstructionPreviewMark(
+        CodeMirror.Pos(lineNumber, start),
+        CodeMirror.Pos(lineNumber, end),
+        { collapsed: true }
+      );
+    const style = (start, end, className) =>
+      addProjectInstructionPreviewMark(
+        CodeMirror.Pos(lineNumber, start),
+        CodeMirror.Pos(lineNumber, end),
+        { className }
+      );
+    const decorateDelimited = (expression, delimiterLength, className) => {
+      let match;
+      while ((match = expression.exec(lineText))) {
+        const start = match.index;
+        const end = start + match[0].length;
+        if (!rangeIsFree(start, end)) continue;
+        reserve(start, end);
+        collapse(start, start + delimiterLength);
+        style(start + delimiterLength, end - delimiterLength, className);
+        collapse(end - delimiterLength, end);
+      }
+    };
+
+    decorateDelimited(
+      /\*\*([^*\n]|\*(?!\*))+\*\*/g,
+      2,
+      "project-instruction-live-strong"
+    );
+    decorateDelimited(
+      /~~([^~\n]|~(?!~))+~~/g,
+      2,
+      "project-instruction-live-deleted"
+    );
+    decorateDelimited(
+      /`[^`\n]+`/g,
+      1,
+      "project-instruction-live-code"
+    );
+
+    let linkMatch;
+    const linkExpression = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
+    while ((linkMatch = linkExpression.exec(lineText))) {
+      const start = linkMatch.index;
+      const end = start + linkMatch[0].length;
+      if (!rangeIsFree(start, end)) continue;
+      const labelEnd = start + 1 + linkMatch[1].length;
+      reserve(start, end);
+      collapse(start, start + 1);
+      style(start + 1, labelEnd, "project-instruction-live-link");
+      collapse(labelEnd, end);
+    }
+
+    let emphasisMatch;
+    const emphasisExpression = /(^|[^\w*])\*([^*\n]+)\*(?!\*)/g;
+    while ((emphasisMatch = emphasisExpression.exec(lineText))) {
+      const start = emphasisMatch.index + emphasisMatch[1].length;
+      const end = start + emphasisMatch[0].length - emphasisMatch[1].length;
+      if (!rangeIsFree(start, end)) continue;
+      reserve(start, end);
+      collapse(start, start + 1);
+      style(start + 1, end - 1, "project-instruction-live-emphasis");
+      collapse(end - 1, end);
     }
   }
 
+  function renderProjectInstructionPreview() {
+    projectInstructionRenderFrame = null;
+    if (!projectInstructionEditor || projectInstructionCompositionActive) {
+      return;
+    }
+
+    projectInstructionEditor.operation(() => {
+      clearProjectInstructionPreviewDecorations();
+      const activeLines = getProjectInstructionActiveLines();
+      const viewport = projectInstructionEditor.getViewport();
+      const firstVisibleLine = Math.max(0, viewport.from - 20);
+      const lastVisibleLine = Math.min(
+        projectInstructionEditor.lineCount(),
+        viewport.to + 20
+      );
+      let fenceCharacter = "";
+
+      for (let lineNumber = 0; lineNumber < lastVisibleLine; lineNumber += 1) {
+        const lineText = projectInstructionEditor.getLine(lineNumber) || "";
+        const fence = lineText.match(/^\s{0,3}(`{3,}|~{3,})/);
+        const insideFence = !!fenceCharacter;
+        const inDecorationRange = lineNumber >= firstVisibleLine;
+        const activeLine = activeLines.has(lineNumber);
+
+        if (inDecorationRange && activeLine) {
+          addProjectInstructionPreviewLineClass(
+            lineNumber,
+            "background",
+            "project-instruction-active-line"
+          );
+        }
+
+        if (fence) {
+          if (inDecorationRange && !activeLine) {
+            addProjectInstructionPreviewMark(
+              CodeMirror.Pos(lineNumber, 0),
+              CodeMirror.Pos(lineNumber, lineText.length),
+              { collapsed: true }
+            );
+          }
+          if (!insideFence) fenceCharacter = fence[1][0];
+          else if (fence[1][0] === fenceCharacter) fenceCharacter = "";
+          continue;
+        }
+
+        if (!inDecorationRange) continue;
+        if (insideFence) {
+          addProjectInstructionPreviewLineClass(
+            lineNumber,
+            "text",
+            "project-instruction-line-code"
+          );
+          continue;
+        }
+
+        if (
+          /^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(
+            lineText
+          )
+        ) {
+          addProjectInstructionPreviewLineClass(
+            lineNumber,
+            "text",
+            "project-instruction-line-rule"
+          );
+          if (!activeLine) {
+            addProjectInstructionPreviewMark(
+              CodeMirror.Pos(lineNumber, 0),
+              CodeMirror.Pos(lineNumber, lineText.length),
+              { collapsed: true }
+            );
+          }
+          continue;
+        }
+
+        const heading = lineText.match(/^(\s{0,3})(#{1,6})[ \t]+/);
+        if (heading) {
+          const level = heading[2].length;
+          addProjectInstructionPreviewLineClass(
+            lineNumber,
+            "text",
+            "project-instruction-line-heading"
+          );
+          addProjectInstructionPreviewLineClass(
+            lineNumber,
+            "text",
+            `project-instruction-line-heading-${level}`
+          );
+          if (!activeLine) {
+            addProjectInstructionPreviewMark(
+              CodeMirror.Pos(lineNumber, heading[1].length),
+              CodeMirror.Pos(lineNumber, heading[0].length),
+              { collapsed: true }
+            );
+          }
+        }
+
+        const quote = lineText.match(/^(\s{0,3}>[ \t]?)/);
+        if (quote) {
+          addProjectInstructionPreviewLineClass(
+            lineNumber,
+            "text",
+            "project-instruction-line-quote"
+          );
+          if (!activeLine) {
+            addProjectInstructionPreviewMark(
+              CodeMirror.Pos(lineNumber, 0),
+              CodeMirror.Pos(lineNumber, quote[0].length),
+              { collapsed: true }
+            );
+          }
+        }
+
+        const listMarker = lineText.match(/^(\s{0,3})([-+*])[ \t]+/);
+        if (listMarker && !activeLine) {
+          const marker = document.createElement("span");
+          marker.className = "project-instruction-list-marker";
+          marker.textContent = "•";
+          addProjectInstructionPreviewMark(
+            CodeMirror.Pos(lineNumber, listMarker[1].length),
+            CodeMirror.Pos(lineNumber, listMarker[0].length),
+            { replacedWith: marker }
+          );
+        }
+
+        if (!activeLine) decorateProjectInstructionInline(lineNumber, lineText);
+      }
+    });
+  }
+
   function scheduleProjectInstructionPreview() {
+    if (projectInstructionCompositionActive) return;
     if (projectInstructionRenderFrame !== null) return;
     projectInstructionRenderFrame = window.requestAnimationFrame(
       renderProjectInstructionPreview
     );
+  }
+
+  function setProjectInstructionEditorValue(markdown) {
+    const nextMarkdown = String(markdown ?? "");
+    const editorElement = $("projectInstructionEditor");
+    if (!projectInstructionEditor) {
+      if (editorElement && editorElement.value !== nextMarkdown) {
+        editorElement.value = nextMarkdown;
+      }
+      return;
+    }
+    if (projectInstructionEditor.getValue() === nextMarkdown) return;
+
+    projectInstructionEditorSyncing = true;
+    try {
+      const lastLine = projectInstructionEditor.lastLine();
+      const lastCharacter = (projectInstructionEditor.getLine(lastLine) || "")
+        .length;
+      projectInstructionEditor.replaceRange(
+        nextMarkdown,
+        CodeMirror.Pos(0, 0),
+        CodeMirror.Pos(lastLine, lastCharacter),
+        "+setInstruction"
+      );
+      projectInstructionEditor.save();
+    } finally {
+      projectInstructionEditorSyncing = false;
+    }
+    scheduleProjectInstructionPreview();
   }
 
   function applyProjectInstructionMarkdown(
@@ -4705,16 +4979,15 @@
           ? projectInstructionDocument.skillRefs
           : normalizeInstructionSkillRefs(skillRefs),
     };
-    const editorElement = $("projectInstructionEditor");
-    if (
-      editorElement &&
-      editorElement.value !== projectInstructionDocument.markdown
-    ) {
-      editorElement.value = projectInstructionDocument.markdown;
-    }
+    setProjectInstructionEditorValue(projectInstructionDocument.markdown);
     scheduleProjectInstructionPreview();
     persistProjectInstruction({ recover: true });
-    if (focus) editorElement?.focus({ preventScroll: true });
+    if (focus) {
+      projectInstructionEditor?.focus();
+      if (!projectInstructionEditor) {
+        $("projectInstructionEditor")?.focus({ preventScroll: true });
+      }
+    }
   }
 
   function normalizeProjectAiSkill(rawSkill) {
@@ -4829,21 +5102,21 @@
     { focus = true, append = false } = {}
   ) {
     const skill = projectAiSkills.get(String(skillId || ""));
-    const editorElement = $("projectInstructionEditor");
-    if (!skill || !editorElement) return false;
+    if (!skill || !projectInstructionEditor) return false;
 
+    const source = projectInstructionEditor.getValue();
     const start = append
-      ? editorElement.value.length
-      : Number.isInteger(editorElement.selectionStart)
-        ? editorElement.selectionStart
-        : editorElement.value.length;
+      ? source.length
+      : projectInstructionEditor.indexFromPos(
+          projectInstructionEditor.getCursor("from")
+        );
     const end = append
       ? start
-      : Number.isInteger(editorElement.selectionEnd)
-        ? editorElement.selectionEnd
-        : start;
-    const before = editorElement.value.slice(0, start);
-    const after = editorElement.value.slice(end);
+      : projectInstructionEditor.indexFromPos(
+          projectInstructionEditor.getCursor("to")
+        );
+    const before = source.slice(0, start);
+    const after = source.slice(end);
     const prefix = before
       ? before.endsWith("\n\n")
         ? ""
@@ -4859,13 +5132,20 @@
           : "\n\n"
       : "\n";
     const insertion = `${prefix}${skill.markdown}${suffix}`;
-    editorElement.setRangeText(insertion, start, end, "end");
     projectInstructionDocument.skillRefs = normalizeInstructionSkillRefs([
       ...projectInstructionDocument.skillRefs,
       { id: skill.id, version: skill.version },
     ]);
-    editorElement.dispatchEvent(new Event("input", { bubbles: true }));
-    if (focus) editorElement.focus({ preventScroll: true });
+    projectInstructionEditor.replaceRange(
+      insertion,
+      projectInstructionEditor.posFromIndex(start),
+      projectInstructionEditor.posFromIndex(end),
+      "+insertSkill"
+    );
+    projectInstructionEditor.setCursor(
+      projectInstructionEditor.posFromIndex(start + insertion.length)
+    );
+    if (focus) projectInstructionEditor.focus();
     return true;
   }
 
@@ -4895,7 +5175,88 @@
     const editorElement = $("projectInstructionEditor");
     const dropZone = $("projectInstructionDropZone");
     const list = $("projectSkillsList");
-    if (editorElement) {
+    if (
+      editorElement &&
+      typeof window.CodeMirror?.fromTextArea === "function"
+    ) {
+      editorElement.value = projectInstructionDocument.markdown;
+      projectInstructionEditor = CodeMirror.fromTextArea(editorElement, {
+        mode: {
+          name: "markdown",
+          highlightFormatting: true,
+          fencedCodeBlockHighlighting: false,
+          strikethrough: true,
+          taskLists: true,
+          xml: false,
+        },
+        theme: "material-darker",
+        inputStyle: "contenteditable",
+        lineNumbers: false,
+        lineWrapping: true,
+        indentUnit: 2,
+        tabSize: 2,
+        indentWithTabs: false,
+        viewportMargin: 30,
+        autofocus: false,
+        extraKeys: {
+          Tab(cm) {
+            cm.replaceSelection("  ", "end", "+input");
+          },
+        },
+      });
+      projectInstructionEditor.setSize("100%", "100%");
+
+      const inputField = projectInstructionEditor.getInputField();
+      inputField.setAttribute("aria-label", "Project instruction Markdown");
+      inputField.setAttribute("aria-multiline", "true");
+      inputField.setAttribute("data-tooltip-disabled", "");
+      inputField.setAttribute("role", "textbox");
+      inputField.setAttribute("spellcheck", "true");
+      inputField.addEventListener("compositionstart", () => {
+        projectInstructionCompositionActive = true;
+        if (projectInstructionRenderFrame !== null) {
+          window.cancelAnimationFrame(projectInstructionRenderFrame);
+          projectInstructionRenderFrame = null;
+        }
+        clearProjectInstructionPreviewDecorations();
+      });
+      inputField.addEventListener("compositionend", () => {
+        projectInstructionCompositionActive = false;
+        scheduleProjectInstructionPreview();
+      });
+
+      projectInstructionEditor.on("change", (cm) => {
+        cm.save();
+        if (projectInstructionEditorSyncing) return;
+        const markdown = cm.getValue();
+        projectInstructionDocument = {
+          ...projectInstructionDocument,
+          revision: projectInstructionDocument.revision + 1,
+          markdown,
+          skillRefs: getCompatibleInstructionSkillRefs(
+            markdown,
+            projectInstructionDocument.skillRefs
+          ),
+        };
+        scheduleProjectInstructionPreview();
+        persistProjectInstruction({ recover: true });
+      });
+      projectInstructionEditor.on(
+        "cursorActivity",
+        scheduleProjectInstructionPreview
+      );
+      projectInstructionEditor.on(
+        "viewportChange",
+        scheduleProjectInstructionPreview
+      );
+      window.setTimeout(() => {
+        projectInstructionEditor?.refresh();
+        scheduleProjectInstructionPreview();
+      }, 0);
+      window.addEventListener("resize", () => {
+        projectInstructionEditor?.refresh();
+      });
+    } else if (editorElement) {
       editorElement.value = projectInstructionDocument.markdown;
       editorElement.addEventListener("input", () => {
         projectInstructionDocument = {
@@ -4907,7 +5268,6 @@
             projectInstructionDocument.skillRefs
           ),
         };
-        scheduleProjectInstructionPreview();
         persistProjectInstruction({ recover: true });
       });
     }
@@ -4934,18 +5294,23 @@
     });
 
     dropZone?.addEventListener("dragover", (event) => {
-      if (!event.dataTransfer) return;
+      const types = Array.from(event.dataTransfer?.types || []);
+      if (!types.includes(AI_SKILL_DRAG_MIME)) return;
       event.preventDefault();
+      event.stopPropagation();
       event.dataTransfer.dropEffect = "copy";
       dropZone.classList.add("is-drag-over");
-    });
+    }, true);
     dropZone?.addEventListener("dragleave", (event) => {
       if (!dropZone.contains(event.relatedTarget)) {
         dropZone.classList.remove("is-drag-over");
       }
     });
     dropZone?.addEventListener("drop", (event) => {
+      const types = Array.from(event.dataTransfer?.types || []);
+      if (!types.includes(AI_SKILL_DRAG_MIME)) return;
       event.preventDefault();
+      event.stopPropagation();
       dropZone.classList.remove("is-drag-over");
       let skillId = "";
       try {
@@ -4963,7 +5328,7 @@
       if (skillId) {
         insertProjectAiSkill(skillId, { append: true });
       }
-    });
+    }, true);
 
     renderProjectInstructionPreview();
     renderProjectAiSkills();
@@ -5757,22 +6122,53 @@
     }
   }
 
+  function renderProjectWorkspaceToggleLabel(label, words) {
+    if (!label) return;
+    const fragment = document.createDocumentFragment();
+    for (const word of words) {
+      const wordElement = document.createElement("span");
+      wordElement.className = "project-ai-toggle-label-word";
+      for (const character of word) {
+        const characterElement = document.createElement("span");
+        characterElement.textContent = character;
+        wordElement.appendChild(characterElement);
+      }
+      fragment.appendChild(wordElement);
+    }
+    label.replaceChildren(fragment);
+  }
+
   function setProjectWorkspaceMode(mode, { focusPrompt = false } = {}) {
     const aiMode = mode === "ai";
+    const nextMode = aiMode ? "ai" : "avr";
     const stage = $("projectWorkspaceStage");
     const avrScene = $("avrWorkspaceScene");
     const aiScene = $("projectAiScene");
     const toggle = $("projectAiToggle");
     const toggleLabel = toggle?.querySelector(".project-ai-toggle-label");
     if (!stage || !avrScene || !aiScene || !toggle) return;
+    if (stage.classList.contains("is-switching")) return;
+
+    const shouldAnimate = projectWorkspaceMode !== nextMode;
+    const reducedMotion = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)"
+    )?.matches;
+    const compactWorkspace = window.matchMedia?.("(max-width: 989px)")
+      ?.matches;
+    const animateTransition =
+      shouldAnimate && !reducedMotion && !compactWorkspace;
 
     const outgoingScene = aiMode ? avrScene : aiScene;
     if (outgoingScene.contains(document.activeElement)) {
       toggle.focus({ preventScroll: true });
     }
-    projectWorkspaceMode = aiMode ? "ai" : "avr";
-    stage.dataset.mode = projectWorkspaceMode;
-    stage.classList.add("is-switching");
+    if (animateTransition) {
+      stage.classList.add("is-switching");
+      toggle.disabled = true;
+      void stage.offsetWidth;
+    }
+    projectWorkspaceMode = nextMode;
+    stage.dataset.mode = nextMode;
     avrScene.setAttribute("aria-hidden", String(aiMode));
     aiScene.setAttribute("aria-hidden", String(!aiMode));
     if (aiMode) {
@@ -5787,27 +6183,28 @@
       "aria-label",
       aiMode ? "Return to AVR workspace" : "Open AI assistant workspace"
     );
-    if (toggleLabel) {
-      toggleLabel.textContent = aiMode ? "AVR WORKSPACE" : "AI ASSISTANT";
-    }
+    renderProjectWorkspaceToggleLabel(
+      toggleLabel,
+      aiMode ? ["AVR", "WORKSPACE"] : ["AI", "ASSISTANT"]
+    );
 
     if (projectWorkspaceTransitionTimer) {
       window.clearTimeout(projectWorkspaceTransitionTimer);
     }
-    const reducedMotion = window.matchMedia?.(
-      "(prefers-reduced-motion: reduce)"
-    )?.matches;
     projectWorkspaceTransitionTimer = window.setTimeout(
       () => {
         projectWorkspaceTransitionTimer = null;
         stage.classList.remove("is-switching");
+        toggle.disabled = false;
         editor?.refresh();
+        projectInstructionEditor?.refresh();
+        scheduleProjectInstructionPreview();
         fitEditorFileWatermark();
         if (aiMode && focusPrompt) {
           $("projectAiPrompt")?.focus({ preventScroll: true });
         }
       },
-      reducedMotion ? 0 : 540
+      animateTransition ? 1000 : 0
     );
 
     if (aiMode) {

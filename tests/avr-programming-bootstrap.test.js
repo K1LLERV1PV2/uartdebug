@@ -57,6 +57,25 @@ test("exposes the mini-project bridge before DOMContentLoaded", () => {
   assert.equal(typeof documentListeners.get("DOMContentLoaded"), "function");
 });
 
+test("vendored Markdown mode uses a non-ambiguous HTML tag lookahead", () => {
+  const markdownMode = fs.readFileSync(
+    path.join(
+      __dirname,
+      "../public/vendor/codemirror/5.65.16/mode/markdown/markdown.js"
+    ),
+    "utf8"
+  );
+
+  assert.match(
+    markdownMode,
+    /\[a-z\]\[a-z0-9-\]\*\(\?=\[\\s\/>\]\|\$\)/
+  );
+  assert.doesNotMatch(
+    markdownMode,
+    /\(\?:\\s\+\[a-z_:\.\\-\]\+\(\?:\\s\*\=\\s\*\[\^>\]\+\)\?\)\*/
+  );
+});
+
 test("uses the MP badge for mini-projects in the AVR outliner", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.js"),
@@ -108,7 +127,23 @@ test("keeps documentation separate and uses a full-height AI workspace rail", ()
     css,
     /\.project-workspace-stage\[data-mode="ai"\] \.project-ai-toggle\s*\{[\s\S]*?left:\s*0;/
   );
-  assert.match(css, /\.project-ai-toggle-label\s*\{[\s\S]*?writing-mode:\s*vertical-rl;/);
+  assert.match(
+    html.slice(aiToggleIndex),
+    /project-ai-toggle-label-word[\s\S]*?<span>A<\/span><span>I<\/span>[\s\S]*?project-ai-toggle-label-word[\s\S]*?<span>A<\/span><span>S<\/span><span>S<\/span>/
+  );
+  assert.match(
+    css,
+    /\.project-ai-toggle\s*\{[\s\S]*?background:\s*var\(--avr-window-bg\);/
+  );
+  assert.match(
+    css,
+    /\.project-ai-toggle::before\s*\{[\s\S]*?linear-gradient\(90deg, transparent, var\(--avr-bg\)\)/
+  );
+  assert.match(
+    css,
+    /\.project-ai-toggle-arrow::before,[\s\S]*?\.project-ai-toggle-arrow::after\s*\{[\s\S]*?height:\s*50%;/
+  );
+  assert.doesNotMatch(css, /project-workspace-rail-breathe/);
 });
 
 test("wires the project AI pane to the AVR AI API contract", () => {
@@ -138,7 +173,11 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.match(html, /id="projectAiBudgetFill"/);
   assert.match(html, /id="projectAiSignOutBtn"[\s\S]*Sign out/);
   assert.match(html, /id="projectInstructionEditor"/);
-  assert.match(html, /id="projectInstructionPreview"/);
+  assert.doesNotMatch(html, /id="projectInstructionPreview"/);
+  assert.match(
+    html,
+    /vendor\/codemirror\/5\.65\.16\/mode\/markdown\/markdown\.js/
+  );
   assert.match(html, /id="projectSkillsList"[\s\S]*role="list"/);
   assert.doesNotMatch(html, /accounts\.google\.com\/gsi|gsi\/client/);
   assert.doesNotMatch(html, /id="projectAiAccessToken"/);
@@ -267,6 +306,18 @@ test("keeps only technical AI concurrency safeguards", () => {
   );
 });
 
+test("scopes the AI credential umask to secret generation", () => {
+  const installer = fs.readFileSync(
+    path.join(__dirname, "../backend/deploy/install-ai-service.sh"),
+    "utf8"
+  );
+
+  assert.match(
+    installer,
+    /\(\s*umask 0077\s*openssl rand -hex 32 > "\$\{credential_path\}"\s*\)/
+  );
+});
+
 test("gives Add file enough width and lets catalog text wrap", () => {
   const css = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.css"),
@@ -386,12 +437,27 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   );
   assert.match(
     css,
-    /\.project-instruction-workspace\s*\{[\s\S]*?grid-template-rows:/
+    /\.project-instruction-workspace\s*\{[\s\S]*?display:\s*flex;/
   );
   assert.match(source, /AI_SKILL_DRAG_MIME/);
-  assert.match(source, /setRangeText\(insertion, start, end, "end"\)/);
+  assert.match(source, /CodeMirror\.fromTextArea\(editorElement/);
+  assert.match(source, /name:\s*"markdown"/);
+  assert.match(source, /inputField\.setAttribute\("role", "textbox"\)/);
+  assert.match(
+    source,
+    /inputField\.setAttribute\("data-tooltip-disabled", ""\)/
+  );
+  assert.match(source, /projectInstructionEditor\.markText\(/);
+  assert.match(source, /"cursorActivity"/);
+  assert.match(source, /projectInstructionEditor\.replaceRange\(/);
+  assert.doesNotMatch(source, /setRangeText\(/);
   assert.match(source, /insertProjectAiSkill\(skillId, \{ append: true \}\)/);
-  assert.match(html, /project-instruction-source scroll-frame[\s\S]*?id="projectInstructionDropZone"/);
+  assert.match(
+    html,
+    /project-instruction-live-editor scroll-frame[\s\S]*?id="projectInstructionDropZone"/
+  );
+  assert.doesNotMatch(html, /project-skills-help|Saved locally/);
+  assert.doesNotMatch(source, /Saved locally/);
   assert.match(source, /getCompatibleInstructionSkillRefs/);
   assert.match(
     source,
@@ -407,6 +473,18 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   assert.match(source, /\(\?<!\[A-Za-z0-9\]\)_/);
   assert.match(source, /control\.readOnly = !!busy/);
   assert.match(source, /prompt\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(
+    css,
+    /animation:\s*project-workspace-card-switch 980ms/
+  );
+  assert.match(
+    css,
+    /\.project-workspace-stage\.is-switching \.project-workspace-track\s*\{[\s\S]*?transition-delay:\s*250ms;/
+  );
+  assert.match(
+    css,
+    /\.project-workspace-track\s*\{[\s\S]*?transition:\s*transform 440ms/
+  );
   assert.match(css, /@media \(max-width: 989px\)/);
   assert.match(css, /height:\s*clamp\(560px, 78vh, 700px\)/);
 });
@@ -437,6 +515,18 @@ test("collapses the device panel without hiding its persistent handle", () => {
   assert.match(
     css,
     /\.avr-device-section\.is-device-panel-collapsed \.avr-device-panel-viewport\s*\{[\s\S]*?max-height:\s*0;/
+  );
+  assert.match(
+    css,
+    /\.device-panel-toggle-arrow::before,[\s\S]*?\.device-panel-toggle-arrow::after\s*\{[\s\S]*?height:\s*2px;/
+  );
+  assert.match(
+    css,
+    /\.device-panel-toggle-arrow::before\s*\{[\s\S]*?rotate\(-8deg\)/
+  );
+  assert.match(
+    css,
+    /is-device-panel-collapsed[\s\S]*?\.device-panel-toggle-arrow::before\s*\{[\s\S]*?rotate\(8deg\)/
   );
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.avr-device-panel-viewport/);
   assert.match(

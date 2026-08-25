@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="uart.css?v=20260709-terminal-polish-v3" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260825-ai-workspace-v1"
+      href="AVR-Programming.css?v=20260825-ai-live-preview-v2"
     />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
 
@@ -23,6 +23,7 @@
     />
     <script src="vendor/codemirror/5.65.16/codemirror.min.js"></script>
     <script src="vendor/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+    <script src="vendor/codemirror/5.65.16/mode/markdown/markdown.js"></script>
     <script src="vendor/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
     <link
       rel="stylesheet"
@@ -447,13 +448,13 @@
                         id="projectInstructionSaveState"
                         role="status"
                         aria-live="polite"
-                        >Saved locally</span
-                      >
+                        hidden
+                      ></span>
                     </div>
 
                     <div class="project-instruction-workspace">
                       <div
-                        class="project-instruction-source scroll-frame"
+                        class="project-instruction-live-editor scroll-frame"
                         id="projectInstructionDropZone"
                       >
                         <label class="sr-only" for="projectInstructionEditor">
@@ -464,17 +465,6 @@
                           spellcheck="true"
                           placeholder="# Initialization&#10;&#10;Describe what the project should do."
                         ></textarea>
-                      </div>
-                      <div
-                        class="project-instruction-preview scroll-frame"
-                        role="region"
-                        aria-label="Live instruction preview"
-                        tabindex="0"
-                      >
-                        <article
-                          class="project-documentation-content"
-                          id="projectInstructionPreview"
-                        ></article>
                       </div>
                     </div>
                   </section>
@@ -491,16 +481,10 @@
                         <h2 id="projectSkillsTitle">Instruction blocks</h2>
                       </div>
                     </div>
-                    <p class="project-skills-help" id="projectSkillsHelp">
-                      Drag a block to the end of the Markdown instruction, or
-                      use Insert to place it at the current caret. You can edit
-                      every block afterwards.
-                    </p>
                     <div
                       class="project-skills-list scroll-frame"
                       id="projectSkillsList"
                       role="list"
-                      aria-describedby="projectSkillsHelp"
                       aria-live="polite"
                     ></div>
                   </aside>
@@ -517,7 +501,16 @@
               aria-controls="avrWorkspaceScene projectAiScene"
             >
               <span class="project-ai-toggle-arrow" aria-hidden="true"></span>
-              <span class="project-ai-toggle-label">AI ASSISTANT</span>
+              <span class="project-ai-toggle-label" aria-hidden="true">
+                <span class="project-ai-toggle-label-word">
+                  <span>A</span><span>I</span>
+                </span>
+                <span class="project-ai-toggle-label-word">
+                  <span>A</span><span>S</span><span>S</span><span>I</span
+                  ><span>S</span><span>T</span><span>A</span><span>N</span
+                  ><span>T</span>
+                </span>
+              </span>
               <img
                 src="icons/logo-512.png"
                 alt=""
@@ -775,7 +768,7 @@
     <script defer src="avr-mini-project-archive.js?v=20260821-localized-zip-v1"></script>
     <script
       defer
-      src="AVR-Programming.js?v=20260825-ai-workspace-v1"
+      src="AVR-Programming.js?v=20260825-ai-live-preview-v2"
     ></script>
     <script defer src="updi-test.js?v=20260709-terminal-avr-sync-v1"></script>
   </body>
