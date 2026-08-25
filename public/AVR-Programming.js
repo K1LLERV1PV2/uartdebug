@@ -53,9 +53,10 @@
   const PROJECT_WORKSPACE_TOGGLE_EXIT_MS = 180;
   const PROJECT_WORKSPACE_SWITCH_MS = 1000;
   const PROJECT_WORKSPACE_TOGGLE_ENTER_MS = 200;
-  const DEVICE_PANEL_EXPANDED_HEIGHT = 104;
+  const DEVICE_PANEL_EXPANDED_HEIGHT = 112;
   const DEVICE_PANEL_COMPACT_HEIGHT = 54;
   const DEVICE_PANEL_COLLAPSED_HEIGHT = 0;
+  const DEVICE_PANEL_DRAG_THRESHOLD = 18;
   const MINI_PROJECT_IMPORT_EVENT = "ud-avr-mini-project";
   const MINI_PROJECT_INSTALLED_EVENT = "ud-avr-mini-project-installed";
   const MINI_PROJECT_READY_EVENT = "ud-avr-mini-projects-ready";
@@ -6898,25 +6899,11 @@
     return DEVICE_PANEL_EXPANDED_HEIGHT;
   }
 
-  function getNearestDevicePanelState(height) {
-    const candidates = ["collapsed", "compact", "expanded"];
-    return candidates.reduce((nearest, state) =>
-      Math.abs(getDevicePanelHeightForState(state) - height) <
-      Math.abs(getDevicePanelHeightForState(nearest) - height)
-        ? state
-        : nearest
-    );
-  }
-
-  function getLiveDevicePanelState(height) {
-    if (height <= DEVICE_PANEL_COMPACT_HEIGHT / 2) return "collapsed";
-    if (
-      height <
-      (DEVICE_PANEL_COMPACT_HEIGHT + DEVICE_PANEL_EXPANDED_HEIGHT) / 2
-    ) {
-      return "compact";
-    }
-    return "expanded";
+  function getAdjacentDevicePanelState(state, direction) {
+    const states = ["collapsed", "compact", "expanded"];
+    const index = Math.max(0, states.indexOf(state));
+    const step = direction < 0 ? -1 : 1;
+    return states[Math.max(0, Math.min(states.length - 1, index + step))];
   }
 
   function syncDevicePanelResizerAria() {
@@ -6949,20 +6936,19 @@
     fitEditorFileWatermark();
   }
 
-  function applyDevicePanelHeight(
-    height,
-    { persist = false, animate = false, state = null } = {}
+  function applyDevicePanelState(
+    state,
+    { persist = false, animate = false } = {}
   ) {
     const section = $("avrDeviceSection");
     const viewport = $("avrDevicePanelViewport");
     const handle = $("devicePanelToggle");
     if (!section || !viewport || !handle) return;
 
-    devicePanelHeight = Math.max(
-      DEVICE_PANEL_COLLAPSED_HEIGHT,
-      Math.min(DEVICE_PANEL_EXPANDED_HEIGHT, Number(height) || 0)
-    );
-    devicePanelState = state || getLiveDevicePanelState(devicePanelHeight);
+    devicePanelState = ["expanded", "compact", "collapsed"].includes(state)
+      ? state
+      : "expanded";
+    devicePanelHeight = getDevicePanelHeightForState(devicePanelState);
     section.style.setProperty("--device-panel-height", `${devicePanelHeight}px`);
     section.dataset.state = devicePanelState;
     const collapsed = devicePanelState === "collapsed" && devicePanelHeight === 0;
@@ -7003,10 +6989,9 @@
     const normalized = ["expanded", "compact", "collapsed"].includes(state)
       ? state
       : "expanded";
-    applyDevicePanelHeight(getDevicePanelHeightForState(normalized), {
+    applyDevicePanelState(normalized, {
       persist,
       animate,
-      state: normalized,
     });
   }
 
@@ -7021,16 +7006,6 @@
       storedState = "expanded";
     }
     setDevicePanelState(storedState, { persist: false, animate: false });
-  }
-
-  function cycleDevicePanelState() {
-    const next =
-      devicePanelState === "expanded"
-        ? "compact"
-        : devicePanelState === "compact"
-          ? "collapsed"
-          : "expanded";
-    setDevicePanelState(next);
   }
 
   function bindDevicePanelResizer() {
@@ -7049,15 +7024,18 @@
       } catch {}
       section.classList.remove("is-device-panel-resizing");
       document.body.classList.remove("is-device-panel-resizing");
-      if (cancelled) {
-        setDevicePanelState(resizeState.startState, {
-          persist: false,
-          animate: resizeState.moved,
-        });
-      } else if (resizeState.moved) {
-        setDevicePanelState(getNearestDevicePanelState(devicePanelHeight));
-      } else {
-        cycleDevicePanelState();
+      const endY = Number.isFinite(event?.clientY)
+        ? event.clientY
+        : resizeState.lastY;
+      const delta = endY - resizeState.startY;
+      if (!cancelled && Math.abs(delta) >= DEVICE_PANEL_DRAG_THRESHOLD) {
+        const nextState = getAdjacentDevicePanelState(
+          resizeState.startState,
+          delta < 0 ? -1 : 1
+        );
+        if (nextState !== resizeState.startState) {
+          setDevicePanelState(nextState);
+        }
       }
       event?.preventDefault?.();
     };
@@ -7068,9 +7046,8 @@
       devicePanelResizeState = {
         pointerId: event.pointerId,
         startY: event.clientY,
-        startHeight: devicePanelHeight,
+        lastY: event.clientY,
         startState: devicePanelState,
-        moved: false,
       };
       handle.setPointerCapture?.(event.pointerId);
       section.classList.add("is-device-panel-resizing");
@@ -7079,11 +7056,8 @@
 
     handle.addEventListener("pointermove", (event) => {
       if (!devicePanelResizeState) return;
-      const delta = event.clientY - devicePanelResizeState.startY;
-      if (Math.abs(delta) >= 3) devicePanelResizeState.moved = true;
-      if (!devicePanelResizeState.moved) return;
       event.preventDefault();
-      applyDevicePanelHeight(devicePanelResizeState.startHeight + delta);
+      devicePanelResizeState.lastY = event.clientY;
     });
 
     handle.addEventListener("pointerup", finishResize);
@@ -7098,15 +7072,12 @@
     handle.addEventListener("keydown", (event) => {
       const states = ["collapsed", "compact", "expanded"];
       let index = states.indexOf(devicePanelState);
-      if (event.key === "ArrowUp") index = Math.min(states.length - 1, index + 1);
-      else if (event.key === "ArrowDown") index = Math.max(0, index - 1);
-      else if (event.key === "Home") index = 0;
+      if (event.key === "ArrowUp") index = Math.max(0, index - 1);
+      else if (event.key === "ArrowDown") {
+        index = Math.min(states.length - 1, index + 1);
+      } else if (event.key === "Home") index = 0;
       else if (event.key === "End") index = states.length - 1;
-      else if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        cycleDevicePanelState();
-        return;
-      } else return;
+      else return;
       event.preventDefault();
       setDevicePanelState(states[index]);
     });

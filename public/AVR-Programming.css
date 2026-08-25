@@ -189,7 +189,7 @@ main,
 }
 
 .avr-device-section {
-  --device-panel-height: 104px;
+  --device-panel-height: 112px;
 
   position: relative;
   display: flex;
