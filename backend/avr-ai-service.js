@@ -886,7 +886,6 @@ async function loadAiSkillCatalog(catalogPath) {
     Number(catalog.schemaVersion) !== 1 ||
     !SAFE_CATALOG_VERSION.test(String(catalog.catalogVersion || "")) ||
     !Array.isArray(catalog.skills) ||
-    !catalog.skills.length ||
     catalog.skills.length > MAX_SKILL_FILES
   ) {
     throw new AiServiceError(

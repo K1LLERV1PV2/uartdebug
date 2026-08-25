@@ -27,11 +27,16 @@ prove a person's legal identity, that one person has only one account, account
 age or trustworthiness, or that the account will remain available. Email must
 not be used as the durable identity key; Google's verified `sub` claim is.
 
-Required Google sign-in must remain disabled until production OAuth credentials,
-the exact callback, consent-screen status, user-facing failure/recovery states,
-and the public privacy information have been verified. Losing the persistent
-session or identity secrets invalidates sessions or breaks installation matching,
-so they must be backed up securely and rotated only with a migration plan.
+Before Google sign-in is exposed publicly, production OAuth credentials, the
+exact callback, consent-screen publication, user-facing failure/recovery states,
+and the public privacy information must be verified together. The repository
+contains the application and deployment prerequisites, but Google Cloud console
+publication is a separate operational step and must not be treated as complete
+until it has been verified on the production domain. All of these prerequisites
+must be rechecked whenever the domain, OAuth client, data use, or providers change.
+Losing the persistent session or identity secrets invalidates sessions or breaks
+installation matching, so they must be backed up securely and rotated only with
+a migration plan.
 
 ## Quotas and provider cost
 
@@ -54,8 +59,9 @@ Provider-side price or usage changes can also require a new catalog and manual
 reconciliation; the local balance is not a substitute for the provider invoice.
 The database preserves ambiguous reservations and a provider-correlatable
 request ID, but a supported operator reconciliation/appeal tool is still
-deferred. Required Google access must not be enabled for a broad audience until
-that workflow exists and is tested.
+deferred. Until it exists, ambiguous charges and account appeals require manual
+operator review and the displayed balance should not be presented as a final
+provider invoice.
 
 ## Paid access
 
@@ -73,12 +79,14 @@ cash value, or describe AI Credits as transferable or withdrawable.
 ## Privacy and retention
 
 Account identifiers, installation HMACs, IP/risk signals, sessions, and usage
-ledgers can be personal data even when they are pseudonymous. Before mandatory
-sign-in or payments are enabled, Uart Debug needs a public privacy notice with
-controller/contact details, purposes and legal bases, processors, retention
-periods, user rights, international-transfer information where applicable, and
-an account/data-deletion process. Retention must be implemented, not merely
-described.
+ledgers can be personal data even when they are pseudonymous. Uart Debug now
+publishes a privacy notice with the current data flows, contact, retention, and
+request route. Because only a masked email is stored, an operator cannot map a
+plain email to a record without additional verification context. It remains an
+operational responsibility to keep that notice in
+sync with production and to implement the documented retention periods rather
+than merely describing them. Automated expiry for long-lived account/device and
+ledger records is still deferred and is disclosed in the notice.
 
 OAuth, OpenAI, hosting, logging, backups, and any future payment provider add
 separate data flows. Their production configuration and contracts cannot be

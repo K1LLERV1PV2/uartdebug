@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260825-ai-live-preview-v2";
+const CACHE_NAME = "uartdebug-shell-20260825-workspace-public-auth-v2";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -6,6 +6,11 @@ const APP_SHELL_ASSETS = [
   "/avr.html",
   "/uart",
   "/uart.html",
+  "/privacy",
+  "/privacy.html",
+  "/terms",
+  "/terms.html",
+  "/legal.css",
   "/manifest.webmanifest",
   "/uart.css",
   "/uart.js",
@@ -70,6 +75,7 @@ const APP_SHELL_ASSETS = [
   "/favicon.ico",
   "/icons/favicon-192.png",
   "/icons/logo-512.png",
+  "/icons/sign-in-with-google-light.svg",
   "/icons/apple-touch-icon.png",
 ];
 

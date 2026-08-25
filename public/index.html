@@ -135,6 +135,36 @@
         width: min(100%, 900px);
       }
 
+      .service-note {
+        max-width: 680px;
+        margin: 14px auto 0;
+        color: var(--home-text-soft);
+        font-size: 12px;
+        line-height: 1.5;
+        text-align: center;
+      }
+
+      .legal-links {
+        position: fixed;
+        z-index: 3;
+        right: 18px;
+        bottom: 14px;
+        display: flex;
+        gap: 14px;
+        font-size: 12px;
+      }
+
+      .legal-links a {
+        color: var(--home-text-soft);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+
+      .legal-links a:hover,
+      .legal-links a:focus-visible {
+        color: var(--home-text);
+      }
+
       .nav-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -985,8 +1015,19 @@
             <p class="card-description">Terminal &amp; Graphics Online</p>
           </a>
         </div>
+        <p class="service-note">
+          AVR Programming includes an optional AI assistant for AVR questions
+          and mini-project drafts. Google sign-in is required only for AI
+          access; the editor, compiler, flasher, and UART tools remain available
+          without it.
+        </p>
       </section>
     </main>
+
+    <footer class="legal-links" aria-label="Legal">
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </footer>
 
     <script>
       if ("serviceWorker" in navigator) {

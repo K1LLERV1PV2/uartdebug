@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="uart.css?v=20260709-terminal-polish-v3" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260825-ai-live-preview-v2"
+      href="AVR-Programming.css?v=20260825-workspace-public-auth-v2"
     />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
 
@@ -41,7 +41,7 @@
           <section
             class="avr-device-section"
             id="avrDeviceSection"
-            data-collapsed="false"
+            data-state="expanded"
           >
             <div
               class="avr-device-panel-viewport"
@@ -81,34 +81,23 @@
                 </div>
               </div>
 
-                <button
-                  class="avr-device-collapse-zone"
-                  id="devicePanelHoverToggle"
-                  type="button"
-                  aria-label="Collapse device panel"
-                  aria-controls="avrDevicePanelViewport"
-                  aria-expanded="true"
-                  data-tooltip-disabled
-                >
-                  <span>Collapse device panel</span>
-                  <span class="avr-device-collapse-zone-arrow" aria-hidden="true"
-                    >&#8593;</span
-                  >
-                </button>
               </div>
             </div>
 
-            <button
-              class="device-panel-toggle"
+            <div
+              class="split-resizer device-panel-resizer"
               id="devicePanelToggle"
-              type="button"
-              aria-label="Collapse device panel"
+              role="separator"
+              tabindex="0"
+              aria-label="Resize device panel"
               aria-controls="avrDevicePanelViewport"
-              aria-expanded="true"
+              aria-orientation="horizontal"
+              aria-valuemin="0"
+              aria-valuemax="104"
+              aria-valuenow="104"
+              aria-valuetext="Expanded"
               data-tooltip-disabled
-            >
-              <span class="device-panel-toggle-arrow" aria-hidden="true"></span>
-            </button>
+            ></div>
           </section>
 
           <div
@@ -315,12 +304,21 @@
                           hidden
                         >
                           <button
-                            class="connect-btn secondary-btn project-ai-auth-button"
+                            class="project-ai-google-sign-in"
                             id="projectAiSignInBtn"
                             type="button"
+                            aria-label="Sign in with Google"
+                            aria-describedby="projectAiPrivacyNote"
                             hidden
                           >
-                            Sign in with Google
+                            <img
+                              class="project-ai-google-sign-in-asset"
+                              src="/icons/sign-in-with-google-light.svg"
+                              alt=""
+                              width="180"
+                              height="40"
+                              aria-hidden="true"
+                            />
                           </button>
 
                           <div
@@ -357,6 +355,24 @@
                         </div>
                       </div>
                     </div>
+
+                    <p
+                      class="project-ai-privacy-note"
+                      id="projectAiPrivacyNote"
+                      hidden
+                    >
+                      Before sign-in, Google shares a verified account identifier
+                      and email. Uart Debug stores a pseudonymous identifier and
+                      masked email, and links the account to this browser
+                      installation for authentication, a shared free AI-credit
+                      pool, and abuse prevention. Google identity data is not sent
+                      to OpenAI.
+                      <a href="/privacy" target="_blank" rel="noopener"
+                        >Privacy</a
+                      >
+                      ·
+                      <a href="/terms" target="_blank" rel="noopener">Terms</a>
+                    </p>
 
                     <div
                       class="project-ai-budget"
@@ -430,6 +446,17 @@
                     </div>
                   </section>
 
+                  <div
+                    class="split-resizer project-ai-resizer project-ai-chat-resizer"
+                    id="projectAiChatResizer"
+                    role="separator"
+                    tabindex="0"
+                    aria-label="Resize AI conversation"
+                    aria-orientation="vertical"
+                    aria-controls="projectAiView projectInstructionDropZone"
+                    data-tooltip-disabled
+                  ></div>
+
                   <section
                     class="project-instruction-panel avr-session-panel"
                     aria-labelledby="projectInstructionTitle"
@@ -463,11 +490,21 @@
                         <textarea
                           id="projectInstructionEditor"
                           spellcheck="true"
-                          placeholder="# Initialization&#10;&#10;Describe what the project should do."
                         ></textarea>
                       </div>
                     </div>
                   </section>
+
+                  <div
+                    class="split-resizer project-ai-resizer project-ai-skills-resizer"
+                    id="projectAiSkillsResizer"
+                    role="separator"
+                    tabindex="0"
+                    aria-label="Resize instruction blocks"
+                    aria-orientation="vertical"
+                    aria-controls="projectInstructionDropZone projectSkillsList"
+                    data-tooltip-disabled
+                  ></div>
 
                   <aside
                     class="project-skills-panel avr-session-panel"
@@ -768,7 +805,7 @@
     <script defer src="avr-mini-project-archive.js?v=20260821-localized-zip-v1"></script>
     <script
       defer
-      src="AVR-Programming.js?v=20260825-ai-live-preview-v2"
+      src="AVR-Programming.js?v=20260825-workspace-public-auth-v2"
     ></script>
     <script defer src="updi-test.js?v=20260709-terminal-avr-sync-v1"></script>
   </body>

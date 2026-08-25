@@ -8,6 +8,7 @@ const {
   AI_SERVER_VERSION,
   createAiHttpServer,
 } = require("../backend/ai-server");
+const { AiAccessError } = require("../backend/ai-access-service");
 const { AiServiceError } = require("../backend/avr-ai-service");
 
 function listen(server) {
@@ -139,6 +140,74 @@ test("serves only allowlisted versioned AI skills and rejects unsafe Markdown", 
   const unsafe = await fetch(`${baseUrl}/api/avr/ai/skills`);
   assert.equal(unsafe.status, 503);
   assert.equal((await unsafe.json()).code, "skill_catalog_invalid");
+});
+
+test("serves an intentionally empty public AI skill catalog", async (t) => {
+  const aiService = {
+    async getSkills() {
+      return {
+        schemaVersion: 1,
+        catalogVersion: "2026.08.25.2",
+        locale: "ru",
+        digest: "d".repeat(64),
+        skills: [],
+      };
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService,
+    accessService: {},
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(`${baseUrl}/api/avr/ai/skills`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
+  delete body.requestId;
+  assert.deepEqual(body, {
+    ok: true,
+    schemaVersion: 1,
+    catalogVersion: "2026.08.25.2",
+    locale: "ru",
+    count: 0,
+    digest: "d".repeat(64),
+    skills: [],
+  });
+});
+
+test("redirects a failed Google callback back to the AVR assistant", async (t) => {
+  const server = createAiHttpServer({
+    environment: {},
+    aiService: {},
+    accessService: {
+      async completeGoogleLogin() {
+        throw new AiAccessError(
+          401,
+          "google_sign_in_denied",
+          "Google sign-in was not completed."
+        );
+      },
+    },
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(
+    `${baseUrl}/api/avr/ai/auth/google/callback?state=test&error=access_denied`,
+    { redirect: "manual" }
+  );
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(
+    response.headers.get("location"),
+    "/avr?ai_auth=error&ai_auth_code=google_sign_in_denied"
+  );
+  assert.equal(await response.text(), "");
 });
 
 test("requires JSON and does not apply legacy request or daily quotas", async (t) => {

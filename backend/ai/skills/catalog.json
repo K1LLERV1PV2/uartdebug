@@ -1,52 +1,6 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "2026.08.25.1",
+  "catalogVersion": "2026.08.25.2",
   "locale": "ru",
-  "skills": [
-    {
-      "id": "initialization",
-      "version": "1.0.0",
-      "title": "Инициализация",
-      "summary": "Базовая последовательность настройки тактирования и периферии.",
-      "mediaType": "text/markdown",
-      "file": "initialization.md",
-      "sha256": "d6a1119cfa6bf7901c6e466c0d5cb04c251c2ba1b475f2c024766d64cb329077"
-    },
-    {
-      "id": "main-loop",
-      "version": "1.0.0",
-      "title": "Фоновый процесс while (1)",
-      "summary": "Неблокирующий основной цикл и обработка событий вне ISR.",
-      "mediaType": "text/markdown",
-      "file": "main-loop.md",
-      "sha256": "07a95f6bdcf478e9e6f7a223ee8c3a5ff23b33efb88f71739661be82381f68ab"
-    },
-    {
-      "id": "sampling-1s",
-      "version": "1.0.0",
-      "title": "Дискретизация 1 сек.",
-      "summary": "Периодическое событие аппаратного таймера раз в секунду.",
-      "mediaType": "text/markdown",
-      "file": "sampling-1s.md",
-      "sha256": "d2d789a81c9e8f6943542c53680edf13ad54bd110505f06089c455eedc08a47d"
-    },
-    {
-      "id": "button-reaction",
-      "version": "1.0.0",
-      "title": "Реакция на кнопку",
-      "summary": "Неблокирующая обработка кнопки с подавлением дребезга.",
-      "mediaType": "text/markdown",
-      "file": "button-reaction.md",
-      "sha256": "549c25cf2bde9f3ab2e8411be8ebafcd1704b5a6fd8d2af2051a06d91fe475b8"
-    },
-    {
-      "id": "uart-output",
-      "version": "1.0.0",
-      "title": "Выдача по UART",
-      "summary": "Формирование и передача текстового состояния по UART.",
-      "mediaType": "text/markdown",
-      "file": "uart-output.md",
-      "sha256": "18d2eecaa122e775aa2a184bbe6aefc534c04a003b47c7085180a7bf1da64f90"
-    }
-  ]
+  "skills": []
 }
