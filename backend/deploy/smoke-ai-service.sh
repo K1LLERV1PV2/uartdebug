@@ -36,6 +36,7 @@ node -e '
   const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   if (value.ok !== true || value.schemaVersion !== 1) process.exit(1);
   if (!Array.isArray(value.skills) || value.skills.length !== value.count) process.exit(1);
+  if (!/^[a-f0-9]{64}$/.test(String(value.digest || ""))) process.exit(1);
   const allowed = ["id", "markdown", "summary", "title", "version"];
   for (const skill of value.skills) {
     if (Object.keys(skill).some((key) => !allowed.includes(key))) process.exit(1);

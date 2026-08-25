@@ -572,49 +572,8 @@ jobs:
                   }
                   rm -f "${ai_status_body}"
 
-                  ai_skills_url="${AI_HC_URL%/health}/api/avr/ai/skills"
-                  ai_skills_body="$(mktemp)"
-                  ai_skills_code="$(
-                    curl -sS -o "${ai_skills_body}" -w '%{http_code}' --max-time 15 "${ai_skills_url}" || true
-                  )"
-                  [ "${ai_skills_code}" = "200" ] &&
-                    /usr/bin/node -e '
-                      const fs = require("fs");
-                      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-                      if (value.ok !== true || value.schemaVersion !== 1) process.exit(1);
-                      if (!Array.isArray(value.skills) || value.skills.length !== value.count) process.exit(1);
-                      if (!/^[a-f0-9]{64}$/.test(String(value.digest || ""))) process.exit(1);
-                      const allowed = ["id", "markdown", "summary", "title", "version"];
-                      for (const skill of value.skills) {
-                        if (Object.keys(skill).some((key) => !allowed.includes(key))) process.exit(1);
-                      }
-                    ' "${ai_skills_body}" || {
-                      echo "AI skills readiness check failed with HTTP ${ai_skills_code}"
-                      cat "${ai_skills_body}" || true
-                      rm -f "${ai_skills_body}"
-                      exit 1
-                    }
-                  rm -f "${ai_skills_body}"
-
-                  ai_auth_url="${AI_HC_URL%/health}/api/avr/ai/auth/session"
-                  ai_auth_body="$(mktemp)"
-                  ai_auth_code="$(
-                    curl -sS -o "${ai_auth_body}" -w '%{http_code}' --max-time 15 "${ai_auth_url}" || true
-                  )"
-                  [ "${ai_auth_code}" = "200" ] &&
-                    /usr/bin/node -e '
-                      const fs = require("fs");
-                      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-                      if (value.ok !== true) process.exit(1);
-                      if (value.mode !== "public" && value.mode !== "google") process.exit(1);
-                      if (value.mode === "google" && value.configured !== true) process.exit(1);
-                    ' "${ai_auth_body}" || {
-                      echo "AI Google-access readiness check failed with HTTP ${ai_auth_code}"
-                      cat "${ai_auth_body}" || true
-                      rm -f "${ai_auth_body}"
-                      exit 1
-                    }
-                  rm -f "${ai_auth_body}"
+                  /bin/bash "${BE_DIR}/deploy/smoke-ai-service.sh" \
+                    "${AI_HC_URL%/health}"
                 else
                   echo "No AI entrypoint found in ${BE_DIR}; stopping optional uartdebug-ai.service"
                   run_sudo systemctl stop uartdebug-ai.service || true
@@ -693,28 +652,8 @@ jobs:
               rm -f "${hc_body}"
 
               site_origin="$(/usr/bin/node -e 'process.stdout.write(new URL(process.argv[1]).origin)' "${HC_URL}")"
-              for legal_route in privacy terms; do
-                legal_body="$(mktemp)"
-                legal_url="${site_origin}/${legal_route}"
-                legal_code="000"
-                if [ -n "${HC_RESOLVE}" ]; then
-                  if ! legal_code="$(curl -sS -o "${legal_body}" -w '%{http_code}' --max-time 10 --resolve "${HC_RESOLVE}" "${legal_url}")"; then
-                    legal_code="000"
-                  fi
-                elif ! legal_code="$(curl -sS -o "${legal_body}" -w '%{http_code}' --max-time 10 "${legal_url}")"; then
-                  legal_code="000"
-                fi
-                expected_title="$(printf '%s' "${legal_route}" | sed 's/^./\U&/')"
-                [ "${legal_code}" = "200" ] &&
-                  grep -Fq "<title>${expected_title}" "${legal_body}" &&
-                  grep -Fq "rel=\"canonical\" href=\"https://uartdebug.com/${legal_route}\"" "${legal_body}" || {
-                    echo "Legal page ${legal_url} failed semantic readiness with HTTP ${legal_code}"
-                    cat "${legal_body}" || true
-                    rm -f "${legal_body}"
-                    exit 1
-                  }
-                rm -f "${legal_body}"
-              done
+              /bin/bash "${BE_DIR}/deploy/check-legal-pages.sh" \
+                "${site_origin}" "${HC_RESOLVE}"
             fi
 
             if [ -z "${ROLLBACK}" ]; then
