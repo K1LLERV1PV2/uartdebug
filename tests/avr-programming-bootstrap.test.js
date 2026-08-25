@@ -167,8 +167,16 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.match(html, /id="projectAiWorkspace"/);
   assert.match(html, /id="projectAiHistory"[\s\S]*role="log"/);
   assert.match(html, /id="projectAiForm"/);
-  assert.match(html, /id="projectAiAuth"[\s\S]*aria-live="polite"[\s\S]*hidden/);
-  assert.match(html, /id="projectAiSignInBtn"[\s\S]*Sign in with Google/);
+  assert.match(
+    html,
+    /id="projectAiAuth"[\s\S]*?aria-label="AI access"[\s\S]*?hidden[\s\S]*?id="projectAiAccountBtn"/
+  );
+  assert.match(
+    html,
+    /id="projectAiAccountStatus"[\s\S]*?role="status"[\s\S]*?aria-live="polite"/
+  );
+  assert.match(html, /id="projectAiAccountBtn"/);
+  assert.match(html, /id="projectAiSignInBtn"[\s\S]*Continue with Google/);
   assert.match(html, /id="projectAiAccount"/);
   assert.match(html, /id="projectAiCredits"/);
   assert.match(html, /id="projectAiBudget"[\s\S]*role="progressbar"/);
@@ -193,7 +201,10 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.doesNotMatch(source, /AI_BROWSER_INSTALLATION_STORAGE_KEY/);
   assert.doesNotMatch(source, /X-UartDebug-Installation/);
   assert.doesNotMatch(source, /getAiBrowserInstallationHeader/);
-  assert.match(source, /if \(session\?\.mode !== "google"\) return/);
+  assert.match(
+    source,
+    /if \(session\?\.mode !== "google"\) \{[\s\S]*?closeProjectAiAccountModal\(\{ restoreFocus: false \}\);[\s\S]*?return;[\s\S]*?\}/
+  );
   assert.match(source, /PROJECT_AI_AUTH_SESSION_URL[\s\S]*method: "GET"/);
   assert.match(source, /credentials: "same-origin"/);
   assert.match(
@@ -272,6 +283,123 @@ test("wires the project AI pane to the AVR AI API contract", () => {
     /placeholder="Ask, revise the instruction, or request a project"/
   );
   assert.match(html, />\s*Send\s*<\/button>/);
+});
+
+test("keeps Google AI account controls in an accessible account modal", () => {
+  const html = fs.readFileSync(
+    path.join(__dirname, "../public/avr.html"),
+    "utf8"
+  );
+  const source = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.js"),
+    "utf8"
+  );
+  const css = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.css"),
+    "utf8"
+  );
+
+  const headerStart = html.indexOf('id="projectAiHeader"');
+  const headerEnd = html.indexOf('id="projectAiBudget"', headerStart);
+  const accountModalStart = html.indexOf('id="projectAiAccountModal"');
+  const accountModalEnd = html.indexOf('id="siteDialog"', accountModalStart);
+  assert.ok(headerStart >= 0 && headerEnd > headerStart);
+  assert.ok(accountModalStart >= 0 && accountModalEnd > accountModalStart);
+
+  const header = html.slice(headerStart, headerEnd);
+  const modal = html.slice(accountModalStart, accountModalEnd);
+  assert.match(
+    header,
+    /id="projectAiAccountBtn"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="projectAiAccountModal"[\s\S]*?aria-expanded="false"/
+  );
+  assert.doesNotMatch(
+    header,
+    /project-ai-google-sign-in-asset|id="projectAiPrivacyNote"|id="projectAiAccount"|id="projectAiCredits"|id="projectAiSignOutBtn"/
+  );
+  assert.match(
+    modal,
+    /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="projectAiAccountModalTitle"[\s\S]*?hidden/
+  );
+  assert.match(modal, /id="projectAiAccountCard"[\s\S]*?tabindex="-1"/);
+  assert.match(modal, /id="projectAiAccountCloseBtn"/);
+  assert.match(modal, /id="projectAiAccountStatus"[\s\S]*?role="status"/);
+  for (const requiredControl of [
+    "project-ai-google-sign-in-asset",
+    'id="projectAiPrivacyNote"',
+    'id="projectAiAccount"',
+    'id="projectAiCredits"',
+    'id="projectAiSignOutBtn"',
+  ]) {
+    assert.ok(
+      modal.includes(requiredControl),
+      `account modal is missing ${requiredControl}`
+    );
+  }
+
+  const openStart = source.indexOf("function openProjectAiAccountModal()");
+  const closeStart = source.indexOf(
+    "function closeProjectAiAccountModal",
+    openStart
+  );
+  const renderStart = source.indexOf(
+    "function renderProjectAiAuthSession",
+    closeStart
+  );
+  assert.ok(openStart >= 0 && closeStart > openStart && renderStart > closeStart);
+  const openSource = source.slice(openStart, closeStart);
+  const closeSource = source.slice(closeStart, renderStart);
+  assert.match(openSource, /modal\.hidden = false/);
+  assert.match(openSource, /trigger\.setAttribute\("aria-expanded", "true"\)/);
+  assert.match(
+    openSource,
+    /const focusTarget = signIn && !signIn\.hidden \? signIn : card/
+  );
+  assert.match(openSource, /focusTarget\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(closeSource, /modal\.hidden = true/);
+  assert.match(closeSource, /trigger\.setAttribute\("aria-expanded", "false"\)/);
+  assert.match(closeSource, /trigger\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(
+    source,
+    /projectAiAccountBtn &&[\s\S]*?projectAiAccountBtn\.addEventListener\("click", openProjectAiAccountModal\)/
+  );
+  assert.match(
+    source,
+    /projectAiAccountCloseBtn &&[\s\S]*?projectAiAccountCloseBtn\.addEventListener\([\s\S]*?"click",[\s\S]*?closeProjectAiAccountModal/
+  );
+  assert.match(
+    source,
+    /if \(event\.target === projectAiAccountModal\) \{\s*closeProjectAiAccountModal\(\);\s*\}/
+  );
+  assert.match(
+    source,
+    /if \(e\.key === "Escape"\) \{[\s\S]*?if \(projectAiAccountModal && !projectAiAccountModal\.hidden\) \{\s*closeProjectAiAccountModal\(\);\s*return;/
+  );
+  assert.match(source, /function trapProjectAiAccountFocus\(event\)/);
+  assert.match(
+    source,
+    /document\.addEventListener\("keydown", \(e\) => \{\s*if \(trapProjectAiAccountFocus\(e\)\) return;/
+  );
+  assert.match(
+    source,
+    /projectAiAuthSession = \{\s*mode: "google",\s*configured: true,\s*authenticated: false,\s*quota: null,\s*\};\s*renderProjectAiAuthSession\(projectAiAuthSession\);/
+  );
+  assert.match(source, /setProjectAiAccountStatus\(message, "error"\)/);
+  assert.match(
+    css,
+    /\.project-ai-account-modal\s*\{[\s\S]*?backdrop-filter:\s*blur\(8px\);/
+  );
+  assert.match(
+    css,
+    /\.project-ai-account-card\s*\{[\s\S]*?width:\s*min\(100%, 520px\);[\s\S]*?background:\s*var\(--avr-window-bg\);/
+  );
+  assert.match(
+    css,
+    /\.project-ai-google-sign-in\s*\{[\s\S]*?width:\s*100%;[\s\S]*?background:\s*rgba\(39, 174, 96, 0\.1\);/
+  );
+  assert.match(
+    css,
+    /\.project-ai-account-status\[data-tone="error"\]\s*\{[\s\S]*?color:\s*#ffe0aa;/
+  );
 });
 
 test("keeps only technical AI concurrency safeguards", () => {
@@ -712,11 +840,19 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   assert.doesNotMatch(css, /device-panel-toggle-arrow::after/);
   assert.match(
     css,
-    /data-state="compact"[\s\S]*?\.detect-chip-btn\s*\{[\s\S]*?height:\s*36px;/
+    /data-state="compact"[\s\S]*?\.detect-chip-btn\s*\{[\s\S]*?height:\s*36px;[\s\S]*?padding:\s*0;/
+  );
+  assert.match(
+    css,
+    /data-state="compact"[\s\S]*?\.detect-chip-label\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?display:\s*flex;[\s\S]*?align-items:\s*center;[\s\S]*?justify-content:\s*center;/
   );
   assert.match(
     css,
     /data-state="compact"[\s\S]*?\.avr-status-value\s*\{[\s\S]*?height:\s*36px;[\s\S]*?min-height:\s*36px;/
+  );
+  assert.match(
+    css,
+    /\.feature-panel:has\(\s*> \.canvas-section > \.avr-device-section\[data-state="collapsed"\]\s*\)\s*\{\s*padding-top:\s*0;/
   );
   assert.match(
     source,
@@ -728,17 +864,7 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   assert.match(source, /DEVICE_PANEL_COLLAPSED_HEIGHT\s*=\s*0/);
   assert.match(source, /DEVICE_PANEL_DRAG_THRESHOLD\s*=\s*18/);
   assert.match(source, /function getAdjacentDevicePanelState\(state, direction\)/);
-  assert.match(source, /startY:\s*event\.clientY/);
-  assert.match(source, /lastY:\s*event\.clientY/);
-  assert.match(source, /startState:\s*devicePanelState/);
-  assert.match(
-    source,
-    /Math\.abs\(delta\)\s*>=\s*DEVICE_PANEL_DRAG_THRESHOLD/
-  );
-  assert.match(
-    source,
-    /getAdjacentDevicePanelState\([\s\S]*?resizeState\.startState,[\s\S]*?delta < 0 \? -1 : 1/
-  );
+  assert.match(source, /anchorY:\s*event\.clientY/);
   assert.doesNotMatch(source, /getNearestDevicePanelState|getLiveDevicePanelState/);
   const pointerMoveStart = source.indexOf(
     'handle.addEventListener("pointermove"'
@@ -749,10 +875,26 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   );
   assert.ok(pointerMoveStart >= 0 && pointerMoveEnd > pointerMoveStart);
   const pointerMoveSource = source.slice(pointerMoveStart, pointerMoveEnd);
-  assert.match(pointerMoveSource, /devicePanelResizeState\.lastY = event\.clientY/);
-  assert.doesNotMatch(
+  assert.match(
     pointerMoveSource,
-    /applyDevicePanelState|setDevicePanelState|--device-panel-height/
+    /const delta = event\.clientY - devicePanelResizeState\.anchorY/
+  );
+  assert.match(
+    pointerMoveSource,
+    /Math\.floor\(\s*Math\.abs\(delta\) \/ DEVICE_PANEL_DRAG_THRESHOLD\s*\)/
+  );
+  assert.match(pointerMoveSource, /const direction = delta < 0 \? -1 : 1/);
+  assert.match(
+    pointerMoveSource,
+    /while \(appliedSteps < requestedSteps\)[\s\S]*?getAdjacentDevicePanelState\(\s*nextState,\s*direction\s*\)/
+  );
+  assert.match(
+    pointerMoveSource,
+    /devicePanelResizeState\.anchorY \+=[\s\S]*?DEVICE_PANEL_DRAG_THRESHOLD \* appliedSteps/
+  );
+  assert.match(
+    pointerMoveSource,
+    /setDevicePanelState\(nextState, \{ persist: false, animate: false \}\)/
   );
   assert.match(
     source,
@@ -760,7 +902,7 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   );
   assert.match(
     source,
-    /pointercancel[\s\S]*?finishResize\(event, \{ cancelled: true \}\)/
+    /handle\.addEventListener\("pointercancel", finishResize\)/
   );
   assert.match(source, /lostpointercapture/);
   assert.match(source, /if \(collapsed\) viewport\.setAttribute\("inert", ""\)/);

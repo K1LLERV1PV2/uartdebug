@@ -6064,17 +6064,113 @@
     renderProjectAiQuota(quota);
   }
 
+  function openProjectAiAccountModal() {
+    const modal = $("projectAiAccountModal");
+    const trigger = $("projectAiAccountBtn");
+    const card = $("projectAiAccountCard");
+    if (!modal || !trigger || !card) return;
+
+    modal.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    requestAnimationFrame(() => {
+      const signIn = $("projectAiSignInBtn");
+      const focusTarget = signIn && !signIn.hidden ? signIn : card;
+      focusTarget.focus({ preventScroll: true });
+    });
+  }
+
+  function closeProjectAiAccountModal({ restoreFocus = true } = {}) {
+    const modal = $("projectAiAccountModal");
+    const trigger = $("projectAiAccountBtn");
+    if (!modal || !trigger || modal.hidden) return;
+
+    modal.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    if (restoreFocus) {
+      requestAnimationFrame(() => {
+        trigger.focus({ preventScroll: true });
+      });
+    }
+  }
+
+  function setProjectAiAccountStatus(message = "", tone = "info") {
+    const status = $("projectAiAccountStatus");
+    if (!status) return;
+    const normalizedMessage = String(message || "").trim();
+    status.textContent = normalizedMessage;
+    status.dataset.tone = tone;
+    status.hidden = !normalizedMessage;
+  }
+
+  function trapProjectAiAccountFocus(event) {
+    const modal = $("projectAiAccountModal");
+    const card = $("projectAiAccountCard");
+    if (!modal || !card || modal.hidden || event.key !== "Tab") return false;
+
+    const focusable = Array.from(
+      modal.querySelectorAll(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter(
+      (element) =>
+        !element.closest("[hidden]") && element.getClientRects().length > 0
+    );
+
+    if (focusable.length === 0) {
+      event.preventDefault();
+      card.focus({ preventScroll: true });
+      return true;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const activeElement = document.activeElement;
+    if (
+      event.shiftKey &&
+      (activeElement === first || !focusable.includes(activeElement))
+    ) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+      return true;
+    }
+    if (
+      !event.shiftKey &&
+      (activeElement === last || !focusable.includes(activeElement))
+    ) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+      return true;
+    }
+    return false;
+  }
+
   function renderProjectAiAuthSession(session) {
     const auth = $("projectAiAuth");
+    const accountButton = $("projectAiAccountBtn");
     const signIn = $("projectAiSignInBtn");
     const signedInSession = $("projectAiAuthSession");
     const account = $("projectAiAccount");
     const credits = $("projectAiCredits");
     const unavailable = $("projectAiAuthUnavailable");
     const privacyNote = $("projectAiPrivacyNote");
-    if (!auth || !signIn || !signedInSession || !account || !credits) return;
+    if (
+      !auth ||
+      !accountButton ||
+      !signIn ||
+      !signedInSession ||
+      !account ||
+      !credits
+    ) {
+      return;
+    }
 
     auth.hidden = true;
+    accountButton.classList.remove(
+      "is-sign-in-required",
+      "is-authenticated",
+      "is-unavailable"
+    );
+    accountButton.setAttribute("aria-label", "Open AI account");
     signIn.hidden = true;
     signedInSession.hidden = true;
     if (unavailable) unavailable.hidden = true;
@@ -6084,16 +6180,26 @@
     credits.hidden = true;
     renderProjectAiQuota(null);
 
-    if (session?.mode !== "google") return;
+    if (session?.mode !== "google") {
+      closeProjectAiAccountModal({ restoreFocus: false });
+      return;
+    }
     auth.hidden = false;
     if (privacyNote) privacyNote.hidden = false;
 
     if (session.configured !== true) {
+      accountButton.classList.add("is-unavailable");
+      accountButton.setAttribute("aria-label", "Open AI account: unavailable");
       if (unavailable) unavailable.hidden = false;
       return;
     }
 
     if (session.authenticated !== true) {
+      accountButton.classList.add("is-sign-in-required");
+      accountButton.setAttribute(
+        "aria-label",
+        "Open AI account: Google sign-in required"
+      );
       signIn.hidden = false;
       return;
     }
@@ -6101,6 +6207,11 @@
     account.textContent =
       String(session.user?.emailMasked || "").trim() || "Google account";
     account.title = account.textContent;
+    accountButton.classList.add("is-authenticated");
+    accountButton.setAttribute(
+      "aria-label",
+      `Open AI account: ${account.textContent}`
+    );
     const remaining = Number(session.quota?.remaining);
     renderProjectAiQuota(session.quota);
     if (Number.isFinite(remaining)) {
@@ -6119,9 +6230,13 @@
 
   function setProjectAiAuthPending(pending) {
     const auth = $("projectAiAuth");
+    const accountBody = $("projectAiAccountBody");
     const signIn = $("projectAiSignInBtn");
     const signOut = $("projectAiSignOutBtn");
     if (auth) auth.setAttribute("aria-busy", String(!!pending));
+    if (accountBody) {
+      accountBody.setAttribute("aria-busy", String(!!pending));
+    }
     if (signIn) signIn.disabled = !!pending;
     if (signOut) signOut.disabled = !!pending;
   }
@@ -6207,18 +6322,24 @@
     if (authReturn.status === "success") {
       void fetchProjectAiAuthSession()
         .then((session) => {
-          appendProjectAiMessage(
-            "system",
+          const message =
             session?.authenticated === true
               ? "Signed in with Google."
-              : "Google sign-in could not be restored. Please try again."
+              : "Google sign-in could not be restored. Please try again.";
+          appendProjectAiMessage(
+            "system",
+            message
+          );
+          setProjectAiAccountStatus(
+            message,
+            session?.authenticated === true ? "success" : "error"
           );
         })
         .catch(() => {
-          appendProjectAiMessage(
-            "system",
-            "Google sign-in completed, but the session could not be checked. Please reload the page."
-          );
+          const message =
+            "Google sign-in completed, but the session could not be checked. Please reload the page.";
+          appendProjectAiMessage("system", message);
+          setProjectAiAccountStatus(message, "error");
         });
       return;
     }
@@ -6238,23 +6359,24 @@
       google_email_unverified:
         "A verified Google email address is required.",
     };
-    appendProjectAiMessage(
-      "system",
+    const message =
       messages[authReturn.code] ||
-        "Google sign-in could not be completed. Please try again."
-    );
+      "Google sign-in could not be completed. Please try again.";
+    appendProjectAiMessage("system", message);
+    setProjectAiAccountStatus(message, "error");
   }
 
   async function handleProjectAiSignIn() {
+    setProjectAiAccountStatus();
     setProjectAiAuthPending(true);
     try {
       const session = await fetchProjectAiAuthSession();
       if (session.mode !== "google") return;
       if (session.configured !== true) {
-        appendProjectAiMessage(
-          "system",
-          "Google access for Uart Debug AI is not configured yet."
-        );
+        const message =
+          "Google access for Uart Debug AI is not configured yet.";
+        appendProjectAiMessage("system", message);
+        setProjectAiAccountStatus(message, "error");
         return;
       }
       if (session.authenticated === true) return;
@@ -6288,10 +6410,10 @@
       }
       window.location.assign(redirectUrl.toString());
     } catch (error) {
-      appendProjectAiMessage(
-        "system",
-        error?.message || "AI access could not be checked. Try again."
-      );
+      const message =
+        error?.message || "AI access could not be checked. Try again.";
+      appendProjectAiMessage("system", message);
+      setProjectAiAccountStatus(message, "error");
     } finally {
       setProjectAiAuthPending(false);
     }
@@ -6299,6 +6421,7 @@
 
   async function handleProjectAiSignOut() {
     let focusSignIn = false;
+    setProjectAiAccountStatus();
     setProjectAiAuthPending(true);
     try {
       const response = await fetch(PROJECT_AI_LOGOUT_URL, {
@@ -6321,20 +6444,35 @@
       }
       projectAiAuthRequestEpoch += 1;
       projectAiAuthSessionPromise = null;
-      projectAiAuthSession = null;
       projectAiLatestQuota = null;
       projectAiQuotaUpdateSequence += 1;
-      await fetchProjectAiAuthSession();
+      projectAiAuthSession = {
+        mode: "google",
+        configured: true,
+        authenticated: false,
+        quota: null,
+      };
+      renderProjectAiAuthSession(projectAiAuthSession);
       focusSignIn = true;
+      setProjectAiAccountStatus("Signed out.", "success");
+      try {
+        await fetchProjectAiAuthSession();
+      } catch {
+        const message =
+          "Signed out, but the account status could not be refreshed. You can safely try again later.";
+        appendProjectAiMessage("system", message);
+        setProjectAiAccountStatus(message, "error");
+      }
     } catch (error) {
-      appendProjectAiMessage(
-        "system",
-        error?.message || "Could not sign out. Try again."
-      );
+      const message = error?.message || "Could not sign out. Try again.";
+      appendProjectAiMessage("system", message);
+      setProjectAiAccountStatus(message, "error");
     } finally {
       setProjectAiAuthPending(false);
-      if (focusSignIn) {
-        $("projectAiSignInBtn")?.focus({ preventScroll: true });
+      const modal = $("projectAiAccountModal");
+      const signIn = $("projectAiSignInBtn");
+      if (focusSignIn && modal && !modal.hidden && signIn && !signIn.hidden) {
+        signIn.focus({ preventScroll: true });
       }
     }
   }
@@ -6795,6 +6933,9 @@
   function setProjectWorkspaceMode(mode, { focusPrompt = false } = {}) {
     const aiMode = mode === "ai";
     const nextMode = aiMode ? "ai" : "avr";
+    if (!aiMode) {
+      closeProjectAiAccountModal({ restoreFocus: false });
+    }
     const stage = $("projectWorkspaceStage");
     const avrScene = $("avrWorkspaceScene");
     const aiScene = $("projectAiScene");
@@ -7013,7 +7154,7 @@
     const handle = $("devicePanelToggle");
     if (!section || !handle) return;
 
-    const finishResize = (event, { cancelled = false } = {}) => {
+    const finishResize = (event) => {
       if (!devicePanelResizeState) return;
       const resizeState = devicePanelResizeState;
       devicePanelResizeState = null;
@@ -7024,19 +7165,11 @@
       } catch {}
       section.classList.remove("is-device-panel-resizing");
       document.body.classList.remove("is-device-panel-resizing");
-      const endY = Number.isFinite(event?.clientY)
-        ? event.clientY
-        : resizeState.lastY;
-      const delta = endY - resizeState.startY;
-      if (!cancelled && Math.abs(delta) >= DEVICE_PANEL_DRAG_THRESHOLD) {
-        const nextState = getAdjacentDevicePanelState(
-          resizeState.startState,
-          delta < 0 ? -1 : 1
-        );
-        if (nextState !== resizeState.startState) {
-          setDevicePanelState(nextState);
-        }
-      }
+      setDevicePanelState(devicePanelState, {
+        persist: true,
+        animate: false,
+      });
+      refreshWorkspaceAfterDevicePanelResize();
       event?.preventDefault?.();
     };
 
@@ -7045,9 +7178,7 @@
       event.preventDefault();
       devicePanelResizeState = {
         pointerId: event.pointerId,
-        startY: event.clientY,
-        lastY: event.clientY,
-        startState: devicePanelState,
+        anchorY: event.clientY,
       };
       handle.setPointerCapture?.(event.pointerId);
       section.classList.add("is-device-panel-resizing");
@@ -7055,18 +7186,52 @@
     });
 
     handle.addEventListener("pointermove", (event) => {
-      if (!devicePanelResizeState) return;
+      if (
+        !devicePanelResizeState ||
+        devicePanelResizeState.pointerId !== event.pointerId
+      ) {
+        return;
+      }
       event.preventDefault();
-      devicePanelResizeState.lastY = event.clientY;
+      const delta = event.clientY - devicePanelResizeState.anchorY;
+      const requestedSteps = Math.floor(
+        Math.abs(delta) / DEVICE_PANEL_DRAG_THRESHOLD
+      );
+      if (requestedSteps < 1) return;
+
+      const direction = delta < 0 ? -1 : 1;
+      let nextState = devicePanelState;
+      let appliedSteps = 0;
+      while (appliedSteps < requestedSteps) {
+        const adjacentState = getAdjacentDevicePanelState(
+          nextState,
+          direction
+        );
+        if (adjacentState === nextState) break;
+        nextState = adjacentState;
+        appliedSteps += 1;
+      }
+
+      if (appliedSteps === 0) {
+        devicePanelResizeState.anchorY = event.clientY;
+        return;
+      }
+
+      if (appliedSteps < requestedSteps) {
+        devicePanelResizeState.anchorY = event.clientY;
+      } else {
+        devicePanelResizeState.anchorY +=
+          direction * DEVICE_PANEL_DRAG_THRESHOLD * appliedSteps;
+      }
+      setDevicePanelState(nextState, { persist: false, animate: false });
+      refreshWorkspaceAfterDevicePanelResize();
     });
 
     handle.addEventListener("pointerup", finishResize);
-    handle.addEventListener("pointercancel", (event) => {
-      finishResize(event, { cancelled: true });
-    });
+    handle.addEventListener("pointercancel", finishResize);
     handle.addEventListener("lostpointercapture", (event) => {
       if (devicePanelResizeState?.pointerId === event.pointerId) {
-        finishResize(event, { cancelled: true });
+        finishResize(event);
       }
     });
     handle.addEventListener("keydown", (event) => {
@@ -7989,6 +8154,9 @@
       const projectAiToggle = $("projectAiToggle");
       const projectAiForm = $("projectAiForm");
       const projectAiPrompt = $("projectAiPrompt");
+      const projectAiAccountBtn = $("projectAiAccountBtn");
+      const projectAiAccountModal = $("projectAiAccountModal");
+      const projectAiAccountCloseBtn = $("projectAiAccountCloseBtn");
       const projectAiSignInBtn = $("projectAiSignInBtn");
       const projectAiSignOutBtn = $("projectAiSignOutBtn");
 
@@ -8088,6 +8256,19 @@
       });
     projectAiForm &&
       projectAiForm.addEventListener("submit", handleProjectAiSubmit);
+    projectAiAccountBtn &&
+      projectAiAccountBtn.addEventListener("click", openProjectAiAccountModal);
+    projectAiAccountCloseBtn &&
+      projectAiAccountCloseBtn.addEventListener(
+        "click",
+        closeProjectAiAccountModal
+      );
+    projectAiAccountModal &&
+      projectAiAccountModal.addEventListener("click", (event) => {
+        if (event.target === projectAiAccountModal) {
+          closeProjectAiAccountModal();
+        }
+      });
     projectAiSignInBtn &&
       projectAiSignInBtn.addEventListener("click", handleProjectAiSignIn);
     projectAiSignOutBtn &&
@@ -8184,7 +8365,12 @@
 
     // Close context menu on Escape
     document.addEventListener("keydown", (e) => {
+      if (trapProjectAiAccountFocus(e)) return;
       if (e.key === "Escape") {
+        if (projectAiAccountModal && !projectAiAccountModal.hidden) {
+          closeProjectAiAccountModal();
+          return;
+        }
         if (siteDialog && !siteDialog.hidden) {
           resolveSiteDialog(false);
           return;
