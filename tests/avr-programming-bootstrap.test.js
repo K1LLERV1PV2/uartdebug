@@ -769,10 +769,32 @@ test("deploy verifies legal page content rather than accepting an SPA fallback",
     path.join(__dirname, "../.github/workflows/deploy.yml"),
     "utf8"
   );
+  const legalCheck = fs.readFileSync(
+    path.join(__dirname, "../backend/deploy/check-legal-pages.sh"),
+    "utf8"
+  );
 
-  assert.match(workflow, /for legal_route in privacy terms/);
-  assert.match(workflow, /rel=\\"canonical\\" href=\\"https:\/\/uartdebug\.com\/\$\{legal_route\}\\"/);
-  assert.match(workflow, /<title>\$\{expected_title\}/);
+  assert.match(workflow, /check-legal-pages\.sh/);
+  assert.match(legalCheck, /for legal_route in privacy terms/);
+  assert.match(
+    legalCheck,
+    /rel=\\"canonical\\" href=\\"https:\/\/uartdebug\.com\/\$\{legal_route\}\\"/
+  );
+  assert.match(legalCheck, /<title>\$\{expected_title\}/);
+  assert.match(workflow, /smoke-ai-service\.sh/);
+
+  const remoteScript = workflow.match(
+    /          script: \|\r?\n([\s\S]*?)\r?\n      - name: Cleanup temp on server/
+  );
+  assert.ok(remoteScript, "remote deploy script block is missing");
+  const evaluatedInput = remoteScript[1]
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^ {12}/, ""))
+    .join("\n");
+  assert.ok(
+    evaluatedInput.length < 21000,
+    `remote deploy action input exceeds GitHub's 21000-character expression limit: ${evaluatedInput.length}`
+  );
 });
 
 test("renames a mini-project display name without renaming its linked files", () => {
