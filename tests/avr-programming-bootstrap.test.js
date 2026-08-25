@@ -57,6 +57,25 @@ test("exposes the mini-project bridge before DOMContentLoaded", () => {
   assert.equal(typeof documentListeners.get("DOMContentLoaded"), "function");
 });
 
+test("vendored Markdown mode uses a non-ambiguous HTML tag lookahead", () => {
+  const markdownMode = fs.readFileSync(
+    path.join(
+      __dirname,
+      "../public/vendor/codemirror/5.65.16/mode/markdown/markdown.js"
+    ),
+    "utf8"
+  );
+
+  assert.match(
+    markdownMode,
+    /\[a-z\]\[a-z0-9-\]\*\(\?=\[\\s\/>\]\|\$\)/
+  );
+  assert.doesNotMatch(
+    markdownMode,
+    /\(\?:\\s\+\[a-z_:\.\\-\]\+\(\?:\\s\*\=\\s\*\[\^>\]\+\)\?\)\*/
+  );
+});
+
 test("uses the MP badge for mini-projects in the AVR outliner", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.js"),
