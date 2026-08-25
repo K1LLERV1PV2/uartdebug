@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260825-ai-workspace-v1";
+const CACHE_NAME = "uartdebug-shell-20260825-ai-live-preview-v2";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -61,6 +61,7 @@ const APP_SHELL_ASSETS = [
   "/vendor/codemirror/5.65.16/addon/hint/show-hint.min.css",
   "/vendor/codemirror/5.65.16/codemirror.min.js",
   "/vendor/codemirror/5.65.16/mode/clike/clike.min.js",
+  "/vendor/codemirror/5.65.16/mode/markdown/markdown.js",
   "/vendor/codemirror/5.65.16/addon/edit/matchbrackets.min.js",
   "/vendor/codemirror/5.65.16/addon/hint/show-hint.min.js",
   "/vendor/codemirror/5.65.16/addon/hint/anyword-hint.min.js",
