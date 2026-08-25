@@ -15,8 +15,10 @@ AI access has two independent identities:
 - **Browser installation:** the backend creates a random internal device record
   when Google sign-in begins and binds it to a signed `Secure`, `HttpOnly`,
   `SameSite=Lax` cookie. Frontend JavaScript never receives or persists a device
-  bearer secret. The database stores only the internal device ID, and cookie
-  signatures use the server's persistent `AI_IDENTITY_SECRET`.
+  bearer secret. The normal browser path stores only the internal device ID. If
+  a compatible non-browser client supplies an installation alias, the database
+  stores only its HMAC-derived value, never the raw secret. Cookie signatures
+  and alias derivation use the server's persistent `AI_IDENTITY_SECRET`.
 
 In this project, “device” always means this best-effort browser installation.
 It does not mean a physical computer, phone, serial adapter, CPU ID, advertising
