@@ -12,9 +12,6 @@
     "ud_avr_ai_project_instruction_v1";
   const STORAGE_DEVICE_PANEL_COLLAPSED =
     "ud_avr_programming_device_panel_collapsed_v1";
-  const AI_BROWSER_INSTALLATION_STORAGE_KEY =
-    "ud_avr_ai_browser_installation_v1";
-  const AI_BROWSER_INSTALLATION_HEADER = "X-UartDebug-Installation";
   const AI_SKILL_DRAG_MIME = "application/x-uartdebug-ai-skill+json";
   const PROJECT_AI_SKILLS_URL = "/api/avr/ai/skills";
   const PROJECT_AI_AUTH_SESSION_URL = "/api/avr/ai/auth/session";
@@ -4168,17 +4165,15 @@
     return String(fileName && hasFile(fileName) ? files[fileName] || "" : "");
   }
 
-  function isSafeDocumentationUrl(url) {
+  function resolveSafeDocumentationLinkUrl(url) {
     const value = String(url || "").trim();
-    if (!value) return false;
-    if (value.startsWith("#") || value.startsWith("/") || value.startsWith("./")) {
-      return true;
-    }
+    if (!value) return "";
     try {
       const parsed = new URL(value, window.location.href);
-      return ["http:", "https:", "mailto:"].includes(parsed.protocol);
+      if (!["http:", "https:", "mailto:"].includes(parsed.protocol)) return "";
+      return encodeURI(parsed.href);
     } catch {
-      return false;
+      return "";
     }
   }
 
@@ -4319,12 +4314,18 @@
         parent.appendChild(emphasis);
       } else {
         const label = match[4];
-        const href = String(match[5] || "").trim().replace(/^<|>$/g, "");
-        if (isSafeDocumentationUrl(href)) {
+        const href = resolveSafeDocumentationLinkUrl(
+          String(match[5] || "").trim().replace(/^<|>$/g, "")
+        );
+        if (href) {
           const link = document.createElement("a");
           link.textContent = label;
           link.href = href;
-          if (/^https?:/i.test(href)) {
+          const destination = new URL(href, window.location.href);
+          if (
+            ["http:", "https:"].includes(destination.protocol) &&
+            destination.origin !== window.location.origin
+          ) {
             link.target = "_blank";
             link.rel = "noopener noreferrer";
           }
@@ -5051,38 +5052,6 @@
     indicator?.remove();
   }
 
-  function getAiBrowserInstallationSecret() {
-    let stored = "";
-    try {
-      stored = String(
-        window.localStorage.getItem(AI_BROWSER_INSTALLATION_STORAGE_KEY) || ""
-      );
-    } catch {
-      return "";
-    }
-
-    if (/^[a-f0-9]{64}$/i.test(stored)) return stored.toLowerCase();
-    if (!window.crypto?.getRandomValues) return "";
-
-    const randomBytes = new Uint8Array(32);
-    window.crypto.getRandomValues(randomBytes);
-    const secret = Array.from(randomBytes, (byte) =>
-      byte.toString(16).padStart(2, "0")
-    ).join("");
-
-    try {
-      window.localStorage.setItem(AI_BROWSER_INSTALLATION_STORAGE_KEY, secret);
-    } catch {
-      return "";
-    }
-    return secret;
-  }
-
-  function getAiBrowserInstallationHeader() {
-    const secret = getAiBrowserInstallationSecret();
-    return secret ? { [AI_BROWSER_INSTALLATION_HEADER]: secret } : {};
-  }
-
   function renderProjectAiQuota(quota) {
     const budget = $("projectAiBudget");
     const value = $("projectAiBudgetValue");
@@ -5213,7 +5182,6 @@
         method: "GET",
         headers: {
           Accept: "application/json",
-          ...getAiBrowserInstallationHeader(),
         },
         credentials: "same-origin",
       });
@@ -5275,7 +5243,6 @@
         method: "GET",
         headers: {
           Accept: "application/json",
-          ...getAiBrowserInstallationHeader(),
         },
         credentials: "same-origin",
       });
@@ -5319,7 +5286,6 @@
         method: "POST",
         headers: {
           Accept: "application/json",
-          ...getAiBrowserInstallationHeader(),
         },
         credentials: "same-origin",
       });
@@ -5619,7 +5585,6 @@
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
-          ...getAiBrowserInstallationHeader(),
         },
         credentials: "same-origin",
         body: JSON.stringify(requestPayload),

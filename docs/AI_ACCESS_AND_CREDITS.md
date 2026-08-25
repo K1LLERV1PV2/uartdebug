@@ -12,12 +12,11 @@ AI access has two independent identities:
 - **Google account:** the server validates Google's OpenID Connect issuer and
   identifies the account by the verified `sub` claim. Email is masked display
   metadata, not a stable key.
-- **Browser installation:** the frontend creates a cryptographically random
-  installation secret in first-party browser storage and sends it only to the
-  same-origin backend over HTTPS. The backend links its HMAC-derived alias to a
-  signed `Secure`, `HttpOnly`, `SameSite=Lax` device cookie. The database stores
-  the HMAC alias and an internal device ID, never the raw frontend secret;
-  derivation uses the server's persistent `AI_IDENTITY_SECRET`.
+- **Browser installation:** the backend creates a random internal device record
+  when Google sign-in begins and binds it to a signed `Secure`, `HttpOnly`,
+  `SameSite=Lax` cookie. Frontend JavaScript never receives or persists a device
+  bearer secret. The database stores only the internal device ID, and cookie
+  signatures use the server's persistent `AI_IDENTITY_SECRET`.
 
 In this project, “device” always means this best-effort browser installation.
 It does not mean a physical computer, phone, serial adapter, CPU ID, advertising
@@ -30,8 +29,8 @@ cannot prove hardware uniqueness and creates privacy, consent, false-positive,
 and long-term compatibility problems.
 
 For signed-in metered requests, OpenAI receives a random pseudonymous internal
-installation identifier in `safety_identifier`. It does not receive the raw
-browser secret, Google account identifier, or email address through this field.
+installation identifier in `safety_identifier`. It does not receive the device
+cookie, Google account identifier, or email address through this field.
 
 ## Google sign-in flow
 
@@ -111,7 +110,7 @@ failure, or ambiguous server result after provider dispatch retains it in
 `needs_reconciliation` for an operator instead of risking free spend. The same
 opaque internal request ID is stored with the reservation and sent as OpenAI
 request metadata so an operator can correlate the two sides without sending an
-account, email address, installation secret, or prompt in that metadata. The
+account, email address, device cookie, or prompt in that metadata. The
 append-only usage ledger is the audit trail, and account and installation
 counters are updated in the same transaction.
 

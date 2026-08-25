@@ -149,24 +149,19 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.doesNotMatch(source, /fetch\("\/api\/avr\/ai\/status"/);
   assert.match(source, /fetch\("\/api\/avr\/ai\/respond"/);
   assert.match(source, /PROJECT_AI_SKILLS_URL\s*=\s*"\/api\/avr\/ai\/skills"/);
-  assert.match(
-    source,
-    /AI_BROWSER_INSTALLATION_STORAGE_KEY[\s\S]*browser_installation/
-  );
-  assert.match(source, /new Uint8Array\(32\)/);
-  assert.match(source, /window\.crypto\.getRandomValues\(randomBytes\)/);
-  assert.match(source, /"X-UartDebug-Installation"/);
-  assert.match(source, /return secret \? \{ \[AI_BROWSER_INSTALLATION_HEADER\]: secret \} : \{\}/);
+  assert.doesNotMatch(source, /AI_BROWSER_INSTALLATION_STORAGE_KEY/);
+  assert.doesNotMatch(source, /X-UartDebug-Installation/);
+  assert.doesNotMatch(source, /getAiBrowserInstallationHeader/);
   assert.match(source, /if \(session\?\.mode !== "google"\) return/);
   assert.match(source, /PROJECT_AI_AUTH_SESSION_URL[\s\S]*method: "GET"/);
   assert.match(source, /credentials: "same-origin"/);
   assert.match(
     source,
-    /fetch\("\/api\/avr\/ai\/respond"[\s\S]*getAiBrowserInstallationHeader\(\)/
+    /fetch\("\/api\/avr\/ai\/respond"[\s\S]*credentials: "same-origin"/
   );
   assert.match(
     source,
-    /fetchProjectAiAuthSession\(\)[\s\S]*fetch\(PROJECT_AI_GOOGLE_START_URL[\s\S]*getAiBrowserInstallationHeader\(\)[\s\S]*redirectUrl\.hostname !== "accounts\.google\.com"[\s\S]*window\.location\.assign\(redirectUrl\.toString\(\)\)/
+    /fetchProjectAiAuthSession\(\)[\s\S]*fetch\(PROJECT_AI_GOOGLE_START_URL[\s\S]*credentials: "same-origin"[\s\S]*redirectUrl\.hostname !== "accounts\.google\.com"[\s\S]*window\.location\.assign\(redirectUrl\.toString\(\)\)/
   );
   assert.match(source, /PROJECT_AI_LOGOUT_URL[\s\S]*method: "POST"/);
   assert.match(source, /google_sign_in_required/);
