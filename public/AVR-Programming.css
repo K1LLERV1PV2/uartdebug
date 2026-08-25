@@ -131,6 +131,12 @@ main,
   overflow: hidden;
 }
 
+.feature-panel:has(
+    > .canvas-section > .avr-device-section[data-state="collapsed"]
+  ) {
+  padding-top: 0;
+}
+
 .feature-panel:has(.canvas-updi-section:not([hidden])) {
   overflow-y: auto;
 }
@@ -246,7 +252,19 @@ main,
 .avr-device-section[data-state="compact"] .detect-chip-btn {
   width: 136px !important;
   height: 36px;
-  padding-block: 5px;
+  padding: 0;
+}
+
+.avr-device-section[data-state="compact"] .detect-chip-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: none;
+  padding: 0 10px;
+  line-height: 1.1;
+  text-align: center;
 }
 
 .avr-device-section[data-state="compact"] .avr-status-value {
@@ -1447,94 +1465,199 @@ body.is-device-panel-resizing * {
   display: none !important;
 }
 
+.project-ai-account-trigger {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid rgba(129, 159, 141, 0.3);
+  border-radius: 10px;
+  background: rgba(39, 174, 96, 0.1);
+  color: var(--avr-text-soft);
+  font: 700 11px/1 Inter, Arial, sans-serif;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.project-ai-account-trigger:hover,
+.project-ai-account-trigger:focus-visible {
+  border-color: var(--avr-border-hover);
+  background: var(--avr-surface-strong);
+  color: var(--avr-text);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.project-ai-account-trigger svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.project-ai-account-trigger-status {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--avr-text-muted);
+}
+
+.project-ai-account-trigger.is-sign-in-required
+  .project-ai-account-trigger-status {
+  background: var(--avr-warning);
+}
+
+.project-ai-account-trigger.is-authenticated
+  .project-ai-account-trigger-status {
+  background: var(--avr-border-hot);
+  box-shadow: 0 0 0 3px rgba(39, 174, 96, 0.14);
+}
+
+.project-ai-account-trigger.is-unavailable {
+  color: var(--avr-text-muted);
+}
+
 .project-ai-auth-session {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: center;
-  justify-content: flex-end;
-  gap: 7px;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px;
+  border: 1px solid rgba(129, 159, 141, 0.2);
+  border-radius: 12px;
+  background: rgba(10, 18, 25, 0.34);
 }
 
 .project-ai-auth-summary {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   flex-direction: column;
-  gap: 1px;
-  line-height: 1.15;
+  gap: 4px;
+  line-height: 1.25;
+}
+
+.project-ai-auth-summary-label {
+  color: var(--avr-text-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .project-ai-auth-account,
 .project-ai-auth-credits {
   display: block;
-  max-width: 128px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .project-ai-auth-account {
-  color: var(--avr-text-soft);
-  font-size: 10px;
+  color: var(--avr-text);
+  font-size: 13px;
   font-weight: 700;
 }
 
 .project-ai-auth-credits {
   color: var(--avr-border-hot);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
 }
 
-.project-ai-action-strip .project-ai-auth-button {
+.project-ai-auth-button {
   flex: 0 0 auto;
   width: auto !important;
   min-width: 0;
-  height: 30px;
-  padding: 0 9px;
-  font-size: 10px;
+  height: 36px;
+  padding: 0 12px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
 .project-ai-google-sign-in {
-  display: inline-flex;
-  flex: 0 0 auto;
-  width: 180px;
-  height: 40px;
-  padding: 0;
-  overflow: hidden;
+  display: flex;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
   align-items: center;
   justify-content: center;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
+  gap: 10px;
+  border: 1px solid rgba(129, 159, 141, 0.34);
+  border-radius: 12px;
+  background: rgba(39, 174, 96, 0.1);
+  color: var(--avr-text);
+  font: 700 13px/1 Inter, Arial, sans-serif;
   cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
 }
 
 .project-ai-google-sign-in:hover {
-  filter: brightness(0.97);
+  border-color: var(--avr-border-hover);
+  background: var(--avr-surface-strong);
+  transform: translateY(-1px);
 }
 
 .project-ai-google-sign-in:focus-visible {
-  outline: 3px solid rgba(66, 133, 244, 0.42);
+  outline: 3px solid rgba(39, 174, 96, 0.22);
   outline-offset: 2px;
 }
 
+.project-ai-google-sign-in:disabled {
+  border-color: rgba(129, 159, 141, 0.18);
+  background: rgba(10, 18, 25, 0.32);
+  color: var(--avr-text-muted);
+  cursor: progress;
+  opacity: 0.64;
+  transform: none;
+}
+
 .project-ai-google-sign-in-asset {
+  position: relative;
+  display: block;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.project-ai-google-sign-in-asset img {
+  position: absolute;
+  top: -8px;
+  left: -10px;
   display: block;
   width: 180px;
+  max-width: none;
   height: 40px;
 }
 
 .project-ai-privacy-note {
-  flex: 0 0 auto;
-  margin: 0 2px 8px;
-  padding: 8px 10px;
+  margin: 0;
+  padding: 12px 14px;
   border: 1px solid rgba(129, 159, 141, 0.18);
-  border-radius: 8px;
+  border-radius: 12px;
   background: rgba(10, 18, 25, 0.28);
   color: var(--avr-text-soft);
-  font-size: 10px;
-  line-height: 1.45;
+  font-size: 11px;
+  line-height: 1.55;
 }
 
 .project-ai-privacy-note[hidden] {
@@ -1547,15 +1670,43 @@ body.is-device-panel-resizing * {
 }
 
 .project-ai-auth-unavailable {
-  max-width: 140px;
-  overflow: hidden;
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(242, 164, 68, 0.28);
+  border-radius: 12px;
+  background: rgba(242, 164, 68, 0.08);
   color: var(--avr-text-muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
-  line-height: 1.2;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.project-ai-account-status {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px solid rgba(129, 159, 141, 0.22);
+  border-radius: 12px;
+  background: rgba(10, 18, 25, 0.32);
+  color: var(--avr-text-soft);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.project-ai-account-status[hidden] {
+  display: none !important;
+}
+
+.project-ai-account-status[data-tone="success"] {
+  border-color: rgba(39, 174, 96, 0.32);
+  background: rgba(39, 174, 96, 0.09);
+  color: #bff7d2;
+}
+
+.project-ai-account-status[data-tone="error"] {
+  border-color: rgba(242, 164, 68, 0.34);
+  background: rgba(242, 164, 68, 0.09);
+  color: #ffe0aa;
 }
 
 .project-documentation-panel {
@@ -3626,6 +3777,90 @@ body.is-device-panel-resizing * {
   padding: 0 18px 18px;
 }
 
+.project-ai-account-modal {
+  background: rgba(7, 13, 20, 0.68);
+  backdrop-filter: blur(8px);
+}
+
+.project-ai-account-card {
+  display: flex;
+  width: min(100%, 520px);
+  max-height: min(86vh, 680px);
+  flex-direction: column;
+  border-color: rgba(129, 159, 141, 0.24);
+  background: var(--avr-window-bg);
+  color: var(--avr-text);
+  box-shadow: 0 20px 60px rgba(7, 13, 20, 0.38);
+}
+
+.project-ai-account-card:focus {
+  outline: none;
+}
+
+.project-ai-account-header {
+  flex: 0 0 auto;
+  min-height: 62px;
+  padding: 16px 18px;
+  border-bottom-color: rgba(129, 159, 141, 0.24);
+}
+
+.project-ai-account-heading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.project-ai-account-heading .project-ai-eyebrow {
+  color: var(--avr-text-muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.project-ai-account-header .editor-title {
+  margin: 0;
+  color: var(--avr-border-hot);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.project-ai-account-modal .site-dialog-close {
+  width: 36px;
+  height: 36px;
+  border-color: rgba(129, 159, 141, 0.24);
+  background: rgba(39, 174, 96, 0.1);
+  color: var(--avr-text-soft);
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.project-ai-account-modal .site-dialog-close:hover,
+.project-ai-account-modal .site-dialog-close:focus-visible {
+  border-color: var(--avr-border-hover);
+  background: var(--avr-surface-strong);
+  color: var(--avr-text);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.project-ai-account-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  overflow: auto;
+}
+
 .updi-options-card {
   display: flex;
   flex-direction: column;
@@ -4097,18 +4332,13 @@ body.is-device-panel-resizing * {
 
 @container project-ai-chat-panel (max-width: 330px) {
   .project-ai-action-strip {
-    align-content: flex-start;
-    flex-wrap: wrap;
+    align-content: center;
+    flex-wrap: nowrap;
   }
 
   .project-ai-auth {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  .project-ai-auth-session {
-    width: 100%;
-    justify-content: space-between;
+    width: auto;
+    justify-content: flex-end;
   }
 }
 
@@ -4479,6 +4709,24 @@ body.is-device-panel-resizing * {
 @media (max-width: 640px) {
   .feature-panel {
     padding: 12px;
+  }
+
+  .project-ai-account-modal {
+    padding: 12px;
+  }
+
+  .project-ai-account-header,
+  .project-ai-account-body {
+    padding: 14px;
+  }
+
+  .project-ai-auth-session {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .project-ai-auth-button {
+    width: 100% !important;
   }
 
   .avr-device-panel {
