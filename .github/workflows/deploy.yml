@@ -403,6 +403,13 @@ jobs:
                 rsync -a --delete "$BE_SRC"/ "$BE_NEW"/
                 printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$BE_NEW/RELEASE.txt"
                 if [ -f "${BE_NEW}/package.json" ]; then
+                  /usr/bin/node -e '
+                    const [major, minor] = process.versions.node.split(".").map(Number);
+                    if (major < 22 || (major === 22 && minor < 13)) process.exit(1);
+                  ' || {
+                    echo "Node.js 22.13 or newer is required by the deployed backend"
+                    exit 1
+                  }
                   npm ci --prefix "${BE_NEW}" --omit=dev --ignore-scripts
                 fi
                 ln -sfn "$BE_NEW" "$BE_DIR"
@@ -549,8 +556,28 @@ jobs:
                       cat "${ai_status_body}" || true
                       rm -f "${ai_status_body}"
                       exit 1
-                    }
+                  }
                   rm -f "${ai_status_body}"
+
+                  ai_auth_url="${AI_HC_URL%/health}/api/avr/ai/auth/session"
+                  ai_auth_body="$(mktemp)"
+                  ai_auth_code="$(
+                    curl -sS -o "${ai_auth_body}" -w '%{http_code}' --max-time 15 "${ai_auth_url}" || true
+                  )"
+                  [ "${ai_auth_code}" = "200" ] &&
+                    /usr/bin/node -e '
+                      const fs = require("fs");
+                      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                      if (value.ok !== true) process.exit(1);
+                      if (value.mode !== "public" && value.mode !== "google") process.exit(1);
+                      if (value.mode === "google" && value.configured !== true) process.exit(1);
+                    ' "${ai_auth_body}" || {
+                      echo "AI Google-access readiness check failed with HTTP ${ai_auth_code}"
+                      cat "${ai_auth_body}" || true
+                      rm -f "${ai_auth_body}"
+                      exit 1
+                    }
+                  rm -f "${ai_auth_body}"
                 else
                   echo "No AI entrypoint found in ${BE_DIR}; stopping optional uartdebug-ai.service"
                   run_sudo systemctl stop uartdebug-ai.service || true

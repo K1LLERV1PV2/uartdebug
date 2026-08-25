@@ -13,7 +13,7 @@ Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Development setup
 
-Install Node.js 20 or newer, npm, Python 3, and Git. Then run:
+Install Node.js 22.13 or newer, npm, Python 3, and Git. Then run:
 
 ```sh
 npm ci --prefix backend
@@ -55,6 +55,7 @@ Run before opening a pull request:
 npm test --prefix backend
 node --check backend/compile-server.js
 node --check backend/ai-server.js
+node --check backend/ai-access-service.js
 node --check backend/avr-ai-service.js
 node --check public/AVR-Programming.js
 node --check public/uart.js

@@ -10,6 +10,9 @@ coverage/
 tmp/
 temp/
 backend/ai/drafts/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 
 # Local configuration and secrets
 .env

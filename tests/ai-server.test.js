@@ -8,6 +8,7 @@ const {
   AI_SERVER_VERSION,
   createAiHttpServer,
 } = require("../backend/ai-server");
+const { AiServiceError } = require("../backend/avr-ai-service");
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -63,6 +64,81 @@ test("serves safe AI status metadata and health from a separate server", async (
   assert.equal(body.model, "gpt-5.6-terra");
   assert.equal(body.rules.packageId, "rules-v1");
   assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
+});
+
+test("serves only allowlisted versioned AI skills and rejects unsafe Markdown", async (t) => {
+  let calls = 0;
+  const aiService = {
+    async getSkills() {
+      calls += 1;
+      if (calls > 1) {
+        return {
+          schemaVersion: 1,
+          catalogVersion: "2026.08.25.1",
+          locale: "ru",
+          digest: "b".repeat(64),
+          skills: [
+            {
+              id: "unsafe",
+              version: "1.0.0",
+              title: "Unsafe",
+              summary: "Unsafe Markdown",
+              markdown: "# Unsafe\n\n<script>alert(1)</script>\n",
+            },
+          ],
+        };
+      }
+      return {
+        schemaVersion: 1,
+        catalogVersion: "2026.08.25.1",
+        locale: "ru",
+        count: 999,
+        digest: "a".repeat(64),
+        privateMiniProjectRefs: [{ id: "private-draft" }],
+        skills: [
+          {
+            id: "initialization",
+            version: "1.0.0",
+            title: "Инициализация",
+            summary: "Настройка периферии.",
+            markdown: "# Инициализация\n\nНастроить периферию.\n",
+            file: "C:\\private\\initialization.md",
+            sha256: "c".repeat(64),
+            aiSpecRef: { id: "private-draft" },
+          },
+        ],
+      };
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService,
+    accessService: {},
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(`${baseUrl}/api/avr/ai/skills`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.count, 1);
+  assert.equal(body.privateMiniProjectRefs, undefined);
+  assert.deepEqual(Object.keys(body.skills[0]).sort(), [
+    "id",
+    "markdown",
+    "summary",
+    "title",
+    "version",
+  ]);
+  assert.equal(JSON.stringify(body).includes("private-draft"), false);
+  assert.equal(JSON.stringify(body).includes("C:\\private"), false);
+
+  const unsafe = await fetch(`${baseUrl}/api/avr/ai/skills`);
+  assert.equal(unsafe.status, 503);
+  assert.equal((await unsafe.json()).code, "skill_catalog_invalid");
 });
 
 test("requires JSON and does not apply legacy request or daily quotas", async (t) => {
@@ -182,7 +258,7 @@ test("supports opt-in owner access and returns 413 without resetting an oversize
       Origin: baseUrl,
       "X-UartDebug-AI-Token": "owner-token",
     },
-    body: JSON.stringify({ prompt: "x".repeat(385 * 1024) }),
+    body: JSON.stringify({ prompt: "x".repeat(1025 * 1024) }),
   });
   assert.equal(oversized.status, 413);
   assert.equal((await oversized.json()).code, "body_too_large");
@@ -275,6 +351,12 @@ test("handles a conversational AI response through the HTTP boundary", async (t)
     },
     async respond(body) {
       assert.equal(body.prompt, "What is TCA0?");
+      assert.deepEqual(body.instructionDocument, {
+        schemaVersion: 1,
+        revision: 2,
+        markdown: "# Processes\n\nUse TCA0.\n",
+        skillRefs: [{ id: "sampling-1s", version: "1.0.0" }],
+      });
       return {
         ok: true,
         kind: "answer",
@@ -303,7 +385,17 @@ test("handles a conversational AI response through the HTTP boundary", async (t)
       resolve
     );
     request.on("error", reject);
-    request.end(JSON.stringify({ prompt: "What is TCA0?" }));
+    request.end(
+      JSON.stringify({
+        prompt: "What is TCA0?",
+        instructionDocument: {
+          schemaVersion: 1,
+          revision: 2,
+          markdown: "# Processes\n\nUse TCA0.\n",
+          skillRefs: [{ id: "sampling-1s", version: "1.0.0" }],
+        },
+      })
+    );
   });
   const chunks = [];
   for await (const chunk of response) chunks.push(chunk);
@@ -313,4 +405,416 @@ test("handles a conversational AI response through the HTTP boundary", async (t)
   assert.equal(body.kind, "answer");
   assert.equal(body.message, "TCA0 is a 16-bit timer/counter.");
   assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
+});
+
+test("routes Google access endpoints and records metering without exposing it", async (t) => {
+  const calls = [];
+  const accessContext = {
+    mode: "google",
+    deviceId: "device-1",
+    accountId: "account-1",
+    safetyIdentifier: "ud_user_deadbeef",
+  };
+  const metering = {
+    provider: "openai",
+    responseId: "resp_1",
+    model: "gpt-5.6-terra",
+    usage: {
+      inputTokens: 10,
+      cachedInputTokens: 2,
+      cacheWriteTokens: 0,
+      outputTokens: 3,
+      reasoningTokens: 1,
+      totalTokens: 13,
+    },
+  };
+  const accessService = {
+    async getPublicStatus() {
+      calls.push("session");
+      return {
+        mode: "google",
+        configured: true,
+        authenticated: true,
+        user: { emailMasked: "d***@example.com" },
+        quota: { unit: "AI Credit", granted: 100, spent: 2, remaining: 98 },
+      };
+    },
+    async beginGoogleLogin() {
+      calls.push("start");
+      return { redirectUrl: "https://accounts.google.com/o/oauth2/v2/auth" };
+    },
+    async completeGoogleLogin() {
+      calls.push("callback");
+      return { redirectUrl: "/avr?ai_auth=success" };
+    },
+    async logout() {
+      calls.push("logout");
+      return { authenticated: false };
+    },
+    async authorizeAiRequest() {
+      calls.push("authorize");
+      return accessContext;
+    },
+    async reserveAiBudget(context, quote) {
+      calls.push("reserve");
+      assert.equal(context, accessContext);
+      assert.deepEqual(quote, {
+        model: "gpt-5.6-terra",
+        inputTokens: 10,
+        maxOutputTokens: 24_000,
+        minOutputTokens: 8_000,
+      });
+      return { maxOutputTokens: 12_000 };
+    },
+    async recordAiUsage(context, record) {
+      calls.push("record");
+      assert.equal(context, accessContext);
+      assert.match(record.requestId, /^[a-f0-9-]{36}$/i);
+      assert.deepEqual(
+        {
+          provider: record.provider,
+          responseId: record.responseId,
+          model: record.model,
+          usage: record.usage,
+        },
+        metering
+      );
+      return {
+        quota: { unit: "AI Credit", granted: 100, spent: 3, remaining: 97 },
+      };
+    },
+    async releaseAiRequest(context, outcome) {
+      calls.push("release");
+      assert.equal(context, accessContext);
+      assert.deepEqual(outcome, {
+        providerCalled: true,
+        providerRejected: false,
+        usageRecorded: true,
+      });
+    },
+  };
+  const aiService = {
+    authorizeAccessToken() {
+      return true;
+    },
+    validateRequestInput() {},
+    async getStatus() {
+      return {
+        ok: true,
+        enabled: true,
+        configured: true,
+        accessRequired: false,
+        rules: { packageId: "rules-v1" },
+      };
+    },
+    async respond(body, context) {
+      assert.equal(body.prompt, "Meter this");
+      assert.match(context.requestId, /^[a-f0-9-]{36}$/i);
+      assert.equal(context.safetyIdentifier, "ud_user_deadbeef");
+      const reservation = await context.reserveBudget({
+        model: "gpt-5.6-terra",
+        inputTokens: 10,
+        maxOutputTokens: 24_000,
+        minOutputTokens: 8_000,
+      });
+      assert.equal(reservation.maxOutputTokens, 12_000);
+      context.markProviderCalled();
+      return {
+        ok: true,
+        kind: "answer",
+        message: "Metered",
+        _metering: metering,
+      };
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService,
+    accessService,
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const session = await fetch(`${baseUrl}/api/avr/ai/auth/session`);
+  assert.equal(session.status, 200);
+  assert.equal((await session.json()).user.emailMasked, "d***@example.com");
+
+  const start = await fetch(`${baseUrl}/api/avr/ai/auth/google/start`, {
+    redirect: "manual",
+  });
+  assert.equal(start.status, 302);
+  assert.equal(
+    start.headers.get("location"),
+    "https://accounts.google.com/o/oauth2/v2/auth"
+  );
+
+  const callback = await fetch(
+    `${baseUrl}/api/avr/ai/auth/google/callback?state=test&code=test`,
+    { headers: { "Sec-Fetch-Site": "cross-site" }, redirect: "manual" }
+  );
+  assert.equal(callback.status, 302);
+  assert.equal(callback.headers.get("location"), "/avr?ai_auth=success");
+
+  const logout = await fetch(`${baseUrl}/api/avr/ai/auth/logout`, {
+    method: "POST",
+    headers: { Origin: baseUrl },
+  });
+  assert.equal(logout.status, 200);
+  assert.equal((await logout.json()).authenticated, false);
+
+  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    body: JSON.stringify({ prompt: "Meter this" }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.message, "Metered");
+  assert.equal(body._metering, undefined);
+  assert.equal(body.quota.remaining, 97);
+  assert.deepEqual(calls, [
+    "session",
+    "start",
+    "callback",
+    "logout",
+    "authorize",
+    "reserve",
+    "record",
+    "release",
+  ]);
+});
+
+test("records provider usage when a paid AI response fails validation", async (t) => {
+  const calls = [];
+  const accessContext = { mode: "google", reservationId: "reservation-1" };
+  const metering = {
+    provider: "openai",
+    responseId: "resp_invalid_paid",
+    model: "gpt-5.6-terra",
+    usage: {
+      inputTokens: 200,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 10,
+      reasoningTokens: 4,
+      totalTokens: 210,
+    },
+  };
+  const accessService = {
+    async authorizeAiRequest() {
+      calls.push("authorize");
+      return accessContext;
+    },
+    async recordAiUsage(context, record) {
+      calls.push("record");
+      assert.equal(context, accessContext);
+      assert.deepEqual(
+        {
+          provider: record.provider,
+          responseId: record.responseId,
+          model: record.model,
+          usage: record.usage,
+        },
+        metering
+      );
+      return { quota: { unit: "AI Credit", remaining: 99 } };
+    },
+    async releaseAiRequest(context, outcome) {
+      calls.push("release");
+      assert.equal(context, accessContext);
+      assert.deepEqual(outcome, {
+        providerCalled: true,
+        providerRejected: false,
+        usageRecorded: true,
+      });
+    },
+  };
+  const aiService = {
+    authorizeAccessToken() {
+      return true;
+    },
+    validateRequestInput() {},
+    async getStatus() {
+      return {
+        enabled: true,
+        configured: true,
+        accessRequired: false,
+        rules: { packageId: "rules-v1" },
+      };
+    },
+    async respond(_body, context) {
+      context.markProviderCalled();
+      const error = new AiServiceError(
+        502,
+        "invalid_ai_response",
+        "The paid provider response was invalid."
+      );
+      Object.defineProperty(error, "_metering", { value: metering });
+      throw error;
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService,
+    accessService,
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    body: JSON.stringify({ prompt: "Return an invalid response" }),
+  });
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.equal(body.code, "invalid_ai_response");
+  assert.equal(body._metering, undefined);
+  assert.deepEqual(calls, ["authorize", "record", "release"]);
+});
+
+test("rate limits only the technical Google OAuth start endpoint", async (t) => {
+  let startCalls = 0;
+  const accessService = {
+    async beginGoogleLogin() {
+      startCalls += 1;
+      return { redirectUrl: "https://accounts.google.com/o/oauth2/v2/auth" };
+    },
+  };
+  const aiService = {
+    authorizeAccessToken() {
+      return true;
+    },
+    async getStatus() {
+      return { ok: true, enabled: true, configured: true, rules: {} };
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {
+      AI_AUTH_START_MAX_PER_IP: "2",
+      AI_AUTH_START_MAX_GLOBAL: "20",
+      AI_AUTH_START_WINDOW_MS: "60000",
+    },
+    aiService,
+    accessService,
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const start = () =>
+    fetch(`${baseUrl}/api/avr/ai/auth/google/start`, {
+      headers: { "X-Real-IP": "203.0.113.8" },
+      redirect: "manual",
+    });
+  assert.equal((await start()).status, 302);
+  assert.equal((await start()).status, 302);
+  const limited = await start();
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get("retry-after"), "60");
+  assert.equal((await limited.json()).code, "google_auth_rate_limited");
+  assert.equal(startCalls, 2);
+});
+
+test("caps Google OAuth starts globally without calling the access service", async (t) => {
+  let startCalls = 0;
+  const accessService = {
+    async beginGoogleLogin() {
+      startCalls += 1;
+      return { redirectUrl: "https://accounts.google.com/o/oauth2/v2/auth" };
+    },
+  };
+  const aiService = {
+    authorizeAccessToken() {
+      return true;
+    },
+    async getStatus() {
+      return { ok: true, enabled: true, configured: true, rules: {} };
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {
+      AI_AUTH_START_MAX_PER_IP: "10",
+      AI_AUTH_START_MAX_GLOBAL: "2",
+      AI_AUTH_START_WINDOW_MS: "60000",
+    },
+    aiService,
+    accessService,
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const start = (address) =>
+    fetch(`${baseUrl}/api/avr/ai/auth/google/start`, {
+      headers: { "X-Real-IP": address },
+      redirect: "manual",
+    });
+  assert.equal((await start("203.0.113.1")).status, 302);
+  assert.equal((await start("203.0.113.2")).status, 302);
+  const limited = await start("203.0.113.3");
+  assert.equal(limited.status, 429);
+  assert.equal((await limited.json()).code, "google_auth_rate_limited");
+  assert.equal(startCalls, 2);
+});
+
+test("passes an explicit provider rejection to reservation cleanup", async (t) => {
+  const accessContext = { mode: "google", reservationId: "reservation-rejected" };
+  let releaseOutcome = null;
+  const accessService = {
+    async authorizeAiRequest(_req, _res, metadata) {
+      assert.match(metadata.requestId, /^[a-f0-9-]{36}$/i);
+      return accessContext;
+    },
+    async releaseAiRequest(context, outcome) {
+      assert.equal(context, accessContext);
+      releaseOutcome = outcome;
+    },
+  };
+  const aiService = {
+    authorizeAccessToken() {
+      return true;
+    },
+    validateRequestInput() {},
+    async getStatus() {
+      return {
+        enabled: true,
+        configured: true,
+        accessRequired: false,
+        rules: { packageId: "rules-v1" },
+      };
+    },
+    async respond(_body, context) {
+      await context.markProviderCalled();
+      const error = new AiServiceError(
+        429,
+        "openai_rate_limited",
+        "The AI service rate limit was reached. Try again later."
+      );
+      Object.defineProperty(error, "_providerRejected", { value: true });
+      throw error;
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService,
+    accessService,
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    body: JSON.stringify({ prompt: "Retry later" }),
+  });
+  assert.equal(response.status, 429);
+  assert.deepEqual(releaseOutcome, {
+    providerCalled: true,
+    providerRejected: true,
+    usageRecorded: false,
+  });
 });

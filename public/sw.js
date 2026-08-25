@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260824-ai-project-actions-v1";
+const CACHE_NAME = "uartdebug-shell-20260825-ai-workspace-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",

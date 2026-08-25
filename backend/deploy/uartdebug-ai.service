@@ -14,6 +14,16 @@ Environment=PORT=8083
 Environment=ALLOWED_ORIGINS=https://uartdebug.com
 Environment=AI_ENABLED=1
 Environment=AI_REQUIRE_ACCESS_TOKEN=0
+Environment=AI_GOOGLE_AUTH_ENABLED=0
+Environment=AI_GOOGLE_AUTH_REQUIRED=0
+Environment=AI_PUBLIC_BASE_URL=https://uartdebug.com
+Environment=AI_ACCESS_DB_PATH=/var/lib/uartdebug-ai/data/ai-access.sqlite
+Environment=AI_FREE_DEVICE_GRANT_CREDITS=500
+Environment=AI_PRICE_CATALOG_VERSION=2026-08-24
+Environment=AI_ACCESS_MIN_OUTPUT_TOKENS=8000
+Environment=AI_AUTH_START_WINDOW_MS=600000
+Environment=AI_AUTH_START_MAX_PER_IP=10
+Environment=AI_AUTH_START_MAX_GLOBAL=1000
 Environment=AI_RULE_PACK_ROOT=/var/lib/uartdebug-ai/rule-packs
 Environment=AI_DRAFTS_DIR=/var/lib/uartdebug-ai/drafts
 Environment=AI_DRAFT_TTL_HOURS=720
@@ -26,6 +36,10 @@ Environment=OPENAI_MAX_OUTPUT_TOKENS=24000
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 LoadCredential=openai_api_key:/etc/uartdebug/secrets/openai-api-key
 LoadCredential=ai_access_token:/etc/uartdebug/secrets/ai-access-token
+LoadCredential=google_oauth_client_id:/etc/uartdebug/secrets/google-oauth-client-id
+LoadCredential=google_oauth_client_secret:/etc/uartdebug/secrets/google-oauth-client-secret
+LoadCredential=ai_identity_secret:/etc/uartdebug/secrets/ai-identity-secret
+LoadCredential=ai_session_secret:/etc/uartdebug/secrets/ai-session-secret
 ExecStart=/usr/bin/node /var/www/uartdebug/backend/ai-server.js
 Restart=on-failure
 RestartSec=3
@@ -40,7 +54,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/uartdebug-ai/drafts
+ReadWritePaths=/var/lib/uartdebug-ai/drafts /var/lib/uartdebug-ai/data
 ProtectClock=true
 ProtectControlGroups=true
 ProtectHostname=true

@@ -11,6 +11,7 @@ const {
   AiServiceError,
   createAvrAiService,
   loadActiveRulePack,
+  loadAiSkillCatalog,
   parseAssistantResponse,
   parseStructuredOutput,
   validateGeneratedBundle,
@@ -23,6 +24,13 @@ const miniProjectCatalogPath = path.join(
   "backend",
   "ai",
   "mini-projects",
+  "catalog.json"
+);
+const skillCatalogPath = path.join(
+  repoRoot,
+  "backend",
+  "ai",
+  "skills",
   "catalog.json"
 );
 
@@ -81,6 +89,86 @@ test("loads the checked-in immutable rule pack and verifies its hashes", async (
   assert.match(rules.prompt, /templates\/mini-project\.c/);
 });
 
+test("loads the versioned public AI skill catalog and verifies every prototype", async () => {
+  const catalog = await loadAiSkillCatalog(skillCatalogPath);
+
+  assert.equal(catalog.schemaVersion, 1);
+  assert.equal(catalog.catalogVersion, "2026.08.25.1");
+  assert.equal(catalog.locale, "ru");
+  assert.deepEqual(
+    catalog.skills.map((skill) => skill.id),
+    [
+      "initialization",
+      "main-loop",
+      "sampling-1s",
+      "button-reaction",
+      "uart-output",
+    ]
+  );
+  for (const skill of catalog.skills) {
+    assert.match(skill.sha256, /^[a-f0-9]{64}$/);
+    assert.match(skill.markdown, /^#{1,2} /);
+  }
+
+  const service = createAvrAiService({
+    environment: {},
+    rulePackRoot,
+    miniProjectCatalogPath,
+    skillCatalogPath,
+  });
+  const publicCatalog = await service.getSkills();
+  assert.equal(publicCatalog.count, 5);
+  assert.match(publicCatalog.digest, /^[a-f0-9]{64}$/);
+  assert.deepEqual(
+    Object.keys(publicCatalog.skills[0]).sort(),
+    ["id", "markdown", "summary", "title", "version"]
+  );
+});
+
+test("rejects tampered or escaping AI skill catalog entries", async (t) => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "uartdebug-ai-skills-")
+  );
+  t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  const catalogPath = path.join(tempRoot, "catalog.json");
+  const markdown = "# Skill\n\nTrusted prototype.\n";
+  await fs.writeFile(path.join(tempRoot, "skill.md"), markdown, "utf8");
+  const baseCatalog = {
+    schemaVersion: 1,
+    catalogVersion: "test-1",
+    locale: "en",
+    skills: [
+      {
+        id: "skill",
+        version: "1.0.0",
+        title: "Skill",
+        summary: "Trusted prototype.",
+        mediaType: "text/markdown",
+        file: "skill.md",
+        sha256: "0".repeat(64),
+      },
+    ],
+  };
+  await fs.writeFile(catalogPath, JSON.stringify(baseCatalog), "utf8");
+  await assert.rejects(
+    loadAiSkillCatalog(catalogPath),
+    (error) =>
+      error instanceof AiServiceError && error.code === "skill_catalog_invalid"
+  );
+
+  baseCatalog.skills[0].file = "../private.md";
+  baseCatalog.skills[0].sha256 = crypto
+    .createHash("sha256")
+    .update(markdown, "utf8")
+    .digest("hex");
+  await fs.writeFile(catalogPath, JSON.stringify(baseCatalog), "utf8");
+  await assert.rejects(
+    loadAiSkillCatalog(catalogPath),
+    (error) =>
+      error instanceof AiServiceError && error.code === "skill_catalog_invalid"
+  );
+});
+
 test("reports a present rule pack but stays unconfigured without a key", async () => {
   const staticReferenceIds = await readStaticReferenceIds();
   const service = createAvrAiService({
@@ -103,6 +191,9 @@ test("reports a present rule pack but stays unconfigured without a key", async (
   assert.equal(status.references.count, staticReferenceIds.length);
   assert.match(status.references.digest, /^[a-f0-9]{64}$/);
   assert.equal(status.referencesError, null);
+  assert.equal(status.skills.count, 5);
+  assert.equal(status.skills.catalogVersion, "2026.08.25.1");
+  assert.equal(status.skillsError, null);
 });
 
 test("supports future opt-in access without requiring a token in public mode", async () => {
@@ -181,6 +272,8 @@ test("answers a Russian question in Russian and accepts more than 12 conversatio
         status: 200,
         async json() {
           return {
+            id: "resp_metered_answer",
+            model: "gpt-5.6-terra-2026-08-01",
             output: [
               {
                 type: "message",
@@ -193,18 +286,31 @@ test("answers a Russian question in Russian and accepts more than 12 conversatio
                 ],
               },
             ],
+            usage: {
+              input_tokens: 1200,
+              input_tokens_details: {
+                cached_tokens: 800,
+                cache_write_tokens: 100,
+              },
+              output_tokens: 55,
+              output_tokens_details: { reasoning_tokens: 20 },
+              total_tokens: 1255,
+            },
           };
         },
       };
     },
   });
 
-  const result = await service.respond({
-    prompt: "Что такое TCA0?",
-    mcu: "attiny1624",
-    locale: "en",
-    conversation,
-  });
+  const result = await service.respond(
+    {
+      prompt: "Что такое TCA0?",
+      mcu: "attiny1624",
+      locale: "en",
+      conversation,
+    },
+    { safetyIdentifier: "ud_user_0123456789abcdef" }
+  );
 
   assert.equal(result.kind, "answer");
   assert.equal(
@@ -214,9 +320,17 @@ test("answers a Russian question in Russian and accepts more than 12 conversatio
   assert.equal(result.project, undefined);
   assert.equal(capturedRequest.url, "https://api.openai.com/v1/responses");
   assert.equal(capturedRequest.body.tool_choice, "auto");
-  assert.equal(capturedRequest.body.tools.length, 1);
+  assert.equal(capturedRequest.body.tools.length, 2);
   assert.equal(capturedRequest.body.tools[0].name, "create_avr_mini_project");
+  assert.equal(
+    capturedRequest.body.tools[1].name,
+    "edit_avr_project_instruction"
+  );
   assert.equal(capturedRequest.body.tools[0].strict, true);
+  assert.equal(
+    capturedRequest.body.safety_identifier,
+    "ud_user_0123456789abcdef"
+  );
   assert.equal(capturedRequest.body.text, undefined);
   assert.match(
     capturedRequest.body.instructions,
@@ -231,7 +345,418 @@ test("answers a Russian question in Russian and accepts more than 12 conversatio
   assert.equal(input.responseLanguage, "Russian");
   assert.equal(input.humanGuideLocale, "en");
   assert.deepEqual(input.conversation, conversation);
+  assert.deepEqual(result._metering, {
+    provider: "openai",
+    responseId: "resp_metered_answer",
+    model: "gpt-5.6-terra-2026-08-01",
+    usage: {
+      inputTokens: 1200,
+      cachedInputTokens: 800,
+      cacheWriteTokens: 100,
+      outputTokens: 55,
+      reasoningTokens: 20,
+      totalTokens: 1255,
+    },
+  });
   await assert.rejects(fs.stat(draftRoot), { code: "ENOENT" });
+});
+
+test("keeps provider metering on a paid response that fails validation", async () => {
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+      OPENAI_MODEL: "gpt-5.6-terra",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          id: "resp_metered_refusal",
+          model: "gpt-5.6-terra-2026-08-01",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "refusal", refusal: "Cannot comply." }],
+            },
+          ],
+          usage: {
+            input_tokens: 250,
+            input_tokens_details: {
+              cached_tokens: 100,
+              cache_write_tokens: 50,
+            },
+            output_tokens: 12,
+            output_tokens_details: { reasoning_tokens: 4 },
+            total_tokens: 262,
+          },
+        };
+      },
+    }),
+  });
+
+  let failure;
+  try {
+    await service.respond({
+      prompt: "Explain the current project.",
+      mcu: "attiny1624",
+      locale: "en",
+    });
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.ok(failure instanceof AiServiceError);
+  assert.equal(failure.code, "ai_refusal");
+  assert.equal(Object.keys(failure).includes("_metering"), false);
+  assert.deepEqual(failure._metering, {
+    provider: "openai",
+    responseId: "resp_metered_refusal",
+    model: "gpt-5.6-terra-2026-08-01",
+    usage: {
+      inputTokens: 250,
+      cachedInputTokens: 100,
+      cacheWriteTokens: 50,
+      outputTokens: 12,
+      reasoningTokens: 4,
+      totalTokens: 262,
+    },
+  });
+});
+
+test("counts input tokens and applies a metered reservation before generation", async () => {
+  const requests = [];
+  let reservationQuote;
+  let providerCalled = false;
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+      OPENAI_MODEL: "gpt-5.6-terra",
+      AI_ACCESS_MIN_OUTPUT_TOKENS: "8000",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    fetch: async (url, request) => {
+      const body = JSON.parse(request.body);
+      requests.push({ url, body });
+      if (url.endsWith("/responses/input_tokens")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { object: "response.input_tokens", input_tokens: 12_345 };
+          },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            id: "resp_reserved_answer",
+            model: "gpt-5.6-terra-2026-08-01",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Reserved response." }],
+              },
+            ],
+            usage: {
+              input_tokens: 12_345,
+              input_tokens_details: {
+                cached_tokens: 10_000,
+                cache_write_tokens: 0,
+              },
+              output_tokens: 100,
+              output_tokens_details: { reasoning_tokens: 25 },
+              total_tokens: 12_445,
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const result = await service.respond(
+    {
+      prompt: "Explain TCA0.",
+      mcu: "attiny1624",
+      locale: "en",
+    },
+    {
+      requestId: "018f1234-5678-7abc-8def-0123456789ab",
+      async reserveBudget(quote) {
+        reservationQuote = quote;
+        return { maxOutputTokens: 9000 };
+      },
+      markProviderCalled() {
+        providerCalled = true;
+      },
+    }
+  );
+
+  assert.equal(result.kind, "answer");
+  assert.equal(providerCalled, true);
+  assert.deepEqual(reservationQuote, {
+    model: "gpt-5.6-terra",
+    inputTokens: 12_345,
+    maxOutputTokens: 24_000,
+    minOutputTokens: 8_000,
+  });
+  assert.deepEqual(
+    requests.map(({ url }) => url),
+    [
+      "https://api.openai.com/v1/responses/input_tokens",
+      "https://api.openai.com/v1/responses",
+    ]
+  );
+  assert.equal(requests[0].body.max_output_tokens, undefined);
+  assert.equal(requests[0].body.store, undefined);
+  assert.equal(requests[0].body.metadata, undefined);
+  assert.equal(requests[1].body.max_output_tokens, 9000);
+  assert.deepEqual(requests[1].body.metadata, {
+    uartdebug_request_id: "018f1234-5678-7abc-8def-0123456789ab",
+  });
+});
+
+test("marks an explicit OpenAI 4xx rejection as safe to release", async () => {
+  let providerCalled = false;
+  let providerRequest;
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+      OPENAI_MODEL: "gpt-5.6-terra",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    fetch: async (_url, request) => {
+      providerRequest = JSON.parse(request.body);
+      return {
+        ok: false,
+        status: 429,
+        async json() {
+          return { error: { type: "rate_limit_error" } };
+        },
+      };
+    },
+  });
+
+  let failure;
+  try {
+    await service.respond(
+      { prompt: "Explain TCA0.", mcu: "attiny1624", locale: "en" },
+      {
+        requestId: "018faaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
+        markProviderCalled() {
+          providerCalled = true;
+        },
+      }
+    );
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.ok(failure instanceof AiServiceError);
+  assert.equal(failure.code, "openai_rate_limited");
+  assert.equal(failure._providerRejected, true);
+  assert.equal(Object.keys(failure).includes("_providerRejected"), false);
+  assert.equal(providerCalled, true);
+  assert.deepEqual(providerRequest.metadata, {
+    uartdebug_request_id: "018faaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee",
+  });
+});
+
+test("fails closed when a metered provider response omits usage", async () => {
+  let call = 0;
+  let providerCalled = false;
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+      OPENAI_MODEL: "gpt-5.6-terra",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    fetch: async () => {
+      call += 1;
+      return call === 1
+        ? {
+            ok: true,
+            status: 200,
+            async json() {
+              return { input_tokens: 1000 };
+            },
+          }
+        : {
+            ok: true,
+            status: 200,
+            async json() {
+              return {
+                id: "resp_without_usage",
+                model: "gpt-5.6-terra",
+                output: [
+                  {
+                    type: "message",
+                    role: "assistant",
+                    content: [{ type: "output_text", text: "No usage." }],
+                  },
+                ],
+              };
+            },
+          };
+    },
+  });
+
+  await assert.rejects(
+    service.respond(
+      { prompt: "Explain TCA0.", mcu: "attiny1624", locale: "en" },
+      {
+        async reserveBudget() {
+          return { maxOutputTokens: 8000 };
+        },
+        markProviderCalled() {
+          providerCalled = true;
+        },
+      }
+    ),
+    (error) =>
+      error instanceof AiServiceError && error.code === "openai_usage_invalid"
+  );
+  assert.equal(providerCalled, true);
+});
+
+test("edits a revisioned instruction document without generating a project", async (t) => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "uartdebug-ai-instruction-")
+  );
+  t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  const draftRoot = path.join(tempRoot, "drafts");
+  const capturedRequests = [];
+  const responses = [
+    {
+      output: [
+        {
+          type: "function_call",
+          name: "edit_avr_project_instruction",
+          arguments: JSON.stringify({
+            baseRevision: 7,
+            assistantMessage: "Уточнил невозможное требование к таймеру.",
+            instructionMarkdown:
+              "# Инициализация\n\nНастроить TCA0.\n\n# Процессы\n\n## Дискретизация по времени 1 сек.\n\nИспользовать периодическое прерывание.\n",
+          }),
+        },
+      ],
+    },
+    {
+      output: [
+        {
+          type: "function_call",
+          name: "edit_avr_project_instruction",
+          arguments: JSON.stringify({
+            baseRevision: 6,
+            assistantMessage: "Изменил инструкцию.",
+            instructionMarkdown: "# Инициализация\n\nНастроить TCA0.\n",
+          }),
+        },
+      ],
+    },
+  ];
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    skillCatalogPath,
+    draftRoot,
+    fetch: async (url, request) => {
+      capturedRequests.push({ url, body: JSON.parse(request.body) });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return responses[capturedRequests.length - 1];
+        },
+      };
+    },
+  });
+  const instructionDocument = {
+    schemaVersion: 1,
+    revision: 7,
+    markdown:
+      "# Инициализация\n\nНастроить TCA0 на невозможный период.\n",
+    skillRefs: [{ id: "initialization", version: "1.0.0" }],
+  };
+
+  const result = await service.respond({
+    prompt: "Исправь инструкцию так, чтобы проект можно было реализовать.",
+    mcu: "attiny1624",
+    locale: "ru",
+    instructionDocument,
+    instructionMarkdown: instructionDocument.markdown,
+  });
+
+  assert.equal(result.kind, "instruction");
+  assert.equal(result.operation, "edit");
+  assert.equal(result.baseRevision, 7);
+  assert.match(result.message, /Уточнил/);
+  assert.equal(result.instructionDocument.schemaVersion, 1);
+  assert.equal(result.instructionDocument.revision, 8);
+  assert.deepEqual(
+    result.instructionDocument.skillRefs,
+    instructionDocument.skillRefs
+  );
+  assert.equal(result.instructionMarkdown, result.instructionDocument.markdown);
+  assert.deepEqual(
+    JSON.parse(capturedRequests[0].body.input).instructionDocument,
+    instructionDocument
+  );
+  assert.match(
+    capturedRequests[0].body.instructions,
+    /exact baseRevision 7/i
+  );
+  assert.deepEqual(
+    capturedRequests[0].body.tools.map((tool) => tool.name),
+    ["create_avr_mini_project", "edit_avr_project_instruction"]
+  );
+  await assert.rejects(fs.stat(draftRoot), { code: "ENOENT" });
+
+  await assert.rejects(
+    service.respond({
+      prompt: "Исправь инструкцию ещё раз.",
+      instructionDocument,
+    }),
+    (error) =>
+      error instanceof AiServiceError &&
+      error.code === "invalid_ai_instruction_revision"
+  );
+  await assert.rejects(
+    service.respond({
+      prompt: "Исправь инструкцию.",
+      instructionDocument: {
+        ...instructionDocument,
+        skillRefs: [{ id: "private-project-ref", version: "1.0.0" }],
+      },
+    }),
+    (error) =>
+      error instanceof AiServiceError &&
+      error.code === "unknown_instruction_skill"
+  );
+  assert.equal(
+    service.validateRequestInput({
+      prompt: "Draft an instruction.",
+      instructionMarkdown: "# Initialization\n\nConfigure the clock.\n",
+    }),
+    true
+  );
 });
 
 test("uses an explicit project tool call and stores only the private AI file", async (t) => {
@@ -240,6 +765,16 @@ test("uses an explicit project tool call and stores only the private AI file", a
   t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
   const draftRoot = path.join(tempRoot, "drafts");
   const capturedRequests = [];
+  const reviewedInstruction = {
+    schemaVersion: 1,
+    revision: 4,
+    markdown:
+      "# Инициализация\n\nНастроить TCA0.\n\n# Процессы\n\n## Фоновый процесс\n\nИспользовать `while (1)`.\n",
+    skillRefs: [
+      { id: "initialization", version: "1.0.0" },
+      { id: "main-loop", version: "1.0.0" },
+    ],
+  };
   const updateBundle = makeGeneratedBundle();
   updateBundle.assistantMessage = "I updated the current mini-project.";
   const responsePayloads = [
@@ -297,6 +832,7 @@ test("uses an explicit project tool call and stores only the private AI file", a
     prompt: "Create a timer-driven status LED example.",
     mcu: "attiny1624",
     locale: "en",
+    instructionDocument: reviewedInstruction,
   });
 
   const capturedRequest = capturedRequests[0];
@@ -308,7 +844,19 @@ test("uses an explicit project tool call and stores only the private AI file", a
   assert.equal(capturedRequest.body.tools[0].name, "create_avr_mini_project");
   assert.equal(capturedRequest.body.tools[0].strict, true);
   assert.equal(capturedRequest.body.tools[0].parameters.type, "object");
+  assert.equal(
+    capturedRequest.body.tools[1].name,
+    "edit_avr_project_instruction"
+  );
   assert.match(capturedRequest.body.safety_identifier, /^ud_[a-f0-9]{40}$/);
+  assert.match(
+    capturedRequest.body.instructions,
+    /reviewed instructionDocument is present/i
+  );
+  assert.deepEqual(
+    JSON.parse(capturedRequest.body.input).instructionDocument,
+    reviewedInstruction
+  );
   for (const projectId of staticReferenceIds) {
     assertReferenceIncludedOnce(capturedRequest.body.instructions, projectId);
   }
@@ -342,6 +890,7 @@ test("uses an explicit project tool call and stores only the private AI file", a
     prompt: "Change the timer interval.",
     mcu: "attiny1624",
     locale: "en",
+    instructionDocument: reviewedInstruction,
     currentProject: {
       instanceId: "installed-project-1",
       id: result.project.id,
@@ -361,7 +910,11 @@ test("uses an explicit project tool call and stores only the private AI file", a
   assert.match(updated.message, /updated/i);
   assert.deepEqual(
     capturedRequests[1].body.tools.map((tool) => tool.name),
-    ["create_avr_mini_project", "update_current_avr_mini_project"]
+    [
+      "create_avr_mini_project",
+      "edit_avr_project_instruction",
+      "update_current_avr_mini_project",
+    ]
   );
   assert.match(
     capturedRequests[1].body.instructions,
@@ -401,6 +954,10 @@ test("uses an explicit project tool call and stores only the private AI file", a
       source: result.project.files[0].content,
       guide: result.project.files[1].content,
     }
+  );
+  assert.deepEqual(
+    JSON.parse(capturedRequests[1].body.input).instructionDocument,
+    reviewedInstruction
   );
 });
 
@@ -715,6 +1272,27 @@ test("parses REST Responses output and rejects a refusal", () => {
   });
   assert.equal(updated.kind, "project");
   assert.equal(updated.operation, "update");
+
+  const instruction = parseAssistantResponse({
+    output: [
+      {
+        type: "function_call",
+        name: "edit_avr_project_instruction",
+        arguments: JSON.stringify({
+          baseRevision: 3,
+          assistantMessage: "Updated the instruction.",
+          instructionMarkdown: "# Initialization\n\nConfigure the clock.\n",
+        }),
+      },
+    ],
+  });
+  assert.deepEqual(instruction, {
+    kind: "instruction",
+    operation: "edit",
+    baseRevision: 3,
+    message: "Updated the instruction.",
+    instructionMarkdown: "# Initialization\n\nConfigure the clock.",
+  });
 
   assert.throws(
     () =>
