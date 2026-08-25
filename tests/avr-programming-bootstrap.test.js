@@ -287,6 +287,18 @@ test("keeps only technical AI concurrency safeguards", () => {
   );
 });
 
+test("scopes the AI credential umask to secret generation", () => {
+  const installer = fs.readFileSync(
+    path.join(__dirname, "../backend/deploy/install-ai-service.sh"),
+    "utf8"
+  );
+
+  assert.match(
+    installer,
+    /\(\s*umask 0077\s*openssl rand -hex 32 > "\$\{credential_path\}"\s*\)/
+  );
+});
+
 test("gives Add file enough width and lets catalog text wrap", () => {
   const css = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.css"),
