@@ -36,7 +36,6 @@ node -e '
   const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   if (value.ok !== true || value.schemaVersion !== 1) process.exit(1);
   if (!Array.isArray(value.skills) || value.skills.length !== value.count) process.exit(1);
-  if (!value.skills.length) process.exit(1);
   const allowed = ["id", "markdown", "summary", "title", "version"];
   for (const skill of value.skills) {
     if (Object.keys(skill).some((key) => !allowed.includes(key))) process.exit(1);
@@ -61,22 +60,22 @@ node -e '
 
 if ! grep -q '"configured":false' "${status_file}"; then
   echo "OpenAI is configured; the paid assistant smoke test was intentionally skipped." >&2
-  exit 78
+  public_code="skipped"
+else
+  public_code="$(
+    curl --silent --show-error \
+      --output "${public_file}" \
+      --write-out '%{http_code}' \
+      --max-time 15 \
+      --request POST \
+      --header "Origin: ${base_url}" \
+      --header 'Content-Type: application/json' \
+      --data-binary '{"prompt":"Service smoke test"}' \
+      "${base_url}/api/avr/ai/respond"
+  )"
+  [ "${public_code}" = "503" ]
+  grep -q '"code":"api_key_not_configured"' "${public_file}"
 fi
-
-public_code="$(
-  curl --silent --show-error \
-    --output "${public_file}" \
-    --write-out '%{http_code}' \
-    --max-time 15 \
-    --request POST \
-    --header "Origin: ${base_url}" \
-    --header 'Content-Type: application/json' \
-    --data-binary '{"prompt":"Service smoke test"}' \
-    "${base_url}/api/avr/ai/respond"
-)"
-[ "${public_code}" = "503" ]
-grep -q '"code":"api_key_not_configured"' "${public_file}"
 
 printf 'status=%s skills=%s auth=%s public-without-key=%s\n' \
   "${status_code}" \

@@ -89,26 +89,13 @@ test("loads the checked-in immutable rule pack and verifies its hashes", async (
   assert.match(rules.prompt, /templates\/mini-project\.c/);
 });
 
-test("loads the versioned public AI skill catalog and verifies every prototype", async () => {
+test("loads an intentionally empty versioned public AI skill catalog", async () => {
   const catalog = await loadAiSkillCatalog(skillCatalogPath);
 
   assert.equal(catalog.schemaVersion, 1);
-  assert.equal(catalog.catalogVersion, "2026.08.25.1");
+  assert.equal(catalog.catalogVersion, "2026.08.25.2");
   assert.equal(catalog.locale, "ru");
-  assert.deepEqual(
-    catalog.skills.map((skill) => skill.id),
-    [
-      "initialization",
-      "main-loop",
-      "sampling-1s",
-      "button-reaction",
-      "uart-output",
-    ]
-  );
-  for (const skill of catalog.skills) {
-    assert.match(skill.sha256, /^[a-f0-9]{64}$/);
-    assert.match(skill.markdown, /^#{1,2} /);
-  }
+  assert.deepEqual(catalog.skills, []);
 
   const service = createAvrAiService({
     environment: {},
@@ -117,12 +104,9 @@ test("loads the versioned public AI skill catalog and verifies every prototype",
     skillCatalogPath,
   });
   const publicCatalog = await service.getSkills();
-  assert.equal(publicCatalog.count, 5);
+  assert.equal(publicCatalog.count, 0);
   assert.match(publicCatalog.digest, /^[a-f0-9]{64}$/);
-  assert.deepEqual(
-    Object.keys(publicCatalog.skills[0]).sort(),
-    ["id", "markdown", "summary", "title", "version"]
-  );
+  assert.deepEqual(publicCatalog.skills, []);
 });
 
 test("rejects tampered or escaping AI skill catalog entries", async (t) => {
@@ -156,11 +140,16 @@ test("rejects tampered or escaping AI skill catalog entries", async (t) => {
       error instanceof AiServiceError && error.code === "skill_catalog_invalid"
   );
 
-  baseCatalog.skills[0].file = "../private.md";
   baseCatalog.skills[0].sha256 = crypto
     .createHash("sha256")
     .update(markdown, "utf8")
     .digest("hex");
+  await fs.writeFile(catalogPath, JSON.stringify(baseCatalog), "utf8");
+  const validCatalog = await loadAiSkillCatalog(catalogPath);
+  assert.equal(validCatalog.skills.length, 1);
+  assert.equal(validCatalog.skills[0].id, "skill");
+
+  baseCatalog.skills[0].file = "../private.md";
   await fs.writeFile(catalogPath, JSON.stringify(baseCatalog), "utf8");
   await assert.rejects(
     loadAiSkillCatalog(catalogPath),
@@ -191,8 +180,8 @@ test("reports a present rule pack but stays unconfigured without a key", async (
   assert.equal(status.references.count, staticReferenceIds.length);
   assert.match(status.references.digest, /^[a-f0-9]{64}$/);
   assert.equal(status.referencesError, null);
-  assert.equal(status.skills.count, 5);
-  assert.equal(status.skills.catalogVersion, "2026.08.25.1");
+  assert.equal(status.skills.count, 0);
+  assert.equal(status.skills.catalogVersion, "2026.08.25.2");
   assert.equal(status.skillsError, null);
 });
 
@@ -693,7 +682,7 @@ test("edits a revisioned instruction document without generating a project", asy
     revision: 7,
     markdown:
       "# Инициализация\n\nНастроить TCA0 на невозможный период.\n",
-    skillRefs: [{ id: "initialization", version: "1.0.0" }],
+    skillRefs: [],
   };
 
   const result = await service.respond({
@@ -770,10 +759,7 @@ test("uses an explicit project tool call and stores only the private AI file", a
     revision: 4,
     markdown:
       "# Инициализация\n\nНастроить TCA0.\n\n# Процессы\n\n## Фоновый процесс\n\nИспользовать `while (1)`.\n",
-    skillRefs: [
-      { id: "initialization", version: "1.0.0" },
-      { id: "main-loop", version: "1.0.0" },
-    ],
+    skillRefs: [],
   };
   const updateBundle = makeGeneratedBundle();
   updateBundle.assistantMessage = "I updated the current mini-project.";

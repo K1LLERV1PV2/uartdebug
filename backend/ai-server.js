@@ -11,7 +11,7 @@ const {
   createAiAccessService,
 } = require("./ai-access-service");
 
-const AI_SERVER_VERSION = "20260825-instruction-skills-v1";
+const AI_SERVER_VERSION = "20260825-workspace-public-auth-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -177,8 +177,12 @@ function createAiHttpServer(options = {}) {
       req.method === "GET" &&
       requestUrl.pathname === "/api/avr/ai/auth/google/callback"
     ) {
-      return handleAccessEndpoint(res, requestId, () =>
-        accessService.completeGoogleLogin(req, res, requestUrl)
+      return handleAccessEndpoint(
+        res,
+        requestId,
+        () => accessService.completeGoogleLogin(req, res, requestUrl),
+        204,
+        { redirectErrorsToAvr: true }
       );
     }
 
@@ -523,7 +527,8 @@ async function handleAccessEndpoint(
   res,
   requestId,
   handler,
-  successStatus = 204
+  successStatus = 204,
+  { redirectErrorsToAvr = false } = {}
 ) {
   try {
     const result = await handler();
@@ -541,6 +546,16 @@ async function handleAccessEndpoint(
   } catch (error) {
     if (res.writableEnded) return;
     const normalized = normalizeAccessError(error);
+    if (redirectErrorsToAvr) {
+      const query = new URLSearchParams({
+        ai_auth: "error",
+        ai_auth_code: normalized.code,
+      });
+      res.statusCode = 303;
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Location", `/avr?${query.toString()}`);
+      return res.end();
+    }
     return sendJson(res, normalized.status, {
       ok: false,
       code: normalized.code,
@@ -694,7 +709,6 @@ function normalizePublicSkillCatalog(rawCatalog) {
     ) ||
     !/^[a-f0-9]{64}$/.test(String(rawCatalog.digest || "")) ||
     !Array.isArray(rawCatalog.skills) ||
-    !rawCatalog.skills.length ||
     rawCatalog.skills.length > MAX_PUBLIC_SKILLS
   ) {
     throw new AiServiceError(

@@ -36,7 +36,9 @@ required=(
   "${skills_catalog}"
   "${stage}/deploy/uartdebug-ai.service"
   "${stage}/deploy/nginx-avr-ai-location.conf"
+  "${stage}/deploy/nginx-avr-ai-oauth-callback-location.conf"
   "${stage}/deploy/install-ai-rule-pack.sh"
+  "${stage}/deploy/redact-oauth-callback-logging.sh"
   "${stage}/deploy/remove-ai-request-limits.sh"
 )
 for required_file in "${required[@]}"; do
@@ -154,14 +156,23 @@ fi
 /bin/bash "${stage}/deploy/install-ai-rule-pack.sh" "${stage}"
 
 if [ "${stage}" != "${backend_dir}" ]; then
+  shopt -s nullglob
   skill_markdown=("${stage}"/ai/skills/*.md)
   install -d -o deploy -g deploy -m 0755 \
     "${backend_dir}/ai" \
     "${backend_dir}/ai/skills"
   install -o deploy -g deploy -m 0644 \
     "${skills_catalog}" \
-    "${skill_markdown[@]}" \
-    "${backend_dir}/ai/skills/"
+    "${backend_dir}/ai/skills/catalog.json"
+  # The catalog is authoritative. Remove obsolete prototype blocks before
+  # installing the currently allowlisted Markdown files from the staged release.
+  rm -f -- "${backend_dir}/ai/skills/"*.md
+  if [ "${#skill_markdown[@]}" -gt 0 ]; then
+    install -o deploy -g deploy -m 0644 \
+      "${skill_markdown[@]}" \
+      "${backend_dir}/ai/skills/"
+  fi
+  shopt -u nullglob
   install -o deploy -g deploy -m 0644 \
     "${stage}/ai-server.js" \
     "${backend_dir}/ai-server.js"
@@ -210,6 +221,11 @@ if ! grep -q 'location \^~ /api/avr/ai/' "${site_file}"; then
   rm -f "${site_tmp}"
 fi
 
+/bin/bash "${stage}/deploy/redact-oauth-callback-logging.sh" \
+  "${site_file}" \
+  "${stage}/deploy/nginx-avr-ai-oauth-callback-location.conf" \
+  "${backup_root}/oauth-log-redaction"
+
 nginx -t
 systemd-analyze verify "${unit_file}"
 systemctl daemon-reload
@@ -231,4 +247,16 @@ done
 curl --fail --silent --show-error --max-time 10 \
   http://127.0.0.1:8083/api/avr/ai/status
 echo
+skills_body="$(mktemp)"
+curl --fail --silent --show-error --max-time 10 \
+  --output "${skills_body}" \
+  http://127.0.0.1:8083/api/avr/ai/skills
+node -e '
+  const fs = require("fs");
+  const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  if (value.ok !== true || value.schemaVersion !== 1) process.exit(1);
+  if (!Array.isArray(value.skills) || value.skills.length !== value.count) process.exit(1);
+  if (!/^[a-f0-9]{64}$/.test(String(value.digest || ""))) process.exit(1);
+' "${skills_body}"
+rm -f "${skills_body}"
 echo "AI service installed. Backups: ${backup_root}"

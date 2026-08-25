@@ -9,9 +9,15 @@
   const STORAGE_DOCUMENTATION_WIDTH =
     "ud_avr_programming_documentation_width_v1";
   const STORAGE_PROJECT_INSTRUCTION =
+    "ud_avr_ai_project_instruction_v2";
+  const STORAGE_PROJECT_INSTRUCTION_LEGACY =
     "ud_avr_ai_project_instruction_v1";
-  const STORAGE_DEVICE_PANEL_COLLAPSED =
-    "ud_avr_programming_device_panel_collapsed_v1";
+  const STORAGE_PROJECT_AI_CHAT_WIDTH =
+    "ud_avr_ai_chat_width_v1";
+  const STORAGE_PROJECT_AI_SKILLS_WIDTH =
+    "ud_avr_ai_skills_width_v1";
+  const STORAGE_DEVICE_PANEL_STATE =
+    "ud_avr_programming_device_panel_state_v2";
   const AI_SKILL_DRAG_MIME = "application/x-uartdebug-ai-skill+json";
   const PROJECT_AI_SKILLS_URL = "/api/avr/ai/skills";
   const PROJECT_AI_AUTH_SESSION_URL = "/api/avr/ai/auth/session";
@@ -36,10 +42,25 @@
   const DOCUMENTATION_MIN_WIDTH = 240;
   const DOCUMENTATION_MAX_WIDTH = 1600;
   const SPLIT_RESIZER_TOTAL_WIDTH = 28;
+  const PROJECT_AI_CHAT_DEFAULT_WIDTH = 320;
+  const PROJECT_AI_CHAT_MIN_WIDTH = 270;
+  const PROJECT_AI_CHAT_MAX_WIDTH = 620;
+  const PROJECT_AI_SKILLS_DEFAULT_WIDTH = 280;
+  const PROJECT_AI_SKILLS_MIN_WIDTH = 240;
+  const PROJECT_AI_SKILLS_MAX_WIDTH = 520;
+  const PROJECT_AI_INSTRUCTION_MIN_WIDTH = 350;
+  const PROJECT_AI_RESIZER_TOTAL_WIDTH = 28;
+  const PROJECT_WORKSPACE_TOGGLE_EXIT_MS = 180;
+  const PROJECT_WORKSPACE_SWITCH_MS = 1000;
+  const PROJECT_WORKSPACE_TOGGLE_ENTER_MS = 200;
+  const DEVICE_PANEL_EXPANDED_HEIGHT = 104;
+  const DEVICE_PANEL_COMPACT_HEIGHT = 54;
+  const DEVICE_PANEL_COLLAPSED_HEIGHT = 0;
   const MINI_PROJECT_IMPORT_EVENT = "ud-avr-mini-project";
   const MINI_PROJECT_INSTALLED_EVENT = "ud-avr-mini-project-installed";
   const MINI_PROJECT_READY_EVENT = "ud-avr-mini-projects-ready";
-  const DEFAULT_PROJECT_INSTRUCTION = [
+  const DEFAULT_PROJECT_INSTRUCTION = "";
+  const LEGACY_DEFAULT_PROJECT_INSTRUCTION = [
     "# Инициализация",
     "",
     "# Процессы",
@@ -105,6 +126,14 @@
   let documentationEditSaveTimer = null;
   let projectWorkspaceMode = "avr";
   let projectWorkspaceTransitionTimer = null;
+  let projectWorkspaceToggleExitTimer = null;
+  let projectWorkspaceToggleEnterTimer = null;
+  let projectAiChatWidth = PROJECT_AI_CHAT_DEFAULT_WIDTH;
+  let projectAiChatPreferredWidth = PROJECT_AI_CHAT_DEFAULT_WIDTH;
+  let projectAiChatResizeState = null;
+  let projectAiSkillsWidth = PROJECT_AI_SKILLS_DEFAULT_WIDTH;
+  let projectAiSkillsPreferredWidth = PROJECT_AI_SKILLS_DEFAULT_WIDTH;
+  let projectAiSkillsResizeState = null;
   let projectInstructionDocument = {
     schemaVersion: 1,
     revision: 0,
@@ -122,7 +151,9 @@
   let projectInstructionPreviewLineClasses = [];
   const projectAiSkills = new Map();
   let projectAiSkillsLoaded = false;
-  let devicePanelCollapsed = false;
+  let devicePanelState = "expanded";
+  let devicePanelHeight = DEVICE_PANEL_EXPANDED_HEIGHT;
+  let devicePanelResizeState = null;
   let devicePanelTransitionTimer = null;
   const projectAiConversation = [];
   let projectAiRequestInFlight = false;
@@ -2877,6 +2908,288 @@
     });
   }
 
+  function getProjectAiLayout() {
+    return document.querySelector(".project-ai-layout");
+  }
+
+  function normalizeProjectAiChatPreference(width) {
+    const numeric = Number(width);
+    if (!Number.isFinite(numeric)) return PROJECT_AI_CHAT_DEFAULT_WIDTH;
+    return Math.max(
+      PROJECT_AI_CHAT_MIN_WIDTH,
+      Math.min(PROJECT_AI_CHAT_MAX_WIDTH, numeric)
+    );
+  }
+
+  function normalizeProjectAiSkillsPreference(width) {
+    const numeric = Number(width);
+    if (!Number.isFinite(numeric)) return PROJECT_AI_SKILLS_DEFAULT_WIDTH;
+    return Math.max(
+      PROJECT_AI_SKILLS_MIN_WIDTH,
+      Math.min(PROJECT_AI_SKILLS_MAX_WIDTH, numeric)
+    );
+  }
+
+  function getProjectAiSideBudget() {
+    const layout = getProjectAiLayout();
+    if (!layout || isStackedCanvasLayout()) {
+      return PROJECT_AI_CHAT_MAX_WIDTH + PROJECT_AI_SKILLS_MAX_WIDTH;
+    }
+    return Math.max(
+      PROJECT_AI_CHAT_MIN_WIDTH + PROJECT_AI_SKILLS_MIN_WIDTH,
+      layout.getBoundingClientRect().width -
+        PROJECT_AI_INSTRUCTION_MIN_WIDTH -
+        PROJECT_AI_RESIZER_TOTAL_WIDTH
+    );
+  }
+
+  function resolveProjectAiWidths(chatWidth, skillsWidth, priority = "balanced") {
+    let chat = normalizeProjectAiChatPreference(chatWidth);
+    let skills = normalizeProjectAiSkillsPreference(skillsWidth);
+    const budget = getProjectAiSideBudget();
+    if (chat + skills <= budget) return { chat, skills };
+
+    if (priority === "chat") {
+      chat = Math.min(chat, budget - PROJECT_AI_SKILLS_MIN_WIDTH);
+      skills = Math.min(skills, budget - chat);
+    } else if (priority === "skills") {
+      skills = Math.min(skills, budget - PROJECT_AI_CHAT_MIN_WIDTH);
+      chat = Math.min(chat, budget - skills);
+    } else {
+      const reducibleChat = chat - PROJECT_AI_CHAT_MIN_WIDTH;
+      const reducibleSkills = skills - PROJECT_AI_SKILLS_MIN_WIDTH;
+      const overflow = chat + skills - budget;
+      const reducibleTotal = reducibleChat + reducibleSkills;
+      if (reducibleTotal > 0) {
+        chat -= overflow * (reducibleChat / reducibleTotal);
+        skills = budget - chat;
+      }
+    }
+
+    return {
+      chat: Math.max(PROJECT_AI_CHAT_MIN_WIDTH, Math.round(chat)),
+      skills: Math.max(PROJECT_AI_SKILLS_MIN_WIDTH, Math.round(skills)),
+    };
+  }
+
+  function getProjectAiChatMaxWidth() {
+    return Math.max(
+      PROJECT_AI_CHAT_MIN_WIDTH,
+      Math.min(
+        PROJECT_AI_CHAT_MAX_WIDTH,
+        getProjectAiSideBudget() - projectAiSkillsWidth
+      )
+    );
+  }
+
+  function getProjectAiSkillsMaxWidth() {
+    return Math.max(
+      PROJECT_AI_SKILLS_MIN_WIDTH,
+      Math.min(
+        PROJECT_AI_SKILLS_MAX_WIDTH,
+        getProjectAiSideBudget() - projectAiChatWidth
+      )
+    );
+  }
+
+  function syncProjectAiResizerAria() {
+    const chatResizer = $("projectAiChatResizer");
+    if (chatResizer) {
+      chatResizer.setAttribute("aria-valuemin", String(PROJECT_AI_CHAT_MIN_WIDTH));
+      chatResizer.setAttribute("aria-valuemax", String(getProjectAiChatMaxWidth()));
+      chatResizer.setAttribute("aria-valuenow", String(projectAiChatWidth));
+    }
+
+    const skillsResizer = $("projectAiSkillsResizer");
+    if (skillsResizer) {
+      skillsResizer.setAttribute(
+        "aria-valuemin",
+        String(PROJECT_AI_SKILLS_MIN_WIDTH)
+      );
+      skillsResizer.setAttribute(
+        "aria-valuemax",
+        String(getProjectAiSkillsMaxWidth())
+      );
+      skillsResizer.setAttribute("aria-valuenow", String(projectAiSkillsWidth));
+    }
+  }
+
+  function persistProjectAiWidths() {
+    try {
+      localStorage.setItem(
+        STORAGE_PROJECT_AI_CHAT_WIDTH,
+        String(projectAiChatPreferredWidth)
+      );
+      localStorage.setItem(
+        STORAGE_PROJECT_AI_SKILLS_WIDTH,
+        String(projectAiSkillsPreferredWidth)
+      );
+    } catch (error) {
+      console.warn("Failed to persist AI workspace widths:", error);
+    }
+  }
+
+  function applyProjectAiWidths(
+    chatWidth,
+    skillsWidth,
+    { persist = true, remember = true, priority = "balanced" } = {}
+  ) {
+    const resolved = resolveProjectAiWidths(chatWidth, skillsWidth, priority);
+    projectAiChatWidth = resolved.chat;
+    projectAiSkillsWidth = resolved.skills;
+    if (remember) {
+      projectAiChatPreferredWidth = resolved.chat;
+      projectAiSkillsPreferredWidth = resolved.skills;
+    }
+
+    const layout = getProjectAiLayout();
+    if (layout && !isStackedCanvasLayout()) {
+      layout.style.setProperty("--project-ai-chat-width", `${resolved.chat}px`);
+      layout.style.setProperty(
+        "--project-ai-skills-width",
+        `${resolved.skills}px`
+      );
+    } else if (layout) {
+      layout.style.removeProperty("--project-ai-chat-width");
+      layout.style.removeProperty("--project-ai-skills-width");
+    }
+    syncProjectAiResizerAria();
+    if (persist) persistProjectAiWidths();
+    window.requestAnimationFrame(() => projectInstructionEditor?.refresh());
+  }
+
+  function restoreProjectAiWidths() {
+    let chat = PROJECT_AI_CHAT_DEFAULT_WIDTH;
+    let skills = PROJECT_AI_SKILLS_DEFAULT_WIDTH;
+    try {
+      const storedChat = localStorage.getItem(STORAGE_PROJECT_AI_CHAT_WIDTH);
+      const storedSkills = localStorage.getItem(STORAGE_PROJECT_AI_SKILLS_WIDTH);
+      if (storedChat !== null) chat = Number(storedChat);
+      if (storedSkills !== null) skills = Number(storedSkills);
+    } catch (error) {
+      console.warn("Failed to restore AI workspace widths:", error);
+    }
+    applyProjectAiWidths(chat, skills, { persist: false });
+  }
+
+  function bindProjectAiResizers() {
+    const layout = getProjectAiLayout();
+    const chatResizer = $("projectAiChatResizer");
+    const skillsResizer = $("projectAiSkillsResizer");
+    if (!layout || !chatResizer || !skillsResizer) return;
+
+    const finishChatResize = (event) => {
+      if (!projectAiChatResizeState) return;
+      chatResizer.releasePointerCapture?.(projectAiChatResizeState.pointerId);
+      projectAiChatResizeState = null;
+      layout.classList.remove("is-chat-resizing");
+      document.body.classList.remove("is-project-ai-resizing");
+      applyProjectAiWidths(
+        projectAiChatPreferredWidth,
+        projectAiSkillsPreferredWidth,
+        { persist: true, remember: false, priority: "chat" }
+      );
+      event?.preventDefault?.();
+    };
+
+    chatResizer.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || isStackedCanvasLayout()) return;
+      event.preventDefault();
+      projectAiChatResizeState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startWidth: projectAiChatWidth,
+      };
+      chatResizer.setPointerCapture?.(event.pointerId);
+      layout.classList.add("is-chat-resizing");
+      document.body.classList.add("is-project-ai-resizing");
+    });
+    chatResizer.addEventListener("pointermove", (event) => {
+      if (!projectAiChatResizeState) return;
+      event.preventDefault();
+      applyProjectAiWidths(
+        projectAiChatResizeState.startWidth +
+          event.clientX -
+          projectAiChatResizeState.startX,
+        projectAiSkillsPreferredWidth,
+        { persist: false, priority: "chat" }
+      );
+    });
+    chatResizer.addEventListener("pointerup", finishChatResize);
+    chatResizer.addEventListener("pointercancel", finishChatResize);
+    chatResizer.addEventListener("keydown", (event) => {
+      const step = event.shiftKey ? 48 : 24;
+      let nextWidth = projectAiChatWidth;
+      if (event.key === "ArrowLeft") nextWidth -= step;
+      else if (event.key === "ArrowRight") nextWidth += step;
+      else if (event.key === "Home") nextWidth = PROJECT_AI_CHAT_MIN_WIDTH;
+      else if (event.key === "End") nextWidth = getProjectAiChatMaxWidth();
+      else return;
+      event.preventDefault();
+      applyProjectAiWidths(nextWidth, projectAiSkillsPreferredWidth, {
+        priority: "chat",
+      });
+    });
+
+    const finishSkillsResize = (event) => {
+      if (!projectAiSkillsResizeState) return;
+      skillsResizer.releasePointerCapture?.(projectAiSkillsResizeState.pointerId);
+      projectAiSkillsResizeState = null;
+      layout.classList.remove("is-skills-resizing");
+      document.body.classList.remove("is-project-ai-resizing");
+      applyProjectAiWidths(
+        projectAiChatPreferredWidth,
+        projectAiSkillsPreferredWidth,
+        { persist: true, remember: false, priority: "skills" }
+      );
+      event?.preventDefault?.();
+    };
+
+    skillsResizer.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || isStackedCanvasLayout()) return;
+      event.preventDefault();
+      projectAiSkillsResizeState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startWidth: projectAiSkillsWidth,
+      };
+      skillsResizer.setPointerCapture?.(event.pointerId);
+      layout.classList.add("is-skills-resizing");
+      document.body.classList.add("is-project-ai-resizing");
+    });
+    skillsResizer.addEventListener("pointermove", (event) => {
+      if (!projectAiSkillsResizeState) return;
+      event.preventDefault();
+      applyProjectAiWidths(
+        projectAiChatPreferredWidth,
+        projectAiSkillsResizeState.startWidth -
+          (event.clientX - projectAiSkillsResizeState.startX),
+        { persist: false, priority: "skills" }
+      );
+    });
+    skillsResizer.addEventListener("pointerup", finishSkillsResize);
+    skillsResizer.addEventListener("pointercancel", finishSkillsResize);
+    skillsResizer.addEventListener("keydown", (event) => {
+      const step = event.shiftKey ? 48 : 24;
+      let nextWidth = projectAiSkillsWidth;
+      if (event.key === "ArrowLeft") nextWidth += step;
+      else if (event.key === "ArrowRight") nextWidth -= step;
+      else if (event.key === "Home") nextWidth = PROJECT_AI_SKILLS_MIN_WIDTH;
+      else if (event.key === "End") nextWidth = getProjectAiSkillsMaxWidth();
+      else return;
+      event.preventDefault();
+      applyProjectAiWidths(projectAiChatPreferredWidth, nextWidth, {
+        priority: "skills",
+      });
+    });
+
+    applyProjectAiWidths(
+      projectAiChatPreferredWidth,
+      projectAiSkillsPreferredWidth,
+      { persist: false, remember: false }
+    );
+  }
+
   function bindWorkspaceResizeObserver() {
     const container = getCanvasSplitContainer();
     if (!container) return;
@@ -2904,6 +3217,11 @@
           persist: false,
           remember: false,
         });
+        applyProjectAiWidths(
+          projectAiChatPreferredWidth,
+          projectAiSkillsPreferredWidth,
+          { persist: false, remember: false }
+        );
         syncSplitResizerAria();
         fitEditorFileWatermark();
       });
@@ -2912,6 +3230,8 @@
     if (typeof ResizeObserver === "function") {
       workspaceResizeObserver = new ResizeObserver(scheduleResize);
       workspaceResizeObserver.observe(container);
+      const projectAiLayout = getProjectAiLayout();
+      if (projectAiLayout) workspaceResizeObserver.observe(projectAiLayout);
       const editorContainer = document.querySelector(".editor-container");
       if (editorContainer) {
         watermarkResizeObserver = new ResizeObserver(
@@ -4550,6 +4870,22 @@
     };
   }
 
+  function parseStoredProjectInstruction(rawValue) {
+    const parsed = JSON.parse(rawValue);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      parsed.schemaVersion !== 1 ||
+      !Number.isSafeInteger(parsed.revision) ||
+      parsed.revision < 0 ||
+      typeof parsed.markdown !== "string"
+    ) {
+      throw new TypeError("Invalid stored project instruction.");
+    }
+    return normalizeProjectInstructionDocument(parsed);
+  }
+
   function getProjectInstructionSnapshot({ forRequest = false } = {}) {
     const skillRefs = getCompatibleInstructionSkillRefs(
       projectInstructionDocument.markdown,
@@ -4578,22 +4914,33 @@
   function restoreProjectInstruction() {
     try {
       const stored = window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (
-          !parsed ||
-          typeof parsed !== "object" ||
-          Array.isArray(parsed) ||
-          parsed.schemaVersion !== 1 ||
-          !Number.isSafeInteger(parsed.revision) ||
-          parsed.revision < 0 ||
-          typeof parsed.markdown !== "string"
-        ) {
-          throw new TypeError("Invalid stored project instruction.");
-        }
-        projectInstructionDocument = normalizeProjectInstructionDocument(
-          parsed
+      if (stored !== null) {
+        projectInstructionDocument = parseStoredProjectInstruction(stored);
+      } else {
+        const legacyStored = window.localStorage.getItem(
+          STORAGE_PROJECT_INSTRUCTION_LEGACY
         );
+        if (legacyStored !== null) {
+          const legacyDocument = parseStoredProjectInstruction(legacyStored);
+          projectInstructionDocument =
+            legacyDocument.markdown === LEGACY_DEFAULT_PROJECT_INSTRUCTION
+              ? {
+                  ...legacyDocument,
+                  markdown: DEFAULT_PROJECT_INSTRUCTION,
+                  skillRefs: [],
+                }
+              : legacyDocument;
+          try {
+            window.localStorage.setItem(
+              STORAGE_PROJECT_INSTRUCTION,
+              JSON.stringify(projectInstructionDocument)
+            );
+          } catch {
+            console.warn(
+              "The migrated project instruction could not be saved locally."
+            );
+          }
+        }
       }
       projectInstructionStorageReadFailed = false;
     } catch {
@@ -4710,6 +5057,14 @@
 
   function decorateProjectInstructionInline(lineNumber, lineText) {
     const occupied = [];
+    const isEscaped = (index) => {
+      let backslashes = 0;
+      for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+        if (lineText[cursor] !== "\\") break;
+        backslashes += 1;
+      }
+      return backslashes % 2 === 1;
+    };
     const rangeIsFree = (start, end) =>
       start < end &&
       !occupied.some(
@@ -4732,21 +5087,141 @@
         CodeMirror.Pos(lineNumber, end),
         { className }
       );
-    const decorateDelimited = (expression, delimiterLength, className) => {
+    const decorateDelimited = (
+      expression,
+      delimiterLength,
+      className,
+      { allowBoundaryWhitespace = false } = {}
+    ) => {
       let match;
       while ((match = expression.exec(lineText))) {
         const start = match.index;
         const end = start + match[0].length;
         if (!rangeIsFree(start, end)) continue;
+        const resolvedDelimiterLength =
+          typeof delimiterLength === "function"
+            ? delimiterLength(match)
+            : delimiterLength;
+        const contentStart = start + resolvedDelimiterLength;
+        const contentEnd = end - resolvedDelimiterLength;
+        const content = lineText.slice(contentStart, contentEnd);
+        if (
+          isEscaped(start) ||
+          isEscaped(contentEnd) ||
+          (!allowBoundaryWhitespace &&
+            (!content || /^\s|\s$/.test(content)))
+        ) {
+          continue;
+        }
         reserve(start, end);
-        collapse(start, start + delimiterLength);
-        style(start + delimiterLength, end - delimiterLength, className);
-        collapse(end - delimiterLength, end);
+        collapse(start, start + resolvedDelimiterLength);
+        style(contentStart, contentEnd, className);
+        collapse(end - resolvedDelimiterLength, end);
       }
     };
 
+    const codeRunExpression = /`+/g;
+    let openingCodeRun;
+    while ((openingCodeRun = codeRunExpression.exec(lineText))) {
+      if (isEscaped(openingCodeRun.index)) continue;
+      const openingStart = openingCodeRun.index;
+      const delimiterLength = openingCodeRun[0].length;
+      const restartAt = codeRunExpression.lastIndex;
+      let closingCodeRun = null;
+      let candidateCodeRun;
+      while ((candidateCodeRun = codeRunExpression.exec(lineText))) {
+        if (
+          candidateCodeRun[0].length === delimiterLength &&
+          !isEscaped(candidateCodeRun.index)
+        ) {
+          closingCodeRun = candidateCodeRun;
+          break;
+        }
+      }
+      if (!closingCodeRun) {
+        codeRunExpression.lastIndex = restartAt;
+        continue;
+      }
+      const closingStart = closingCodeRun.index;
+      const end = closingStart + delimiterLength;
+      if (!rangeIsFree(openingStart, end)) {
+        codeRunExpression.lastIndex = end;
+        continue;
+      }
+      reserve(openingStart, end);
+      collapse(openingStart, openingStart + delimiterLength);
+      let contentStart = openingStart + delimiterLength;
+      let contentEnd = closingStart;
+      const content = lineText.slice(contentStart, contentEnd);
+      if (
+        content.startsWith(" ") &&
+        content.endsWith(" ") &&
+        /\S/.test(content)
+      ) {
+        collapse(contentStart, contentStart + 1);
+        collapse(contentEnd - 1, contentEnd);
+        contentStart += 1;
+        contentEnd -= 1;
+      }
+      style(contentStart, contentEnd, "project-instruction-live-code");
+      collapse(closingStart, end);
+      codeRunExpression.lastIndex = end;
+    }
+
+    const imageRanges = [];
+    let imageMatch;
+    const imageExpression = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g;
+    while ((imageMatch = imageExpression.exec(lineText))) {
+      const start = imageMatch.index;
+      const end = start + imageMatch[0].length;
+      if (isEscaped(start) || isEscaped(start + 1) || !rangeIsFree(start, end)) {
+        continue;
+      }
+      const labelStart = start + 2;
+      const labelEnd = labelStart + imageMatch[1].length;
+      imageRanges.push([start, end]);
+      reserve(start, labelStart);
+      reserve(labelEnd, end);
+      collapse(start, labelStart);
+      style(labelStart, labelEnd, "project-instruction-live-link");
+      collapse(labelEnd, end);
+    }
+
+    let linkMatch;
+    const linkExpression = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
+    while ((linkMatch = linkExpression.exec(lineText))) {
+      const start = linkMatch.index;
+      const end = start + linkMatch[0].length;
+      if (
+        isEscaped(start) ||
+        imageRanges.some(
+          ([imageStart, imageEnd]) => start >= imageStart && end <= imageEnd
+        )
+      ) {
+        continue;
+      }
+      const labelStart = start + 1;
+      const labelEnd = labelStart + linkMatch[1].length;
+      if (
+        !rangeIsFree(start, labelStart) ||
+        !rangeIsFree(labelEnd, end)
+      ) {
+        continue;
+      }
+      reserve(start, labelStart);
+      reserve(labelEnd, end);
+      collapse(start, labelStart);
+      style(labelStart, labelEnd, "project-instruction-live-link");
+      collapse(labelEnd, end);
+    }
+
     decorateDelimited(
       /\*\*([^*\n]|\*(?!\*))+\*\*/g,
+      2,
+      "project-instruction-live-strong"
+    );
+    decorateDelimited(
+      /(?<![A-Za-z0-9])__([^_\n]|_(?!_))+__(?![A-Za-z0-9])/g,
       2,
       "project-instruction-live-strong"
     );
@@ -4755,27 +5230,9 @@
       2,
       "project-instruction-live-deleted"
     );
-    decorateDelimited(
-      /`[^`\n]+`/g,
-      1,
-      "project-instruction-live-code"
-    );
-
-    let linkMatch;
-    const linkExpression = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
-    while ((linkMatch = linkExpression.exec(lineText))) {
-      const start = linkMatch.index;
-      const end = start + linkMatch[0].length;
-      if (!rangeIsFree(start, end)) continue;
-      const labelEnd = start + 1 + linkMatch[1].length;
-      reserve(start, end);
-      collapse(start, start + 1);
-      style(start + 1, labelEnd, "project-instruction-live-link");
-      collapse(labelEnd, end);
-    }
 
     let emphasisMatch;
-    const emphasisExpression = /(^|[^\w*])\*([^*\n]+)\*(?!\*)/g;
+    const emphasisExpression = /(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?!\*)/g;
     while ((emphasisMatch = emphasisExpression.exec(lineText))) {
       const start = emphasisMatch.index + emphasisMatch[1].length;
       const end = start + emphasisMatch[0].length - emphasisMatch[1].length;
@@ -4784,6 +5241,34 @@
       collapse(start, start + 1);
       style(start + 1, end - 1, "project-instruction-live-emphasis");
       collapse(end - 1, end);
+    }
+
+    const underscoreExpression =
+      /(^|[^A-Za-z0-9_])_(?=\S)([^_\n]*?\S)_(?![A-Za-z0-9_])/g;
+    while ((emphasisMatch = underscoreExpression.exec(lineText))) {
+      const start = emphasisMatch.index + emphasisMatch[1].length;
+      const end = start + emphasisMatch[0].length - emphasisMatch[1].length;
+      if (!rangeIsFree(start, end)) continue;
+      reserve(start, end);
+      collapse(start, start + 1);
+      style(start + 1, end - 1, "project-instruction-live-emphasis");
+      collapse(end - 1, end);
+    }
+
+    const escapablePunctuation = new Set(
+      "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".split("")
+    );
+    for (let index = 0; index + 1 < lineText.length; index += 1) {
+      if (
+        lineText[index] !== "\\" ||
+        isEscaped(index) ||
+        !escapablePunctuation.has(lineText[index + 1]) ||
+        !rangeIsFree(index, index + 1)
+      ) {
+        continue;
+      }
+      reserve(index, index + 1);
+      collapse(index, index + 1);
     }
   }
 
@@ -4842,6 +5327,51 @@
           continue;
         }
 
+        const setextHeading = lineText.match(/^\s{0,3}(=+|-+)\s*$/);
+        const previousLineText =
+          lineNumber > 0
+            ? projectInstructionEditor.getLine(lineNumber - 1) || ""
+            : "";
+        const previousLineIsThematicBreak =
+          /^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(
+            previousLineText
+          );
+        const previousLineIsParagraph =
+          previousLineText.trim() &&
+          !/^(?: {4}|\t)/.test(previousLineText) &&
+          !/^\s{0,3}(?:#{1,6}(?:[ \t]+|$)|`{3,}|~{3,})/.test(
+            previousLineText
+          ) &&
+          !/^\s{0,3}(?:=+|-+)\s*$/.test(previousLineText) &&
+          !/^\s{0,3}(?:>|[-+*]|\d{1,9}[.)])[ \t]/.test(
+            previousLineText
+          ) &&
+          !previousLineIsThematicBreak;
+        if (
+          setextHeading &&
+          previousLineIsParagraph
+        ) {
+          const level = setextHeading[1][0] === "=" ? 1 : 2;
+          addProjectInstructionPreviewLineClass(
+            lineNumber - 1,
+            "text",
+            "project-instruction-line-heading"
+          );
+          addProjectInstructionPreviewLineClass(
+            lineNumber - 1,
+            "text",
+            `project-instruction-line-heading-${level}`
+          );
+          if (!activeLine && !activeLines.has(lineNumber - 1)) {
+            addProjectInstructionPreviewMark(
+              CodeMirror.Pos(lineNumber, 0),
+              CodeMirror.Pos(lineNumber, lineText.length),
+              { collapsed: true }
+            );
+          }
+          continue;
+        }
+
         if (
           /^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(
             lineText
@@ -4881,10 +5411,18 @@
               CodeMirror.Pos(lineNumber, heading[0].length),
               { collapsed: true }
             );
+            const closingHashes = lineText.match(/[ \t]+#+[ \t]*$/);
+            if (closingHashes) {
+              addProjectInstructionPreviewMark(
+                CodeMirror.Pos(lineNumber, closingHashes.index),
+                CodeMirror.Pos(lineNumber, lineText.length),
+                { collapsed: true }
+              );
+            }
           }
         }
 
-        const quote = lineText.match(/^(\s{0,3}>[ \t]?)/);
+        const quote = lineText.match(/^(\s{0,3}(?:>[ \t]?)+)/);
         if (quote) {
           addProjectInstructionPreviewLineClass(
             lineNumber,
@@ -4900,8 +5438,11 @@
           }
         }
 
+        const taskMarker = lineText.match(
+          /^(\s{0,3})([-+*]|\d{1,9}[.)])([ \t]+)\[([ xX])\][ \t]+/
+        );
         const listMarker = lineText.match(/^(\s{0,3})([-+*])[ \t]+/);
-        if (listMarker && !activeLine) {
+        if (listMarker && !taskMarker && !activeLine) {
           const marker = document.createElement("span");
           marker.className = "project-instruction-list-marker";
           marker.textContent = "•";
@@ -4909,6 +5450,50 @@
             CodeMirror.Pos(lineNumber, listMarker[1].length),
             CodeMirror.Pos(lineNumber, listMarker[0].length),
             { replacedWith: marker }
+          );
+        }
+
+        const orderedMarker = lineText.match(
+          /^(\s{0,3})(\d{1,9}[.)])([ \t]+)/
+        );
+        if (orderedMarker && !taskMarker && !activeLine) {
+          addProjectInstructionPreviewMark(
+            CodeMirror.Pos(lineNumber, orderedMarker[1].length),
+            CodeMirror.Pos(
+              lineNumber,
+              orderedMarker[1].length + orderedMarker[2].length
+            ),
+            { className: "project-instruction-ordered-marker" }
+          );
+        }
+
+        if (taskMarker && !activeLine) {
+          const tokenStart = lineText.indexOf("[", taskMarker[1].length);
+          const task = document.createElement("span");
+          const checked = taskMarker[4].toLowerCase() === "x";
+          const orderedTask = /^\d/.test(taskMarker[2]);
+          task.className = `project-instruction-task-marker${
+            checked ? " is-checked" : ""
+          }`;
+          task.textContent = checked ? "✓" : "";
+          task.setAttribute("aria-hidden", "true");
+          if (orderedTask) {
+            addProjectInstructionPreviewMark(
+              CodeMirror.Pos(lineNumber, taskMarker[1].length),
+              CodeMirror.Pos(
+                lineNumber,
+                taskMarker[1].length + taskMarker[2].length
+              ),
+              { className: "project-instruction-ordered-marker" }
+            );
+          }
+          addProjectInstructionPreviewMark(
+            CodeMirror.Pos(
+              lineNumber,
+              orderedTask ? tokenStart : taskMarker[1].length
+            ),
+            CodeMirror.Pos(lineNumber, tokenStart + 3),
+            { replacedWith: task }
           );
         }
 
@@ -5485,12 +6070,14 @@
     const account = $("projectAiAccount");
     const credits = $("projectAiCredits");
     const unavailable = $("projectAiAuthUnavailable");
+    const privacyNote = $("projectAiPrivacyNote");
     if (!auth || !signIn || !signedInSession || !account || !credits) return;
 
     auth.hidden = true;
     signIn.hidden = true;
     signedInSession.hidden = true;
     if (unavailable) unavailable.hidden = true;
+    if (privacyNote) privacyNote.hidden = true;
     account.textContent = "";
     credits.textContent = "";
     credits.hidden = true;
@@ -5498,6 +6085,7 @@
 
     if (session?.mode !== "google") return;
     auth.hidden = false;
+    if (privacyNote) privacyNote.hidden = false;
 
     if (session.configured !== true) {
       if (unavailable) unavailable.hidden = false;
@@ -5589,6 +6177,71 @@
         projectAiAuthSessionPromise = null;
       }
     }
+  }
+
+  function consumeProjectAiAuthReturn() {
+    let url;
+    try {
+      url = new URL(window.location.href);
+    } catch {
+      return null;
+    }
+    const status = String(url.searchParams.get("ai_auth") || "");
+    if (status !== "success" && status !== "error") return null;
+    const code = String(url.searchParams.get("ai_auth_code") || "");
+    url.searchParams.delete("ai_auth");
+    url.searchParams.delete("ai_auth_code");
+    try {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${url.pathname}${url.search}${url.hash}`
+      );
+    } catch {}
+    return { status, code };
+  }
+
+  function renderProjectAiAuthReturn(authReturn) {
+    if (!authReturn) return;
+    if (authReturn.status === "success") {
+      void fetchProjectAiAuthSession()
+        .then((session) => {
+          appendProjectAiMessage(
+            "system",
+            session?.authenticated === true
+              ? "Signed in with Google."
+              : "Google sign-in could not be restored. Please try again."
+          );
+        })
+        .catch(() => {
+          appendProjectAiMessage(
+            "system",
+            "Google sign-in completed, but the session could not be checked. Please reload the page."
+          );
+        });
+      return;
+    }
+
+    const messages = {
+      google_sign_in_denied: "Google sign-in was cancelled.",
+      oauth_transaction_invalid:
+        "The Google sign-in request expired or was already used. Please try again.",
+      oauth_device_mismatch:
+        "Google sign-in could not be matched to this browser. Please try again without clearing site data.",
+      google_token_exchange_failed:
+        "Google sign-in could not be verified. Please try again.",
+      google_id_token_missing:
+        "Google sign-in did not return the required identity information.",
+      google_identity_invalid:
+        "Google sign-in returned an invalid identity. Please try again.",
+      google_email_unverified:
+        "A verified Google email address is required.",
+    };
+    appendProjectAiMessage(
+      "system",
+      messages[authReturn.code] ||
+        "Google sign-in could not be completed. Please try again."
+    );
   }
 
   async function handleProjectAiSignIn() {
@@ -6147,7 +6800,13 @@
     const toggle = $("projectAiToggle");
     const toggleLabel = toggle?.querySelector(".project-ai-toggle-label");
     if (!stage || !avrScene || !aiScene || !toggle) return;
-    if (stage.classList.contains("is-switching")) return;
+    if (
+      stage.classList.contains("is-switching") ||
+      stage.classList.contains("is-toggle-departing") ||
+      stage.classList.contains("is-toggle-hidden")
+    ) {
+      return;
+    }
 
     const shouldAnimate = projectWorkspaceMode !== nextMode;
     const reducedMotion = window.matchMedia?.(
@@ -6162,50 +6821,68 @@
     if (outgoingScene.contains(document.activeElement)) {
       toggle.focus({ preventScroll: true });
     }
-    if (animateTransition) {
-      stage.classList.add("is-switching");
-      toggle.disabled = true;
-      void stage.offsetWidth;
-    }
-    projectWorkspaceMode = nextMode;
-    stage.dataset.mode = nextMode;
-    avrScene.setAttribute("aria-hidden", String(aiMode));
-    aiScene.setAttribute("aria-hidden", String(!aiMode));
-    if (aiMode) {
-      avrScene.setAttribute("inert", "");
-      aiScene.removeAttribute("inert");
-    } else {
-      aiScene.setAttribute("inert", "");
-      avrScene.removeAttribute("inert");
-    }
-    toggle.setAttribute("aria-pressed", String(aiMode));
-    toggle.setAttribute(
-      "aria-label",
-      aiMode ? "Return to AVR workspace" : "Open AI assistant workspace"
-    );
-    renderProjectWorkspaceToggleLabel(
-      toggleLabel,
-      aiMode ? ["AVR", "WORKSPACE"] : ["AI", "ASSISTANT"]
-    );
 
-    if (projectWorkspaceTransitionTimer) {
-      window.clearTimeout(projectWorkspaceTransitionTimer);
+    const applyMode = () => {
+      projectWorkspaceMode = nextMode;
+      stage.dataset.mode = nextMode;
+      avrScene.setAttribute("aria-hidden", String(aiMode));
+      aiScene.setAttribute("aria-hidden", String(!aiMode));
+      if (aiMode) {
+        avrScene.setAttribute("inert", "");
+        aiScene.removeAttribute("inert");
+      } else {
+        aiScene.setAttribute("inert", "");
+        avrScene.removeAttribute("inert");
+      }
+      toggle.setAttribute("aria-pressed", String(aiMode));
+      toggle.setAttribute(
+        "aria-label",
+        aiMode ? "Return to AVR workspace" : "Open AI assistant workspace"
+      );
+      renderProjectWorkspaceToggleLabel(
+        toggleLabel,
+        aiMode ? ["AVR", "WORKSPACE"] : ["AI", "ASSISTANT"]
+      );
+    };
+
+    const finishTransition = () => {
+      toggle.disabled = false;
+      editor?.refresh();
+      projectInstructionEditor?.refresh();
+      scheduleProjectInstructionPreview();
+      fitEditorFileWatermark();
+      if (aiMode && focusPrompt) {
+        $("projectAiPrompt")?.focus({ preventScroll: true });
+      }
+    };
+
+    if (animateTransition) {
+      toggle.disabled = true;
+      stage.classList.add("is-toggle-departing");
+      void stage.offsetWidth;
+      projectWorkspaceToggleExitTimer = window.setTimeout(() => {
+        projectWorkspaceToggleExitTimer = null;
+        stage.classList.add("is-toggle-hidden");
+        stage.classList.remove("is-toggle-departing");
+        applyMode();
+        stage.classList.add("is-switching");
+        void stage.offsetWidth;
+
+        projectWorkspaceTransitionTimer = window.setTimeout(() => {
+          projectWorkspaceTransitionTimer = null;
+          stage.classList.remove("is-switching");
+          void stage.offsetWidth;
+          stage.classList.remove("is-toggle-hidden");
+          projectWorkspaceToggleEnterTimer = window.setTimeout(() => {
+            projectWorkspaceToggleEnterTimer = null;
+            finishTransition();
+          }, PROJECT_WORKSPACE_TOGGLE_ENTER_MS);
+        }, PROJECT_WORKSPACE_SWITCH_MS);
+      }, PROJECT_WORKSPACE_TOGGLE_EXIT_MS);
+    } else {
+      applyMode();
+      window.setTimeout(finishTransition, 0);
     }
-    projectWorkspaceTransitionTimer = window.setTimeout(
-      () => {
-        projectWorkspaceTransitionTimer = null;
-        stage.classList.remove("is-switching");
-        toggle.disabled = false;
-        editor?.refresh();
-        projectInstructionEditor?.refresh();
-        scheduleProjectInstructionPreview();
-        fitEditorFileWatermark();
-        if (aiMode && focusPrompt) {
-          $("projectAiPrompt")?.focus({ preventScroll: true });
-        }
-      },
-      animateTransition ? 1000 : 0
-    );
 
     if (aiMode) {
       void fetchProjectAiAuthSession().catch(() => {
@@ -6215,99 +6892,223 @@
     }
   }
 
-  function syncDevicePanelCollapseControls() {
-    const expanded = !devicePanelCollapsed;
-    const label = expanded ? "Collapse device panel" : "Expand device panel";
-    for (const control of [
-      $("devicePanelToggle"),
-      $("devicePanelHoverToggle"),
-    ]) {
-      if (!control) continue;
-      control.setAttribute("aria-expanded", String(expanded));
-      control.setAttribute("aria-label", label);
-    }
-    const hoverCopy = $("devicePanelHoverToggle")?.querySelector("span");
-    if (hoverCopy) hoverCopy.textContent = label;
+  function getDevicePanelHeightForState(state) {
+    if (state === "collapsed") return DEVICE_PANEL_COLLAPSED_HEIGHT;
+    if (state === "compact") return DEVICE_PANEL_COMPACT_HEIGHT;
+    return DEVICE_PANEL_EXPANDED_HEIGHT;
   }
 
-  function setDevicePanelCollapsed(
-    collapsed,
-    { persist = true, focusHandle = false } = {}
+  function getNearestDevicePanelState(height) {
+    const candidates = ["collapsed", "compact", "expanded"];
+    return candidates.reduce((nearest, state) =>
+      Math.abs(getDevicePanelHeightForState(state) - height) <
+      Math.abs(getDevicePanelHeightForState(nearest) - height)
+        ? state
+        : nearest
+    );
+  }
+
+  function getLiveDevicePanelState(height) {
+    if (height <= DEVICE_PANEL_COMPACT_HEIGHT / 2) return "collapsed";
+    if (
+      height <
+      (DEVICE_PANEL_COMPACT_HEIGHT + DEVICE_PANEL_EXPANDED_HEIGHT) / 2
+    ) {
+      return "compact";
+    }
+    return "expanded";
+  }
+
+  function syncDevicePanelResizerAria() {
+    const handle = $("devicePanelToggle");
+    if (!handle) return;
+    handle.setAttribute("aria-valuenow", String(Math.round(devicePanelHeight)));
+    handle.setAttribute(
+      "aria-valuetext",
+      devicePanelState[0].toUpperCase() + devicePanelState.slice(1)
+    );
+  }
+
+  function refreshWorkspaceAfterDevicePanelResize() {
+    applyOutlinerWidth(outlinerPreferredWidth, {
+      persist: false,
+      remember: false,
+    });
+    applyDocumentationWidth(documentationPreferredWidth, {
+      persist: false,
+      remember: false,
+    });
+    applyProjectAiWidths(
+      projectAiChatPreferredWidth,
+      projectAiSkillsPreferredWidth,
+      { persist: false, remember: false }
+    );
+    syncSplitResizerAria();
+    editor?.refresh();
+    projectInstructionEditor?.refresh();
+    fitEditorFileWatermark();
+  }
+
+  function applyDevicePanelHeight(
+    height,
+    { persist = false, animate = false, state = null } = {}
   ) {
     const section = $("avrDeviceSection");
     const viewport = $("avrDevicePanelViewport");
     const handle = $("devicePanelToggle");
     if (!section || !viewport || !handle) return;
 
-    devicePanelCollapsed = !!collapsed;
-    if (devicePanelCollapsed && focusHandle) {
-      handle.focus({ preventScroll: true });
-    }
-    section.classList.toggle(
-      "is-device-panel-collapsed",
-      devicePanelCollapsed
+    devicePanelHeight = Math.max(
+      DEVICE_PANEL_COLLAPSED_HEIGHT,
+      Math.min(DEVICE_PANEL_EXPANDED_HEIGHT, Number(height) || 0)
     );
-    section.dataset.collapsed = String(devicePanelCollapsed);
-    section.classList.add("is-device-panel-transitioning");
-    viewport.setAttribute("aria-hidden", String(devicePanelCollapsed));
-    if (devicePanelCollapsed) viewport.setAttribute("inert", "");
+    devicePanelState = state || getLiveDevicePanelState(devicePanelHeight);
+    section.style.setProperty("--device-panel-height", `${devicePanelHeight}px`);
+    section.dataset.state = devicePanelState;
+    const collapsed = devicePanelState === "collapsed" && devicePanelHeight === 0;
+    viewport.setAttribute("aria-hidden", String(collapsed));
+    if (collapsed) viewport.setAttribute("inert", "");
     else viewport.removeAttribute("inert");
-    syncDevicePanelCollapseControls();
+    syncDevicePanelResizerAria();
 
     if (persist) {
       try {
-        window.localStorage.setItem(
-          STORAGE_DEVICE_PANEL_COLLAPSED,
-          devicePanelCollapsed ? "1" : "0"
-        );
+        window.localStorage.setItem(STORAGE_DEVICE_PANEL_STATE, devicePanelState);
       } catch {}
     }
 
     if (devicePanelTransitionTimer) {
       window.clearTimeout(devicePanelTransitionTimer);
+      devicePanelTransitionTimer = null;
     }
-    devicePanelTransitionTimer = window.setTimeout(
-      () => {
-        devicePanelTransitionTimer = null;
-        section.classList.remove("is-device-panel-transitioning");
-        applyDocumentationWidth(documentationPreferredWidth, {
-          persist: false,
-          remember: false,
-        });
-        applyOutlinerWidth(outlinerPreferredWidth, {
-          persist: false,
-          remember: false,
-        });
-        applyDocumentationWidth(documentationPreferredWidth, {
-          persist: false,
-          remember: false,
-        });
-        syncSplitResizerAria();
-        editor?.refresh();
-        fitEditorFileWatermark();
-      },
-      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
-        ? 0
-        : 270
-    );
+    section.classList.toggle("is-device-panel-transitioning", animate);
+    if (animate) {
+      devicePanelTransitionTimer = window.setTimeout(
+        () => {
+          devicePanelTransitionTimer = null;
+          section.classList.remove("is-device-panel-transitioning");
+          refreshWorkspaceAfterDevicePanelResize();
+        },
+        window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+          ? 0
+          : 270
+      );
+    }
   }
 
-  function restoreDevicePanelCollapsed() {
-    try {
-      devicePanelCollapsed =
-        window.localStorage.getItem(STORAGE_DEVICE_PANEL_COLLAPSED) === "1";
-    } catch {
-      devicePanelCollapsed = false;
-    }
-    setDevicePanelCollapsed(devicePanelCollapsed, { persist: false });
-  }
-
-  function bindDevicePanelCollapse() {
-    $("devicePanelToggle")?.addEventListener("click", () => {
-      setDevicePanelCollapsed(!devicePanelCollapsed);
+  function setDevicePanelState(
+    state,
+    { persist = true, animate = true } = {}
+  ) {
+    const normalized = ["expanded", "compact", "collapsed"].includes(state)
+      ? state
+      : "expanded";
+    applyDevicePanelHeight(getDevicePanelHeightForState(normalized), {
+      persist,
+      animate,
+      state: normalized,
     });
-    $("devicePanelHoverToggle")?.addEventListener("click", () => {
-      setDevicePanelCollapsed(true, { focusHandle: true });
+  }
+
+  function restoreDevicePanelState() {
+    let storedState = "expanded";
+    try {
+      const raw = window.localStorage.getItem(STORAGE_DEVICE_PANEL_STATE);
+      if (["expanded", "compact", "collapsed"].includes(raw)) {
+        storedState = raw;
+      }
+    } catch {
+      storedState = "expanded";
+    }
+    setDevicePanelState(storedState, { persist: false, animate: false });
+  }
+
+  function cycleDevicePanelState() {
+    const next =
+      devicePanelState === "expanded"
+        ? "compact"
+        : devicePanelState === "compact"
+          ? "collapsed"
+          : "expanded";
+    setDevicePanelState(next);
+  }
+
+  function bindDevicePanelResizer() {
+    const section = $("avrDeviceSection");
+    const handle = $("devicePanelToggle");
+    if (!section || !handle) return;
+
+    const finishResize = (event, { cancelled = false } = {}) => {
+      if (!devicePanelResizeState) return;
+      const resizeState = devicePanelResizeState;
+      devicePanelResizeState = null;
+      try {
+        if (handle.hasPointerCapture?.(resizeState.pointerId)) {
+          handle.releasePointerCapture(resizeState.pointerId);
+        }
+      } catch {}
+      section.classList.remove("is-device-panel-resizing");
+      document.body.classList.remove("is-device-panel-resizing");
+      if (cancelled) {
+        setDevicePanelState(resizeState.startState, {
+          persist: false,
+          animate: resizeState.moved,
+        });
+      } else if (resizeState.moved) {
+        setDevicePanelState(getNearestDevicePanelState(devicePanelHeight));
+      } else {
+        cycleDevicePanelState();
+      }
+      event?.preventDefault?.();
+    };
+
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      devicePanelResizeState = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        startHeight: devicePanelHeight,
+        startState: devicePanelState,
+        moved: false,
+      };
+      handle.setPointerCapture?.(event.pointerId);
+      section.classList.add("is-device-panel-resizing");
+      document.body.classList.add("is-device-panel-resizing");
+    });
+
+    handle.addEventListener("pointermove", (event) => {
+      if (!devicePanelResizeState) return;
+      const delta = event.clientY - devicePanelResizeState.startY;
+      if (Math.abs(delta) >= 3) devicePanelResizeState.moved = true;
+      if (!devicePanelResizeState.moved) return;
+      event.preventDefault();
+      applyDevicePanelHeight(devicePanelResizeState.startHeight + delta);
+    });
+
+    handle.addEventListener("pointerup", finishResize);
+    handle.addEventListener("pointercancel", (event) => {
+      finishResize(event, { cancelled: true });
+    });
+    handle.addEventListener("lostpointercapture", (event) => {
+      if (devicePanelResizeState?.pointerId === event.pointerId) {
+        finishResize(event, { cancelled: true });
+      }
+    });
+    handle.addEventListener("keydown", (event) => {
+      const states = ["collapsed", "compact", "expanded"];
+      let index = states.indexOf(devicePanelState);
+      if (event.key === "ArrowUp") index = Math.min(states.length - 1, index + 1);
+      else if (event.key === "ArrowDown") index = Math.max(0, index - 1);
+      else if (event.key === "Home") index = 0;
+      else if (event.key === "End") index = states.length - 1;
+      else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        cycleDevicePanelState();
+        return;
+      } else return;
+      event.preventDefault();
+      setDevicePanelState(states[index]);
     });
   }
 
@@ -7225,7 +8026,8 @@
     bindOutlinerDropZone();
     bindFileListResizer();
     bindDocumentationResizer();
-    bindDevicePanelCollapse();
+    bindProjectAiResizers();
+    bindDevicePanelResizer();
     bindProjectInstructionWorkspace();
     bindWorkspaceResizeObserver();
     newBtn && newBtn.addEventListener("click", startInlineCreate);
@@ -7972,9 +8774,11 @@
   function boot() {
     loadState();
     restoreProjectInstruction();
+    const projectAiAuthReturn = consumeProjectAiAuthReturn();
     ensureAtLeastOneFile();
     restoreDocumentationWidth();
     restoreOutlinerWidth();
+    restoreProjectAiWidths();
     applyOutlinerWidth(outlinerPreferredWidth, {
       persist: false,
       remember: false,
@@ -7988,12 +8792,15 @@
     initUpdiBridge();
 
     setMoreOptionsExpanded(false);
-    restoreDevicePanelCollapsed();
+    restoreDevicePanelState();
     bindUI();
     void renderBuiltInMiniProjectCards();
     void fetchProjectAiSkills();
-    setProjectWorkspaceMode("avr");
+    setProjectWorkspaceMode(projectAiAuthReturn ? "ai" : "avr", {
+      focusPrompt: !!projectAiAuthReturn,
+    });
     initEditor();
+    renderProjectAiAuthReturn(projectAiAuthReturn);
 
     updateHexUI(false);
     dispatchCanvasSerialState();

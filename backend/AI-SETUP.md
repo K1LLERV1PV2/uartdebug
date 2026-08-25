@@ -157,6 +157,10 @@ backend/ai/skills/catalog.json
 backend/ai/skills/*.md
 ```
 
+The catalog may intentionally contain an empty `skills` array while the real
+instruction-block library is being designed. The endpoint remains available so
+future versioned blocks can be published without changing the browser contract.
+
 `GET /api/avr/ai/skills` returns only the allowlisted `id`, `version`, `title`,
 `summary`, and Markdown content. The loader rejects symlinks, escaping paths,
 unexpected catalog fields, oversized content, duplicate identifiers, and files

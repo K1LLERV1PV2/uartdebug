@@ -13,6 +13,12 @@ The vendored CodeMirror Markdown mode includes a local linear-time HTML-tag
 lookahead hardening patch. CodeMirror remains governed by its upstream MIT
 license.
 
+The Google "Sign in with Google" SVG in
+`public/icons/sign-in-with-google-light.svg` is an official Google branding
+asset. Google trademarks and branding requirements apply to that asset; it is
+not covered by Uart Debug's AGPL license. See Google's
+[Sign in with Google branding guidelines](https://developers.google.com/identity/branding-guidelines).
+
 The backend installs these direct runtime dependencies from npm; their own
 licenses continue to apply to those packages and their transitive dependencies:
 

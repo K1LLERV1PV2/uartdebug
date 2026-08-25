@@ -2,7 +2,9 @@
 
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
@@ -285,6 +287,20 @@ test("keeps only technical AI concurrency safeguards", () => {
     path.join(__dirname, "../backend/deploy/nginx-avr-ai-location.conf"),
     "utf8"
   );
+  const oauthCallbackLocation = fs.readFileSync(
+    path.join(
+      __dirname,
+      "../backend/deploy/nginx-avr-ai-oauth-callback-location.conf"
+    ),
+    "utf8"
+  );
+  const oauthLogRedaction = fs.readFileSync(
+    path.join(
+      __dirname,
+      "../backend/deploy/redact-oauth-callback-logging.sh"
+    ),
+    "utf8"
+  );
   const nginxCleanup = fs.readFileSync(
     path.join(__dirname, "../backend/deploy/remove-ai-request-limits.sh"),
     "utf8"
@@ -298,12 +314,23 @@ test("keeps only technical AI concurrency safeguards", () => {
   assert.doesNotMatch(serviceUnit, /AI_(?:RATE|DAILY)_/);
   assert.doesNotMatch(nginxLocation, /^\s*limit_req\s/m);
   assert.match(nginxLocation, /^\s*limit_conn\s+uartdebug_conn_per_ip\s+2;/m);
+  assert.match(
+    oauthCallbackLocation,
+    /location = \/api\/avr\/ai\/auth\/google\/callback\s*\{[\s\S]*?access_log off;/
+  );
+  assert.match(oauthLogRedaction, /BEGIN uartdebug-ai-oauth-callback/);
+  assert.match(oauthLogRedaction, /unmanaged exact OAuth callback location/);
   assert.match(serverSource, /AI_MAX_CONCURRENT/);
   assert.match(nginxCleanup, /zone=uartdebug_ai_per_ip/);
   assert.match(
     deployWorkflow,
     /run_sudo \/bin\/bash[\s\\\n]+"\$\{BE_SRC\}\/deploy\/remove-ai-request-limits\.sh"/
   );
+  assert.match(
+    deployWorkflow,
+    /run_sudo \/bin\/bash[\s\\\n]+"\$\{BE_SRC\}\/deploy\/redact-oauth-callback-logging\.sh"/
+  );
+  assert.match(deployWorkflow, /run_sudo nginx -t/);
 });
 
 test("scopes the AI credential umask to secret generation", () => {
@@ -316,6 +343,72 @@ test("scopes the AI credential umask to secret generation", () => {
     installer,
     /\(\s*umask 0077\s*openssl rand -hex 32 > "\$\{credential_path\}"\s*\)/
   );
+});
+
+test("installs OAuth callback log redaction idempotently", (t) => {
+  const bash =
+    process.platform === "win32"
+      ? "C:\\Program Files\\Git\\bin\\bash.exe"
+      : "bash";
+  if (process.platform === "win32" && !fs.existsSync(bash)) {
+    t.skip("Git Bash is not installed");
+    return;
+  }
+
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-nginx-"));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const siteFile = path.join(tempRoot, "uartdebug.com");
+  const scriptFile = path.join(
+    __dirname,
+    "../backend/deploy/redact-oauth-callback-logging.sh"
+  );
+  const snippetFile = path.join(
+    __dirname,
+    "../backend/deploy/nginx-avr-ai-oauth-callback-location.conf"
+  );
+  fs.writeFileSync(
+    siteFile,
+    [
+      "server {",
+      "    location ^~ /api/avr/ai/ {",
+      "        proxy_pass http://127.0.0.1:8083;",
+      "    }",
+      "}",
+      "",
+    ].join("\n")
+  );
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = childProcess.spawnSync(
+      bash,
+      [scriptFile, siteFile, snippetFile],
+      { encoding: "utf8" }
+    );
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  }
+
+  const migrated = fs.readFileSync(siteFile, "utf8");
+  assert.equal(
+    (migrated.match(/location = \/api\/avr\/ai\/auth\/google\/callback/g) || [])
+      .length,
+    1
+  );
+  assert.match(migrated, /access_log off;/);
+  assert.match(migrated, /location \^~ \/api\/avr\/ai\//);
+});
+
+test("treats the staged AI skills catalog as authoritative during deploy", () => {
+  const installer = fs.readFileSync(
+    path.join(__dirname, "../backend/deploy/install-ai-service.sh"),
+    "utf8"
+  );
+
+  assert.match(installer, /shopt -s nullglob/);
+  assert.match(
+    installer,
+    /rm -f -- "\$\{backend_dir\}\/ai\/skills\/"\*\.md/
+  );
+  assert.match(installer, /if \[ "\$\{#skill_markdown\[@\]\}" -gt 0 \]/);
 });
 
 test("gives Add file enough width and lets catalog text wrap", () => {
@@ -404,12 +497,19 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
     aiLayoutStart
   );
   const skillsPanel = html.indexOf("project-skills-panel", aiLayoutStart);
+  const chatResizer = html.indexOf('id="projectAiChatResizer"', aiLayoutStart);
+  const skillsResizer = html.indexOf(
+    'id="projectAiSkillsResizer"',
+    aiLayoutStart
+  );
 
   assert.ok(viewStart >= 0);
   assert.ok(aiLayoutStart >= 0);
   assert.ok(chatPanel > aiLayoutStart);
-  assert.ok(instructionPanel > chatPanel);
-  assert.ok(skillsPanel > instructionPanel);
+  assert.ok(chatResizer > chatPanel);
+  assert.ok(instructionPanel > chatResizer);
+  assert.ok(skillsResizer > instructionPanel);
+  assert.ok(skillsPanel > skillsResizer);
   assert.ok(workspace >= 0);
   assert.ok(view.indexOf('id="projectAiForm"') > workspace);
   assert.ok(composer < prompt);
@@ -433,7 +533,20 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   assert.match(css, /#projectAiPrompt\s*\{[\s\S]*?background:\s*transparent;/);
   assert.match(
     css,
-    /\.project-ai-layout\s*\{[\s\S]*?grid-template-columns:[\s\S]*?minmax\(270px,[\s\S]*?minmax\(350px,[\s\S]*?minmax\(240px,/
+    /\.project-ai-layout\s*\{[\s\S]*?grid-template-columns:[\s\S]*?minmax\(270px,[\s\S]*?var\(--project-ai-resizer-width\)[\s\S]*?minmax\(350px,[\s\S]*?var\(--project-ai-resizer-width\)[\s\S]*?minmax\(240px,/
+  );
+  assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?gap:\s*0;/);
+  assert.match(
+    html,
+    /id="projectAiChatResizer"[\s\S]*?role="separator"[\s\S]*?aria-orientation="vertical"/
+  );
+  assert.match(
+    html,
+    /id="projectAiSkillsResizer"[\s\S]*?role="separator"[\s\S]*?aria-orientation="vertical"/
+  );
+  assert.match(
+    source,
+    /projectAiChatPreferredWidth\s*=\s*resolved\.chat;[\s\S]*?projectAiSkillsPreferredWidth\s*=\s*resolved\.skills;/
   );
   assert.match(
     css,
@@ -452,6 +565,9 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   assert.match(source, /projectInstructionEditor\.replaceRange\(/);
   assert.doesNotMatch(source, /setRangeText\(/);
   assert.match(source, /insertProjectAiSkill\(skillId, \{ append: true \}\)/);
+  assert.match(source, /function bindProjectAiResizers\(\)/);
+  assert.match(source, /STORAGE_PROJECT_AI_CHAT_WIDTH/);
+  assert.match(source, /STORAGE_PROJECT_AI_SKILLS_WIDTH/);
   assert.match(
     html,
     /project-instruction-live-editor scroll-frame[\s\S]*?id="projectInstructionDropZone"/
@@ -465,14 +581,72 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   );
   assert.match(source, /projectInstructionStorageReadFailed && !recover/);
   assert.match(source, /Stored instruction is unreadable/);
+  assert.match(source, /const DEFAULT_PROJECT_INSTRUCTION = "";/);
+  assert.match(source, /ud_avr_ai_project_instruction_v2/);
+  assert.match(source, /ud_avr_ai_project_instruction_v1/);
+  assert.match(source, /const LEGACY_DEFAULT_PROJECT_INSTRUCTION = \[/);
+  assert.match(
+    source,
+    /legacyDocument\.markdown === LEGACY_DEFAULT_PROJECT_INSTRUCTION[\s\S]*?markdown:\s*DEFAULT_PROJECT_INSTRUCTION[\s\S]*?skillRefs:\s*\[\]/
+  );
+  assert.match(
+    source,
+    /localStorage\.setItem\(\s*STORAGE_PROJECT_INSTRUCTION,[\s\S]*?JSON\.stringify\(projectInstructionDocument\)/
+  );
+  assert.doesNotMatch(
+    html,
+    /placeholder="# Initialization|Describe what the project should do/
+  );
+  for (const level of [1, 2, 3, 4, 5, 6]) {
+    assert.match(
+      css,
+      new RegExp(
+        `pre\\.CodeMirror-line\\.project-instruction-line-heading-${level}`
+      )
+    );
+  }
+  assert.match(source, /setextHeading/);
+  assert.match(source, /previousLineIsParagraph/);
+  assert.match(source, /previousLineIsThematicBreak/);
+  assert.match(source, /orderedMarker/);
+  assert.match(source, /underscoreExpression/);
+  assert.match(source, /function decorateProjectInstructionInline[\s\S]*?isEscaped/);
+  assert.match(source, /const imageExpression = \/!\\\[/);
+  const inlinePreviewStart = source.indexOf(
+    "function decorateProjectInstructionInline"
+  );
+  const codePriority = source.indexOf("const codeRunExpression", inlinePreviewStart);
+  const strongPriority = source.indexOf(
+    '"project-instruction-live-strong"',
+    inlinePreviewStart
+  );
+  assert.ok(
+    codePriority > inlinePreviewStart && strongPriority > codePriority,
+    "code spans must reserve their content before strong/emphasis"
+  );
+  assert.match(source, /project-instruction-task-marker/);
+  assert.match(source, /const orderedTask = \/\^\\d\//);
   assert.match(source, /renderMarkdownInto\(markdown, message, null, \{ allowImages: false \}\)/);
   assert.match(source, /match\[0\]\.startsWith\("\*\*"\)/);
   assert.match(source, /document\.createElement\("strong"\)/);
   assert.match(source, /document\.createElement\("em"\)/);
   assert.match(source, /document\.createElement\("del"\)/);
   assert.match(source, /\(\?<!\[A-Za-z0-9\]\)_/);
+  const headingSixRule = css.match(
+    /pre\.CodeMirror-line\.project-instruction-line-heading-6\s*\{[\s\S]*?\}/
+  )?.[0];
+  assert.ok(headingSixRule);
+  assert.doesNotMatch(headingSixRule, /text-transform:\s*uppercase/);
   assert.match(source, /control\.readOnly = !!busy/);
   assert.match(source, /prompt\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(source, /function consumeProjectAiAuthReturn\(\)/);
+  assert.match(source, /url\.searchParams\.delete\("ai_auth"\)/);
+  assert.match(source, /window\.history\.replaceState\(/);
+  assert.match(source, /google_sign_in_denied:\s*"Google sign-in was cancelled\."/);
+  assert.match(
+    source,
+    /setProjectWorkspaceMode\(projectAiAuthReturn \? "ai" : "avr"/
+  );
   assert.match(
     css,
     /animation:\s*project-workspace-card-switch 980ms/
@@ -481,6 +655,11 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
     css,
     /\.project-workspace-stage\.is-switching \.project-workspace-track\s*\{[\s\S]*?transition-delay:\s*250ms;/
   );
+  assert.match(css, /\.is-toggle-departing[\s\S]*?\.project-ai-toggle/);
+  assert.match(css, /\.is-toggle-hidden[\s\S]*?\.project-ai-toggle/);
+  assert.match(source, /PROJECT_WORKSPACE_TOGGLE_EXIT_MS\s*=\s*180/);
+  assert.match(source, /PROJECT_WORKSPACE_SWITCH_MS\s*=\s*1000/);
+  assert.match(source, /PROJECT_WORKSPACE_TOGGLE_ENTER_MS\s*=\s*200/);
   assert.match(
     css,
     /\.project-workspace-track\s*\{[\s\S]*?transition:\s*transform 440ms/
@@ -489,7 +668,7 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   assert.match(css, /height:\s*clamp\(560px, 78vh, 700px\)/);
 });
 
-test("collapses the device panel without hiding its persistent handle", () => {
+test("uses a full-width three-stage draggable device-panel separator", () => {
   const html = fs.readFileSync(
     path.join(__dirname, "../public/avr.html"),
     "utf8"
@@ -503,39 +682,97 @@ test("collapses the device panel without hiding its persistent handle", () => {
     "utf8"
   );
   const viewportStart = html.indexOf('id="avrDevicePanelViewport"');
-  const viewportEnd = html.indexOf("</div>", html.indexOf("</div>", viewportStart) + 6);
-  const hoverToggle = html.indexOf('id="devicePanelHoverToggle"');
   const persistentToggle = html.indexOf('id="devicePanelToggle"');
 
   assert.ok(viewportStart >= 0);
-  assert.ok(hoverToggle > viewportStart);
-  assert.ok(persistentToggle > viewportEnd);
-  assert.match(html, /id="devicePanelToggle"[\s\S]*aria-expanded="true"/);
-  assert.match(html, /id="devicePanelHoverToggle"[\s\S]*data-tooltip-disabled/);
+  assert.ok(persistentToggle > viewportStart);
+  assert.match(html, /id="avrDeviceSection"[\s\S]*data-state="expanded"/);
+  assert.match(
+    html,
+    /class="split-resizer device-panel-resizer"[\s\S]*?id="devicePanelToggle"[\s\S]*?role="separator"[\s\S]*?aria-orientation="horizontal"/
+  );
+  assert.doesNotMatch(html, /devicePanelHoverToggle|device-panel-toggle-arrow/);
   assert.match(
     css,
-    /\.avr-device-section\.is-device-panel-collapsed \.avr-device-panel-viewport\s*\{[\s\S]*?max-height:\s*0;/
+    /\.avr-device-panel-viewport\s*\{[\s\S]*?height:\s*var\(--device-panel-height\);/
   );
   assert.match(
     css,
-    /\.device-panel-toggle-arrow::before,[\s\S]*?\.device-panel-toggle-arrow::after\s*\{[\s\S]*?height:\s*2px;/
+    /\.split-resizer\.device-panel-resizer\s*\{[\s\S]*?width:\s*100%;[\s\S]*?cursor:\s*row-resize;/
   );
   assert.match(
     css,
-    /\.device-panel-toggle-arrow::before\s*\{[\s\S]*?rotate\(-8deg\)/
+    /\.split-resizer\.device-panel-resizer::before\s*\{[\s\S]*?width:\s*58px;[\s\S]*?height:\s*2px;/
+  );
+  assert.doesNotMatch(css, /device-panel-toggle-arrow::after/);
+  assert.match(
+    css,
+    /data-state="compact"[\s\S]*?\.detect-chip-btn\s*\{[\s\S]*?height:\s*36px;/
   );
   assert.match(
     css,
-    /is-device-panel-collapsed[\s\S]*?\.device-panel-toggle-arrow::before\s*\{[\s\S]*?rotate\(8deg\)/
+    /data-state="compact"[\s\S]*?\.avr-status-value\s*\{[\s\S]*?height:\s*36px;[\s\S]*?min-height:\s*36px;/
   );
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.avr-device-panel-viewport/);
   assert.match(
     source,
-    /STORAGE_DEVICE_PANEL_COLLAPSED\s*=\s*\n\s*"ud_avr_programming_device_panel_collapsed_v1"/
+    /STORAGE_DEVICE_PANEL_STATE\s*=\s*\n\s*"ud_avr_programming_device_panel_state_v2"/
   );
-  assert.match(source, /viewport\.setAttribute\("aria-hidden", String\(devicePanelCollapsed\)\)/);
-  assert.match(source, /viewport\.setAttribute\("inert", ""\)/);
-  assert.match(source, /restoreDevicePanelCollapsed\(\)/);
+  assert.match(source, /const states = \["collapsed", "compact", "expanded"\]/);
+  assert.match(source, /DEVICE_PANEL_COMPACT_HEIGHT\s*=\s*54/);
+  assert.match(source, /startY:\s*event\.clientY/);
+  assert.match(source, /startState:\s*devicePanelState/);
+  assert.match(source, /event\.clientY - devicePanelResizeState\.startY/);
+  assert.match(source, /getNearestDevicePanelState\(devicePanelHeight\)/);
+  assert.match(
+    source,
+    /pointercancel[\s\S]*?finishResize\(event, \{ cancelled: true \}\)/
+  );
+  assert.match(source, /lostpointercapture/);
+  assert.match(source, /if \(collapsed\) viewport\.setAttribute\("inert", ""\)/);
+  assert.match(source, /restoreDevicePanelState\(\)/);
+});
+
+test("publishes legal pages and links them to Google sign-in", () => {
+  const index = fs.readFileSync(path.join(__dirname, "../public/index.html"), "utf8");
+  const avr = fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8");
+  const privacy = fs.readFileSync(
+    path.join(__dirname, "../public/privacy.html"),
+    "utf8"
+  );
+  const terms = fs.readFileSync(
+    path.join(__dirname, "../public/terms.html"),
+    "utf8"
+  );
+  const sw = fs.readFileSync(path.join(__dirname, "../public/sw.js"), "utf8");
+
+  assert.match(index, /href="\/privacy"/);
+  assert.match(index, /href="\/terms"/);
+  assert.match(avr, /id="projectAiPrivacyNote"[\s\S]*?href="\/privacy"/);
+  assert.match(
+    avr,
+    /id="projectAiSignInBtn"[\s\S]*?icons\/sign-in-with-google-light\.svg/
+  );
+  assert.match(avr, /shared free AI-credit[\s\S]*?Google identity data is not sent/);
+  assert.match(privacy, /Privacy Policy[\s\S]*?Google sign-in[\s\S]*?OpenAI/);
+  assert.match(privacy, /stable pseudonymous browser safety identifier/);
+  assert.match(privacy, /uartdebug@gmail\.com/);
+  assert.match(terms, /Terms of Service[\s\S]*?AI Credits[\s\S]*?hardware/);
+  for (const route of ["/privacy", "/privacy.html", "/terms", "/terms.html"]) {
+    assert.ok(sw.includes(`"${route}"`), `service worker is missing ${route}`);
+  }
+  assert.match(sw, /icons\/sign-in-with-google-light\.svg/);
+  assert.match(index, /optional AI assistant[\s\S]*?Google sign-in is required only/);
+});
+
+test("deploy verifies legal page content rather than accepting an SPA fallback", () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, "../.github/workflows/deploy.yml"),
+    "utf8"
+  );
+
+  assert.match(workflow, /for legal_route in privacy terms/);
+  assert.match(workflow, /rel=\\"canonical\\" href=\\"https:\/\/uartdebug\.com\/\$\{legal_route\}\\"/);
+  assert.match(workflow, /<title>\$\{expected_title\}/);
 });
 
 test("renames a mini-project display name without renaming its linked files", () => {

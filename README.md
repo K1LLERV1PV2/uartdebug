@@ -2,7 +2,7 @@
 
 Browser-based tools for working with UART connections and tinyAVR microcontrollers.
 
-[Open Uart Debug](https://uartdebug.com) · [UART Terminal](https://uartdebug.com/uart) · [AVR Programming](https://uartdebug.com/avr) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE)
+[Open Uart Debug](https://uartdebug.com) · [UART Terminal](https://uartdebug.com/uart) · [AVR Programming](https://uartdebug.com/avr) · [Privacy](https://uartdebug.com/privacy) · [Terms](https://uartdebug.com/terms) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [License](LICENSE)
 
 Uart Debug combines two related tools in one installable web app:
 
@@ -54,7 +54,7 @@ The old README described the entire project as client-only. That is true for ser
 - Compiling sends the selected source and linked project files to the Uart Debug compiler service. The service builds in a temporary directory and removes it after the request.
 - Using the AI assistant sends the prompt, conversation, selected MCU, current mini-project context, reviewed Markdown instruction, referenced instruction-block identifiers, and a pseudonymous browser-installation safety identifier to the Uart Debug AI service and then to the configured OpenAI API. The API request uses `store: false`.
 - When enabled, the Google access layer identifies a signed-in account by Google's verified `sub` claim and a “device” only as a best-effort browser installation. It does not collect or prove a hardware identifier.
-- When the assistant creates or updates a project, the default server configuration retains the generated AI specification as a draft for up to 30 days, with a maximum of 100 drafts. Source and human-guide copies are returned to the browser.
+- When the assistant creates or updates a project, the default server configuration makes the generated AI specification eligible for cleanup after 30 days and keeps at most 100 drafts. Cleanup runs during later draft activity. Source and human-guide copies are returned to the browser.
 - The OpenAI API key is a server-side systemd credential and is never sent to browser code.
 
 Do not put secrets in editor files, prompts, issues, pull requests, or repository configuration. See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
@@ -104,12 +104,12 @@ The first paragraph below the exact `## Short Project Description` heading in th
 Built-in projects are copied into the browser workspace before editing; repository originals are not modified by the page.
 
 The separate AI workspace keeps a revisioned project instruction in browser
-`localStorage`. Reusable Markdown blocks are checked in under
-[`backend/ai/skills`](backend/ai/skills), verified by version and SHA-256, and
-served through an allowlisted API response. Private mini-project AI references
-are not returned by that endpoint. An AI instruction edit must target the exact
-revision the user submitted, so a delayed response cannot overwrite newer
-manual changes.
+`localStorage`. Its allowlisted instruction-block catalog lives under
+[`backend/ai/skills`](backend/ai/skills), may intentionally be empty, and can
+later publish Markdown blocks verified by version and SHA-256 without changing
+the browser/API contract. Private mini-project AI references are not returned by
+that endpoint. An AI instruction edit must target the exact revision the user
+submitted, so a delayed response cannot overwrite newer manual changes.
 
 ## Local development
 
