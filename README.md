@@ -32,7 +32,8 @@ The repository is under active development. Hardware access requires a browser t
 - Follow `//# Heading` through `//###### Heading` comment links from C code to matching guide sections.
 - Compile supported tinyAVR projects with Microchip XC8 on the compiler service.
 - Detect a supported chip and flash Intel HEX over UPDI from the browser.
-- Ask the AVR assistant ordinary questions, create a new mini-project, or update the currently open mini-project.
+- Ask the AVR assistant ordinary questions, revise a reviewable Markdown project instruction, create a new mini-project, or update the currently open mini-project.
+- Build that instruction manually or from versioned drag-and-drop blocks, with an immediate formatted preview.
 
 ## Browser and hardware requirements
 
@@ -51,11 +52,18 @@ The old README described the entire project as client-only. That is true for ser
 - UART and UPDI bytes travel directly between the browser and the serial port selected in the browser permission prompt.
 - AVR working copies and preferences are stored in browser `localStorage`.
 - Compiling sends the selected source and linked project files to the Uart Debug compiler service. The service builds in a temporary directory and removes it after the request.
-- Using the AI assistant sends the prompt, conversation, selected MCU, and current mini-project context to the Uart Debug AI service and then to the configured OpenAI API. The API request uses `store: false`.
+- Using the AI assistant sends the prompt, conversation, selected MCU, current mini-project context, reviewed Markdown instruction, referenced instruction-block identifiers, and a pseudonymous browser-installation safety identifier to the Uart Debug AI service and then to the configured OpenAI API. The API request uses `store: false`.
+- When enabled, the Google access layer identifies a signed-in account by Google's verified `sub` claim and a “device” only as a best-effort browser installation. It does not collect or prove a hardware identifier.
 - When the assistant creates or updates a project, the default server configuration retains the generated AI specification as a draft for up to 30 days, with a maximum of 100 drafts. Source and human-guide copies are returned to the browser.
 - The OpenAI API key is a server-side systemd credential and is never sent to browser code.
 
 Do not put secrets in editor files, prompts, issues, pull requests, or repository configuration. See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+
+The access/credit design, including Google setup, the provisional free grant,
+integer provider-cost accounting, and the proposed 2:1:1 paid/free/project fund,
+is documented in [`docs/AI_ACCESS_AND_CREDITS.md`](docs/AI_ACCESS_AND_CREDITS.md).
+Guarantees the browser cannot provide and decisions that block paid access are
+kept explicitly in [`docs/PRODUCT_LIMITATIONS.md`](docs/PRODUCT_LIMITATIONS.md).
 
 ## Architecture
 
@@ -70,6 +78,7 @@ flowchart LR
   Compiler --> Toolchain[XC8 + DFP + avr-objcopy]
   Nginx --> AI[ai-server.js :8083]
   Rules[Versioned rules and AI references] --> AI
+  Skills[Versioned instruction blocks] --> AI
   AI --> OpenAI[OpenAI Responses API]
 ```
 
@@ -94,9 +103,17 @@ The first paragraph below the exact `## Short Project Description` heading in th
 
 Built-in projects are copied into the browser workspace before editing; repository originals are not modified by the page.
 
+The separate AI workspace keeps a revisioned project instruction in browser
+`localStorage`. Reusable Markdown blocks are checked in under
+[`backend/ai/skills`](backend/ai/skills), verified by version and SHA-256, and
+served through an allowlisted API response. Private mini-project AI references
+are not returned by that endpoint. An AI instruction edit must target the exact
+revision the user submitted, so a delayed response cannot overwrite newer
+manual changes.
+
 ## Local development
 
-Prerequisites: Git, Node.js 20 or newer, npm, Python 3, and a compatible browser.
+Prerequisites: Git, Node.js 22.13 or newer, npm, Python 3, and a compatible browser.
 
 ```sh
 git clone https://github.com/K1LLERV1PV2/uartdebug.git
@@ -145,7 +162,8 @@ Production setup is intentionally not a copy-and-paste local quick start: it als
 | Path | Purpose |
 | --- | --- |
 | `public/` | Static PWA, UART terminal, AVR editor/programmer, mini-project source and guides, vendored browser libraries |
-| `backend/` | Compiler service, AI service, versioned rules, AI references, and deployment files |
+| `backend/` | Compiler service, AI service, versioned rules, AI references, instruction blocks, and deployment files |
+| `docs/` | Product architecture decisions, access/credit design, and explicit limitations |
 | `tests/` | Node test suite |
 | `.github/workflows/` | CI and production deployment workflows |
 | `.github/scripts/` | Build metadata tooling used by deployment |

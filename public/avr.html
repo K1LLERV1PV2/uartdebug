@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="uart.css?v=20260709-terminal-polish-v3" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260824-ai-project-actions-v1"
+      href="AVR-Programming.css?v=20260825-ai-workspace-v1"
     />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
 
@@ -37,8 +37,16 @@
     <main>
       <div class="feature-panel">
         <section class="canvas-section">
-          <section class="avr-device-section">
-            <div class="avr-device-panel" aria-label="UPDI adapter and chip">
+          <section
+            class="avr-device-section"
+            id="avrDeviceSection"
+            data-collapsed="false"
+          >
+            <div
+              class="avr-device-panel-viewport"
+              id="avrDevicePanelViewport"
+            >
+              <div class="avr-device-panel" aria-label="UPDI adapter and chip">
               <button
                 class="detect-chip-btn"
                 id="detectChipBtn"
@@ -71,10 +79,49 @@
                   No chip detected
                 </div>
               </div>
+
+                <button
+                  class="avr-device-collapse-zone"
+                  id="devicePanelHoverToggle"
+                  type="button"
+                  aria-label="Collapse device panel"
+                  aria-controls="avrDevicePanelViewport"
+                  aria-expanded="true"
+                  data-tooltip-disabled
+                >
+                  <span>Collapse device panel</span>
+                  <span class="avr-device-collapse-zone-arrow" aria-hidden="true"
+                    >&#8593;</span
+                  >
+                </button>
+              </div>
             </div>
+
+            <button
+              class="device-panel-toggle"
+              id="devicePanelToggle"
+              type="button"
+              aria-label="Collapse device panel"
+              aria-controls="avrDevicePanelViewport"
+              aria-expanded="true"
+              data-tooltip-disabled
+            >
+              <span class="device-panel-toggle-arrow" aria-hidden="true"></span>
+            </button>
           </section>
 
-          <div class="canvas-split-container">
+          <div
+            class="project-workspace-stage"
+            id="projectWorkspaceStage"
+            data-mode="avr"
+          >
+            <div class="project-workspace-track">
+              <section
+                class="project-workspace-scene workspace-scene--avr"
+                id="avrWorkspaceScene"
+                aria-label="AVR editor workspace"
+              >
+                <div class="canvas-split-container">
             <aside class="outliner">
               <div class="scroll-frame outliner-frame">
                 <div class="outliner-list" id="fileList"></div>
@@ -198,32 +245,6 @@
                 >
                   Edit
                 </button>
-
-                <div
-                  class="project-ai-heading"
-                  id="projectAiHeader"
-                  hidden
-                >
-                  <span class="project-ai-eyebrow">AVR project assistant</span>
-                  <h2 id="projectAiTitle">Uart Debug AI</h2>
-                </div>
-
-                <button
-                  class="connect-btn secondary-btn project-ai-toggle"
-                  id="projectAiToggle"
-                  type="button"
-                  aria-label="Open AI project assistant"
-                  aria-pressed="false"
-                  aria-controls="projectDocumentationView projectAiView"
-                >
-                  <img
-                    src="icons/logo-512.png"
-                    alt=""
-                    width="24"
-                    height="24"
-                    aria-hidden="true"
-                  />
-                </button>
               </div>
 
               <div
@@ -257,61 +278,254 @@
                   ></textarea>
                 </div>
               </div>
-
-              <div
-                class="project-ai-view"
-                id="projectAiView"
-                role="region"
-                aria-labelledby="projectAiTitle"
-                hidden
-              >
-                <section
-                  class="project-ai-workspace scroll-frame"
-                  id="projectAiWorkspace"
-                  aria-label="AI project conversation"
-                >
-                  <div
-                    class="project-ai-history"
-                    id="projectAiHistory"
-                    role="log"
-                    aria-live="polite"
-                    aria-relevant="additions"
-                  >
-                    <article class="project-ai-message is-assistant">
-                      <span class="sr-only">AI assistant</span>
-                      <p>
-                        Ask an AVR question or describe a mini-project. I will
-                        answer normally unless you explicitly ask me to create
-                        or change a project.
-                      </p>
-                    </article>
-                  </div>
-                </section>
-
-                <form class="project-ai-form" id="projectAiForm">
-                  <div class="project-ai-composer scroll-frame">
-                    <label class="sr-only" for="projectAiPrompt">
-                      Message
-                    </label>
-                    <textarea
-                      id="projectAiPrompt"
-                      rows="3"
-                      placeholder="Ask a question or request an AVR mini-project"
-                      spellcheck="true"
-                    ></textarea>
-                    <div class="project-ai-form-footer">
-                      <button
-                        class="connect-btn"
-                        id="projectAiSubmitBtn"
-                        type="submit"
-                      >
-                        Send
-                      </button>
-                    </div>
-                  </div>
-                </form>
-              </div>
             </aside>
+                </div>
+              </section>
+
+              <section
+                class="project-workspace-scene workspace-scene--ai"
+                id="projectAiScene"
+                aria-label="AI project workspace"
+                aria-hidden="true"
+                inert
+              >
+                <div class="project-ai-layout">
+                  <section
+                    class="project-ai-chat-panel avr-session-panel"
+                    aria-labelledby="projectAiTitle"
+                  >
+                    <div
+                      class="avr-action-strip project-ai-action-strip avr-session-header"
+                    >
+                      <div class="project-ai-heading" id="projectAiHeader">
+                        <div class="project-ai-heading-copy">
+                          <span class="project-ai-eyebrow"
+                            >AVR project assistant</span
+                          >
+                          <h2 id="projectAiTitle">Uart Debug AI</h2>
+                        </div>
+
+                        <div
+                          class="project-ai-auth"
+                          id="projectAiAuth"
+                          role="group"
+                          aria-label="AI access"
+                          aria-live="polite"
+                          hidden
+                        >
+                          <button
+                            class="connect-btn secondary-btn project-ai-auth-button"
+                            id="projectAiSignInBtn"
+                            type="button"
+                            hidden
+                          >
+                            Sign in with Google
+                          </button>
+
+                          <div
+                            class="project-ai-auth-session"
+                            id="projectAiAuthSession"
+                            hidden
+                          >
+                            <span class="project-ai-auth-summary">
+                              <span
+                                class="project-ai-auth-account"
+                                id="projectAiAccount"
+                              ></span>
+                              <span
+                                class="project-ai-auth-credits"
+                                id="projectAiCredits"
+                              ></span>
+                            </span>
+                            <button
+                              class="connect-btn secondary-btn project-ai-auth-button"
+                              id="projectAiSignOutBtn"
+                              type="button"
+                            >
+                              Sign out
+                            </button>
+                          </div>
+
+                          <span
+                            class="project-ai-auth-unavailable"
+                            id="projectAiAuthUnavailable"
+                            hidden
+                          >
+                            AI access unavailable
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div
+                      class="project-ai-budget"
+                      id="projectAiBudget"
+                      role="progressbar"
+                      aria-label="AI Credits remaining"
+                      aria-valuemin="0"
+                      aria-valuemax="0"
+                      aria-valuenow="0"
+                      hidden
+                    >
+                      <div class="project-ai-budget-copy">
+                        <span>AI Credits</span>
+                        <output id="projectAiBudgetValue">0 / 0</output>
+                      </div>
+                      <div class="project-ai-budget-track" aria-hidden="true">
+                        <span id="projectAiBudgetFill"></span>
+                      </div>
+                    </div>
+
+                    <div
+                      class="project-ai-view"
+                      id="projectAiView"
+                      role="region"
+                      aria-labelledby="projectAiTitle"
+                    >
+                      <section
+                        class="project-ai-workspace scroll-frame"
+                        id="projectAiWorkspace"
+                        aria-label="AI project conversation"
+                      >
+                        <div
+                          class="project-ai-history"
+                          id="projectAiHistory"
+                          role="log"
+                          aria-live="polite"
+                          aria-relevant="additions"
+                        >
+                          <article class="project-ai-message is-assistant">
+                            <span class="sr-only">AI assistant</span>
+                            <p>
+                              Ask an AVR question, refine the instruction, or
+                              explicitly request a new or updated mini-project.
+                            </p>
+                          </article>
+                        </div>
+                      </section>
+
+                      <form class="project-ai-form" id="projectAiForm">
+                        <div class="project-ai-composer scroll-frame">
+                          <label class="sr-only" for="projectAiPrompt">
+                            Message
+                          </label>
+                          <textarea
+                            id="projectAiPrompt"
+                            rows="3"
+                            placeholder="Ask, revise the instruction, or request a project"
+                            spellcheck="true"
+                          ></textarea>
+                          <div class="project-ai-form-footer">
+                            <button
+                              class="connect-btn"
+                              id="projectAiSubmitBtn"
+                              type="submit"
+                            >
+                              Send
+                            </button>
+                          </div>
+                        </div>
+                      </form>
+                    </div>
+                  </section>
+
+                  <section
+                    class="project-instruction-panel avr-session-panel"
+                    aria-labelledby="projectInstructionTitle"
+                  >
+                    <div
+                      class="avr-action-strip project-instruction-action-strip avr-session-header"
+                    >
+                      <div class="project-ai-heading-copy">
+                        <span class="project-ai-eyebrow">Reviewed Markdown</span>
+                        <h2 id="projectInstructionTitle">
+                          Project instruction
+                        </h2>
+                      </div>
+                      <span
+                        class="project-instruction-save-state"
+                        id="projectInstructionSaveState"
+                        role="status"
+                        aria-live="polite"
+                        >Saved locally</span
+                      >
+                    </div>
+
+                    <div class="project-instruction-workspace">
+                      <div
+                        class="project-instruction-source scroll-frame"
+                        id="projectInstructionDropZone"
+                      >
+                        <label class="sr-only" for="projectInstructionEditor">
+                          Project instruction Markdown
+                        </label>
+                        <textarea
+                          id="projectInstructionEditor"
+                          spellcheck="true"
+                          placeholder="# Initialization&#10;&#10;Describe what the project should do."
+                        ></textarea>
+                      </div>
+                      <div
+                        class="project-instruction-preview scroll-frame"
+                        role="region"
+                        aria-label="Live instruction preview"
+                        tabindex="0"
+                      >
+                        <article
+                          class="project-documentation-content"
+                          id="projectInstructionPreview"
+                        ></article>
+                      </div>
+                    </div>
+                  </section>
+
+                  <aside
+                    class="project-skills-panel avr-session-panel"
+                    aria-labelledby="projectSkillsTitle"
+                  >
+                    <div
+                      class="avr-action-strip project-skills-action-strip avr-session-header"
+                    >
+                      <div class="project-ai-heading-copy">
+                        <span class="project-ai-eyebrow">Drag into Markdown</span>
+                        <h2 id="projectSkillsTitle">Instruction blocks</h2>
+                      </div>
+                    </div>
+                    <p class="project-skills-help" id="projectSkillsHelp">
+                      Drag a block to the end of the Markdown instruction, or
+                      use Insert to place it at the current caret. You can edit
+                      every block afterwards.
+                    </p>
+                    <div
+                      class="project-skills-list scroll-frame"
+                      id="projectSkillsList"
+                      role="list"
+                      aria-describedby="projectSkillsHelp"
+                      aria-live="polite"
+                    ></div>
+                  </aside>
+                </div>
+              </section>
+            </div>
+
+            <button
+              class="project-ai-toggle"
+              id="projectAiToggle"
+              type="button"
+              aria-label="Open AI assistant workspace"
+              aria-pressed="false"
+              aria-controls="avrWorkspaceScene projectAiScene"
+            >
+              <span class="project-ai-toggle-arrow" aria-hidden="true"></span>
+              <span class="project-ai-toggle-label">AI ASSISTANT</span>
+              <img
+                src="icons/logo-512.png"
+                alt=""
+                width="22"
+                height="22"
+                aria-hidden="true"
+              />
+            </button>
           </div>
 
           <div id="fileContextMenu" class="file-context-menu">
@@ -561,7 +775,7 @@
     <script defer src="avr-mini-project-archive.js?v=20260821-localized-zip-v1"></script>
     <script
       defer
-      src="AVR-Programming.js?v=20260824-ai-project-actions-v1"
+      src="AVR-Programming.js?v=20260825-ai-workspace-v1"
     ></script>
     <script defer src="updi-test.js?v=20260709-terminal-avr-sync-v1"></script>
   </body>

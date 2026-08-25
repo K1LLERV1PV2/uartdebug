@@ -11,12 +11,13 @@
     "start:compiler": "node compile-server.js",
     "start:ai": "node ai-server.js",
     "test": "node --test ../tests/*.test.js",
-    "check": "node --check compile-server.js && node --check ai-server.js && node --check avr-ai-service.js"
+    "check": "node --check compile-server.js && node --check ai-server.js && node --check ai-access-service.js && node --check avr-ai-service.js"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.13.0"
   },
   "dependencies": {
-    "express": "4.22.2"
+    "express": "4.22.2",
+    "google-auth-library": "11.0.2"
   }
 }

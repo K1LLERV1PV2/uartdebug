@@ -6,12 +6,22 @@ const {
   AiServiceError,
   createAvrAiService,
 } = require("./avr-ai-service");
+const {
+  AiAccessError,
+  createAiAccessService,
+} = require("./ai-access-service");
 
-const AI_SERVER_VERSION = "20260824-avr-ai-project-actions-v1";
+const AI_SERVER_VERSION = "20260825-instruction-skills-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
-const MAX_REQUEST_BYTES = 384 * 1024;
+const MAX_REQUEST_BYTES = 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT = 2;
+const DEFAULT_AUTH_START_WINDOW_MS = 10 * 60 * 1000;
+const DEFAULT_AUTH_START_MAX_PER_IP = 10;
+const DEFAULT_AUTH_START_MAX_GLOBAL = 1000;
+const MAX_PUBLIC_SKILLS = 64;
+const MAX_PUBLIC_SKILL_MARKDOWN_BYTES = 64 * 1024;
+const MAX_PUBLIC_SKILL_PACK_BYTES = 512 * 1024;
 
 function createAiHttpServer(options = {}) {
   const environment = options.environment || process.env;
@@ -22,6 +32,15 @@ function createAiHttpServer(options = {}) {
       serverDirectory: options.serverDirectory || __dirname,
       fetch: options.fetch,
     });
+  const accessService =
+    options.accessService ||
+    createAiAccessService({
+      environment,
+      fetch: options.fetch,
+      now: options.nowDate,
+      randomBytes: options.randomBytes,
+    });
+  const ownsAccessService = !options.accessService;
   const now = options.now || (() => Date.now());
   const log = options.log || console;
   const allowedOrigins = new Set(
@@ -40,21 +59,33 @@ function createAiHttpServer(options = {}) {
     environment.AI_ALLOW_NO_ORIGIN,
     false
   );
+  const authStartLimiter = createFixedWindowLimiter({
+    now,
+    windowMs: readInteger(
+      environment.AI_AUTH_START_WINDOW_MS,
+      60_000,
+      60 * 60 * 1000,
+      DEFAULT_AUTH_START_WINDOW_MS
+    ),
+    maxPerKey: readInteger(
+      environment.AI_AUTH_START_MAX_PER_IP,
+      1,
+      1000,
+      DEFAULT_AUTH_START_MAX_PER_IP
+    ),
+    maxGlobal: readInteger(
+      environment.AI_AUTH_START_MAX_GLOBAL,
+      1,
+      100_000,
+      DEFAULT_AUTH_START_MAX_GLOBAL
+    ),
+  });
   let concurrentRequests = 0;
 
   const server = http.createServer(async (req, res) => {
     const startedAt = now();
     const requestId = crypto.randomUUID();
     applySecurityHeaders(res, requestId);
-
-    if (!isAllowedRequest(req, allowedOrigins)) {
-      return sendJson(res, 403, {
-        ok: false,
-        code: "origin_not_allowed",
-        message: "Origin is not allowed.",
-        requestId,
-      });
-    }
 
     const requestUrl = parseRequestUrl(req);
     if (!requestUrl) {
@@ -66,8 +97,101 @@ function createAiHttpServer(options = {}) {
       });
     }
 
+    if (
+      !isGoogleOAuthCallback(req, requestUrl) &&
+      !isAllowedRequest(req, allowedOrigins)
+    ) {
+      return sendJson(res, 403, {
+        ok: false,
+        code: "origin_not_allowed",
+        message: "Origin is not allowed.",
+        requestId,
+      });
+    }
+
     if (req.method === "GET" && requestUrl.pathname === "/health") {
       return sendText(res, 200, `ok ${AI_SERVER_VERSION}\n`);
+    }
+
+    if (
+      req.method === "GET" &&
+      requestUrl.pathname === "/api/avr/ai/skills"
+    ) {
+      try {
+        if (typeof aiService.getSkills !== "function") {
+          throw new AiServiceError(
+            503,
+            "skill_catalog_unavailable",
+            "The AI skill catalog is unavailable."
+          );
+        }
+        const catalog = normalizePublicSkillCatalog(await aiService.getSkills());
+        return sendJson(res, 200, {
+          ok: true,
+          ...catalog,
+          requestId,
+        });
+      } catch (error) {
+        const normalized = normalizeServiceError(error);
+        return sendJson(res, normalized.status, {
+          ok: false,
+          code: normalized.code,
+          message: normalized.message,
+          requestId,
+        });
+      }
+    }
+
+    if (
+      req.method === "GET" &&
+      requestUrl.pathname === "/api/avr/ai/auth/session"
+    ) {
+      return handleAccessEndpoint(
+        res,
+        requestId,
+        () => accessService.getPublicStatus(req, res),
+        200
+      );
+    }
+
+    if (
+      req.method === "GET" &&
+      requestUrl.pathname === "/api/avr/ai/auth/google/start"
+    ) {
+      const authLimit = authStartLimiter.consume(getClientAddress(req));
+      if (!authLimit.allowed) {
+        res.setHeader("Retry-After", String(authLimit.retryAfterSeconds));
+        return sendJson(res, 429, {
+          ok: false,
+          code: "google_auth_rate_limited",
+          message: "Too many Google sign-in attempts. Try again later.",
+          requestId,
+        });
+      }
+      return handleAccessEndpoint(res, requestId, () =>
+        accessService.beginGoogleLogin(req, res)
+      );
+    }
+
+    if (
+      req.method === "GET" &&
+      requestUrl.pathname === "/api/avr/ai/auth/google/callback"
+    ) {
+      return handleAccessEndpoint(res, requestId, () =>
+        accessService.completeGoogleLogin(req, res, requestUrl)
+      );
+    }
+
+    if (
+      req.method === "POST" &&
+      requestUrl.pathname === "/api/avr/ai/auth/logout"
+    ) {
+      return handleAccessEndpoint(
+        res,
+        requestId,
+        () => accessService.logout(req, res),
+        200
+      );
     }
 
     if (
@@ -204,7 +328,25 @@ function createAiHttpServer(options = {}) {
         });
       }
 
+      let accessContext;
+      try {
+        accessContext = await accessService.authorizeAiRequest(req, res, {
+          requestId,
+        });
+      } catch (error) {
+        const normalized = normalizeAccessError(error);
+        return sendJson(res, normalized.status, {
+          ok: false,
+          code: normalized.code,
+          message: normalized.message,
+          requestId,
+        });
+      }
+
       concurrentRequests += 1;
+      let providerCalled = false;
+      let providerRejected = false;
+      let usageRecorded = false;
       try {
         const respond = aiService.respond || aiService.generate;
         if (typeof respond !== "function") {
@@ -214,16 +356,68 @@ function createAiHttpServer(options = {}) {
             "The AI assistant is unavailable."
           );
         }
-        const result = await respond.call(aiService, requestBody);
+        const result = await respond.call(aiService, requestBody, {
+          requestId,
+          safetyIdentifier: accessContext?.safetyIdentifier || "",
+          reserveBudget:
+            accessContext?.mode === "google" &&
+            typeof accessService.reserveAiBudget === "function"
+              ? (quote) => accessService.reserveAiBudget(accessContext, quote)
+              : undefined,
+          async markProviderCalled() {
+            if (
+              accessContext?.mode === "google" &&
+              typeof accessService.markAiProviderStarted === "function"
+            ) {
+              await accessService.markAiProviderStarted(accessContext);
+            }
+            providerCalled = true;
+          },
+        });
+        const metering = result?._metering || null;
+        const publicResult = { ...result };
+        delete publicResult._metering;
+        let quota = null;
+        if (metering) {
+          const recorded = await accessService.recordAiUsage(accessContext, {
+            requestId,
+            ...metering,
+          });
+          usageRecorded = true;
+          quota = recorded?.quota || null;
+        }
         log.info?.(
           `[avr-ai] request=${requestId} status=200 duration_ms=${Math.max(
             0,
             now() - startedAt
           )}`
         );
-        return sendJson(res, 200, { ...result, requestId });
+        return sendJson(res, 200, {
+          ...publicResult,
+          ...(quota ? { quota } : {}),
+          requestId,
+        });
       } catch (error) {
-        const normalized = normalizeServiceError(error);
+        providerRejected = error?._providerRejected === true;
+        if (error?._metering) {
+          try {
+            await accessService.recordAiUsage(accessContext, {
+              requestId,
+              ...error._metering,
+            });
+            usageRecorded = true;
+          } catch (meteringError) {
+            log.error?.(
+              `[avr-ai] request=${requestId} usage_record_failed code=${
+                meteringError?.code || "unknown"
+              }`
+            );
+          }
+        }
+        const normalized =
+          error instanceof AiAccessError
+            ? normalizeAccessError(error)
+            : normalizeServiceError(error);
         log.warn?.(
           `[avr-ai] request=${requestId} status=${normalized.status} code=${
             normalized.code
@@ -237,6 +431,19 @@ function createAiHttpServer(options = {}) {
         });
       } finally {
         concurrentRequests = Math.max(0, concurrentRequests - 1);
+        try {
+          await accessService.releaseAiRequest(accessContext, {
+            providerCalled,
+            providerRejected,
+            usageRecorded,
+          });
+        } catch (error) {
+          log.error?.(
+            `[avr-ai] request=${requestId} access_release_failed code=${
+              error?.code || "unknown"
+            }`
+          );
+        }
       }
     }
 
@@ -251,6 +458,16 @@ function createAiHttpServer(options = {}) {
   server.on("clientError", (error, socket) => {
     if (socket.writable) {
       socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+    }
+  });
+  server.on("close", () => {
+    if (!ownsAccessService || typeof accessService.close !== "function") return;
+    try {
+      accessService.close();
+    } catch (error) {
+      log.error?.(
+        `[avr-ai] access_close_failed code=${error?.code || "unknown"}`
+      );
     }
   });
 
@@ -295,9 +512,111 @@ function parseRequestUrl(req) {
   }
 }
 
+function isGoogleOAuthCallback(req, requestUrl) {
+  return (
+    req.method === "GET" &&
+    requestUrl.pathname === "/api/avr/ai/auth/google/callback"
+  );
+}
+
+async function handleAccessEndpoint(
+  res,
+  requestId,
+  handler,
+  successStatus = 204
+) {
+  try {
+    const result = await handler();
+    if (res.writableEnded) return;
+    if (result?.redirectUrl) {
+      res.statusCode = Number(result.status) || 302;
+      res.setHeader("Location", result.redirectUrl);
+      return res.end();
+    }
+    return sendJson(res, successStatus, {
+      ok: true,
+      ...(result && typeof result === "object" ? result : {}),
+      requestId,
+    });
+  } catch (error) {
+    if (res.writableEnded) return;
+    const normalized = normalizeAccessError(error);
+    return sendJson(res, normalized.status, {
+      ok: false,
+      code: normalized.code,
+      message: normalized.message,
+      requestId,
+    });
+  }
+}
+
 function getFirstHeaderValue(value) {
   const text = Array.isArray(value) ? value[0] : String(value || "");
   return text.split(",")[0].trim();
+}
+
+function getClientAddress(req) {
+  const realIp = getFirstHeaderValue(req?.headers?.["x-real-ip"]);
+  if (realIp) return realIp.slice(0, 128);
+  const forwarded = String(req?.headers?.["x-forwarded-for"] || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (forwarded.length) return forwarded.at(-1).slice(0, 128);
+  return String(req?.socket?.remoteAddress || "unknown").slice(0, 128);
+}
+
+function createFixedWindowLimiter({ now, windowMs, maxPerKey, maxGlobal }) {
+  const entries = new Map();
+  let globalWindowStartedAt = null;
+  let globalCount = 0;
+
+  return {
+    consume(rawKey) {
+      const timestamp = Number(now());
+      if (!Number.isSafeInteger(timestamp) || timestamp < 0) {
+        throw new TypeError("The rate-limit clock must return a timestamp.");
+      }
+      if (
+        globalWindowStartedAt == null ||
+        timestamp - globalWindowStartedAt >= windowMs
+      ) {
+        globalWindowStartedAt = timestamp;
+        globalCount = 0;
+        entries.clear();
+      }
+
+      if (globalCount >= maxGlobal) {
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(
+            1,
+            Math.ceil((globalWindowStartedAt + windowMs - timestamp) / 1000)
+          ),
+        };
+      }
+
+      const key = String(rawKey || "unknown").slice(0, 128);
+      let entry = entries.get(key);
+      if (!entry || timestamp - entry.startedAt >= windowMs) {
+        entry = { startedAt: timestamp, count: 0 };
+        entries.set(key, entry);
+      }
+      if (entry.count >= maxPerKey) {
+        return {
+          allowed: false,
+          retryAfterSeconds: Math.max(
+            1,
+            Math.ceil((entry.startedAt + windowMs - timestamp) / 1000)
+          ),
+        };
+      }
+
+      entry.count += 1;
+      globalCount += 1;
+      return { allowed: true, retryAfterSeconds: 0 };
+    },
+  };
 }
 
 function isJsonRequest(req) {
@@ -358,6 +677,115 @@ function normalizeServiceError(error) {
     status: 500,
     code: "internal_error",
     message: "Internal AI service error.",
+  };
+}
+
+function normalizePublicSkillCatalog(rawCatalog) {
+  if (
+    !rawCatalog ||
+    typeof rawCatalog !== "object" ||
+    Array.isArray(rawCatalog) ||
+    Number(rawCatalog.schemaVersion) !== 1 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(
+      String(rawCatalog.catalogVersion || "")
+    ) ||
+    !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(
+      String(rawCatalog.locale || "")
+    ) ||
+    !/^[a-f0-9]{64}$/.test(String(rawCatalog.digest || "")) ||
+    !Array.isArray(rawCatalog.skills) ||
+    !rawCatalog.skills.length ||
+    rawCatalog.skills.length > MAX_PUBLIC_SKILLS
+  ) {
+    throw new AiServiceError(
+      503,
+      "skill_catalog_invalid",
+      "The AI skill catalog is invalid."
+    );
+  }
+
+  const ids = new Set();
+  let totalMarkdownBytes = 0;
+  const skills = rawCatalog.skills.map((rawSkill) => {
+    if (!rawSkill || typeof rawSkill !== "object" || Array.isArray(rawSkill)) {
+      throwInvalidPublicSkillCatalog();
+    }
+    const id = String(rawSkill.id || "").trim();
+    const version = String(rawSkill.version || "").trim();
+    const title = normalizePublicSkillText(rawSkill.title, 96);
+    const summary = normalizePublicSkillText(rawSkill.summary, 300);
+    if (
+      !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ||
+      ids.has(id) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(version) ||
+      typeof rawSkill.markdown !== "string"
+    ) {
+      throwInvalidPublicSkillCatalog();
+    }
+    const markdown = rawSkill.markdown.replace(/\r\n?/g, "\n");
+    const markdownBytes = Buffer.byteLength(markdown, "utf8");
+    if (
+      !markdown.trim() ||
+      markdown.includes("\u0000") ||
+      markdownBytes > MAX_PUBLIC_SKILL_MARKDOWN_BYTES ||
+      !/^#{1,6}[ \t]+\S/m.test(markdown) ||
+      /<(?:script|style|iframe|object|embed|link|meta|img|svg)\b/i.test(
+        markdown
+      ) ||
+      /(?:javascript|data):/i.test(markdown)
+    ) {
+      throwInvalidPublicSkillCatalog();
+    }
+    totalMarkdownBytes += markdownBytes;
+    if (totalMarkdownBytes > MAX_PUBLIC_SKILL_PACK_BYTES) {
+      throwInvalidPublicSkillCatalog();
+    }
+    ids.add(id);
+    return { id, version, title, summary, markdown };
+  });
+
+  return {
+    schemaVersion: 1,
+    catalogVersion: String(rawCatalog.catalogVersion),
+    locale: String(rawCatalog.locale),
+    count: skills.length,
+    digest: String(rawCatalog.digest),
+    skills,
+  };
+}
+
+function normalizePublicSkillText(value, maxBytes) {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.includes("\u0000") ||
+    Buffer.byteLength(value, "utf8") > maxBytes
+  ) {
+    throwInvalidPublicSkillCatalog();
+  }
+  return value.trim();
+}
+
+function throwInvalidPublicSkillCatalog() {
+  throw new AiServiceError(
+    503,
+    "skill_catalog_invalid",
+    "The AI skill catalog is invalid."
+  );
+}
+
+function normalizeAccessError(error) {
+  if (error instanceof AiAccessError) {
+    return {
+      status: Number(error.status) || 500,
+      code: error.code || "ai_access_error",
+      message: error.message || "AI access could not be verified.",
+    };
+  }
+  return {
+    status: 500,
+    code: "ai_access_error",
+    message: "AI access could not be verified.",
   };
 }
 
