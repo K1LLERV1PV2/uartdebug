@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260825-workspace-public-auth-v2";
+const CACHE_NAME = "uartdebug-shell-20260825-device-panel-steps-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",

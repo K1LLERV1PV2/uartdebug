@@ -696,6 +696,11 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
     css,
     /\.avr-device-panel-viewport\s*\{[\s\S]*?height:\s*var\(--device-panel-height\);/
   );
+  assert.match(css, /--device-panel-height:\s*112px;/);
+  assert.match(
+    html,
+    /id="devicePanelToggle"[\s\S]*?aria-valuemax="112"[\s\S]*?aria-valuenow="112"/
+  );
   assert.match(
     css,
     /\.split-resizer\.device-panel-resizer\s*\{[\s\S]*?width:\s*100%;[\s\S]*?cursor:\s*row-resize;/
@@ -718,11 +723,41 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
     /STORAGE_DEVICE_PANEL_STATE\s*=\s*\n\s*"ud_avr_programming_device_panel_state_v2"/
   );
   assert.match(source, /const states = \["collapsed", "compact", "expanded"\]/);
+  assert.match(source, /DEVICE_PANEL_EXPANDED_HEIGHT\s*=\s*112/);
   assert.match(source, /DEVICE_PANEL_COMPACT_HEIGHT\s*=\s*54/);
+  assert.match(source, /DEVICE_PANEL_COLLAPSED_HEIGHT\s*=\s*0/);
+  assert.match(source, /DEVICE_PANEL_DRAG_THRESHOLD\s*=\s*18/);
+  assert.match(source, /function getAdjacentDevicePanelState\(state, direction\)/);
   assert.match(source, /startY:\s*event\.clientY/);
+  assert.match(source, /lastY:\s*event\.clientY/);
   assert.match(source, /startState:\s*devicePanelState/);
-  assert.match(source, /event\.clientY - devicePanelResizeState\.startY/);
-  assert.match(source, /getNearestDevicePanelState\(devicePanelHeight\)/);
+  assert.match(
+    source,
+    /Math\.abs\(delta\)\s*>=\s*DEVICE_PANEL_DRAG_THRESHOLD/
+  );
+  assert.match(
+    source,
+    /getAdjacentDevicePanelState\([\s\S]*?resizeState\.startState,[\s\S]*?delta < 0 \? -1 : 1/
+  );
+  assert.doesNotMatch(source, /getNearestDevicePanelState|getLiveDevicePanelState/);
+  const pointerMoveStart = source.indexOf(
+    'handle.addEventListener("pointermove"'
+  );
+  const pointerMoveEnd = source.indexOf(
+    'handle.addEventListener("pointerup"',
+    pointerMoveStart
+  );
+  assert.ok(pointerMoveStart >= 0 && pointerMoveEnd > pointerMoveStart);
+  const pointerMoveSource = source.slice(pointerMoveStart, pointerMoveEnd);
+  assert.match(pointerMoveSource, /devicePanelResizeState\.lastY = event\.clientY/);
+  assert.doesNotMatch(
+    pointerMoveSource,
+    /applyDevicePanelState|setDevicePanelState|--device-panel-height/
+  );
+  assert.match(
+    source,
+    /event\.key === "ArrowUp"[\s\S]*?Math\.max\(0, index - 1\)[\s\S]*?event\.key === "ArrowDown"[\s\S]*?Math\.min\(states\.length - 1, index \+ 1\)/
+  );
   assert.match(
     source,
     /pointercancel[\s\S]*?finishResize\(event, \{ cancelled: true \}\)/
