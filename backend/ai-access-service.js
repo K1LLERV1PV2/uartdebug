@@ -6,10 +6,21 @@ const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { OAuth2Client } = require("google-auth-library");
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DEVICE_COOKIE = "__Host-ud_device";
 const SESSION_COOKIE = "__Host-ud_session";
 const INSTALLATION_SECRET_HEADER = "x-uartdebug-installation";
+const ACCOUNT_WORKSPACE_TYPES = Object.freeze(["chats", "files", "instruction"]);
+const ACCOUNT_WORKSPACE_SCHEMA_VERSIONS = Object.freeze({
+  chats: 1,
+  files: 2,
+  instruction: 1,
+});
+const ACCOUNT_WORKSPACE_MAX_BYTES = Object.freeze({
+  chats: 1024 * 1024,
+  files: 4 * 1024 * 1024,
+  instruction: 256 * 1024,
+});
 const CREDIT_NANO_USD = 1_000_000;
 const DEFAULT_PRICE_CATALOG_VERSION = "2026-08-24";
 const DEFAULT_MODEL = "gpt-5.6-terra";
@@ -258,6 +269,136 @@ class AiAccessService {
     };
     sendJson(res, 200, payload);
     return payload;
+  }
+
+  authenticateAccountWorkspaceRequest(req, res) {
+    if (!this.googleAuthEnabled) {
+      throw new AiAccessError(
+        401,
+        "google_sign_in_required",
+        "Sign in with Google to use account workspace storage."
+      );
+    }
+
+    this._deleteExpiredAuthSessions(this._now());
+    this._assertConfigured();
+    const device = this._resolveDevice(req, res, { create: false });
+    const session = device ? this._resolveSession(req, res, device.id) : null;
+    if (!session) {
+      throw new AiAccessError(
+        401,
+        "google_sign_in_required",
+        "Sign in with Google to use account workspace storage."
+      );
+    }
+
+    return Object.freeze({
+      accountHash: session.account_hash,
+      accountKey: this._identityHash(
+        "account-workspace-client",
+        session.account_hash
+      ),
+      deviceId: device.id,
+    });
+  }
+
+  readAccountWorkspace(context) {
+    const accountHash = readWorkspaceAccountHash(context);
+    return {
+      accountKey: readWorkspaceAccountKey(context),
+      documents: Object.fromEntries(
+        ACCOUNT_WORKSPACE_TYPES.map((dataType) => [
+          dataType,
+          this._readAccountWorkspaceRecord(accountHash, dataType),
+        ])
+      ),
+    };
+  }
+
+  writeAccountWorkspace(context, rawDataType, rawInput) {
+    const accountHash = readWorkspaceAccountHash(context);
+    const accountKey = readWorkspaceAccountKey(context);
+    const dataType = normalizeAccountWorkspaceType(rawDataType);
+    const input = normalizeAccountWorkspaceWrite(dataType, rawInput);
+    if (input.expectedAccountKey !== accountKey) {
+      throw new AiAccessError(
+        409,
+        "account_workspace_account_mismatch",
+        "The signed-in account changed before this workspace could be saved. Reload the account workspace before saving again."
+      );
+    }
+    const now = this._now();
+    let record;
+
+    this._transaction(() => {
+      const existing = this.database
+        .prepare(
+          `SELECT revision, created_at
+             FROM account_workspace_snapshots
+            WHERE account_hash = ? AND data_type = ?`
+        )
+        .get(accountHash, dataType);
+      const currentRevision = Number(existing?.revision || 0);
+      if (input.baseRevision !== currentRevision) {
+        throw new AiAccessError(
+          409,
+          "account_data_revision_conflict",
+          "The account workspace changed in another session. Reload it before saving again."
+        );
+      }
+
+      const revision = currentRevision + 1;
+      if (existing) {
+        this.database
+          .prepare(
+            `UPDATE account_workspace_snapshots
+                SET revision = ?, schema_version = ?, payload_json = ?,
+                    payload_bytes = ?, updated_at = ?
+              WHERE account_hash = ? AND data_type = ? AND revision = ?`
+          )
+          .run(
+            revision,
+            input.schemaVersion,
+            input.payloadJson,
+            input.payloadBytes,
+            now,
+            accountHash,
+            dataType,
+            currentRevision
+          );
+      } else {
+        this.database
+          .prepare(
+            `INSERT INTO account_workspace_snapshots
+               (account_hash, data_type, revision, schema_version,
+                payload_json, payload_bytes, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            accountHash,
+            dataType,
+            revision,
+            input.schemaVersion,
+            input.payloadJson,
+            input.payloadBytes,
+            now,
+            now
+          );
+      }
+
+      record = {
+        revision,
+        schemaVersion: input.schemaVersion,
+        updatedAt: now,
+        data: input.data,
+      };
+    });
+
+    return {
+      type: dataType,
+      accountKey: readWorkspaceAccountKey(context),
+      document: record,
+    };
   }
 
   async beginGoogleLogin(req, res) {
@@ -1506,6 +1647,75 @@ class AiAccessService {
     return released;
   }
 
+  _readAccountWorkspaceRecord(accountHash, dataType) {
+    const row = this.database
+      .prepare(
+        `SELECT revision, schema_version, payload_json, payload_bytes, updated_at
+           FROM account_workspace_snapshots
+          WHERE account_hash = ? AND data_type = ?`
+      )
+      .get(accountHash, dataType);
+    if (!row) {
+      return {
+        revision: 0,
+        schemaVersion: ACCOUNT_WORKSPACE_SCHEMA_VERSIONS[dataType],
+        updatedAt: null,
+        data: null,
+      };
+    }
+
+    const payloadJson = String(row.payload_json || "");
+    const payloadBytes = Buffer.byteLength(payloadJson, "utf8");
+    if (
+      payloadBytes !== Number(row.payload_bytes) ||
+      payloadBytes > ACCOUNT_WORKSPACE_MAX_BYTES[dataType]
+    ) {
+      throw new AiAccessError(
+        500,
+        "account_data_corrupt",
+        "The stored account workspace is invalid."
+      );
+    }
+
+    let data;
+    try {
+      data = JSON.parse(payloadJson);
+    } catch {
+      throw new AiAccessError(
+        500,
+        "account_data_corrupt",
+        "The stored account workspace is invalid."
+      );
+    }
+    let normalized;
+    try {
+      normalized = normalizeAccountWorkspaceData(dataType, data);
+    } catch {
+      throw new AiAccessError(
+        500,
+        "account_data_corrupt",
+        "The stored account workspace is invalid."
+      );
+    }
+    if (
+      normalized.payloadJson !== payloadJson ||
+      Number(row.schema_version) !== normalized.schemaVersion
+    ) {
+      throw new AiAccessError(
+        500,
+        "account_data_corrupt",
+        "The stored account workspace is invalid."
+      );
+    }
+
+    return {
+      revision: Number(row.revision),
+      schemaVersion: Number(row.schema_version),
+      updatedAt: Number(row.updated_at),
+      data: normalized.data,
+    };
+  }
+
   close() {
     if (this.ownsDatabase && this.database) {
       this.database.close();
@@ -1906,6 +2116,336 @@ class AiAccessService {
   }
 }
 
+function readWorkspaceAccountHash(context) {
+  const accountHash = String(context?.accountHash || "");
+  if (!accountHash) {
+    throw new AiAccessError(
+      500,
+      "invalid_account_context",
+      "The authenticated account context is invalid."
+    );
+  }
+  return accountHash;
+}
+
+function readWorkspaceAccountKey(context) {
+  const accountKey = String(context?.accountKey || "");
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(accountKey)) {
+    throw new AiAccessError(
+      500,
+      "invalid_account_context",
+      "The authenticated account context is invalid."
+    );
+  }
+  return accountKey;
+}
+
+function normalizeAccountWorkspaceType(value) {
+  const dataType = String(value || "").trim().toLowerCase();
+  if (!ACCOUNT_WORKSPACE_TYPES.includes(dataType)) {
+    throw new AiAccessError(
+      404,
+      "account_data_type_not_found",
+      "The requested account workspace data type does not exist."
+    );
+  }
+  return dataType;
+}
+
+function normalizeAccountWorkspaceWrite(dataType, rawInput) {
+  if (!isPlainJsonObject(rawInput)) {
+    throw new AiAccessError(
+      400,
+      "invalid_account_data",
+      "The account workspace request must be a JSON object."
+    );
+  }
+  if (
+    Object.keys(rawInput).some(
+      (key) => !["baseRevision", "expectedAccountKey", "data"].includes(key)
+    )
+  ) {
+    throw new AiAccessError(
+      400,
+      "invalid_account_data",
+      "The account workspace request contains unsupported fields."
+    );
+  }
+  const baseRevision = Number(rawInput.baseRevision);
+  if (!Number.isSafeInteger(baseRevision) || baseRevision < 0) {
+    throw new AiAccessError(
+      400,
+      "invalid_account_revision",
+      "baseRevision must be a non-negative integer."
+    );
+  }
+  const expectedAccountKey = String(rawInput.expectedAccountKey || "");
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(expectedAccountKey)) {
+    throw new AiAccessError(
+      400,
+      "expected_account_key_required",
+      "expectedAccountKey must identify the account workspace being saved."
+    );
+  }
+  return {
+    baseRevision,
+    expectedAccountKey,
+    ...normalizeAccountWorkspaceData(dataType, rawInput.data),
+  };
+}
+
+function normalizeAccountWorkspaceData(dataType, rawData) {
+  if (!isPlainJsonObject(rawData)) {
+    throw new AiAccessError(
+      400,
+      "invalid_account_data",
+      "Account workspace data must be a JSON object."
+    );
+  }
+  const schemaVersion = Number(rawData.schemaVersion);
+  if (schemaVersion !== ACCOUNT_WORKSPACE_SCHEMA_VERSIONS[dataType]) {
+    throw new AiAccessError(
+      400,
+      "invalid_account_data_schema",
+      `Unsupported ${dataType} workspace schema.`
+    );
+  }
+  if (
+    dataType !== "instruction" &&
+    ["projectInstruction", "projectInstructionDocument", "instructionDocument"].some(
+      (key) => Object.prototype.hasOwnProperty.call(rawData, key)
+    )
+  ) {
+    throw new AiAccessError(
+      400,
+      "project_instruction_storage_forbidden",
+      "Project instruction is not part of account chat or file storage."
+    );
+  }
+
+  if (dataType === "chats") validateAccountChats(rawData);
+  if (dataType === "files") validateAccountFiles(rawData);
+  if (dataType === "instruction") validateAccountInstruction(rawData);
+
+  let payloadJson;
+  try {
+    payloadJson = JSON.stringify(rawData);
+  } catch {
+    throw new AiAccessError(
+      400,
+      "invalid_account_data",
+      "Account workspace data must be valid JSON."
+    );
+  }
+  const payloadBytes = Buffer.byteLength(payloadJson, "utf8");
+  if (payloadBytes > ACCOUNT_WORKSPACE_MAX_BYTES[dataType]) {
+    throw new AiAccessError(
+      413,
+      "account_data_too_large",
+      `The ${dataType} workspace exceeds its storage limit.`
+    );
+  }
+
+  return {
+    data: rawData,
+    schemaVersion,
+    payloadJson,
+    payloadBytes,
+  };
+}
+
+function validateAccountChats(data) {
+  const allowedKeys = new Set(["schemaVersion", "activeChatId", "chats"]);
+  if (Object.keys(data).some((key) => !allowedKeys.has(key)) || !Array.isArray(data.chats)) {
+    throwInvalidAccountData("The chat workspace structure is invalid.");
+  }
+  if (data.chats.length > 100) {
+    throwInvalidAccountData("The chat workspace contains too many chats.");
+  }
+
+  const ids = new Set();
+  const messageIds = new Set();
+  for (const chat of data.chats) {
+    if (
+      !isPlainJsonObject(chat) ||
+      Object.keys(chat).some(
+        (key) =>
+          !["id", "title", "createdAt", "updatedAt", "messages"].includes(key)
+      )
+    ) {
+      throwInvalidAccountData("Each chat must be a JSON object.");
+    }
+    const id = normalizeBoundedWorkspaceText(chat.id, 96, { required: true });
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(id) || ids.has(id)) {
+      throwInvalidAccountData("Chat identifiers must be unique and URL-safe.");
+    }
+    ids.add(id);
+    normalizeBoundedWorkspaceText(chat.title, 256, { required: false });
+    validateRequiredWorkspaceTimestamp(chat.createdAt);
+    validateRequiredWorkspaceTimestamp(chat.updatedAt);
+    if (chat.updatedAt < chat.createdAt) {
+      throwInvalidAccountData("Chat timestamps are invalid.");
+    }
+    if (!Array.isArray(chat.messages)) {
+      throwInvalidAccountData("Each chat must contain a messages array.");
+    }
+    for (const message of chat.messages) {
+      if (
+        !isPlainJsonObject(message) ||
+        Object.keys(message).some(
+          (key) =>
+            !["id", "role", "content", "title", "createdAt"].includes(key)
+        ) ||
+        !["user", "assistant"].includes(String(message.role || ""))
+      ) {
+        throwInvalidAccountData("Chat messages must have a user or assistant role.");
+      }
+      const messageId = normalizeBoundedWorkspaceText(message.id, 128, {
+        required: true,
+      });
+      if (
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(messageId) ||
+        messageIds.has(messageId)
+      ) {
+        throwInvalidAccountData("Chat message identifiers must be unique and URL-safe.");
+      }
+      messageIds.add(messageId);
+      normalizeBoundedWorkspaceText(message.content, 128 * 1024, {
+        required: true,
+      });
+      normalizeBoundedWorkspaceText(message.title, 512, { required: false });
+      validateRequiredWorkspaceTimestamp(message.createdAt);
+    }
+  }
+
+  if (data.activeChatId != null) {
+    const activeChatId = normalizeBoundedWorkspaceText(data.activeChatId, 96, {
+      required: true,
+    });
+    if (!ids.has(activeChatId)) {
+      throwInvalidAccountData("activeChatId must identify a stored chat.");
+    }
+  }
+}
+
+function validateAccountFiles(data) {
+  const allowedKeys = new Set([
+    "schemaVersion",
+    "files",
+    "fileGroups",
+    "miniProjects",
+    "current",
+  ]);
+  if (
+    Object.keys(data).some((key) => !allowedKeys.has(key)) ||
+    !isPlainJsonObject(data.files) ||
+    !isPlainJsonObject(data.fileGroups) ||
+    !isPlainJsonObject(data.miniProjects)
+  ) {
+    throwInvalidAccountData("The file workspace structure is invalid.");
+  }
+  const fileEntries = Object.entries(data.files);
+  if (
+    fileEntries.length > 256 ||
+    Object.keys(data.fileGroups).length > 256 ||
+    Object.keys(data.miniProjects).length > 128
+  ) {
+    throwInvalidAccountData("The file workspace contains too many entries.");
+  }
+  for (const [name, content] of fileEntries) {
+    if (
+      !name ||
+      name.length > 96 ||
+      name === "." ||
+      name === ".." ||
+      ["__proto__", "prototype", "constructor"].includes(name.toLowerCase()) ||
+      /[\\/:*?"<>|\x00-\x1f]/.test(name) ||
+      typeof content !== "string"
+    ) {
+      throwInvalidAccountData("The file workspace contains an invalid file.");
+    }
+  }
+  if (
+    data.current != null &&
+    (typeof data.current !== "string" ||
+      !Object.prototype.hasOwnProperty.call(data.files, data.current))
+  ) {
+    throwInvalidAccountData("The current file must identify a stored file.");
+  }
+}
+
+function validateAccountInstruction(data) {
+  const allowedKeys = new Set([
+    "schemaVersion",
+    "revision",
+    "markdown",
+    "skillRefs",
+  ]);
+  if (
+    Object.keys(data).some((key) => !allowedKeys.has(key)) ||
+    !Number.isSafeInteger(data.revision) ||
+    data.revision < 0 ||
+    data.revision >= Number.MAX_SAFE_INTEGER ||
+    typeof data.markdown !== "string" ||
+    data.markdown.includes("\u0000") ||
+    Buffer.byteLength(data.markdown, "utf8") > 128 * 1024 ||
+    !Array.isArray(data.skillRefs) ||
+    data.skillRefs.length > 64
+  ) {
+    throwInvalidAccountData("The Project instruction structure is invalid.");
+  }
+
+  const skillIds = new Set();
+  for (const reference of data.skillRefs) {
+    if (
+      !isPlainJsonObject(reference) ||
+      Object.keys(reference).some((key) => !["id", "version"].includes(key))
+    ) {
+      throwInvalidAccountData("The Project instruction skill references are invalid.");
+    }
+    const id = String(reference.id || "").trim();
+    const version = String(reference.version || "").trim();
+    if (
+      !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(version) ||
+      skillIds.has(id)
+    ) {
+      throwInvalidAccountData("The Project instruction skill references are invalid.");
+    }
+    skillIds.add(id);
+  }
+}
+
+function normalizeBoundedWorkspaceText(value, maxBytes, { required }) {
+  if (typeof value !== "string") {
+    if (!required && value == null) return "";
+    throwInvalidAccountData("Account workspace text is invalid.");
+  }
+  const text = value.trim();
+  if (
+    (required && !text) ||
+    value.includes("\u0000") ||
+    Buffer.byteLength(value, "utf8") > maxBytes
+  ) {
+    throwInvalidAccountData("Account workspace text is invalid.");
+  }
+  return text;
+}
+
+function validateRequiredWorkspaceTimestamp(value) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throwInvalidAccountData("Account workspace timestamps are invalid.");
+  }
+}
+
+function isPlainJsonObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function throwInvalidAccountData(message) {
+  throw new AiAccessError(400, "invalid_account_data", message);
+}
+
 function createAiAccessService(options = {}) {
   return new AiAccessService(options);
 }
@@ -2070,6 +2610,25 @@ function migrateDatabase(database) {
           ON inflight_requests(source_device_id);
         CREATE INDEX inflight_requests_expiry_idx ON inflight_requests(expires_at);
         PRAGMA user_version = 1;
+      `);
+    }
+    if (version < 2) {
+      database.exec(`
+        CREATE TABLE account_workspace_snapshots (
+          account_hash TEXT NOT NULL
+            REFERENCES google_accounts(account_hash) ON DELETE CASCADE,
+          data_type TEXT NOT NULL
+            CHECK (data_type IN ('chats', 'files', 'instruction')),
+          revision INTEGER NOT NULL CHECK (revision > 0),
+          schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+          payload_json TEXT NOT NULL,
+          payload_bytes INTEGER NOT NULL CHECK (payload_bytes >= 0),
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (account_hash, data_type)
+        ) WITHOUT ROWID, STRICT;
+
+        PRAGMA user_version = 2;
       `);
     }
     database.exec("COMMIT");
@@ -2611,6 +3170,8 @@ function firstDefined(...values) {
 }
 
 module.exports = {
+  ACCOUNT_WORKSPACE_MAX_BYTES,
+  ACCOUNT_WORKSPACE_SCHEMA_VERSIONS,
   AI_ACCESS_SCHEMA_VERSION: SCHEMA_VERSION,
   AiAccessError,
   AiAccessService,

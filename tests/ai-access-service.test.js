@@ -1,9 +1,14 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
+  ACCOUNT_WORKSPACE_MAX_BYTES,
+  AI_ACCESS_SCHEMA_VERSION,
   AiAccessError,
   CREDIT_NANO_USD,
   DEVICE_COOKIE,
@@ -1270,4 +1275,334 @@ test("Google mode reports missing server configuration as a typed 503", async (t
       error.status === 503 &&
       error.code === "google_auth_not_configured"
   );
+});
+
+test("account workspace snapshots persist independently without spending AI credits", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {
+    code: "workspace-code",
+    sub: "workspace-account",
+    email: "workspace@example.com",
+  });
+  service.database.exec(
+    "UPDATE google_accounts SET spent_nano_usd = grant_nano_usd; UPDATE devices SET spent_nano_usd = grant_nano_usd;"
+  );
+
+  const context = service.authenticateAccountWorkspaceRequest(
+    request(login.cookie),
+    new MockResponse()
+  );
+  assert.equal(typeof context.accountHash, "string");
+  assert.match(context.accountKey, /^[A-Za-z0-9_-]{32,128}$/);
+  const empty = service.readAccountWorkspace(context);
+  assert.equal(empty.accountKey, context.accountKey);
+  assert.deepEqual(Object.keys(empty.documents), ["chats", "files", "instruction"]);
+  assert.equal(empty.documents.chats.revision, 0);
+  assert.equal(empty.documents.files.data, null);
+  assert.equal(empty.documents.instruction.schemaVersion, 1);
+
+  const chats = {
+    schemaVersion: 1,
+    activeChatId: "chat-1",
+    chats: [
+      {
+        id: "chat-1",
+        title: "First chat",
+        createdAt: 1,
+        updatedAt: 2,
+        messages: [
+          {
+            id: "message-1",
+            role: "user",
+            content: "Question",
+            title: "",
+            createdAt: 1,
+          },
+          {
+            id: "message-2",
+            role: "assistant",
+            content: "Answer",
+            title: "",
+            createdAt: 2,
+          },
+        ],
+      },
+    ],
+  };
+  const files = {
+    schemaVersion: 2,
+    files: { "main.c": "int main(void) { return 0; }\n" },
+    fileGroups: {},
+    miniProjects: {},
+    current: "main.c",
+  };
+  const instruction = {
+    schemaVersion: 1,
+    revision: 4,
+    markdown: "# Project\n",
+    skillRefs: [{ id: "initialization", version: "1.0.0" }],
+  };
+
+  assert.equal(
+    service.writeAccountWorkspace(context, "chats", {
+      baseRevision: 0,
+      expectedAccountKey: context.accountKey,
+      data: chats,
+    }).document.revision,
+    1
+  );
+  assert.equal(
+    service.writeAccountWorkspace(context, "files", {
+      baseRevision: 0,
+      expectedAccountKey: context.accountKey,
+      data: files,
+    }).document.revision,
+    1
+  );
+  assert.equal(
+    service.writeAccountWorkspace(context, "instruction", {
+      baseRevision: 0,
+      expectedAccountKey: context.accountKey,
+      data: instruction,
+    }).document.revision,
+    1
+  );
+
+  const stored = service.readAccountWorkspace(context);
+  assert.deepEqual(stored.documents.chats.data, chats);
+  assert.deepEqual(stored.documents.files.data, files);
+  assert.deepEqual(stored.documents.instruction.data, instruction);
+  assert.equal(stored.documents.chats.revision, 1);
+  assert.equal(stored.documents.files.revision, 1);
+  assert.equal(stored.documents.instruction.revision, 1);
+});
+
+test("account workspace is isolated by Google account and rejects stale revisions", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const first = await signIn(service, oauthClient, {
+    code: "workspace-first",
+    sub: "workspace-first-account",
+    email: "first@example.com",
+  });
+  const secondDevice = await signIn(service, oauthClient, {
+    code: "workspace-second-device",
+    sub: "workspace-first-account",
+    email: "first@example.com",
+  });
+  const other = await signIn(service, oauthClient, {
+    code: "workspace-other",
+    sub: "workspace-other-account",
+    email: "other@example.com",
+  });
+  const firstContext = service.authenticateAccountWorkspaceRequest(
+    request(first.cookie),
+    new MockResponse()
+  );
+  const secondDeviceContext = service.authenticateAccountWorkspaceRequest(
+    request(secondDevice.cookie),
+    new MockResponse()
+  );
+  const otherContext = service.authenticateAccountWorkspaceRequest(
+    request(other.cookie),
+    new MockResponse()
+  );
+  const data = { schemaVersion: 1, activeChatId: null, chats: [] };
+
+  service.writeAccountWorkspace(firstContext, "chats", {
+    baseRevision: 0,
+    expectedAccountKey: firstContext.accountKey,
+    data,
+  });
+  assert.equal(firstContext.accountKey, secondDeviceContext.accountKey);
+  assert.notEqual(firstContext.accountKey, otherContext.accountKey);
+  assert.deepEqual(
+    service.readAccountWorkspace(secondDeviceContext).documents.chats.data,
+    data
+  );
+  assert.equal(service.readAccountWorkspace(otherContext).documents.chats.data, null);
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(secondDeviceContext, "chats", {
+        baseRevision: 0,
+        expectedAccountKey: secondDeviceContext.accountKey,
+        data,
+      }),
+    (error) =>
+      error instanceof AiAccessError &&
+      error.status === 409 &&
+      error.code === "account_data_revision_conflict"
+  );
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(firstContext, "files", {
+        baseRevision: 0,
+        expectedAccountKey: firstContext.accountKey,
+        data: {
+          schemaVersion: 2,
+          files: {},
+          fileGroups: {},
+          miniProjects: {},
+          current: null,
+          instructionDocument: { schemaVersion: 1 },
+        },
+      }),
+    (error) =>
+      error instanceof AiAccessError &&
+      error.code === "project_instruction_storage_forbidden"
+  );
+});
+
+test("account workspace validates authentication, schemas, and payload limits", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  assert.throws(
+    () =>
+      service.authenticateAccountWorkspaceRequest(request(), new MockResponse()),
+    (error) => error instanceof AiAccessError && error.status === 401
+  );
+  const login = await signIn(service, oauthClient, {
+    code: "workspace-limits",
+    sub: "workspace-limits-account",
+    email: "limits@example.com",
+  });
+  const context = service.authenticateAccountWorkspaceRequest(
+    request(login.cookie),
+    new MockResponse()
+  );
+  const emptyChats = { schemaVersion: 1, activeChatId: null, chats: [] };
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(context, "chats", {
+        baseRevision: 0,
+        data: emptyChats,
+      }),
+    (error) =>
+      error instanceof AiAccessError &&
+      error.status === 400 &&
+      error.code === "expected_account_key_required"
+  );
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(context, "chats", {
+        baseRevision: 0,
+        expectedAccountKey: "other_account_key_123456789012345678901234567890",
+        data: emptyChats,
+      }),
+    (error) =>
+      error instanceof AiAccessError &&
+      error.status === 409 &&
+      error.code === "account_workspace_account_mismatch"
+  );
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(context, "chats", {
+        baseRevision: 0,
+        expectedAccountKey: context.accountKey,
+        data: {
+          schemaVersion: 1,
+          activeChatId: "chat-strict",
+          chats: [
+            {
+              id: "chat-strict",
+              title: "Strict",
+              createdAt: 1,
+              updatedAt: 1,
+              messages: [
+                {
+                  id: "message-strict",
+                  role: "user",
+                  content: "Question",
+                  title: "",
+                  createdAt: 1,
+                  unsupported: true,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    (error) =>
+      error instanceof AiAccessError &&
+      error.status === 400 &&
+      error.code === "invalid_account_data"
+  );
+  const largeMessages = Array.from({ length: 9 }, (_, index) => ({
+    id: `large-message-${index}`,
+    role: index % 2 ? "assistant" : "user",
+    content: "x".repeat(120 * 1024),
+    title: "",
+    createdAt: index + 1,
+  }));
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(context, "chats", {
+        baseRevision: 0,
+        expectedAccountKey: context.accountKey,
+        data: {
+          schemaVersion: 1,
+          activeChatId: "large-chat",
+          chats: [
+            {
+              id: "large-chat",
+              title: "Large",
+              createdAt: 1,
+              updatedAt: 10,
+              messages: largeMessages,
+            },
+          ],
+        },
+      }),
+    (error) =>
+      error instanceof AiAccessError &&
+      error.status === 413 &&
+      error.code === "account_data_too_large"
+  );
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(context, "instruction", {
+        baseRevision: 0,
+        expectedAccountKey: context.accountKey,
+        data: {
+          schemaVersion: 1,
+          revision: 0,
+          markdown: "x".repeat(128 * 1024 + 1),
+          skillRefs: [],
+        },
+      }),
+    (error) => error instanceof AiAccessError && error.status === 400
+  );
+  assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.chats, 1024 * 1024);
+  assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.files, 4 * 1024 * 1024);
+  assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.instruction, 256 * 1024);
+});
+
+test("AI access database migrates to schema 2 with account workspace storage", (t) => {
+  const temporaryDirectory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "uartdebug-ai-schema-")
+  );
+  const databasePath = path.join(temporaryDirectory, "ai-access.sqlite");
+  const initial = makeService({ databasePath }).service;
+  initial.database.exec(
+    "DROP TABLE account_workspace_snapshots; PRAGMA user_version = 1;"
+  );
+  initial.close();
+
+  const { service } = makeService({ databasePath });
+  t.after(() => {
+    service.close();
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+  });
+  assert.equal(AI_ACCESS_SCHEMA_VERSION, 2);
+  assert.equal(
+    Number(service.database.prepare("PRAGMA user_version").get().user_version),
+    2
+  );
+  const table = service.database
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'account_workspace_snapshots'"
+    )
+    .get();
+  assert.match(String(table?.sql || ""), /instruction/);
 });

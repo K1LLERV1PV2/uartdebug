@@ -85,7 +85,9 @@ sudo systemctl daemon-reload
 sudo systemctl restart uartdebug-ai.service
 ```
 
-Access state and the append-only credit ledger live in:
+Access state, the append-only credit ledger, signed-in AI chat history, the
+latest account-scoped AVR file-workspace snapshot, and the separate latest
+Project-instruction snapshot live in:
 
 ```text
 /var/lib/uartdebug-ai/data/ai-access.sqlite
@@ -94,7 +96,20 @@ Access state and the append-only credit ledger live in:
 The directory is owned by `uartai:uartai`, has mode `0700`, and is the only new
 writable path granted to the hardened unit. It is outside release directories so
 deployments and rollbacks do not replace it. Treat the database and its backups
-as sensitive personal and financial-adjacent data.
+as sensitive personal, project-content, and financial-adjacent data. Account
+workspace/chat records are structurally and size bounded and use optimistic
+revision checks; a stale write must fail as a conflict instead of replacing a
+newer snapshot. The current serialized ceilings are 1 MiB for chats, 4 MiB for
+files, and 256 KiB for the account Project-instruction snapshot; the more
+granular collection and field limits are enforced alongside those byte ceilings
+in `ai-access-service.js`. The AI request path validates the instruction again
+and may use a stricter limit than account storage. The sync API exposes a second,
+domain-separated HMAC value as `accountKey` for browser-local sync metadata; it
+never exposes the stored account hash, Google subject, or email address. Every
+workspace PUT must echo that value as `expectedAccountKey` beside
+`baseRevision` and `data`. The server compares it with the freshly authenticated
+session before persistence, so a stale tab cannot save one account's local state
+after the shared browser cookie has switched to another account.
 
 The checked-in unit provisionally grants a nominal 500 AI Credits per eligible
 account and browser-installation pair, representing USD 0.50 of catalogued
@@ -145,7 +160,10 @@ per-IP generation quota, conversation-message quota, or daily usage quota.
 The Google OAuth start endpoint has a separate technical abuse guard: by
 default it permits 10 starts per source IP and 1,000 globally per 10-minute
 process window. This protects SQLite from login-start bursts and does not limit
-AI conversation messages.
+AI conversation messages. Account-workspace PUTs have a separate account-scoped
+technical guard of 1,200 attempts per 10-minute process window by default. A 429
+response includes `Retry-After`; this safeguard neither consumes AI Credits nor
+sets a conversation-message limit.
 
 ## Instruction blocks and the reviewed project instruction
 
@@ -179,13 +197,16 @@ hash. The deployment installer validates and copies the complete catalog before
 restarting the service; the smoke test verifies that the public endpoint exposes
 only the allowlisted shape.
 
-The AVR page stores the visitor's assembled Markdown instruction locally as a
-revisioned `instructionDocument`. It is sent as untrusted user context with chat
-requests. A request to revise that document uses the dedicated
-`edit_avr_project_instruction` tool and returns the exact base revision; the
-browser refuses to overwrite newer manual edits. Project create/update actions
-receive the reviewed instruction as their primary project requirements, but do
-not silently rewrite it while generating project files.
+The AVR page stores the visitor's assembled Markdown instruction in
+`localStorage` for unsigned and offline use. After Google sign-in it also syncs
+that document as a third account-scoped snapshot, with a revision independent
+from the chat and file snapshots. It is not attached to a chat, so switching
+chats must not switch instructions. The instruction is sent as untrusted user
+context with explicit AI requests. A request to revise that document uses the
+dedicated `edit_avr_project_instruction` tool and returns the exact base
+revision; the browser refuses to overwrite newer manual edits. Project
+create/update actions receive the reviewed instruction as their primary project
+requirements, but do not silently rewrite it while generating project files.
 
 The service also keeps a dormant random access credential in:
 
@@ -222,11 +243,20 @@ copy a changed unit into `/etc/systemd/system`, create new credential files, or
 create new persistent data directories. A code deploy alone therefore does not
 activate systemd-foundation changes.
 
-The workflow also does not yet coordinate a pre-migration SQLite backup. Before
-deploying a release that changes the access schema, take and verify an online
-backup first (or extend the workflow to invoke a migration/backup step). Running
-the installer only after new code has already opened the database is not a
-pre-migration backup.
+The deployment workflow invokes `backup-ai-access-database.sh` before switching
+the backend release or restarting the AI service. The helper uses SQLite's
+online backup command and verifies the copy's integrity and schema version. A
+schema-changing deployment therefore fails closed if `sqlite3` is missing or the
+backup cannot be verified. Rolling back from schema 2 to an older schema-1
+backend also requires restoring its matching pre-migration database backup;
+switching only the release symlink is insufficient. Before any rollback release
+symlink changes, the workflow compares the live SQLite `user_version` with the
+target backend's `AI_ACCESS_SCHEMA_VERSION` and refuses an incompatible rollback
+with restore instructions. Verified workflow pre-migration backups use narrowly
+validated names and contents under `/var/backups/uartdebug-ai`; the helper keeps
+the newest 10 and deletes only older root-owned mode-0700 directories whose
+database integrity and metadata schema version are verified. Manual installer
+and unrelated operational backups are outside that retention set.
 
 ## Replacing the rule pack
 
@@ -254,13 +284,26 @@ never sent to the model.
 ## Runtime safeguards and retention
 
 The production service unit allows one concurrent generation. The HTTP server
-also enforces a 1 MiB request-body ceiling, bounded individual fields, a model
+enforces a 1 MiB generation-request ceiling, bounded individual fields, a model
 timeout, an output-token ceiling, and the Google-login start guard described
-above. nginx keeps a connection-concurrency safeguard, but AI generation-rate
-and daily quotas are currently disabled.
+above. Authenticated account snapshots are limited independently to 1 MiB for
+chats, 4 MiB for files, and 256 KiB for the Project instruction. The nginx AI
+location allows 5 MiB so the largest revision envelope can reach the stricter
+Node validator. nginx keeps a connection-concurrency safeguard, but AI
+generation-rate and daily quotas are currently disabled. The account-scoped
+workspace PUT guard described above only bounds repeated persistence writes; the
+1 MiB aggregate chat snapshot and 128 KiB per-message field limit are technical
+storage bounds, not a fixed chat-message count.
 
-The browser keeps the full visible chat for the current page session, while
-each API request includes the newest complete exchanges that fit a 768 KiB
+Without Google sign-in, chat and AVR file-workspace state remain browser-local,
+and the Project instruction remains in `localStorage`. After sign-in, the
+browser can restore and revision-sync the account's chat history, latest
+complete AVR file-workspace snapshot, and separate Project-instruction snapshot
+through the AI service. All three have independent revisions; the instruction
+remains independent of chat selection.
+
+Synchronization alone does not call Google or OpenAI. Each explicit AI request
+includes the newest complete exchanges and project context that fit a 768 KiB
 target. This is transport/context protection rather than a message or access
 quota; users can continue the conversation without a fixed interaction count.
 

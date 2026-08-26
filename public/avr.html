@@ -287,12 +287,69 @@
                     <div
                       class="avr-action-strip project-ai-action-strip avr-session-header"
                     >
-                      <div class="project-ai-heading" id="projectAiHeader">
-                        <div class="project-ai-heading-copy">
-                          <span class="project-ai-eyebrow"
-                            >AVR project assistant</span
+                      <h2 class="sr-only" id="projectAiTitle">
+                        Uart Debug AI conversation
+                      </h2>
+                      <div class="project-ai-toolbar" id="projectAiHeader">
+                        <div class="project-ai-chats">
+                          <button
+                            class="project-ai-chats-trigger"
+                            id="projectAiChatsBtn"
+                            type="button"
+                            aria-label="Open chats"
+                            aria-haspopup="menu"
+                            aria-controls="projectAiChatsMenu"
+                            aria-expanded="false"
                           >
-                          <h2 id="projectAiTitle">Uart Debug AI</h2>
+                            <span aria-hidden="true"></span>
+                            <span aria-hidden="true"></span>
+                            <span aria-hidden="true"></span>
+                          </button>
+
+                          <div
+                            class="project-ai-chats-menu"
+                            id="projectAiChatsMenu"
+                            role="menu"
+                            aria-label="AI chats"
+                            hidden
+                          >
+                            <div class="project-ai-chats-menu-header">
+                              <strong>Chats</strong>
+                              <button
+                                class="project-ai-new-chat"
+                                id="projectAiNewChatBtn"
+                                type="button"
+                              >
+                                New chat
+                              </button>
+                            </div>
+                            <div
+                              class="project-ai-chat-list"
+                              id="projectAiChatList"
+                            ></div>
+                          </div>
+                        </div>
+
+                        <div
+                          class="project-ai-budget"
+                          id="projectAiBudget"
+                          role="progressbar"
+                          aria-label="AI Credits remaining"
+                          aria-valuemin="0"
+                          aria-valuemax="0"
+                          aria-valuenow="0"
+                          hidden
+                        >
+                          <span class="project-ai-budget-label"
+                            >AI Credits</span
+                          >
+                          <div
+                            class="project-ai-budget-track"
+                            aria-hidden="true"
+                          >
+                            <span id="projectAiBudgetFill"></span>
+                          </div>
+                          <output id="projectAiBudgetValue">0 / 0</output>
                         </div>
 
                         <div
@@ -333,25 +390,6 @@
                     </div>
 
                     <div
-                      class="project-ai-budget"
-                      id="projectAiBudget"
-                      role="progressbar"
-                      aria-label="AI Credits remaining"
-                      aria-valuemin="0"
-                      aria-valuemax="0"
-                      aria-valuenow="0"
-                      hidden
-                    >
-                      <div class="project-ai-budget-copy">
-                        <span>AI Credits</span>
-                        <output id="projectAiBudgetValue">0 / 0</output>
-                      </div>
-                      <div class="project-ai-budget-track" aria-hidden="true">
-                        <span id="projectAiBudgetFill"></span>
-                      </div>
-                    </div>
-
-                    <div
                       class="project-ai-view"
                       id="projectAiView"
                       role="region"
@@ -368,15 +406,7 @@
                           role="log"
                           aria-live="polite"
                           aria-relevant="additions"
-                        >
-                          <article class="project-ai-message is-assistant">
-                            <span class="sr-only">AI assistant</span>
-                            <p>
-                              Ask an AVR question, refine the instruction, or
-                              explicitly request a new or updated mini-project.
-                            </p>
-                          </article>
-                        </div>
+                        ></div>
                       </section>
 
                       <form class="project-ai-form" id="projectAiForm">

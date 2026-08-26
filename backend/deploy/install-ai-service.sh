@@ -38,6 +38,8 @@ required=(
   "${stage}/deploy/nginx-avr-ai-location.conf"
   "${stage}/deploy/nginx-avr-ai-oauth-callback-location.conf"
   "${stage}/deploy/install-ai-rule-pack.sh"
+  "${stage}/deploy/backup-ai-access-database.sh"
+  "${stage}/deploy/set-ai-workspace-body-limit.sh"
   "${stage}/deploy/redact-oauth-callback-logging.sh"
   "${stage}/deploy/remove-ai-request-limits.sh"
 )
@@ -78,11 +80,6 @@ node -e '
   echo "The staged AI skill catalog is invalid" >&2
   exit 66
 }
-if [ -f "${access_db_file}" ] && ! command -v sqlite3 >/dev/null; then
-  echo "sqlite3 is required to make a consistent online access-database backup" >&2
-  exit 69
-fi
-
 install -d -o root -g root -m 0700 "${backup_root}"
 cp -a "${site_file}" "${backup_root}/uartdebug.com"
 cp -a "${limits_file}" "${backup_root}/uartdebug-limits.conf"
@@ -90,11 +87,9 @@ if [ -f "${unit_file}" ]; then
   cp -a "${unit_file}" "${backup_root}/uartdebug-ai.service"
 fi
 if [ -f "${access_db_file}" ]; then
-  sqlite3 -cmd ".timeout 10000" "${access_db_file}" \
-    ".backup '${backup_root}/ai-access.sqlite'"
-  if [ -f "${backup_root}/ai-access.sqlite" ]; then
-    chmod 0600 "${backup_root}/ai-access.sqlite"
-  fi
+  /bin/bash "${stage}/deploy/backup-ai-access-database.sh" \
+    "${access_db_file}" \
+    "${backup_root}"
 fi
 
 if ! getent passwd uartai >/dev/null; then
@@ -220,6 +215,10 @@ if ! grep -q 'location \^~ /api/avr/ai/' "${site_file}"; then
   install -o root -g root -m 0644 "${site_tmp}" "${site_file}"
   rm -f "${site_tmp}"
 fi
+
+/bin/bash "${stage}/deploy/set-ai-workspace-body-limit.sh" \
+  "${site_file}" \
+  "${backup_root}/workspace-body-limit"
 
 /bin/bash "${stage}/deploy/redact-oauth-callback-logging.sh" \
   "${site_file}" \

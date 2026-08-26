@@ -90,6 +90,21 @@ jobs:
           strip_components: 1
           rm: true
 
+      - name: Upload rollback database-schema guard
+        if: ${{ inputs.rollback }}
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
+          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
+          source: "backend/deploy/guard-ai-access-schema-rollback.sh"
+          target: "/tmp/deploy/${{ github.sha }}/deploy-tools"
+          strip_components: 2
+          rm: true
+
       - name: Run remote deploy / rollback
         env:
           DEPLOY_ROLLBACK: ${{ inputs.rollback && '1' || '' }}
@@ -306,16 +321,28 @@ jobs:
             ROLLBACK="${DEPLOY_ROLLBACK:-}"
             TO_RELEASE="${DEPLOY_TO_RELEASE:-}"
 
-            if [ -n "${TO_RELEASE}" ]; then
-              if ! printf '%s\n' "${TO_RELEASE}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$' ||
-                printf '%s\n' "${TO_RELEASE}" | grep -q '\.\.'; then
-                echo "Invalid release name"
-                exit 1
-              fi
-            fi
-
             sudo mkdir -p "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
             sudo chown -R "$USER":"$USER" "${ROOT}" "${RLS}" "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
+
+            rollback_pub_target=""
+            rollback_be_target=""
+            rollback_py_target=""
+            if [ -n "${ROLLBACK}" ]; then
+              rollback_guard="/tmp/deploy/${SHA}/deploy-tools/guard-ai-access-schema-rollback.sh"
+              [ -f "${rollback_guard}" ] || {
+                echo "Rollback refused before changing release symlinks: database-schema guard was not uploaded." >&2
+                exit 66
+              }
+              rollback_target_output="$(
+                run_sudo /bin/bash "${rollback_guard}" \
+                  "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}" "${TO_RELEASE}" \
+                  "/var/lib/uartdebug-ai/data/ai-access.sqlite"
+              )"
+              mapfile -t rollback_targets <<< "${rollback_target_output}"
+              rollback_pub_target="${rollback_targets[0]:-}"
+              rollback_be_target="${rollback_targets[1]:-}"
+              rollback_py_target="${rollback_targets[2]:-}"
+            fi
 
             ts_bootstrap="$(date +%Y%m%d-%H%M%S)-bootstrap"
             for X in public backend python; do
@@ -332,24 +359,9 @@ jobs:
 
             if [ -n "${ROLLBACK}" ]; then
               echo "== Rollback mode =="
-              if [ -n "${TO_RELEASE}" ]; then
-                [ -d "${PUB_RLS}/${TO_RELEASE}" ] && ln -sfn "${PUB_RLS}/${TO_RELEASE}" "${PUB_DIR}" || echo "No public release ${TO_RELEASE}"
-                [ -d "${BE_RLS}/${TO_RELEASE}" ] && ln -sfn "${BE_RLS}/${TO_RELEASE}" "${BE_DIR}" || echo "No backend release ${TO_RELEASE}"
-                [ -d "${PY_RLS}/${TO_RELEASE}" ] && ln -sfn "${PY_RLS}/${TO_RELEASE}" "${PY_DIR}" || echo "No python release ${TO_RELEASE}"
-              else
-                if [ -d "${PUB_RLS}" ]; then
-                  last_pub="$(ls -1 "${PUB_RLS}" | sort | tail -n 2 | head -n 1 || true)"
-                  [ -n "${last_pub}" ] && ln -sfn "${PUB_RLS}/${last_pub}" "${PUB_DIR}" || echo "No previous public release"
-                fi
-                if [ -d "${BE_RLS}" ]; then
-                  last_be="$(ls -1 "${BE_RLS}" | sort | tail -n 2 | head -n 1 || true)"
-                  [ -n "${last_be}" ] && ln -sfn "${BE_RLS}/${last_be}" "${BE_DIR}" || echo "No previous backend release"
-                fi
-                if [ -d "${PY_RLS}" ]; then
-                  last_py="$(ls -1 "${PY_RLS}" | sort | tail -n 2 | head -n 1 || true)"
-                  [ -n "${last_py}" ] && ln -sfn "${PY_RLS}/${last_py}" "${PY_DIR}" || echo "No previous python release"
-                fi
-              fi
+              [ -n "${rollback_pub_target}" ] && ln -sfn "${rollback_pub_target}" "${PUB_DIR}" || echo "No matching previous public release"
+              [ -n "${rollback_be_target}" ] && ln -sfn "${rollback_be_target}" "${BE_DIR}" || echo "No matching previous backend release"
+              [ -n "${rollback_py_target}" ] && ln -sfn "${rollback_py_target}" "${PY_DIR}" || echo "No matching previous python release"
             else
               echo "== Deploy new build =="
               PUB_SRC="/tmp/deploy/${SHA}/public"
@@ -367,6 +379,14 @@ jobs:
                   echo "Missing AI rule-pack installer in staged backend"
                   exit 1
                 }
+                [ -f "${BE_SRC}/deploy/backup-ai-access-database.sh" ] || {
+                  echo "Missing AI access-database backup helper in staged backend"
+                  exit 1
+                }
+                [ -f "${BE_SRC}/deploy/set-ai-workspace-body-limit.sh" ] || {
+                  echo "Missing AI workspace nginx migration in staged backend"
+                  exit 1
+                }
                 [ -f "${BE_SRC}/deploy/remove-ai-request-limits.sh" ] || {
                   echo "Missing AI request-limit cleanup in staged backend"
                   exit 1
@@ -376,6 +396,16 @@ jobs:
                     echo "Missing OAuth callback log-redaction migration in staged backend"
                     exit 1
                 }
+                access_db_backup="/var/backups/uartdebug-ai/$(date -u +%Y%m%dT%H%M%SZ)-pre-migration-${SHA:0:7}"
+                run_sudo /bin/bash \
+                  "${BE_SRC}/deploy/backup-ai-access-database.sh" \
+                  "/var/lib/uartdebug-ai/data/ai-access.sqlite" \
+                  "${access_db_backup}"
+                workspace_nginx_backup="/var/backups/uartdebug-ai/$(date -u +%Y%m%dT%H%M%SZ)-workspace-body-limit-${SHA:0:7}"
+                run_sudo /bin/bash \
+                  "${BE_SRC}/deploy/set-ai-workspace-body-limit.sh" \
+                  "/etc/nginx/sites-available/uartdebug.com" \
+                  "${workspace_nginx_backup}"
                 run_sudo /bin/bash \
                   "${BE_SRC}/deploy/install-ai-rule-pack.sh" \
                   "${BE_SRC}"
@@ -671,7 +701,7 @@ jobs:
             echo "Deploy OK"
 
       - name: Cleanup temp on server
-        if: ${{ always() && !inputs.rollback }}
+        if: ${{ always() }}
         uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}

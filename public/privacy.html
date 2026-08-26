@@ -16,7 +16,7 @@
 
       <article class="legal-document">
         <h1>Privacy Policy</h1>
-        <p class="legal-effective">Effective August 25, 2026</p>
+        <p class="legal-effective">Effective August 26, 2026</p>
 
         <p class="legal-callout">
           Uart Debug is an experimental browser-based AVR and UART tool. This
@@ -47,17 +47,37 @@
             days. They support authentication, AI Credits, and abuse prevention.
           </li>
           <li>
-            <strong>Local project data.</strong> AVR files, guide edits, interface
-            preferences, and the reviewed Project instruction are stored in your
-            browser's local storage. AI chat history is kept in page memory.
+            <strong>Browser-local project data.</strong> Without Google sign-in,
+            AVR working files and AI chat state remain in the browser and are not
+            written to an account record. Interface preferences remain local. The
+            reviewed Project instruction remains in browser local storage for
+            unsigned and offline use.
           </li>
           <li>
-            <strong>AI requests.</strong> Your message, selected MCU, current
-            project source and guide, recent conversation, and Project instruction
-            are sent to OpenAI to answer or generate requested project material.
-            A stable pseudonymous browser safety identifier and a per-request ID
-            are also sent for abuse prevention and operational tracing. Google
-            identifiers, email, and authentication cookies are not included.
+            <strong>Signed-in workspace synchronization.</strong> After Google
+            sign-in, Uart Debug may store AI chat history, a complete snapshot of
+            the AVR file workspace, and the reviewed Project instruction in
+            account-scoped SQLite. The file snapshot can contain file names, file
+            contents, guide edits, grouping, and the file-list state needed to
+            restore the workspace. The Project instruction is a third independent
+            snapshot; it is not attached to a chat and does not change when chats
+            are switched. Writes are bounded and independently revisioned; stale
+            revisions are rejected rather than silently replacing newer account
+            data. Before a cloud copy replaces browser-local data, the browser may
+            keep a bounded local recovery copy for conflict and account-switch
+            safety. These recovery copies stay in browser storage and are removed
+            when site data is cleared.
+          </li>
+          <li>
+            <strong>AI requests.</strong> Account synchronization by itself does
+            not send chat or workspace data to Google or OpenAI. When you
+            explicitly submit an AI request, your message and the context selected
+            for that request—such as the current conversation, MCU, project source
+            and guide, and Project instruction—are sent to OpenAI to answer or
+            generate requested project material. A stable pseudonymous browser safety identifier
+            and a per-request ID are also sent for abuse
+            prevention and operational tracing. Google identifiers, email, and
+            authentication cookies are not included.
           </li>
           <li>
             <strong>Usage and security records.</strong> The service records
@@ -76,8 +96,9 @@
         <h2>Why we use it</h2>
         <p>
           We process this information to provide the requested tools, authenticate
-          users, allocate and account for AI Credits, keep project updates
-          consistent, secure the service, investigate failures, and prevent abuse.
+          users, restore signed-in chats and AVR workspaces, allocate and account
+          for AI Credits, keep project updates consistent, secure the service,
+          investigate failures, and prevent abuse.
         </p>
 
         <h2>Service providers</h2>
@@ -85,8 +106,9 @@
           DigitalOcean hosts the service. OpenAI processes AI-request content with
           API storage disabled for application responses; OpenAI may retain limited
           data for abuse monitoring under its API data controls. Google provides
-          authentication. These providers process data under their own terms and
-          privacy commitments.
+          authentication. Google does not receive the synchronized AVR workspace,
+          AI chat history, or Project instruction from Uart Debug. These providers
+          process data under their own terms and privacy commitments.
         </p>
         <p>
           We do not sell Google user data, use it for advertising, or send it to
@@ -111,14 +133,24 @@
             while needed to operate access and prevent repeated free-limit abuse.
             Automated expiry for these records is still under development.
           </li>
+          <li>
+            Signed-in chat history, the latest AVR workspace snapshot, and the
+            latest Project-instruction snapshot are retained with the account data
+            until replaced or removed through an operator-handled data request.
+            Automatic expiry and a self-service deletion/export interface are not
+            currently available.
+          </li>
         </ul>
 
         <h2>Your choices and deletion</h2>
         <p>
           You may use the non-AI AVR and UART tools without Google sign-in. You can
           sign out at any time, clear site cookies/local storage in your browser,
-          and revoke Uart Debug in your Google Account connections. To request
-          access, correction, or deletion of server-side account data, email
+          and revoke Uart Debug in your Google Account connections. Signing out,
+          clearing browser storage, or revoking Google access does not by itself
+          erase a previously synchronized server copy. There is currently no
+          self-service account-data export or deletion control. To request access,
+          correction, or deletion of server-side account data, email
           <a href="mailto:uartdebug@gmail.com">uartdebug@gmail.com</a>. Because
           the service stores only a masked email, the operator will provide
           verification steps and may ask for recent session or request details.
