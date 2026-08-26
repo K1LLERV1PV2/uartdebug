@@ -1027,9 +1027,12 @@ test("deploy verifies legal page content rather than accepting an SPA fallback",
     .map((line) => line.replace(/^ {12}/, ""))
     .join("\n");
   assert.ok(
-    evaluatedInput.length < 21000,
-    `remote deploy action input exceeds GitHub's 21000-character expression limit: ${evaluatedInput.length}`
+    evaluatedInput.length < 18000,
+    `remote deploy action input is too close to GitHub's 21000-character expression limit: ${evaluatedInput.length}`
   );
+  assert.match(workflow, /Upload remote deploy helpers/);
+  assert.match(workflow, /remote-deploy-helpers\.sh/);
+  assert.match(workflow, /\. "\$\{deploy_helpers\}"/);
 });
 
 test("renames a mini-project display name without renaming its linked files", () => {

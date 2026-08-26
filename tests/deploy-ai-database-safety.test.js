@@ -19,7 +19,12 @@ test("deployment guards database schema before rollback symlink changes", () => 
   assert.ok(rollbackResolution >= 0, "rollback guard invocation is missing");
   assert.ok(bootstrapSymlink > rollbackResolution);
   assert.ok(rollbackSymlink > bootstrapSymlink);
-  assert.match(workflow, /Upload rollback database-schema guard/);
+  assert.match(workflow, /Upload remote deploy helpers/);
+  assert.match(
+    workflow,
+    /source: "backend\/deploy\/guard-ai-access-schema-rollback\.sh,backend\/deploy\/remote-deploy-helpers\.sh"/
+  );
+  assert.match(workflow, /\. "\$\{deploy_helpers\}"/);
   assert.match(guard, /PRAGMA user_version;/);
   assert.match(guard, /target AI_ACCESS_SCHEMA_VERSION/);
   assert.match(guard, /restore the matching verified pre-migration/);
