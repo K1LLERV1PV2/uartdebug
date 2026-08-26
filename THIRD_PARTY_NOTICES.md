@@ -28,4 +28,5 @@ licenses continue to apply to those packages and their transitive dependencies:
 | Component | Version | Manifest | Upstream | License |
 | --- | --- | --- | --- | --- |
 | Express | 4.22.2 | `backend/package.json` | [expressjs/express](https://github.com/expressjs/express/tree/4.22.2) | MIT |
+| Express Rate Limit | 8.6.2 | `backend/package.json` | [express-rate-limit/express-rate-limit](https://github.com/express-rate-limit/express-rate-limit/tree/v8.6.2) | MIT |
 | Google Auth Library for Node.js | 11.0.2 | `backend/package.json` | [googleapis/google-auth-library-nodejs](https://github.com/googleapis/google-auth-library-nodejs/tree/v11.0.2) | Apache-2.0 |

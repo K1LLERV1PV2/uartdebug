@@ -11,13 +11,14 @@
     "start:compiler": "node compile-server.js",
     "start:ai": "node ai-server.js",
     "test": "node --test ../tests/*.test.js",
-    "check": "node --check avr-compiler-contract.js && node --check avr-compiler-readiness.js && node --check compile-server.js && node --check ai-server.js && node --check ai-access-service.js && node --check avr-ai-service.js"
+    "check": "node --check avr-compiler-contract.js && node --check avr-compiler-readiness.js && node --check compile-capacity-guard.js && node --check compile-server.js && node --check ai-server.js && node --check ai-access-service.js && node --check avr-ai-service.js"
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "dependencies": {
     "express": "4.22.2",
+    "express-rate-limit": "8.6.2",
     "google-auth-library": "11.0.2"
   }
 }

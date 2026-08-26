@@ -1,7 +1,7 @@
 "use strict";
 
 const AVR_COMPILE_CONTRACT = "uartdebug-avr-compile/v1";
-const AVR_COMPILE_SERVER_VERSION = "20260826-verification-contract-v1";
+const AVR_COMPILE_SERVER_VERSION = "20260826-rate-limit-v1";
 const AVR_COMPILE_HEALTH_SERVICE = "uartdebug-avr-compiler";
 const AVR_COMPILE_FAILURE_STAGES = Object.freeze([
   "request",
