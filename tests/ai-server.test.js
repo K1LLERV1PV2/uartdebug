@@ -887,3 +887,315 @@ test("passes an explicit provider rejection to reservation cleanup", async (t) =
     usageRecorded: false,
   });
 });
+
+test("serves independently revisioned account workspace snapshots", async (t) => {
+  const calls = [];
+  const emptyRecord = (schemaVersion) => ({
+    revision: 0,
+    schemaVersion,
+    updatedAt: null,
+    data: null,
+  });
+  const accessService = {
+    authenticateAccountWorkspaceRequest(req) {
+      calls.push(["authenticate", req.method]);
+      return {
+        accountHash: "private-account-hash",
+        accountKey: "public_account_key_12345678901234567890",
+        deviceId: "device",
+      };
+    },
+    readAccountWorkspace(context) {
+      calls.push(["read", context.accountHash]);
+      return {
+        accountKey: context.accountKey,
+        documents: {
+          chats: emptyRecord(1),
+          files: emptyRecord(2),
+          instruction: emptyRecord(1),
+        },
+      };
+    },
+    writeAccountWorkspace(context, type, body) {
+      calls.push(["write", context.accountHash, type, body.baseRevision]);
+      return {
+        type,
+        accountKey: context.accountKey,
+        document: {
+          revision: body.baseRevision + 1,
+          schemaVersion: body.data.schemaVersion,
+          updatedAt: 123,
+          data: body.data,
+        },
+      };
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService: {},
+    accessService,
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const readResponse = await fetch(
+    `${baseUrl}/api/avr/ai/account/workspace`
+  );
+  assert.equal(readResponse.status, 200);
+  const readBody = await readResponse.json();
+  assert.equal(readBody.ok, true);
+  assert.equal(readBody.documents.files.schemaVersion, 2);
+  assert.equal(readBody.documents.instruction.revision, 0);
+  assert.equal(
+    readBody.accountKey,
+    "public_account_key_12345678901234567890"
+  );
+  assert.equal("accountHash" in readBody, false);
+
+  const instruction = {
+    schemaVersion: 1,
+    revision: 2,
+    markdown: "# Project\n",
+    skillRefs: [],
+  };
+  const writeResponse = await fetch(
+    `${baseUrl}/api/avr/ai/account/workspace/instruction`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: baseUrl,
+      },
+      body: JSON.stringify({
+        baseRevision: 0,
+        expectedAccountKey: "public_account_key_12345678901234567890",
+        data: instruction,
+      }),
+    }
+  );
+  assert.equal(writeResponse.status, 200);
+  const writeBody = await writeResponse.json();
+  assert.equal(writeBody.ok, true);
+  assert.equal(writeBody.type, "instruction");
+  assert.equal(writeBody.document.revision, 1);
+  assert.deepEqual(writeBody.document.data, instruction);
+  assert.deepEqual(calls, [
+    ["authenticate", "GET"],
+    ["read", "private-account-hash"],
+    ["authenticate", "PUT"],
+    ["write", "private-account-hash", "instruction", 0],
+  ]);
+});
+
+test("account workspace writes require same-origin JSON and preserve revision conflicts", async (t) => {
+  let authenticateCalls = 0;
+  let writeCalls = 0;
+  const accessService = {
+    authenticateAccountWorkspaceRequest() {
+      authenticateCalls += 1;
+      return {
+        accountHash: "account",
+        accountKey: "account_key_123456789012345678901234567890",
+        deviceId: "device",
+      };
+    },
+    writeAccountWorkspace() {
+      writeCalls += 1;
+      throw new AiAccessError(
+        409,
+        "account_data_revision_conflict",
+        "The account workspace changed in another session."
+      );
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService: {},
+    accessService,
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+  const body = JSON.stringify({
+    baseRevision: 0,
+    expectedAccountKey: "account_key_123456789012345678901234567890",
+    data: { schemaVersion: 1, activeChatId: null, chats: [] },
+  });
+
+  const missingOrigin = await fetch(
+    `${baseUrl}/api/avr/ai/account/workspace/chats`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }
+  );
+  assert.equal(missingOrigin.status, 403);
+  assert.equal(authenticateCalls, 0);
+
+  const wrongType = await fetch(
+    `${baseUrl}/api/avr/ai/account/workspace/chats`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain", Origin: baseUrl },
+      body,
+    }
+  );
+  assert.equal(wrongType.status, 415);
+  assert.equal(authenticateCalls, 0);
+
+  const conflict = await fetch(
+    `${baseUrl}/api/avr/ai/account/workspace/chats`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Origin: baseUrl },
+      body,
+    }
+  );
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).code, "account_data_revision_conflict");
+  assert.equal(authenticateCalls, 1);
+  assert.equal(writeCalls, 1);
+});
+
+test("account workspace writes reject a stale account key before persistence", async (t) => {
+  let writeCalls = 0;
+  const accessService = {
+    authenticateAccountWorkspaceRequest() {
+      return {
+        accountHash: "new-account-hash",
+        accountKey: "new_account_key_123456789012345678901234567890",
+        deviceId: "device",
+      };
+    },
+    writeAccountWorkspace() {
+      writeCalls += 1;
+      return {};
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService: {},
+    accessService,
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(
+    `${baseUrl}/api/avr/ai/account/workspace/chats`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Origin: baseUrl },
+      body: JSON.stringify({
+        baseRevision: 0,
+        expectedAccountKey: "old_account_key_123456789012345678901234567890",
+        data: { schemaVersion: 1, activeChatId: null, chats: [] },
+      }),
+    }
+  );
+  assert.equal(response.status, 409);
+  assert.equal(
+    (await response.json()).code,
+    "account_workspace_account_mismatch"
+  );
+  assert.equal(writeCalls, 0);
+});
+
+test("rate limits account workspace writes without spending AI credits", async (t) => {
+  let writeCalls = 0;
+  const accountKey = "account_key_123456789012345678901234567890";
+  const accessService = {
+    authenticateAccountWorkspaceRequest() {
+      return { accountHash: "rate-limited-account", accountKey, deviceId: "device" };
+    },
+    writeAccountWorkspace(_context, type, body) {
+      writeCalls += 1;
+      return {
+        type,
+        accountKey,
+        document: {
+          revision: body.baseRevision + 1,
+          schemaVersion: 1,
+          updatedAt: 1,
+          data: body.data,
+        },
+      };
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {
+      AI_ACCOUNT_WORKSPACE_WRITES_PER_ACCOUNT: "2",
+      AI_ACCOUNT_WORKSPACE_WRITE_WINDOW_MS: "60000",
+    },
+    aiService: {},
+    accessService,
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+  const save = () =>
+    fetch(`${baseUrl}/api/avr/ai/account/workspace/chats`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Origin: baseUrl },
+      body: JSON.stringify({
+        baseRevision: 0,
+        expectedAccountKey: accountKey,
+        data: { schemaVersion: 1, activeChatId: null, chats: [] },
+      }),
+    });
+
+  assert.equal((await save()).status, 200);
+  assert.equal((await save()).status, 200);
+  const limited = await save();
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get("retry-after")) >= 1);
+  assert.equal((await limited.json()).code, "account_workspace_rate_limited");
+  assert.equal(writeCalls, 2);
+});
+
+test("account instruction HTTP body limit is enforced before persistence", async (t) => {
+  let writeCalls = 0;
+  const accessService = {
+    authenticateAccountWorkspaceRequest() {
+      return {
+        accountHash: "account",
+        accountKey: "account_key_123456789012345678901234567890",
+        deviceId: "device",
+      };
+    },
+    writeAccountWorkspace() {
+      writeCalls += 1;
+      return {};
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService: {},
+    accessService,
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+  const response = await fetch(
+    `${baseUrl}/api/avr/ai/account/workspace/instruction`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Origin: baseUrl },
+      body: JSON.stringify({
+        baseRevision: 0,
+        expectedAccountKey: "account_key_123456789012345678901234567890",
+        data: {
+          schemaVersion: 1,
+          revision: 0,
+          markdown: "x".repeat(300 * 1024),
+          skillRefs: [],
+        },
+      }),
+    }
+  );
+  assert.equal(response.status, 413);
+  assert.equal((await response.json()).code, "body_too_large");
+  assert.equal(writeCalls, 0);
+});

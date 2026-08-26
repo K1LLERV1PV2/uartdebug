@@ -26,7 +26,9 @@ The repository is under active development. Hardware access requires a browser t
 ### AVR Programming
 
 - Edit C source and related project files in a CodeMirror workspace.
-- Keep local working copies in the browser and organize files into groups.
+- Keep working copies in the browser, organize files into groups, and, after
+  Google sign-in, synchronize the AVR file workspace with the signed-in
+  account.
 - Import individual source, guide, firmware, or Uart Debug mini-project ZIP files.
 - Browse localized, image-capable Markdown guides beside the editor.
 - Follow `//# Heading` through `//###### Heading` comment links from C code to matching guide sections.
@@ -50,9 +52,21 @@ Editing, guides, and imported files work without connected hardware. Compilation
 The old README described the entire project as client-only. That is true for serial communication, but not for every AVR feature:
 
 - UART and UPDI bytes travel directly between the browser and the serial port selected in the browser permission prompt.
-- AVR working copies and preferences are stored in browser `localStorage`.
+- Without Google sign-in, AVR working copies remain in browser storage and AI
+  chat state is not written to an account record. After sign-in, Uart Debug may
+  also store AI chat history, the complete AVR file-workspace snapshot, and the
+  Project instruction in account-scoped SQLite so they can be restored for that
+  account. These are three independent snapshots: the Project instruction is
+  not part of a chat and does not change when the active chat changes.
+- Account chat, file-workspace, and Project-instruction writes are size- and
+  structure-bounded and use independent revisions. A client must resolve a
+  stale-revision conflict instead of silently overwriting a newer server copy.
 - Compiling sends the selected source and linked project files to the Uart Debug compiler service. The service builds in a temporary directory and removes it after the request.
-- Using the AI assistant sends the prompt, conversation, selected MCU, current mini-project context, reviewed Markdown instruction, referenced instruction-block identifiers, and a pseudonymous browser-installation safety identifier to the Uart Debug AI service and then to the configured OpenAI API. The API request uses `store: false`.
+- Synchronizing signed-in chat or workspace state does not send it to Google or
+  OpenAI. When the user explicitly submits an AI request, Uart Debug sends the
+  prompt and the context selected for that request—including relevant
+  conversation, MCU, project files and reviewed Markdown instruction—to the AI
+  service and configured OpenAI API. The API request uses `store: false`.
 - When enabled, the Google access layer identifies a signed-in account by Google's verified `sub` claim and a “device” only as a best-effort browser installation. It does not collect or prove a hardware identifier.
 - When the assistant creates or updates a project, the default server configuration makes the generated AI specification eligible for cleanup after 30 days and keeps at most 100 drafts. Cleanup runs during later draft activity. Source and human-guide copies are returned to the browser.
 - The OpenAI API key is a server-side systemd credential and is never sent to browser code.
@@ -79,6 +93,7 @@ flowchart LR
   Nginx --> AI[ai-server.js :8083]
   Rules[Versioned rules and AI references] --> AI
   Skills[Versioned instruction blocks] --> AI
+  AI --> AccessDB[Account-scoped SQLite]
   AI --> OpenAI[OpenAI Responses API]
 ```
 
@@ -103,8 +118,11 @@ The first paragraph below the exact `## Short Project Description` heading in th
 
 Built-in projects are copied into the browser workspace before editing; repository originals are not modified by the page.
 
-The separate AI workspace keeps a revisioned project instruction in browser
-`localStorage`. Its allowlisted instruction-block catalog lives under
+The separate AI workspace keeps a revisioned Project instruction in browser
+`localStorage` for unsigned and offline use. After Google sign-in, it is also
+synchronized as its own account-scoped snapshot with a revision independent of
+both chats and files; switching chats does not switch the instruction. Its
+allowlisted instruction-block catalog lives under
 [`backend/ai/skills`](backend/ai/skills), may intentionally be empty, and can
 later publish Markdown blocks verified by version and SHA-256 without changing
 the browser/API contract. Private mini-project AI references are not returned by

@@ -162,7 +162,11 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.match(html, /id="avrWorkspaceScene"/);
   assert.match(html, /id="projectAiScene"[\s\S]*aria-hidden="true"[\s\S]*inert/);
   assert.match(html, /id="projectAiHeader"/);
-  assert.match(html, /id="projectAiTitle">Uart Debug AI/);
+  assert.match(
+    html,
+    /class="sr-only" id="projectAiTitle">\s*Uart Debug AI conversation/
+  );
+  assert.doesNotMatch(html, /AVR project assistant/);
   assert.match(html, /id="projectAiView"/);
   assert.match(html, /id="projectAiWorkspace"/);
   assert.match(html, /id="projectAiHistory"[\s\S]*role="log"/);
@@ -181,6 +185,12 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.match(html, /id="projectAiCredits"/);
   assert.match(html, /id="projectAiBudget"[\s\S]*role="progressbar"/);
   assert.match(html, /id="projectAiBudgetFill"/);
+  assert.match(
+    html,
+    /id="projectAiChatsBtn"[\s\S]*?aria-haspopup="menu"[\s\S]*?aria-controls="projectAiChatsMenu"/
+  );
+  assert.match(html, /id="projectAiNewChatBtn"[\s\S]*?New chat/);
+  assert.match(html, /id="projectAiChatList"/);
   assert.match(html, /id="projectAiSignOutBtn"[\s\S]*Sign out/);
   assert.match(html, /id="projectInstructionEditor"/);
   assert.doesNotMatch(html, /id="projectInstructionPreview"/);
@@ -234,7 +244,35 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.match(source, /projectAiLatestQuota/);
   assert.match(source, /projectAiAuthRequestEpoch/);
   assert.match(source, /projectAiAuthSessionPromise === sessionPromise/);
-  assert.match(source, /rememberProjectAiExchange\(request, answer\)/);
+  assert.match(source, /function recordProjectAiMessage\(kind, message, title/);
+  assert.match(source, /STORAGE_PROJECT_AI_CHATS\s*=\s*"ud_avr_ai_chats_v1"/);
+  assert.match(
+    source,
+    /PROJECT_AI_ACCOUNT_WORKSPACE_URL\s*=\s*\n\s*"\/api\/avr\/ai\/account\/workspace"/
+  );
+  assert.match(source, /markProjectAiAccountDocumentDirty\("instruction"\)/);
+  assert.match(
+    source,
+    /for \(const kind of \["chats", "files", "instruction"\]\)/
+  );
+  assert.match(
+    source,
+    /STORAGE_PROJECT_AI_LOCAL_DIRTY\s*=\s*\n\s*"ud_avr_ai_local_dirty_v1"/
+  );
+  assert.match(source, /projectAiAccountWorkspaceEpoch/);
+  assert.match(source, /conflicts: projectAiAccountSync\.conflicts/);
+  assert.match(source, /title: "Different Google account"/);
+  assert.match(source, /confirmText: "Import local data"/);
+  assert.match(source, /title: `Cloud sync conflict: \$\{label\}`/);
+  assert.match(source, /cancelText: "Pause sync"/);
+  assert.match(source, /expectedAccountKey: accountKey/);
+  assert.match(source, /account_workspace_account_mismatch/);
+  assert.match(source, /sourceAccountKey: recoveryScope/);
+  assert.match(source, /scopedCopies[\s\S]*?\.slice\(3\)/);
+  assert.match(source, /projectAiAccountWorkspaceRetryTimer/);
+  assert.match(source, /function projectAiAccountDocumentsMatch\(kind, remoteData\)/);
+  assert.match(source, /if \(projectAiAccountDocumentsMatch\(kind, remote\.data\)\)/);
+  assert.doesNotMatch(source, /PROJECT_AI_MAX_MESSAGES_PER_CHAT/);
   assert.match(source, /appendProjectAiThinking\(\)/);
   assert.match(source, /removeProjectAiThinking\(thinkingIndicator\)/);
   assert.match(source, /data\.kind !== "project" && !data\.project/);
@@ -300,7 +338,7 @@ test("keeps Google AI account controls in an accessible account modal", () => {
   );
 
   const headerStart = html.indexOf('id="projectAiHeader"');
-  const headerEnd = html.indexOf('id="projectAiBudget"', headerStart);
+  const headerEnd = html.indexOf('id="projectAiView"', headerStart);
   const accountModalStart = html.indexOf('id="projectAiAccountModal"');
   const accountModalEnd = html.indexOf('id="siteDialog"', accountModalStart);
   assert.ok(headerStart >= 0 && headerEnd > headerStart);
@@ -312,6 +350,8 @@ test("keeps Google AI account controls in an accessible account modal", () => {
     header,
     /id="projectAiAccountBtn"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="projectAiAccountModal"[\s\S]*?aria-expanded="false"/
   );
+  assert.match(header, /id="projectAiChatsBtn"/);
+  assert.match(header, /id="projectAiBudget"/);
   assert.doesNotMatch(
     header,
     /project-ai-google-sign-in-asset|id="projectAiPrivacyNote"|id="projectAiAccount"|id="projectAiCredits"|id="projectAiSignOutBtn"/
@@ -381,7 +421,7 @@ test("keeps Google AI account controls in an accessible account modal", () => {
   );
   assert.match(
     source,
-    /projectAiAuthSession = \{\s*mode: "google",\s*configured: true,\s*authenticated: false,\s*quota: null,\s*\};\s*renderProjectAiAuthSession\(projectAiAuthSession\);/
+    /projectAiAuthSession = \{\s*mode: "google",\s*configured: true,\s*authenticated: false,\s*quota: null,\s*\};\s*resetProjectAiAccountWorkspaceRuntime\(\);\s*renderProjectAiAuthSession\(projectAiAuthSession\);/
   );
   assert.match(source, /setProjectAiAccountStatus\(message, "error"\)/);
   assert.match(
@@ -582,6 +622,10 @@ test("does not render the obsolete AI context row", () => {
 });
 
 test("lets the guide pane grow until the editor reaches its minimum width", () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.css"),
+    "utf8"
+  );
   const source = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.js"),
     "utf8"
@@ -593,6 +637,20 @@ test("lets the guide pane grow until the editor reaches its minimum width", () =
   );
   assert.doesNotMatch(source, /halfSplitWidth/);
   assert.doesNotMatch(source, /availableDocumentationWidth\s*\/\s*2/);
+  assert.match(source, /OUTLINER_EDITOR_MIN_WIDTH\s*=\s*500/);
+  assert.match(
+    css,
+    /--editor-workspace-min-width:\s*500px;[\s\S]*?minmax\(var\(--editor-workspace-min-width\), 1fr\)/
+  );
+  assert.match(
+    css,
+    /\.editor-workspace > \.avr-action-strip\s*\{[\s\S]*?flex-wrap:\s*nowrap;[\s\S]*?gap:\s*8px;/
+  );
+  assert.doesNotMatch(source, /OUTLINER_MAX_WIDTH|DOCUMENTATION_MAX_WIDTH/);
+  assert.doesNotMatch(
+    source,
+    /PROJECT_AI_CHAT_MAX_WIDTH|PROJECT_AI_SKILLS_MAX_WIDTH/
+  );
 });
 
 test("uses three sibling AI panels with live Markdown and a framed composer", () => {
@@ -792,7 +850,7 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
     css,
     /\.project-workspace-track\s*\{[\s\S]*?transition:\s*transform 440ms/
   );
-  assert.match(css, /@media \(max-width: 989px\)/);
+  assert.match(css, /@media \(max-width: 1040px\)/);
   assert.match(css, /height:\s*clamp\(560px, 78vh, 700px\)/);
 });
 
@@ -862,7 +920,7 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   assert.match(source, /DEVICE_PANEL_EXPANDED_HEIGHT\s*=\s*112/);
   assert.match(source, /DEVICE_PANEL_COMPACT_HEIGHT\s*=\s*54/);
   assert.match(source, /DEVICE_PANEL_COLLAPSED_HEIGHT\s*=\s*0/);
-  assert.match(source, /DEVICE_PANEL_DRAG_THRESHOLD\s*=\s*18/);
+  assert.match(source, /DEVICE_PANEL_DRAG_THRESHOLD\s*=\s*48/);
   assert.match(source, /function getAdjacentDevicePanelState\(state, direction\)/);
   assert.match(source, /anchorY:\s*event\.clientY/);
   assert.doesNotMatch(source, /getNearestDevicePanelState|getLiveDevicePanelState/);

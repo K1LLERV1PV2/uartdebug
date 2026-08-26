@@ -78,15 +78,18 @@ cash value, or describe AI Credits as transferable or withdrawable.
 
 ## Privacy and retention
 
-Account identifiers, installation HMACs, IP/risk signals, sessions, and usage
-ledgers can be personal data even when they are pseudonymous. Uart Debug now
-publishes a privacy notice with the current data flows, contact, retention, and
-request route. Because only a masked email is stored, an operator cannot map a
-plain email to a record without additional verification context. It remains an
-operational responsibility to keep that notice in
-sync with production and to implement the documented retention periods rather
-than merely describing them. Automated expiry for long-lived account/device and
-ledger records is still deferred and is disclosed in the notice.
+Account identifiers, installation HMACs, IP/risk signals, sessions, usage
+ledgers, synchronized chats, AVR workspace snapshots, and Project-instruction
+snapshots can be personal or sensitive project data even when account
+identifiers are pseudonymous. Uart
+Debug publishes a privacy notice with the current data flows, contact,
+retention, and request route. Because only a masked email is stored, an operator
+cannot map a plain email to a record without additional verification context. It
+remains an operational responsibility to keep that notice in sync with
+production and to implement the documented retention periods rather than merely
+describing them. Automated expiry for long-lived account/device, ledger,
+workspace, chat, and instruction records is still deferred and is disclosed in
+the notice.
 
 OAuth, OpenAI, hosting, logging, backups, and any future payment provider add
 separate data flows. Their production configuration and contracts cannot be
@@ -98,6 +101,10 @@ derived or guaranteed by application code alone.
   installation tokens reduce casual abuse but are not hardware attestation.
 - SQLite is appropriate for the current single-host deployment, but multi-host
   writes require a database/coordination migration rather than shared-file use.
+- Account workspace, chat, and Project-instruction synchronization uses bounded
+  whole-document snapshots with independent optimistic revisions. It prevents
+  silent stale overwrites, but it is not real-time collaboration and cannot
+  automatically merge two devices' simultaneous edits.
 - The built-in `node:sqlite` API is still marked experimental in Node.js 22;
   pin the supported Node range and test database migrations on every runtime
   upgrade.

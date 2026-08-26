@@ -16,6 +16,16 @@
     "ud_avr_ai_chat_width_v1";
   const STORAGE_PROJECT_AI_SKILLS_WIDTH =
     "ud_avr_ai_skills_width_v1";
+  const STORAGE_PROJECT_AI_CHATS = "ud_avr_ai_chats_v1";
+  const STORAGE_PROJECT_AI_CHATS_RECOVERY =
+    "ud_avr_ai_chats_recovery_v1";
+  const STORAGE_PROJECT_AI_ACCOUNT_SYNC = "ud_avr_ai_account_sync_v1";
+  const STORAGE_PROJECT_AI_LOCAL_DIRTY =
+    "ud_avr_ai_local_dirty_v1";
+  const STORAGE_PROJECT_AI_FILES_RECOVERY =
+    "ud_avr_ai_files_recovery_v1";
+  const STORAGE_PROJECT_AI_INSTRUCTION_RECOVERY =
+    "ud_avr_ai_instruction_recovery_v1";
   const STORAGE_DEVICE_PANEL_STATE =
     "ud_avr_programming_device_panel_state_v2";
   const AI_SKILL_DRAG_MIME = "application/x-uartdebug-ai-skill+json";
@@ -23,7 +33,11 @@
   const PROJECT_AI_AUTH_SESSION_URL = "/api/avr/ai/auth/session";
   const PROJECT_AI_GOOGLE_START_URL = "/api/avr/ai/auth/google/start";
   const PROJECT_AI_LOGOUT_URL = "/api/avr/ai/auth/logout";
+  const PROJECT_AI_ACCOUNT_WORKSPACE_URL =
+    "/api/avr/ai/account/workspace";
   const PROJECT_AI_REQUEST_TARGET_BYTES = 768 * 1024;
+  const PROJECT_AI_MAX_CHATS = 100;
+  const PROJECT_AI_CHAT_TITLE_LENGTH = 52;
   const LEGACY_STORAGE_KEY = "ud_c_canvas_files_v1";
   const LEGACY_STORAGE_CURRENT = "ud_c_canvas_current_v1";
   const AVR_UPDI_RUNTIME_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI__";
@@ -36,18 +50,14 @@
   const OUTLINER_COMPACT_WIDTH = 62;
   const OUTLINER_COMPACT_THRESHOLD = 112;
   const OUTLINER_MIN_EXPANDED_WIDTH = 180;
-  const OUTLINER_MAX_WIDTH = 460;
-  const OUTLINER_EDITOR_MIN_WIDTH = 440;
+  const OUTLINER_EDITOR_MIN_WIDTH = 500;
   const DOCUMENTATION_DEFAULT_WIDTH = 360;
   const DOCUMENTATION_MIN_WIDTH = 240;
-  const DOCUMENTATION_MAX_WIDTH = 1600;
   const SPLIT_RESIZER_TOTAL_WIDTH = 28;
   const PROJECT_AI_CHAT_DEFAULT_WIDTH = 320;
   const PROJECT_AI_CHAT_MIN_WIDTH = 270;
-  const PROJECT_AI_CHAT_MAX_WIDTH = 620;
   const PROJECT_AI_SKILLS_DEFAULT_WIDTH = 280;
   const PROJECT_AI_SKILLS_MIN_WIDTH = 240;
-  const PROJECT_AI_SKILLS_MAX_WIDTH = 520;
   const PROJECT_AI_INSTRUCTION_MIN_WIDTH = 350;
   const PROJECT_AI_RESIZER_TOTAL_WIDTH = 28;
   const PROJECT_WORKSPACE_TOGGLE_EXIT_MS = 180;
@@ -56,7 +66,7 @@
   const DEVICE_PANEL_EXPANDED_HEIGHT = 112;
   const DEVICE_PANEL_COMPACT_HEIGHT = 54;
   const DEVICE_PANEL_COLLAPSED_HEIGHT = 0;
-  const DEVICE_PANEL_DRAG_THRESHOLD = 18;
+  const DEVICE_PANEL_DRAG_THRESHOLD = 48;
   const MINI_PROJECT_IMPORT_EVENT = "ud-avr-mini-project";
   const MINI_PROJECT_INSTALLED_EVENT = "ud-avr-mini-project-installed";
   const MINI_PROJECT_READY_EVENT = "ud-avr-mini-projects-ready";
@@ -156,7 +166,36 @@
   let devicePanelHeight = DEVICE_PANEL_EXPANDED_HEIGHT;
   let devicePanelResizeState = null;
   let devicePanelTransitionTimer = null;
-  const projectAiConversation = [];
+  let projectAiChats = {
+    schemaVersion: 1,
+    activeChatId: "",
+    chats: [],
+  };
+  let projectAiConversation = [];
+  let projectAiChatsSaveTimer = null;
+  let projectAiAccountFilesSaveTimer = null;
+  let projectAiAccountInstructionSaveTimer = null;
+  let projectAiAccountWorkspacePromise = null;
+  let projectAiAccountWorkspaceRetryTimer = null;
+  let projectAiAccountWorkspaceRetryCount = 0;
+  let projectAiAccountWorkspaceEpoch = 0;
+  let projectAiAccountWorkspaceApplying = false;
+  let projectAiBootComplete = false;
+  let projectAiAccountSync = {
+    ready: false,
+    accountKey: "",
+    revisions: { chats: 0, files: 0, instruction: 0 },
+    dirty: { chats: false, files: false, instruction: false },
+    saving: { chats: false, files: false, instruction: false },
+    conflicts: { chats: false, files: false, instruction: false },
+    mutations: { chats: 0, files: 0, instruction: 0 },
+    retries: { chats: 0, files: 0, instruction: 0 },
+  };
+  let projectAiLocalDirty = {
+    chats: false,
+    files: false,
+    instruction: false,
+  };
   let projectAiRequestInFlight = false;
   let projectAiRestorePromptFocus = false;
   let projectAiAuthSession = null;
@@ -1184,6 +1223,13 @@
     }
 
     if (envelopeError && throwOnError) throw envelopeError;
+    if (
+      !envelopeError &&
+      projectAiBootComplete &&
+      !projectAiAccountWorkspaceApplying
+    ) {
+      markProjectAiAccountDocumentDirty("files");
+    }
     return !envelopeError;
   }
 
@@ -2560,13 +2606,18 @@
   }
 
   function isStackedCanvasLayout() {
-    return window.matchMedia?.("(max-width: 989px)")?.matches || false;
+    return window.matchMedia?.("(max-width: 1040px)")?.matches || false;
   }
 
   function getOutlinerMaxWidth() {
     const container = getCanvasSplitContainer();
-    if (!container) return OUTLINER_MAX_WIDTH;
-    if (isStackedCanvasLayout()) return OUTLINER_MAX_WIDTH;
+    if (!container) return Math.max(OUTLINER_MIN_EXPANDED_WIDTH, outlinerWidth);
+    if (isStackedCanvasLayout()) {
+      return Math.max(
+        OUTLINER_MIN_EXPANDED_WIDTH,
+        Math.round(container.getBoundingClientRect().width)
+      );
+    }
 
     const rect = container.getBoundingClientRect();
     const available =
@@ -2576,7 +2627,7 @@
       SPLIT_RESIZER_TOTAL_WIDTH;
     return Math.max(
       OUTLINER_MIN_EXPANDED_WIDTH,
-      Math.min(OUTLINER_MAX_WIDTH, available)
+      available
     );
   }
 
@@ -2727,7 +2778,15 @@
 
   function getDocumentationMaxWidth() {
     const container = getCanvasSplitContainer();
-    if (!container || isStackedCanvasLayout()) return DOCUMENTATION_MAX_WIDTH;
+    if (!container) {
+      return Math.max(DOCUMENTATION_MIN_WIDTH, documentationWidth);
+    }
+    if (isStackedCanvasLayout()) {
+      return Math.max(
+        DOCUMENTATION_MIN_WIDTH,
+        Math.round(container.getBoundingClientRect().width)
+      );
+    }
 
     const rect = container.getBoundingClientRect();
     const availableDocumentationWidth =
@@ -2737,7 +2796,7 @@
       SPLIT_RESIZER_TOTAL_WIDTH;
     return Math.max(
       DOCUMENTATION_MIN_WIDTH,
-      Math.min(DOCUMENTATION_MAX_WIDTH, availableDocumentationWidth)
+      availableDocumentationWidth
     );
   }
 
@@ -2745,10 +2804,7 @@
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return OUTLINER_DEFAULT_WIDTH;
     if (numeric <= OUTLINER_COMPACT_THRESHOLD) return OUTLINER_COMPACT_WIDTH;
-    return Math.max(
-      OUTLINER_MIN_EXPANDED_WIDTH,
-      Math.min(OUTLINER_MAX_WIDTH, numeric)
-    );
+    return Math.max(OUTLINER_MIN_EXPANDED_WIDTH, numeric);
   }
 
   function normalizeDocumentationWidth(width) {
@@ -2763,10 +2819,7 @@
   function normalizeDocumentationPreference(width) {
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return DOCUMENTATION_DEFAULT_WIDTH;
-    return Math.max(
-      DOCUMENTATION_MIN_WIDTH,
-      Math.min(DOCUMENTATION_MAX_WIDTH, numeric)
-    );
+    return Math.max(DOCUMENTATION_MIN_WIDTH, numeric);
   }
 
   function syncSplitResizerAria() {
@@ -2916,25 +2969,25 @@
   function normalizeProjectAiChatPreference(width) {
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return PROJECT_AI_CHAT_DEFAULT_WIDTH;
-    return Math.max(
-      PROJECT_AI_CHAT_MIN_WIDTH,
-      Math.min(PROJECT_AI_CHAT_MAX_WIDTH, numeric)
-    );
+    return Math.max(PROJECT_AI_CHAT_MIN_WIDTH, numeric);
   }
 
   function normalizeProjectAiSkillsPreference(width) {
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return PROJECT_AI_SKILLS_DEFAULT_WIDTH;
-    return Math.max(
-      PROJECT_AI_SKILLS_MIN_WIDTH,
-      Math.min(PROJECT_AI_SKILLS_MAX_WIDTH, numeric)
-    );
+    return Math.max(PROJECT_AI_SKILLS_MIN_WIDTH, numeric);
   }
 
   function getProjectAiSideBudget() {
     const layout = getProjectAiLayout();
-    if (!layout || isStackedCanvasLayout()) {
-      return PROJECT_AI_CHAT_MAX_WIDTH + PROJECT_AI_SKILLS_MAX_WIDTH;
+    if (!layout) {
+      return PROJECT_AI_CHAT_DEFAULT_WIDTH + PROJECT_AI_SKILLS_DEFAULT_WIDTH;
+    }
+    if (isStackedCanvasLayout()) {
+      return Math.max(
+        PROJECT_AI_CHAT_MIN_WIDTH + PROJECT_AI_SKILLS_MIN_WIDTH,
+        Math.round(layout.getBoundingClientRect().width)
+      );
     }
     return Math.max(
       PROJECT_AI_CHAT_MIN_WIDTH + PROJECT_AI_SKILLS_MIN_WIDTH,
@@ -2976,20 +3029,14 @@
   function getProjectAiChatMaxWidth() {
     return Math.max(
       PROJECT_AI_CHAT_MIN_WIDTH,
-      Math.min(
-        PROJECT_AI_CHAT_MAX_WIDTH,
-        getProjectAiSideBudget() - projectAiSkillsWidth
-      )
+      getProjectAiSideBudget() - projectAiSkillsWidth
     );
   }
 
   function getProjectAiSkillsMaxWidth() {
     return Math.max(
       PROJECT_AI_SKILLS_MIN_WIDTH,
-      Math.min(
-        PROJECT_AI_SKILLS_MAX_WIDTH,
-        getProjectAiSideBudget() - projectAiChatWidth
-      )
+      getProjectAiSideBudget() - projectAiChatWidth
     );
   }
 
@@ -4972,6 +5019,9 @@
       projectInstructionSaveTimer = null;
     }
     projectInstructionSaveAttempts = 0;
+    if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
+      markProjectAiAccountDocumentDirty("instruction");
+    }
 
     const save = () => {
       projectInstructionSaveTimer = null;
@@ -5931,7 +5981,176 @@
     });
   }
 
-  function appendProjectAiMessage(kind, message, title = "") {
+  function createProjectAiRecordId(prefix) {
+    const normalizedPrefix = String(prefix || "item").replace(/[^a-z0-9-]/gi, "");
+    const randomId = window.crypto?.randomUUID?.() ||
+      `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    return `${normalizedPrefix}-${randomId}`;
+  }
+
+  function createEmptyProjectAiChat() {
+    const now = Date.now();
+    return {
+      id: createProjectAiRecordId("chat"),
+      title: "New chat",
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+    };
+  }
+
+  function normalizeProjectAiMessage(rawMessage) {
+    const role = String(rawMessage?.role || "");
+    const content = String(rawMessage?.content || "").trim();
+    if (!content || !["user", "assistant"].includes(role)) return null;
+    const createdAt = Number(rawMessage?.createdAt);
+    return {
+      id:
+        String(rawMessage?.id || "").trim() ||
+        createProjectAiRecordId("message"),
+      role,
+      content,
+      title: String(rawMessage?.title || "").trim().slice(0, 120),
+      createdAt:
+        Number.isSafeInteger(createdAt) && createdAt > 0
+          ? createdAt
+          : Date.now(),
+    };
+  }
+
+  function normalizeProjectAiChat(rawChat) {
+    if (!rawChat || typeof rawChat !== "object" || Array.isArray(rawChat)) {
+      return null;
+    }
+    const createdAt = Number(rawChat.createdAt);
+    const updatedAt = Number(rawChat.updatedAt);
+    const messages = [];
+    for (const rawMessage of Array.isArray(rawChat.messages)
+      ? rawChat.messages
+      : []) {
+      const message = normalizeProjectAiMessage(rawMessage);
+      if (message) messages.push(message);
+    }
+    const title = String(rawChat.title || "").trim();
+    return {
+      id:
+        String(rawChat.id || "").trim() || createProjectAiRecordId("chat"),
+      title: (title || "New chat").slice(0, PROJECT_AI_CHAT_TITLE_LENGTH),
+      createdAt:
+        Number.isSafeInteger(createdAt) && createdAt > 0
+          ? createdAt
+          : Date.now(),
+      updatedAt:
+        Number.isSafeInteger(updatedAt) && updatedAt > 0
+          ? updatedAt
+          : Date.now(),
+      messages,
+    };
+  }
+
+  function normalizeProjectAiChats(rawValue) {
+    const source =
+      rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)
+        ? rawValue
+        : {};
+    const chats = [];
+    const seen = new Set();
+    for (const rawChat of Array.isArray(source.chats) ? source.chats : []) {
+      const chat = normalizeProjectAiChat(rawChat);
+      if (!chat || seen.has(chat.id)) continue;
+      seen.add(chat.id);
+      chats.push(chat);
+      if (chats.length >= PROJECT_AI_MAX_CHATS) break;
+    }
+    if (!chats.length) chats.push(createEmptyProjectAiChat());
+    const requestedActiveId = String(source.activeChatId || "");
+    return {
+      schemaVersion: 1,
+      activeChatId: chats.some((chat) => chat.id === requestedActiveId)
+        ? requestedActiveId
+        : chats[0].id,
+      chats,
+    };
+  }
+
+  function getActiveProjectAiChat() {
+    let active = projectAiChats.chats.find(
+      (chat) => chat.id === projectAiChats.activeChatId
+    );
+    if (!active) {
+      active = projectAiChats.chats[0] || createEmptyProjectAiChat();
+      if (!projectAiChats.chats.length) projectAiChats.chats.push(active);
+      projectAiChats.activeChatId = active.id;
+    }
+    projectAiConversation = active.messages;
+    return active;
+  }
+
+  function getProjectAiChatsSnapshot() {
+    return normalizeProjectAiChats(projectAiChats);
+  }
+
+  function restoreProjectAiChats() {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_PROJECT_AI_CHATS);
+      projectAiChats = normalizeProjectAiChats(raw ? JSON.parse(raw) : null);
+    } catch {
+      projectAiChats = normalizeProjectAiChats(null);
+      console.warn("The stored AI chats could not be read.");
+    }
+    getActiveProjectAiChat();
+  }
+
+  function persistProjectAiChats({ syncAccount = true } = {}) {
+    try {
+      window.localStorage.setItem(
+        STORAGE_PROJECT_AI_CHATS,
+        JSON.stringify(getProjectAiChatsSnapshot())
+      );
+    } catch (error) {
+      console.warn("The AI chats could not be saved locally:", error);
+    }
+    renderProjectAiChatList();
+    if (
+      syncAccount &&
+      projectAiBootComplete &&
+      !projectAiAccountWorkspaceApplying
+    ) {
+      markProjectAiAccountDocumentDirty("chats");
+    }
+  }
+
+  function deriveProjectAiChatTitle(message) {
+    const singleLine = String(message || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!singleLine) return "New chat";
+    if (singleLine.length <= PROJECT_AI_CHAT_TITLE_LENGTH) return singleLine;
+    return `${singleLine.slice(0, PROJECT_AI_CHAT_TITLE_LENGTH - 1).trim()}…`;
+  }
+
+  function recordProjectAiMessage(kind, message, title = "") {
+    if (!["user", "assistant"].includes(kind)) return null;
+    const chat = getActiveProjectAiChat();
+    const normalized = normalizeProjectAiMessage({
+      id: createProjectAiRecordId("message"),
+      role: kind,
+      content: message,
+      title,
+      createdAt: Date.now(),
+    });
+    if (!normalized) return null;
+    chat.messages.push(normalized);
+    if (kind === "user" && chat.title === "New chat") {
+      chat.title = deriveProjectAiChatTitle(normalized.content);
+    }
+    chat.updatedAt = Date.now();
+    projectAiConversation = chat.messages;
+    persistProjectAiChats();
+    return normalized;
+  }
+
+  function renderProjectAiMessageElement(kind, message, title = "") {
     const history = $("projectAiHistory");
     if (!history) return null;
 
@@ -5969,6 +6188,1117 @@
     history.appendChild(article);
     history.scrollTop = history.scrollHeight;
     return article;
+  }
+
+  function appendProjectAiMessage(kind, message, title = "") {
+    const article = renderProjectAiMessageElement(kind, message, title);
+    recordProjectAiMessage(kind, message, title);
+    return article;
+  }
+
+  function renderProjectAiHistory() {
+    const history = $("projectAiHistory");
+    if (!history) return;
+    history.replaceChildren();
+    const chat = getActiveProjectAiChat();
+    if (!chat.messages.length) {
+      renderProjectAiMessageElement(
+        "assistant",
+        "Ask an AVR question, refine the instruction, or explicitly request a new or updated mini-project."
+      );
+      return;
+    }
+    for (const message of chat.messages) {
+      renderProjectAiMessageElement(
+        message.role,
+        message.content,
+        message.title
+      );
+    }
+  }
+
+  function closeProjectAiChatsMenu({ restoreFocus = false } = {}) {
+    const menu = $("projectAiChatsMenu");
+    const trigger = $("projectAiChatsBtn");
+    if (!menu || !trigger) return;
+    menu.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    if (restoreFocus) trigger.focus({ preventScroll: true });
+  }
+
+  function openProjectAiChatsMenu() {
+    const menu = $("projectAiChatsMenu");
+    const trigger = $("projectAiChatsBtn");
+    if (!menu || !trigger || projectAiRequestInFlight) return;
+    renderProjectAiChatList();
+    menu.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    requestAnimationFrame(() => {
+      menu
+        .querySelector('[role="menuitem"][aria-current="true"]')
+        ?.focus({ preventScroll: true });
+    });
+  }
+
+  function toggleProjectAiChatsMenu() {
+    const menu = $("projectAiChatsMenu");
+    if (!menu) return;
+    if (menu.hidden) openProjectAiChatsMenu();
+    else closeProjectAiChatsMenu();
+  }
+
+  function renderProjectAiChatList() {
+    const list = $("projectAiChatList");
+    if (!list) return;
+    list.replaceChildren();
+    const sortedChats = [...projectAiChats.chats].sort(
+      (left, right) => right.updatedAt - left.updatedAt
+    );
+    for (const chat of sortedChats) {
+      const row = document.createElement("div");
+      row.className = "project-ai-chat-list-item";
+      row.classList.toggle("is-active", chat.id === projectAiChats.activeChatId);
+
+      const select = document.createElement("button");
+      select.type = "button";
+      select.className = "project-ai-chat-select";
+      select.dataset.chatId = chat.id;
+      select.setAttribute("role", "menuitem");
+      select.setAttribute(
+        "aria-current",
+        String(chat.id === projectAiChats.activeChatId)
+      );
+      select.textContent = chat.title || "New chat";
+      select.title = select.textContent;
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "project-ai-chat-delete";
+      remove.dataset.deleteChatId = chat.id;
+      remove.setAttribute("role", "menuitem");
+      remove.setAttribute("aria-label", `Delete chat ${select.textContent}`);
+      remove.textContent = "×";
+
+      row.append(select, remove);
+      list.appendChild(row);
+    }
+  }
+
+  function selectProjectAiChat(chatId) {
+    if (projectAiRequestInFlight) return;
+    const chat = projectAiChats.chats.find((candidate) => candidate.id === chatId);
+    if (!chat) return;
+    projectAiChats.activeChatId = chat.id;
+    projectAiConversation = chat.messages;
+    persistProjectAiChats();
+    renderProjectAiHistory();
+    closeProjectAiChatsMenu();
+    $("projectAiPrompt")?.focus({ preventScroll: true });
+  }
+
+  function createProjectAiChat() {
+    if (projectAiRequestInFlight) return;
+    if (projectAiChats.chats.length >= PROJECT_AI_MAX_CHATS) {
+      closeProjectAiChatsMenu();
+      appendProjectAiMessage(
+        "system",
+        `The chat limit of ${PROJECT_AI_MAX_CHATS} has been reached. Delete an older chat first.`
+      );
+      return;
+    }
+    const chat = createEmptyProjectAiChat();
+    projectAiChats.chats.push(chat);
+    projectAiChats.activeChatId = chat.id;
+    projectAiConversation = chat.messages;
+    persistProjectAiChats();
+    renderProjectAiHistory();
+    closeProjectAiChatsMenu();
+    $("projectAiPrompt")?.focus({ preventScroll: true });
+  }
+
+  async function deleteProjectAiChat(chatId) {
+    if (projectAiRequestInFlight) return;
+    const chat = projectAiChats.chats.find((candidate) => candidate.id === chatId);
+    if (!chat) return;
+    closeProjectAiChatsMenu();
+    const confirmed = await showSiteConfirm({
+      title: "Delete chat",
+      message: `Delete “${chat.title || "New chat"}”? This removes its saved account copy too.`,
+      confirmText: "Delete chat",
+      cancelText: "Cancel",
+      danger: true,
+    });
+    if (!confirmed) return;
+    projectAiChats.chats = projectAiChats.chats.filter(
+      (candidate) => candidate.id !== chatId
+    );
+    if (!projectAiChats.chats.length) {
+      projectAiChats.chats.push(createEmptyProjectAiChat());
+    }
+    if (!projectAiChats.chats.some((candidate) => candidate.id === projectAiChats.activeChatId)) {
+      projectAiChats.activeChatId = projectAiChats.chats[0].id;
+    }
+    projectAiConversation = getActiveProjectAiChat().messages;
+    persistProjectAiChats();
+    renderProjectAiHistory();
+  }
+
+  function readStoredProjectAiAccountSync() {
+    try {
+      const parsed = JSON.parse(
+        window.localStorage.getItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC) || "null"
+      );
+      if (!parsed || parsed.schemaVersion !== 1 || !parsed.accountKey) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  function restoreProjectAiLocalDirtyState() {
+    try {
+      const stored = JSON.parse(
+        window.localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY) || "null"
+      );
+      for (const kind of ["chats", "files", "instruction"]) {
+        projectAiLocalDirty[kind] = stored?.dirty?.[kind] === true;
+      }
+    } catch {
+      projectAiLocalDirty = {
+        chats: true,
+        files: true,
+        instruction: true,
+      };
+    }
+  }
+
+  function persistProjectAiLocalDirtyState() {
+    try {
+      window.localStorage.setItem(
+        STORAGE_PROJECT_AI_LOCAL_DIRTY,
+        JSON.stringify({
+          schemaVersion: 1,
+          dirty: projectAiLocalDirty,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch (error) {
+      console.warn("The local account-sync markers could not be saved:", error);
+    }
+  }
+
+  function setProjectAiLocalDirty(kind, dirty) {
+    if (!["chats", "files", "instruction"].includes(kind)) return;
+    projectAiLocalDirty[kind] = dirty === true;
+    persistProjectAiLocalDirtyState();
+  }
+
+  function restoreProjectAiAccountSyncState() {
+    const stored = readStoredProjectAiAccountSync();
+    if (!stored) return;
+    projectAiAccountSync.accountKey = String(stored.accountKey || "");
+    for (const kind of ["chats", "files", "instruction"]) {
+      const revision = Number(stored.revisions?.[kind]);
+      projectAiAccountSync.revisions[kind] =
+        Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+      projectAiAccountSync.dirty[kind] = stored.dirty?.[kind] === true;
+      projectAiAccountSync.conflicts[kind] =
+        stored.conflicts?.[kind] === true;
+    }
+  }
+
+  function persistProjectAiAccountSyncState() {
+    if (!projectAiAccountSync.accountKey) return false;
+    try {
+      window.localStorage.setItem(
+        STORAGE_PROJECT_AI_ACCOUNT_SYNC,
+        JSON.stringify({
+          schemaVersion: 1,
+          accountKey: projectAiAccountSync.accountKey,
+          revisions: projectAiAccountSync.revisions,
+          dirty: projectAiAccountSync.dirty,
+          conflicts: projectAiAccountSync.conflicts,
+          updatedAt: Date.now(),
+        })
+      );
+      return true;
+    } catch (error) {
+      console.warn("The account sync state could not be saved:", error);
+      return false;
+    }
+  }
+
+  function getProjectAiAccountFilesSnapshot() {
+    if (editor && current && hasFile(current)) {
+      files[current] = editor.getValue();
+    }
+    return {
+      schemaVersion: 2,
+      files: cloneJsonMetadata(files, {}),
+      fileGroups: cloneJsonMetadata(fileGroups, {}),
+      miniProjects: cloneJsonMetadata(miniProjects, {}),
+      current: typeof current === "string" ? current : null,
+    };
+  }
+
+  function getProjectAiAccountDocumentSnapshot(kind) {
+    if (kind === "chats") return getProjectAiChatsSnapshot();
+    if (kind === "files") return getProjectAiAccountFilesSnapshot();
+    if (kind === "instruction") return getProjectInstructionSnapshot();
+    throw new TypeError(`Unsupported account document: ${kind}`);
+  }
+
+  function projectAiAccountDocumentsMatch(kind, remoteData) {
+    try {
+      const localData = getProjectAiAccountDocumentSnapshot(kind);
+      const normalizedRemote =
+        kind === "chats"
+          ? normalizeProjectAiChats(remoteData)
+          : kind === "instruction"
+            ? normalizeProjectInstructionDocument(remoteData)
+            : remoteData;
+      return JSON.stringify(localData) === JSON.stringify(normalizedRemote);
+    } catch {
+      return false;
+    }
+  }
+
+  function getEmptyProjectAiAccountDocument(kind) {
+    if (kind === "chats") return normalizeProjectAiChats(null);
+    if (kind === "files") {
+      return {
+        schemaVersion: 2,
+        files: { "main.c": "" },
+        fileGroups: {},
+        miniProjects: {},
+        current: "main.c",
+      };
+    }
+    if (kind === "instruction") {
+      return normalizeProjectInstructionDocument(null);
+    }
+    throw new TypeError(`Unsupported account document: ${kind}`);
+  }
+
+  function saveProjectAiRecoveryCopy(
+    kind,
+    data,
+    sourceAccountKey = projectAiAccountSync.accountKey
+  ) {
+    const storageKeyBase =
+      kind === "files"
+        ? STORAGE_PROJECT_AI_FILES_RECOVERY
+        : kind === "instruction"
+          ? STORAGE_PROJECT_AI_INSTRUCTION_RECOVERY
+          : STORAGE_PROJECT_AI_CHATS_RECOVERY;
+    const recoveryScope =
+      String(sourceAccountKey || "browser-local")
+        .replace(/[^A-Za-z0-9_-]/g, "")
+        .slice(0, 128) || "browser-local";
+    const storageKey = `${storageKeyBase}:${recoveryScope}`;
+    try {
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          schemaVersion: 1,
+          sourceAccountKey: recoveryScope,
+          savedAt: Date.now(),
+          data,
+        })
+      );
+      const scopedCopies = [];
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const candidateKey = window.localStorage.key(index);
+        if (!candidateKey?.startsWith(`${storageKeyBase}:`)) continue;
+        let savedAt = 0;
+        try {
+          savedAt = Number(
+            JSON.parse(window.localStorage.getItem(candidateKey) || "null")
+              ?.savedAt
+          );
+        } catch {}
+        scopedCopies.push({
+          key: candidateKey,
+          savedAt: Number.isFinite(savedAt) ? savedAt : 0,
+        });
+      }
+      scopedCopies
+        .sort((left, right) => right.savedAt - left.savedAt)
+        .slice(3)
+        .forEach(({ key }) => window.localStorage.removeItem(key));
+      return true;
+    } catch (error) {
+      console.warn(`The local ${kind} recovery copy could not be saved:`, error);
+      return false;
+    }
+  }
+
+  function applyProjectAiAccountFilesSnapshot(rawData) {
+    if (
+      !rawData ||
+      rawData.schemaVersion !== 2 ||
+      !rawData.files ||
+      typeof rawData.files !== "object" ||
+      Array.isArray(rawData.files)
+    ) {
+      throw new TypeError("The saved account file workspace is invalid.");
+    }
+    const previousWorkspace = { files, fileGroups, miniProjects, current };
+    files = createDictionary(cloneJsonMetadata(rawData.files, {}));
+    fileGroups = createDictionary(cloneJsonMetadata(rawData.fileGroups, {}));
+    miniProjects = createDictionary(cloneJsonMetadata(rawData.miniProjects, {}));
+    current = typeof rawData.current === "string" ? rawData.current : null;
+    normalizeFileGroups();
+    normalizeMiniProjectInstances();
+    if (current && !hasFile(current)) current = null;
+    ensureAtLeastOneFile();
+    if (!current) current = Object.keys(files)[0] || null;
+    try {
+      persistState({ throwOnError: true });
+    } catch (error) {
+      ({ files, fileGroups, miniProjects, current } = previousWorkspace);
+      console.warn("The cloud AVR workspace could not be saved locally:", error);
+      return false;
+    }
+    if (saveTimer) {
+      window.clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    if (documentationEditSaveTimer) {
+      window.clearTimeout(documentationEditSaveTimer);
+      documentationEditSaveTimer = null;
+    }
+    renderOutliner();
+    if (editor) {
+      editor.setOption("readOnly", !current ? "nocursor" : false);
+      editor.setOption("mode", getEditorModeForFile(current));
+      editor.setValue(current ? files[current] || "" : "");
+      editor.refresh();
+    }
+    updateEditorFileWatermark(current || "");
+    refreshDocumentationPane();
+    scheduleDocumentationMarkerRefresh();
+    resetHexArtifact();
+    updateCompilePanelState(true);
+    return true;
+  }
+
+  function applyProjectAiAccountDocument(kind, data) {
+    projectAiAccountWorkspaceApplying = true;
+    try {
+      if (kind === "chats") {
+        const nextChats = normalizeProjectAiChats(data);
+        try {
+          window.localStorage.setItem(
+            STORAGE_PROJECT_AI_CHATS,
+            JSON.stringify(nextChats)
+          );
+        } catch (error) {
+          console.warn("The cloud AI chats could not be saved locally:", error);
+          return false;
+        }
+        projectAiChats = nextChats;
+        projectAiConversation = getActiveProjectAiChat().messages;
+        renderProjectAiChatList();
+        renderProjectAiHistory();
+      } else if (kind === "files") {
+        if (!applyProjectAiAccountFilesSnapshot(data)) return false;
+      } else if (kind === "instruction") {
+        const nextInstruction = normalizeProjectInstructionDocument(data);
+        try {
+          window.localStorage.setItem(
+            STORAGE_PROJECT_INSTRUCTION,
+            JSON.stringify(nextInstruction)
+          );
+        } catch (error) {
+          console.warn(
+            "The cloud Project instruction could not be saved locally:",
+            error
+          );
+          return false;
+        }
+        if (projectInstructionSaveTimer) {
+          window.clearTimeout(projectInstructionSaveTimer);
+          projectInstructionSaveTimer = null;
+        }
+        projectInstructionStorageReadFailed = false;
+        projectInstructionDocument = nextInstruction;
+        setProjectInstructionEditorValue(projectInstructionDocument.markdown);
+        scheduleProjectInstructionPreview();
+        setProjectInstructionSaveState();
+      } else {
+        return false;
+      }
+      return true;
+    } finally {
+      projectAiAccountWorkspaceApplying = false;
+    }
+  }
+
+  function normalizeProjectAiRemoteDocument(rawDocument) {
+    const revision = Number(rawDocument?.revision);
+    const updatedAt = Number(rawDocument?.updatedAt);
+    return {
+      revision:
+        Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
+      updatedAt:
+        Number.isSafeInteger(updatedAt) && updatedAt >= 0 ? updatedAt : 0,
+      data:
+        rawDocument && Object.prototype.hasOwnProperty.call(rawDocument, "data")
+          ? rawDocument.data
+          : null,
+    };
+  }
+
+  function scheduleProjectAiAccountDocumentSave(kind, delay = 700) {
+    if (!projectAiAccountSync.ready || projectAiAccountSync.conflicts[kind]) {
+      return;
+    }
+    const timerName =
+      kind === "chats"
+        ? "projectAiChatsSaveTimer"
+        : kind === "files"
+          ? "projectAiAccountFilesSaveTimer"
+          : "projectAiAccountInstructionSaveTimer";
+    const currentTimer =
+      kind === "chats"
+        ? projectAiChatsSaveTimer
+        : kind === "files"
+          ? projectAiAccountFilesSaveTimer
+          : projectAiAccountInstructionSaveTimer;
+    if (currentTimer) window.clearTimeout(currentTimer);
+    const timer = window.setTimeout(() => {
+      if (kind === "chats") projectAiChatsSaveTimer = null;
+      else if (kind === "files") projectAiAccountFilesSaveTimer = null;
+      else projectAiAccountInstructionSaveTimer = null;
+      void saveProjectAiAccountDocument(kind);
+    }, delay);
+    if (timerName === "projectAiChatsSaveTimer") projectAiChatsSaveTimer = timer;
+    else if (timerName === "projectAiAccountFilesSaveTimer") {
+      projectAiAccountFilesSaveTimer = timer;
+    } else {
+      projectAiAccountInstructionSaveTimer = timer;
+    }
+  }
+
+  function markProjectAiAccountDocumentDirty(kind) {
+    if (!["chats", "files", "instruction"].includes(kind)) return;
+    projectAiAccountSync.dirty[kind] = true;
+    projectAiAccountSync.mutations[kind] += 1;
+    setProjectAiLocalDirty(kind, true);
+    persistProjectAiAccountSyncState();
+    scheduleProjectAiAccountDocumentSave(kind);
+  }
+
+  function getProjectAiAccountConflictMessage(kind) {
+    if (kind === "chats") {
+      return "Chats changed in another tab or device. The local copy was kept and cloud saving was paused to avoid overwriting it.";
+    }
+    if (kind === "instruction") {
+      return "Project instruction changed in another tab or device. The local copy was kept and cloud saving was paused to avoid overwriting it.";
+    }
+    return "The AVR file workspace changed in another tab or device. The local copy was kept and cloud saving was paused to avoid overwriting it.";
+  }
+
+  function getProjectAiAccountSaveFailureMessage(kind, result, status) {
+    const label = getProjectAiAccountDocumentLabel(kind);
+    const detail = String(result?.message || "").trim();
+    return `${label} remain saved locally, but cloud sync was paused${
+      detail ? `: ${detail}` : ` after server error ${status}`
+    }`;
+  }
+
+  async function saveProjectAiAccountDocument(kind) {
+    if (
+      !projectAiAccountSync.ready ||
+      !projectAiAccountSync.dirty[kind] ||
+      projectAiAccountSync.saving[kind] ||
+      projectAiAccountSync.conflicts[kind]
+    ) {
+      return;
+    }
+    const mutation = projectAiAccountSync.mutations[kind];
+    const baseRevision = projectAiAccountSync.revisions[kind];
+    const data = getProjectAiAccountDocumentSnapshot(kind);
+    const workspaceEpoch = projectAiAccountWorkspaceEpoch;
+    const accountKey = projectAiAccountSync.accountKey;
+    projectAiAccountSync.saving[kind] = true;
+    let retryDelay = 0;
+    try {
+      const response = await fetch(`${PROJECT_AI_ACCOUNT_WORKSPACE_URL}/${kind}`, {
+        method: "PUT",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          baseRevision,
+          expectedAccountKey: accountKey,
+          data,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (
+        workspaceEpoch !== projectAiAccountWorkspaceEpoch ||
+        accountKey !== projectAiAccountSync.accountKey
+      ) {
+        return;
+      }
+      if (
+        response.status === 409 &&
+        result?.code === "account_workspace_account_mismatch"
+      ) {
+        appendProjectAiMessage(
+          "system",
+          `The local ${getProjectAiAccountDocumentLabel(kind)} copy remains saved because the Google account changed in another tab. Cloud sync will reconnect to the current account before saving.`
+        );
+        resetProjectAiAccountWorkspaceRuntime();
+        void fetchProjectAiAuthSession().catch((error) => {
+          console.warn("Account workspace could not be reconnected:", error);
+        });
+        return;
+      }
+      if (response.status === 409) {
+        projectAiAccountSync.conflicts[kind] = true;
+        persistProjectAiAccountSyncState();
+        appendProjectAiMessage(
+          "system",
+          `${getProjectAiAccountConflictMessage(kind)} Reload the page to choose which copy to use.`
+        );
+        return;
+      }
+      if (response.status === 401 || response.status === 403) {
+        expireProjectAiWorkspaceSession(
+          `The local ${getProjectAiAccountDocumentLabel(kind)} copy remains saved. The Google session expired; sign in again to resume cloud sync.`
+        );
+        return;
+      }
+      if ([400, 413, 415].includes(response.status)) {
+        projectAiAccountSync.dirty[kind] = false;
+        persistProjectAiAccountSyncState();
+        appendProjectAiMessage(
+          "system",
+          getProjectAiAccountSaveFailureMessage(kind, result, response.status)
+        );
+        return;
+      }
+      if (!response.ok || result?.ok !== true) {
+        if (response.status === 429) {
+          const retryAfter = Number(response.headers.get("Retry-After"));
+          if (Number.isFinite(retryAfter) && retryAfter > 0) {
+            retryDelay = Math.min(120_000, retryAfter * 1000);
+          }
+        }
+        throw new Error(
+          String(result?.message || `Account ${kind} save failed (${response.status}).`)
+        );
+      }
+      const savedDocument = result.document || result[kind] || result;
+      const revision = Number(savedDocument?.revision);
+      if (!Number.isSafeInteger(revision) || revision <= baseRevision) {
+        throw new Error(`Account ${kind} save returned an invalid revision.`);
+      }
+      projectAiAccountSync.revisions[kind] = revision;
+      projectAiAccountSync.dirty[kind] =
+        projectAiAccountSync.mutations[kind] !== mutation;
+      projectAiAccountSync.retries[kind] = 0;
+      if (!projectAiAccountSync.dirty[kind]) {
+        setProjectAiLocalDirty(kind, false);
+      }
+      persistProjectAiAccountSyncState();
+    } catch (error) {
+      if (
+        workspaceEpoch !== projectAiAccountWorkspaceEpoch ||
+        accountKey !== projectAiAccountSync.accountKey
+      ) {
+        return;
+      }
+      projectAiAccountSync.retries[kind] += 1;
+      retryDelay =
+        retryDelay ||
+        Math.min(
+          60_000,
+          1800 * 2 ** Math.min(projectAiAccountSync.retries[kind] - 1, 5)
+        );
+      console.warn(`Account ${kind} sync failed:`, error);
+    } finally {
+      if (
+        workspaceEpoch !== projectAiAccountWorkspaceEpoch ||
+        accountKey !== projectAiAccountSync.accountKey
+      ) {
+        return;
+      }
+      projectAiAccountSync.saving[kind] = false;
+      if (
+        projectAiAccountSync.ready &&
+        projectAiAccountSync.dirty[kind] &&
+        !projectAiAccountSync.conflicts[kind]
+      ) {
+        scheduleProjectAiAccountDocumentSave(kind, retryDelay || 1800);
+      }
+    }
+  }
+
+  function resetProjectAiAccountWorkspaceRuntime() {
+    projectAiAccountWorkspaceEpoch += 1;
+    projectAiAccountWorkspacePromise = null;
+    projectAiAccountSync.ready = false;
+    if (projectAiAccountWorkspaceRetryTimer) {
+      window.clearTimeout(projectAiAccountWorkspaceRetryTimer);
+      projectAiAccountWorkspaceRetryTimer = null;
+    }
+    projectAiAccountWorkspaceRetryCount = 0;
+    for (const timer of [
+      projectAiChatsSaveTimer,
+      projectAiAccountFilesSaveTimer,
+      projectAiAccountInstructionSaveTimer,
+    ]) {
+      if (timer) window.clearTimeout(timer);
+    }
+    projectAiChatsSaveTimer = null;
+    projectAiAccountFilesSaveTimer = null;
+    projectAiAccountInstructionSaveTimer = null;
+    for (const kind of ["chats", "files", "instruction"]) {
+      projectAiAccountSync.saving[kind] = false;
+      projectAiAccountSync.retries[kind] = 0;
+    }
+  }
+
+  function hasMeaningfulProjectAiLocalDocument(kind) {
+    if (kind === "chats") {
+      return getProjectAiChatsSnapshot().chats.some(
+        (chat) => Array.isArray(chat.messages) && chat.messages.length > 0
+      );
+    }
+    if (kind === "files") {
+      const snapshot = getProjectAiAccountFilesSnapshot();
+      const fileEntries = Object.entries(snapshot.files || {});
+      return (
+        fileEntries.some(
+          ([name, content]) => name !== "main.c" || String(content || "").length > 0
+        ) ||
+        Object.keys(snapshot.fileGroups || {}).length > 0 ||
+        Object.keys(snapshot.miniProjects || {}).length > 0
+      );
+    }
+    if (kind === "instruction") {
+      const snapshot = getProjectInstructionSnapshot();
+      return (
+        String(snapshot.markdown || "").trim().length > 0 ||
+        (Array.isArray(snapshot.skillRefs) && snapshot.skillRefs.length > 0)
+      );
+    }
+    return false;
+  }
+
+  function getProjectAiAccountDocumentLabel(kind) {
+    if (kind === "chats") return "AI chats";
+    if (kind === "instruction") return "Project instruction";
+    return "AVR files";
+  }
+
+  function expireProjectAiWorkspaceSession(message) {
+    projectAiAuthRequestEpoch += 1;
+    projectAiAuthSessionPromise = null;
+    projectAiLatestQuota = null;
+    projectAiQuotaUpdateSequence += 1;
+    projectAiAuthSession = {
+      mode: "google",
+      configured: true,
+      authenticated: false,
+      quota: null,
+    };
+    resetProjectAiAccountWorkspaceRuntime();
+    renderProjectAiAuthSession(projectAiAuthSession);
+    appendProjectAiMessage("system", message);
+    setProjectAiAccountStatus(message, "error");
+  }
+
+  function scheduleProjectAiAccountWorkspaceRetry(error, workspaceEpoch) {
+    if (
+      workspaceEpoch !== projectAiAccountWorkspaceEpoch ||
+      projectAiAuthSession?.authenticated !== true
+    ) {
+      return;
+    }
+    projectAiAccountWorkspaceRetryCount += 1;
+    const retryAfter = Number(error?.retryAfterSeconds);
+    const delay =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(120_000, retryAfter * 1000)
+        : Math.min(
+            60_000,
+            2000 * 2 ** Math.min(projectAiAccountWorkspaceRetryCount - 1, 5)
+          );
+    if (projectAiAccountWorkspaceRetryTimer) {
+      window.clearTimeout(projectAiAccountWorkspaceRetryTimer);
+    }
+    setProjectAiAccountStatus(
+      "Cloud workspace sync is temporarily unavailable. Your local changes are safe; retrying automatically.",
+      "error"
+    );
+    projectAiAccountWorkspaceRetryTimer = window.setTimeout(() => {
+      projectAiAccountWorkspaceRetryTimer = null;
+      void initializeProjectAiAccountWorkspace().catch(() => {});
+    }, delay);
+  }
+
+  function pauseProjectAiAccountDocumentForRecoveryFailure(kind) {
+    projectAiAccountSync.dirty[kind] = false;
+    projectAiAccountSync.conflicts[kind] = true;
+    appendProjectAiMessage(
+      "system",
+      `The local ${getProjectAiAccountDocumentLabel(kind)} copy was not replaced because the browser could not safely persist both the local recovery and cloud copies. Free some browser storage and reload to choose again.`
+    );
+  }
+
+  async function initializeProjectAiAccountWorkspace() {
+    if (projectAiAccountSync.ready) return null;
+    if (projectAiAccountWorkspacePromise) {
+      return projectAiAccountWorkspacePromise;
+    }
+    const workspaceEpoch = ++projectAiAccountWorkspaceEpoch;
+    const mutationsAtStart = { ...projectAiAccountSync.mutations };
+    const promise = (async () => {
+      const response = await fetch(PROJECT_AI_ACCOUNT_WORKSPACE_URL, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result?.ok !== true) {
+        const loadError = new Error(
+          String(result?.message || `Account workspace could not be loaded (${response.status}).`)
+        );
+        loadError.httpStatus = response.status;
+        loadError.retryAfterSeconds = response.headers.get("Retry-After");
+        throw loadError;
+      }
+      if (
+        workspaceEpoch !== projectAiAccountWorkspaceEpoch ||
+        projectAiAuthSession?.authenticated !== true
+      ) {
+        return null;
+      }
+      const accountKey = String(result.accountKey || "").trim();
+      if (!accountKey) throw new Error("Account workspace identity is missing.");
+      const stored = readStoredProjectAiAccountSync();
+      const sameAccount = stored?.accountKey === accountKey;
+      const differentKnownAccount =
+        !!stored?.accountKey && stored.accountKey !== accountKey;
+      const documents = result.documents || result.workspace || result;
+      projectAiAccountSync.accountKey = accountKey;
+      const localRecoveryAccountKey =
+        String(stored?.accountKey || "").trim() || "browser-local";
+
+      if (!sameAccount) {
+        for (const kind of ["chats", "files", "instruction"]) {
+          projectAiAccountSync.revisions[kind] = 0;
+          projectAiAccountSync.dirty[kind] = false;
+          projectAiAccountSync.conflicts[kind] = true;
+          projectAiAccountSync.retries[kind] = 0;
+        }
+        if (!persistProjectAiAccountSyncState()) {
+          projectAiAccountSync.accountKey = String(stored?.accountKey || "");
+          const message =
+            "The Google account workspace was not opened because the browser could not safely record the account transition. Local data was not changed. Free some browser storage and reload.";
+          appendProjectAiMessage("system", message);
+          setProjectAiAccountStatus(message, "error");
+          return null;
+        }
+      }
+
+      const remoteDocuments = Object.fromEntries(
+        ["chats", "files", "instruction"].map((kind) => [
+          kind,
+          normalizeProjectAiRemoteDocument(documents[kind]),
+        ])
+      );
+      const missingImportCandidates = differentKnownAccount
+        ? ["chats", "files", "instruction"].filter(
+            (kind) =>
+              remoteDocuments[kind].revision === 0 &&
+              remoteDocuments[kind].data === null &&
+              hasMeaningfulProjectAiLocalDocument(kind)
+          )
+        : [];
+      let importMissingFromPreviousAccount = false;
+      if (missingImportCandidates.length) {
+        importMissingFromPreviousAccount = await showSiteConfirm({
+          title: "Different Google account",
+          message:
+            "This browser still contains local AVR data from another account. Import the local data into this Google account? Choose Start empty to keep it out of the new account; a recovery copy remains in this browser.",
+          confirmText: "Import local data",
+          cancelText: "Start empty",
+        });
+        if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
+      }
+
+      const pendingConflicts = [];
+
+      for (const kind of ["chats", "files", "instruction"]) {
+        const remote = remoteDocuments[kind];
+        const storedRevision = sameAccount ? Number(stored.revisions?.[kind]) : 0;
+        const mutationChangedDuringRequest =
+          projectAiAccountSync.mutations[kind] !== mutationsAtStart[kind];
+        const localDirty =
+          projectAiLocalDirty[kind] === true ||
+          mutationChangedDuringRequest ||
+          (sameAccount && stored.dirty?.[kind] === true) ||
+          (!stored && hasMeaningfulProjectAiLocalDocument(kind));
+        const rememberedConflict =
+          sameAccount && stored.conflicts?.[kind] === true;
+        projectAiAccountSync.revisions[kind] =
+          sameAccount && Number.isSafeInteger(storedRevision)
+            ? storedRevision
+            : 0;
+        projectAiAccountSync.dirty[kind] = false;
+        projectAiAccountSync.conflicts[kind] = false;
+        projectAiAccountSync.retries[kind] = 0;
+
+        if (remote.revision === 0 || remote.data === null) {
+          projectAiAccountSync.revisions[kind] = 0;
+          if (rememberedConflict) {
+            const label = getProjectAiAccountDocumentLabel(kind);
+            const importLocal = await showSiteConfirm({
+              title: `Empty cloud workspace: ${label}`,
+              message: `The cloud has no ${label} copy, while this browser still has local data from an unresolved account transition. Import the local copy into this account? Choose Start empty to keep the local data out of the account; a recovery copy will be kept.`,
+              confirmText: "Import local data",
+              cancelText: "Start empty",
+            });
+            if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
+            if (!importLocal) {
+              const recoverySaved = saveProjectAiRecoveryCopy(
+                kind,
+                getProjectAiAccountDocumentSnapshot(kind),
+                localRecoveryAccountKey
+              );
+              if (!recoverySaved) {
+                pauseProjectAiAccountDocumentForRecoveryFailure(kind);
+                continue;
+              }
+              const emptyApplied = applyProjectAiAccountDocument(
+                kind,
+                getEmptyProjectAiAccountDocument(kind)
+              );
+              if (!emptyApplied) {
+                pauseProjectAiAccountDocumentForRecoveryFailure(kind);
+                continue;
+              }
+            }
+            projectAiAccountSync.conflicts[kind] = false;
+            projectAiAccountSync.dirty[kind] = true;
+            setProjectAiLocalDirty(kind, true);
+            continue;
+          }
+          if (differentKnownAccount && !importMissingFromPreviousAccount) {
+            const recoverySaved = saveProjectAiRecoveryCopy(
+              kind,
+              getProjectAiAccountDocumentSnapshot(kind),
+              localRecoveryAccountKey
+            );
+            if (!recoverySaved) {
+              pauseProjectAiAccountDocumentForRecoveryFailure(kind);
+              continue;
+            }
+            const emptyApplied = applyProjectAiAccountDocument(
+              kind,
+              getEmptyProjectAiAccountDocument(kind)
+            );
+            if (!emptyApplied) {
+              pauseProjectAiAccountDocumentForRecoveryFailure(kind);
+              continue;
+            }
+          }
+          projectAiAccountSync.dirty[kind] = true;
+          setProjectAiLocalDirty(kind, true);
+          continue;
+        }
+
+        if (!sameAccount) {
+          if (!differentKnownAccount && localDirty) {
+            projectAiAccountSync.conflicts[kind] = true;
+            pendingConflicts.push({ kind, remote });
+            continue;
+          }
+          if (mutationChangedDuringRequest) {
+            projectAiAccountSync.conflicts[kind] = true;
+            pendingConflicts.push({ kind, remote });
+            continue;
+          }
+          const recoverySaved = saveProjectAiRecoveryCopy(
+            kind,
+            getProjectAiAccountDocumentSnapshot(kind),
+            localRecoveryAccountKey
+          );
+          if (!recoverySaved) {
+            projectAiAccountSync.conflicts[kind] = true;
+            pendingConflicts.push({ kind, remote });
+            continue;
+          }
+          if (!applyProjectAiAccountDocument(kind, remote.data)) {
+            pauseProjectAiAccountDocumentForRecoveryFailure(kind);
+            continue;
+          }
+          projectAiAccountSync.revisions[kind] = remote.revision;
+          setProjectAiLocalDirty(kind, false);
+          continue;
+        }
+
+        if (rememberedConflict) {
+          projectAiAccountSync.conflicts[kind] = true;
+          pendingConflicts.push({ kind, remote });
+          continue;
+        }
+        if (
+          Number.isSafeInteger(storedRevision) &&
+          storedRevision === remote.revision
+        ) {
+          if (projectAiAccountDocumentsMatch(kind, remote.data)) {
+            projectAiAccountSync.dirty[kind] = false;
+            setProjectAiLocalDirty(kind, false);
+            continue;
+          }
+          if (localDirty) {
+            projectAiAccountSync.dirty[kind] = true;
+            projectAiAccountSync.conflicts[kind] = true;
+            pendingConflicts.push({ kind, remote });
+            continue;
+          }
+          const recoverySaved = saveProjectAiRecoveryCopy(
+            kind,
+            getProjectAiAccountDocumentSnapshot(kind),
+            accountKey
+          );
+          if (!recoverySaved) {
+            projectAiAccountSync.conflicts[kind] = true;
+            pendingConflicts.push({ kind, remote });
+            continue;
+          }
+          if (!applyProjectAiAccountDocument(kind, remote.data)) {
+            pauseProjectAiAccountDocumentForRecoveryFailure(kind);
+            continue;
+          }
+          projectAiAccountSync.dirty[kind] = false;
+          setProjectAiLocalDirty(kind, false);
+          continue;
+        }
+        if (localDirty) {
+          projectAiAccountSync.dirty[kind] = true;
+          projectAiAccountSync.conflicts[kind] = true;
+          pendingConflicts.push({ kind, remote });
+          continue;
+        }
+
+        const recoverySaved = saveProjectAiRecoveryCopy(
+          kind,
+          getProjectAiAccountDocumentSnapshot(kind),
+          accountKey
+        );
+        if (!recoverySaved) {
+          projectAiAccountSync.conflicts[kind] = true;
+          pendingConflicts.push({ kind, remote });
+          continue;
+        }
+        if (!applyProjectAiAccountDocument(kind, remote.data)) {
+          pauseProjectAiAccountDocumentForRecoveryFailure(kind);
+          continue;
+        }
+        projectAiAccountSync.revisions[kind] = remote.revision;
+        setProjectAiLocalDirty(kind, false);
+      }
+
+      for (const { kind, remote } of pendingConflicts) {
+        const label = getProjectAiAccountDocumentLabel(kind);
+        const useCloud = await showSiteConfirm({
+          title: `Cloud sync conflict: ${label}`,
+          message: `A newer cloud copy exists for ${label}. Load that cloud copy on this device? A local recovery copy will be kept. Choose Pause sync to keep this local version without overwriting the cloud.`,
+          confirmText: "Use cloud copy",
+          cancelText: "Pause sync",
+        });
+        if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
+        if (!useCloud) {
+          appendProjectAiMessage(
+            "system",
+            `Cloud sync is paused for ${label}. Nothing was overwritten. Reload the page when you are ready to choose again.`
+          );
+          continue;
+        }
+        const recoverySaved = saveProjectAiRecoveryCopy(
+          kind,
+          getProjectAiAccountDocumentSnapshot(kind),
+          sameAccount ? accountKey : localRecoveryAccountKey
+        );
+        if (!recoverySaved) {
+          pauseProjectAiAccountDocumentForRecoveryFailure(kind);
+          continue;
+        }
+        if (!applyProjectAiAccountDocument(kind, remote.data)) {
+          pauseProjectAiAccountDocumentForRecoveryFailure(kind);
+          continue;
+        }
+        projectAiAccountSync.revisions[kind] = remote.revision;
+        projectAiAccountSync.dirty[kind] = false;
+        projectAiAccountSync.conflicts[kind] = false;
+        setProjectAiLocalDirty(kind, false);
+      }
+
+      if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
+      projectAiAccountSync.ready = true;
+      if (projectAiAccountWorkspaceRetryTimer) {
+        window.clearTimeout(projectAiAccountWorkspaceRetryTimer);
+        projectAiAccountWorkspaceRetryTimer = null;
+      }
+      projectAiAccountWorkspaceRetryCount = 0;
+      const pausedKinds = ["chats", "files", "instruction"].filter(
+        (kind) => projectAiAccountSync.conflicts[kind]
+      );
+      if (pausedKinds.length) {
+        setProjectAiAccountStatus(
+          `Cloud sync is paused for ${pausedKinds
+            .map(getProjectAiAccountDocumentLabel)
+            .join(", ")}. Local data was not overwritten.`,
+          "error"
+        );
+      } else {
+        setProjectAiAccountStatus("Account workspace synchronized.", "success");
+      }
+      persistProjectAiAccountSyncState();
+      for (const kind of ["chats", "files", "instruction"]) {
+        if (projectAiAccountSync.dirty[kind]) {
+          scheduleProjectAiAccountDocumentSave(kind, 60);
+        }
+      }
+      return result;
+    })();
+    projectAiAccountWorkspacePromise = promise;
+    try {
+      return await promise;
+    } catch (error) {
+      if (workspaceEpoch === projectAiAccountWorkspaceEpoch) {
+        const status = Number(error?.httpStatus);
+        if (status === 401 || status === 403) {
+          expireProjectAiWorkspaceSession(
+            "The Google session expired. Your local changes are safe; sign in again to resume cloud sync."
+          );
+        } else if (!status || status === 429 || status >= 500) {
+          scheduleProjectAiAccountWorkspaceRetry(error, workspaceEpoch);
+        } else {
+          setProjectAiAccountStatus(
+            "Cloud workspace sync is paused because the server rejected the load request. Your local changes are safe.",
+            "error"
+          );
+        }
+      }
+      throw error;
+    } finally {
+      if (projectAiAccountWorkspacePromise === promise) {
+        projectAiAccountWorkspacePromise = null;
+      }
+    }
   }
 
   function appendProjectAiThinking() {
@@ -6282,6 +7612,13 @@
 
       projectAiAuthSession = data;
       renderProjectAiAuthSession(data);
+      if (data.mode === "google" && data.authenticated === true) {
+        void initializeProjectAiAccountWorkspace().catch((error) => {
+          console.warn("Account workspace could not be initialized:", error);
+        });
+      } else {
+        resetProjectAiAccountWorkspaceRuntime();
+      }
       return data;
     })();
     projectAiAuthSessionPromise = sessionPromise;
@@ -6452,6 +7789,7 @@
         authenticated: false,
         quota: null,
       };
+      resetProjectAiAccountWorkspaceRuntime();
       renderProjectAiAuthSession(projectAiAuthSession);
       focusSignIn = true;
       setProjectAiAccountStatus("Signed out.", "success");
@@ -6480,6 +7818,9 @@
   function setProjectAiFormBusy(busy) {
     projectAiRequestInFlight = !!busy;
     const form = $("projectAiForm");
+    const chatsButton = $("projectAiChatsBtn");
+    if (chatsButton) chatsButton.disabled = !!busy;
+    if (busy) closeProjectAiChatsMenu();
     if (!form) return;
     const prompt = $("projectAiPrompt");
     if (busy) {
@@ -6611,13 +7952,6 @@
     }
     selectProjectAiConversation(payload);
     return payload;
-  }
-
-  function rememberProjectAiExchange(userMessage, assistantMessage) {
-    projectAiConversation.push(
-      { role: "user", content: String(userMessage || "").trim() },
-      { role: "assistant", content: String(assistantMessage || "").trim() }
-    );
   }
 
   function assertProjectAiUpdateIsFresh(requestPayload) {
@@ -6794,7 +8128,6 @@
           throw new Error("The AI response did not include an answer.");
         }
         appendProjectAiMessage("assistant", answer);
-        rememberProjectAiExchange(request, answer);
         if (prompt) prompt.value = "";
         return;
       }
@@ -6845,7 +8178,6 @@
           String(data.message || "").trim() ||
           "I revised the Markdown instruction. Review it before asking me to create or update the project.";
         appendProjectAiMessage("assistant", instructionMessage);
-        rememberProjectAiExchange(request, instructionMessage);
         if (prompt) prompt.value = "";
         return;
       }
@@ -6895,7 +8227,6 @@
         projectMessage,
         savedProject?.displayName || definition.displayName
       );
-      rememberProjectAiExchange(request, projectMessage);
       if (prompt) prompt.value = "";
     } catch (error) {
       removeProjectAiThinking(thinkingIndicator);
@@ -6954,7 +8285,7 @@
     const reducedMotion = window.matchMedia?.(
       "(prefers-reduced-motion: reduce)"
     )?.matches;
-    const compactWorkspace = window.matchMedia?.("(max-width: 989px)")
+    const compactWorkspace = window.matchMedia?.("(max-width: 1040px)")
       ?.matches;
     const animateTransition =
       shouldAnimate && !reducedMotion && !compactWorkspace;
@@ -7327,6 +8658,9 @@
     if (!markdownEditor || !guideFile || !hasFile(guideFile)) return;
 
     files[guideFile] = markdownEditor.value;
+    if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
+      markProjectAiAccountDocumentDirty("files");
+    }
     if (documentationEditSaveTimer) {
       window.clearTimeout(documentationEditSaveTimer);
       documentationEditSaveTimer = null;
@@ -7921,6 +9255,16 @@
     editor.on("change", () => {
       clearCompileErrorHighlight();
       if (!current) return;
+      if (projectAiAccountWorkspaceApplying) {
+        scheduleDocumentationMarkerRefresh();
+        if (resolveGuideFileName(current) === current) {
+          scheduleDocumentationPaneRefresh();
+        }
+        return;
+      }
+      if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
+        markProjectAiAccountDocumentDirty("files");
+      }
       scheduleDocumentationMarkerRefresh();
       if (resolveGuideFileName(current) === current) {
         scheduleDocumentationPaneRefresh();
@@ -8154,6 +9498,10 @@
       const projectAiToggle = $("projectAiToggle");
       const projectAiForm = $("projectAiForm");
       const projectAiPrompt = $("projectAiPrompt");
+      const projectAiChatsBtn = $("projectAiChatsBtn");
+      const projectAiChatsMenu = $("projectAiChatsMenu");
+      const projectAiNewChatBtn = $("projectAiNewChatBtn");
+      const projectAiChatList = $("projectAiChatList");
       const projectAiAccountBtn = $("projectAiAccountBtn");
       const projectAiAccountModal = $("projectAiAccountModal");
       const projectAiAccountCloseBtn = $("projectAiAccountCloseBtn");
@@ -8256,6 +9604,29 @@
       });
     projectAiForm &&
       projectAiForm.addEventListener("submit", handleProjectAiSubmit);
+    projectAiChatsBtn &&
+      projectAiChatsBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleProjectAiChatsMenu();
+      });
+    projectAiChatsMenu &&
+      projectAiChatsMenu.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+    projectAiNewChatBtn &&
+      projectAiNewChatBtn.addEventListener("click", createProjectAiChat);
+    projectAiChatList &&
+      projectAiChatList.addEventListener("click", (event) => {
+        const select = event.target.closest("[data-chat-id]");
+        if (select) {
+          selectProjectAiChat(select.dataset.chatId || "");
+          return;
+        }
+        const remove = event.target.closest("[data-delete-chat-id]");
+        if (remove) {
+          void deleteProjectAiChat(remove.dataset.deleteChatId || "");
+        }
+      });
     projectAiAccountBtn &&
       projectAiAccountBtn.addEventListener("click", openProjectAiAccountModal);
     projectAiAccountCloseBtn &&
@@ -8355,6 +9726,9 @@
 
     // Close context menu on click outside of it / trigger
     document.addEventListener("click", (e) => {
+      if (!e.target.closest?.(".project-ai-chats")) {
+        closeProjectAiChatsMenu();
+      }
       const menu = $("fileContextMenu");
       if (!menu || menu.style.display !== "block") return;
       if (menu.contains(e.target) || e.target.closest(".file-menu-btn")) {
@@ -8367,6 +9741,10 @@
     document.addEventListener("keydown", (e) => {
       if (trapProjectAiAccountFocus(e)) return;
       if (e.key === "Escape") {
+        if (projectAiChatsMenu && !projectAiChatsMenu.hidden) {
+          closeProjectAiChatsMenu({ restoreFocus: true });
+          return;
+        }
         if (projectAiAccountModal && !projectAiAccountModal.hidden) {
           closeProjectAiAccountModal();
           return;
@@ -8930,6 +10308,9 @@
 
   function boot() {
     loadState();
+    restoreProjectAiChats();
+    restoreProjectAiLocalDirtyState();
+    restoreProjectAiAccountSyncState();
     restoreProjectInstruction();
     const projectAiAuthReturn = consumeProjectAiAuthReturn();
     ensureAtLeastOneFile();
@@ -8951,6 +10332,8 @@
     setMoreOptionsExpanded(false);
     restoreDevicePanelState();
     bindUI();
+    renderProjectAiHistory();
+    renderProjectAiChatList();
     void renderBuiltInMiniProjectCards();
     void fetchProjectAiSkills();
     setProjectWorkspaceMode(projectAiAuthReturn ? "ai" : "avr", {
@@ -8972,6 +10355,8 @@
         detail: { bridge },
       })
     );
+    projectAiBootComplete = true;
+    void fetchProjectAiAuthSession().catch(() => {});
   }
 
   initMiniProjectBridge();

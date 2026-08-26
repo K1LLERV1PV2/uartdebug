@@ -11,7 +11,7 @@ const {
   createAiAccessService,
 } = require("./ai-access-service");
 
-const AI_SERVER_VERSION = "20260825-workspace-public-auth-v1";
+const AI_SERVER_VERSION = "20260826-account-workspace-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -19,9 +19,16 @@ const DEFAULT_MAX_CONCURRENT = 2;
 const DEFAULT_AUTH_START_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_AUTH_START_MAX_PER_IP = 10;
 const DEFAULT_AUTH_START_MAX_GLOBAL = 1000;
+const DEFAULT_WORKSPACE_WRITE_WINDOW_MS = 10 * 60 * 1000;
+const DEFAULT_WORKSPACE_WRITES_PER_ACCOUNT = 1200;
 const MAX_PUBLIC_SKILLS = 64;
 const MAX_PUBLIC_SKILL_MARKDOWN_BYTES = 64 * 1024;
 const MAX_PUBLIC_SKILL_PACK_BYTES = 512 * 1024;
+const ACCOUNT_WORKSPACE_BODY_LIMITS = Object.freeze({
+  chats: 1024 * 1024 + 64 * 1024,
+  files: 4 * 1024 * 1024 + 64 * 1024,
+  instruction: 256 * 1024 + 16 * 1024,
+});
 
 function createAiHttpServer(options = {}) {
   const environment = options.environment || process.env;
@@ -79,6 +86,22 @@ function createAiHttpServer(options = {}) {
       100_000,
       DEFAULT_AUTH_START_MAX_GLOBAL
     ),
+  });
+  const accountWorkspaceWriteLimiter = createFixedWindowLimiter({
+    now,
+    windowMs: readInteger(
+      environment.AI_ACCOUNT_WORKSPACE_WRITE_WINDOW_MS,
+      60_000,
+      60 * 60 * 1000,
+      DEFAULT_WORKSPACE_WRITE_WINDOW_MS
+    ),
+    maxPerKey: readInteger(
+      environment.AI_ACCOUNT_WORKSPACE_WRITES_PER_ACCOUNT,
+      1,
+      10_000,
+      DEFAULT_WORKSPACE_WRITES_PER_ACCOUNT
+    ),
+    maxGlobal: Number.MAX_SAFE_INTEGER,
   });
   let concurrentRequests = 0;
 
@@ -196,6 +219,138 @@ function createAiHttpServer(options = {}) {
         () => accessService.logout(req, res),
         200
       );
+    }
+
+    if (
+      req.method === "GET" &&
+      requestUrl.pathname === "/api/avr/ai/account/workspace"
+    ) {
+      return handleAccessEndpoint(
+        res,
+        requestId,
+        async () => {
+          const context = await accessService.authenticateAccountWorkspaceRequest(
+            req,
+            res
+          );
+          return await accessService.readAccountWorkspace(context);
+        },
+        200
+      );
+    }
+
+    const accountWorkspaceMatch = requestUrl.pathname.match(
+      /^\/api\/avr\/ai\/account\/workspace\/(chats|files|instruction)$/
+    );
+    if (req.method === "PUT" && accountWorkspaceMatch) {
+      if (!String(req.headers.origin || "").trim()) {
+        return sendJson(res, 403, {
+          ok: false,
+          code: "origin_required",
+          message: "A same-origin browser request is required.",
+          requestId,
+        });
+      }
+      if (!isJsonRequest(req)) {
+        return sendJson(res, 415, {
+          ok: false,
+          code: "json_required",
+          message: "Content-Type must be application/json.",
+          requestId,
+        });
+      }
+
+      let accountContext;
+      try {
+        accountContext =
+          await accessService.authenticateAccountWorkspaceRequest(req, res);
+      } catch (error) {
+        const normalized = normalizeAccessError(error);
+        return sendJson(res, normalized.status, {
+          ok: false,
+          code: normalized.code,
+          message: normalized.message,
+          requestId,
+        });
+      }
+
+      const workspaceWriteLimit = accountWorkspaceWriteLimiter.consume(
+        accountContext?.accountHash
+      );
+      if (!workspaceWriteLimit.allowed) {
+        res.setHeader(
+          "Retry-After",
+          String(workspaceWriteLimit.retryAfterSeconds)
+        );
+        return sendJson(res, 429, {
+          ok: false,
+          code: "account_workspace_rate_limited",
+          message: "Too many account workspace saves. Try again shortly.",
+          requestId,
+        });
+      }
+
+      const dataType = accountWorkspaceMatch[1];
+      let requestBody;
+      try {
+        requestBody = await readJsonBody(
+          req,
+          ACCOUNT_WORKSPACE_BODY_LIMITS[dataType]
+        );
+      } catch (error) {
+        const status = error?.code === "body_too_large" ? 413 : 400;
+        return sendJson(res, status, {
+          ok: false,
+          code: error?.code || "invalid_json",
+          message:
+            status === 413
+              ? `The ${dataType} workspace request is too large.`
+              : "Invalid JSON request body.",
+          requestId,
+        });
+      }
+
+      try {
+        const expectedAccountKey = String(
+          requestBody?.expectedAccountKey || ""
+        );
+        if (!/^[A-Za-z0-9_-]{32,128}$/.test(expectedAccountKey)) {
+          return sendJson(res, 400, {
+            ok: false,
+            code: "expected_account_key_required",
+            message:
+              "expectedAccountKey must identify the account workspace being saved.",
+            requestId,
+          });
+        }
+        if (expectedAccountKey !== accountContext?.accountKey) {
+          return sendJson(res, 409, {
+            ok: false,
+            code: "account_workspace_account_mismatch",
+            message:
+              "The signed-in account changed before this workspace could be saved. Reload the account workspace before saving again.",
+            requestId,
+          });
+        }
+        const result = await accessService.writeAccountWorkspace(
+          accountContext,
+          dataType,
+          requestBody
+        );
+        return sendJson(res, 200, {
+          ok: true,
+          ...result,
+          requestId,
+        });
+      } catch (error) {
+        const normalized = normalizeAccessError(error);
+        return sendJson(res, normalized.status, {
+          ok: false,
+          code: normalized.code,
+          message: normalized.message,
+          requestId,
+        });
+      }
     }
 
     if (
