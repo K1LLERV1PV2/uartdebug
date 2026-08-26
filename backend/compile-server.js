@@ -2,6 +2,7 @@
 // Receives C code and returns an AVR HEX file built with Microchip XC8.
 
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const { mkdtemp, writeFile, readFile, rm } = require("fs/promises");
 const fs = require("fs");
 const path = require("path");
@@ -16,6 +17,9 @@ const {
 const {
   inspectCompilerReadiness,
 } = require("./avr-compiler-readiness");
+const {
+  createCompileCapacityGuard,
+} = require("./compile-capacity-guard");
 
 const app = express();
 const SERVER_CWD = __dirname;
@@ -39,13 +43,37 @@ const ALLOWED_ORIGINS = new Set(
 );
 // Keep this literal for the deployment health-check extractor. Runtime use is
 // guarded against the shared contract constant below.
-const COMPILE_SERVER_VERSION = "20260826-verification-contract-v1";
+const COMPILE_SERVER_VERSION = "20260826-rate-limit-v1";
 if (COMPILE_SERVER_VERSION !== AVR_COMPILE_SERVER_VERSION) {
   throw new Error("AVR compiler contract version mismatch.");
 }
 const MAX_CODE_SIZE = 64 * 1024;
 const MAX_PROJECT_SIZE = 512 * 1024;
 const MAX_PROJECT_FILES = 64;
+const COMPILE_RATE_LIMIT_WINDOW_MS = readBoundedInteger(
+  process.env.COMPILE_RATE_LIMIT_WINDOW_MS,
+  1000,
+  60 * 60 * 1000,
+  60 * 1000
+);
+const COMPILE_RATE_LIMIT_MAX_PER_CLIENT = readBoundedInteger(
+  process.env.COMPILE_RATE_LIMIT_MAX_PER_CLIENT,
+  1,
+  1000,
+  12
+);
+const COMPILE_RATE_LIMIT_MAX_GLOBAL = readBoundedInteger(
+  process.env.COMPILE_RATE_LIMIT_MAX_GLOBAL,
+  1,
+  100_000,
+  120
+);
+const COMPILE_MAX_CONCURRENT = readBoundedInteger(
+  process.env.COMPILE_MAX_CONCURRENT,
+  1,
+  16,
+  2
+);
 const PROJECT_FILE_EXTENSIONS = new Set([
   "c",
   "h",
@@ -155,6 +183,27 @@ function resolveTool(envName, toolName) {
 }
 
 app.disable("x-powered-by");
+app.set("trust proxy", "loopback");
+
+const compileGlobalRateLimiter = rateLimit({
+  windowMs: COMPILE_RATE_LIMIT_WINDOW_MS,
+  max: COMPILE_RATE_LIMIT_MAX_GLOBAL,
+  keyGenerator: () => "all-compiler-clients",
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: createCompileRateLimitHandler("global"),
+});
+
+const compileClientRateLimiter = rateLimit({
+  windowMs: COMPILE_RATE_LIMIT_WINDOW_MS,
+  max: COMPILE_RATE_LIMIT_MAX_PER_CLIENT,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: createCompileRateLimitHandler("client"),
+});
+const compileCapacityGuard = createCompileCapacityGuard({
+  maxConcurrent: COMPILE_MAX_CONCURRENT,
+});
 
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -166,6 +215,12 @@ app.use((req, res, next) => {
   );
   next();
 });
+
+app.use(
+  "/api/avr/compile",
+  compileClientRateLimiter,
+  compileGlobalRateLimiter
+);
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -237,6 +292,26 @@ function requireJsonRequest(req, res, next) {
   }
 
   return next();
+}
+
+function createCompileRateLimitHandler(scope) {
+  return (req, res) =>
+    res.status(429).json(
+      createCompileEnvelope({
+        ok: false,
+        stage: "server",
+        code: "compile_rate_limited",
+        scope,
+        stderr: "Too many compile requests. Try again shortly.",
+      })
+    );
+}
+
+function readBoundedInteger(value, min, max, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isSafeInteger(parsed) && parsed >= min && parsed <= max
+    ? parsed
+    : fallback;
 }
 
 app.use("/api/", rejectCrossSiteApiRequests);
@@ -579,8 +654,9 @@ function buildCompilePlan(entryName, projectFiles) {
   };
 }
 
-app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
+async function handleCompileRequest(req, res) {
   let tmp = "";
+  const releaseCompileCapacity = res.locals.releaseCompileCapacity;
 
   try {
     const { filename, code, mcu, optimize, project_files } = req.body || {};
@@ -770,8 +846,17 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
       stage: "server",
       stderr: "Internal compiler service error.",
     }));
+  } finally {
+    releaseCompileCapacity();
   }
-});
+}
+
+app.post(
+  "/api/avr/compile",
+  requireJsonRequest,
+  compileCapacityGuard,
+  handleCompileRequest
+);
 
 app.get("/health", (req, res) => {
   const readiness = inspectCompilerReadiness({

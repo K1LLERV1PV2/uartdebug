@@ -18,6 +18,7 @@ const {
 } = require("../backend/avr-ai-service");
 const {
   AVR_COMPILE_HEALTH_SERVICE,
+  AVR_COMPILE_SERVER_VERSION,
   createCompileEnvelope,
 } = require("../backend/avr-compiler-contract");
 
@@ -251,7 +252,7 @@ test("reports a present rule pack but stays unconfigured without a key", async (
     ready: false,
     error: null,
     contract: "uartdebug-avr-compile/v1",
-    contractVersion: "20260826-verification-contract-v1",
+    contractVersion: AVR_COMPILE_SERVER_VERSION,
   });
   assert.equal(service.authorizeAccessToken(""), true);
   assert.equal(service.authorizeAccessToken("any-public-value"), true);

@@ -158,7 +158,7 @@ Start the compiler service after installing XC8 and `avr-objcopy`:
 npm run start:compiler --prefix backend
 ```
 
-It listens on `127.0.0.1:8082` by default. Tool paths can be overridden with `XC8_CC`, `XC8_DFP`, and `AVR_OBJCOPY`.
+It listens on `127.0.0.1:8082` by default. Tool paths can be overridden with `XC8_CC`, `XC8_DFP`, and `AVR_OBJCOPY`. Expensive compile starts are protected independently of chat credits: by default each client may start 12 compiles and the service may start 120 compiles total per 60-second process window, with at most two compiles running simultaneously. Operators can tune this with `COMPILE_RATE_LIMIT_WINDOW_MS`, `COMPILE_RATE_LIMIT_MAX_PER_CLIENT`, `COMPILE_RATE_LIMIT_MAX_GLOBAL`, and `COMPILE_MAX_CONCURRENT`.
 
 The AI service is optional:
 

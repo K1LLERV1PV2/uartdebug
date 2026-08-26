@@ -164,6 +164,15 @@ compile responses carry the shared `uartdebug-avr-compile/v1` contract and exact
 server version; a missing, stale, or malformed contract is an error, never a
 successful verification.
 
+The public compiler endpoint has a separate in-memory abuse guard because each
+accepted request starts external toolchain processes. Its defaults are 12 starts
+per client and 120 starts globally per 60-second process window. Configure
+`COMPILE_RATE_LIMIT_WINDOW_MS`, `COMPILE_RATE_LIMIT_MAX_PER_CLIENT`, and
+`COMPILE_RATE_LIMIT_MAX_GLOBAL` when server capacity changes. At most two
+compiles run simultaneously by default; tune that separate in-flight guard with
+`COMPILE_MAX_CONCURRENT`. These guards do not count chat messages and do not
+spend or reduce AI credits.
+
 These AI-service variables control the integration:
 
 | Variable | Production value | Meaning |
