@@ -1035,6 +1035,30 @@ test("deploy verifies legal page content rather than accepting an SPA fallback",
   assert.match(workflow, /\. "\$\{deploy_helpers\}"/);
 });
 
+test("deploy revisions AVR script and stylesheet URLs for returning browsers", () => {
+  const stampScript = fs.readFileSync(
+    path.join(__dirname, "../.github/scripts/stamp_frontend_build.py"),
+    "utf8"
+  );
+
+  assert.match(
+    stampScript,
+    /revisioned_page_assets\s*=\s*\[[\s\S]*?"AVR-Programming\.css"[\s\S]*?"AVR-Programming\.js"/
+  );
+  assert.match(
+    stampScript,
+    /\(\?P<prefix>\\b\(\?:href\|src\)/
+  );
+  assert.match(
+    stampScript,
+    /for asset_url, pattern, replacement in revisioned_page_asset_patterns:[\s\S]*?pattern\.subn\(replacement, html_text\)/
+  );
+  assert.match(
+    stampScript,
+    /if count != 1[\s\S]*?Expected exactly one HTML reference for each revisioned page asset/
+  );
+});
+
 test("renames a mini-project display name without renaming its linked files", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.js"),
