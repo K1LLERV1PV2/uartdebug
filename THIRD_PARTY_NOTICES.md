@@ -6,8 +6,11 @@ Uart Debug vendors browser dependencies so the UART and AVR pages can load witho
 | --- | --- | --- | --- | --- |
 | Chart.js | 4.4.0 | `public/vendor/chart.umd.js` | [chartjs/Chart.js](https://github.com/chartjs/Chart.js/tree/v4.4.0) | [MIT](LICENSES/Chart.js.txt) |
 | CodeMirror | 5.65.16 | `public/vendor/codemirror/5.65.16/` | [codemirror/codemirror5](https://github.com/codemirror/codemirror5/tree/5.65.16) | [MIT](LICENSES/CodeMirror.txt) |
+| UartDebugMarkdown runtime | 1.0.0 | `public/vendor/uartdebug-markdown.js` | [`frontend/markdown-runtime/package.json`](frontend/markdown-runtime/package.json) | [Bundled MIT licenses](LICENSES/UartDebugMarkdownRuntime.txt) |
 
 The license copies linked above continue to govern those third-party components. Uart Debug's `AGPL-3.0-only` project license does not replace or alter their terms.
+The UartDebugMarkdown license aggregate is also deployed beside its bundle as
+`public/vendor/uartdebug-markdown.LICENSE.txt`.
 
 The vendored CodeMirror Markdown mode includes a local linear-time HTML-tag
 lookahead hardening patch. CodeMirror remains governed by its upstream MIT

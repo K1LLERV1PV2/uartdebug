@@ -9,13 +9,17 @@ const test = require("node:test");
 
 const {
   AiServiceError,
-  createAvrAiService,
+  createAvrAiService: createRawAvrAiService,
   loadActiveRulePack,
   loadAiSkillCatalog,
   parseAssistantResponse,
   parseStructuredOutput,
   validateGeneratedBundle,
 } = require("../backend/avr-ai-service");
+const {
+  AVR_COMPILE_HEALTH_SERVICE,
+  createCompileEnvelope,
+} = require("../backend/avr-compiler-contract");
 
 const repoRoot = path.join(__dirname, "..");
 const rulePackRoot = path.join(repoRoot, "backend", "ai", "rule-packs");
@@ -33,6 +37,33 @@ const skillCatalogPath = path.join(
   "skills",
   "catalog.json"
 );
+
+function makeCompilerHealthResponse({
+  ok = true,
+  status = ok ? 200 : 503,
+  body,
+} = {}) {
+  return {
+    ok,
+    status,
+    async json() {
+      return (
+        body ||
+        createCompileEnvelope({
+          ok: true,
+          service: AVR_COMPILE_HEALTH_SERVICE,
+        })
+      );
+    },
+  };
+}
+
+function createAvrAiService(options = {}) {
+  return createRawAvrAiService({
+    compileHealthFetch: async () => makeCompilerHealthResponse(),
+    ...options,
+  });
+}
 
 async function readStaticReferenceIds() {
   const catalog = JSON.parse(await fs.readFile(miniProjectCatalogPath, "utf8"));
@@ -55,6 +86,7 @@ function assertReferenceIncludedOnce(instructions, projectId) {
 
 function makeGeneratedBundle() {
   return {
+    chatTitle: "Status LED project",
     title: "Blink status LED",
     summary: "Blinks a status LED using a timer.",
     version: "1.0.0-d",
@@ -73,6 +105,45 @@ function makeGeneratedBundle() {
       name: "BlinkStatus_AI.md",
       content: "# AI Integration Guide\n\nPrivate implementation constraints.\n",
     },
+  };
+}
+
+function makeCompileResponse({
+  ok = true,
+  status = ok ? 200 : 400,
+  mcu = "attiny1624",
+  stage = ok ? undefined : "compile",
+  stderr = "",
+} = {}) {
+  return {
+    ok,
+    status,
+    async json() {
+      return ok
+        ? createCompileEnvelope({
+            ok: true,
+            mcu,
+            hex_name: "firmware.hex",
+            hex: ":00000001FF\n",
+          })
+        : createCompileEnvelope({
+            ok: false,
+            stage,
+            stderr,
+          });
+    },
+  };
+}
+
+function makeAuthorship(content, authors = ["human"]) {
+  const lineCount = String(content).replace(/\r\n?/g, "\n").split("\n").length;
+  return {
+    schemaVersion: 1,
+    lines: Array.from(
+      { length: lineCount },
+      (_, index) => authors[index % authors.length]
+    ),
+    updatedAt: 1_787_500_000_000,
   };
 }
 
@@ -174,6 +245,14 @@ test("reports a present rule pack but stays unconfigured without a key", async (
   assert.equal(status.model, "gpt-5.6-terra");
   assert.equal(status.accessRequired, false);
   assert.equal(status.accessConfigured, false);
+  assert.deepEqual(status.compilerVerification, {
+    enabled: true,
+    maxRepairAttempts: 2,
+    ready: false,
+    error: null,
+    contract: "uartdebug-avr-compile/v1",
+    contractVersion: "20260826-verification-contract-v1",
+  });
   assert.equal(service.authorizeAccessToken(""), true);
   assert.equal(service.authorizeAccessToken("any-public-value"), true);
   assert.equal(status.rules.packageId, "uartdebug-rules-2026-07-23.2");
@@ -320,7 +399,23 @@ test("answers a Russian question in Russian and accepts more than 12 conversatio
     capturedRequest.body.safety_identifier,
     "ud_user_0123456789abcdef"
   );
-  assert.equal(capturedRequest.body.text, undefined);
+  assert.deepEqual(capturedRequest.body.text, {
+    format: {
+      type: "json_schema",
+      name: "uartdebug_chat_answer",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          message: capturedRequest.body.text.format.schema.properties.message,
+          chatTitle:
+            capturedRequest.body.text.format.schema.properties.chatTitle,
+        },
+        required: ["message", "chatTitle"],
+        additionalProperties: false,
+      },
+    },
+  });
   assert.match(
     capturedRequest.body.instructions,
     /same natural language as the latest visitor task/i
@@ -333,6 +428,7 @@ test("answers a Russian question in Russian and accepts more than 12 conversatio
   assert.equal(input.responseLocale, "ru");
   assert.equal(input.responseLanguage, "Russian");
   assert.equal(input.humanGuideLocale, "en");
+  assert.equal(input.chatTitleRequested, false);
   assert.deepEqual(input.conversation, conversation);
   assert.deepEqual(result._metering, {
     provider: "openai",
@@ -508,6 +604,7 @@ test("counts input tokens and applies a metered reservation before generation", 
   assert.equal(requests[0].body.max_output_tokens, undefined);
   assert.equal(requests[0].body.store, undefined);
   assert.equal(requests[0].body.metadata, undefined);
+  assert.deepEqual(requests[0].body.text, requests[1].body.text);
   assert.equal(requests[1].body.max_output_tokens, 9000);
   assert.deepEqual(requests[1].body.metadata, {
     uartdebug_request_id: "018f1234-5678-7abc-8def-0123456789ab",
@@ -635,6 +732,7 @@ test("edits a revisioned instruction document without generating a project", asy
           type: "function_call",
           name: "edit_avr_project_instruction",
           arguments: JSON.stringify({
+            chatTitle: "Уточнение инструкции таймера",
             baseRevision: 7,
             assistantMessage: "Уточнил невозможное требование к таймеру.",
             instructionMarkdown:
@@ -649,6 +747,7 @@ test("edits a revisioned instruction document without generating a project", asy
           type: "function_call",
           name: "edit_avr_project_instruction",
           arguments: JSON.stringify({
+            chatTitle: "Изменение проектной инструкции",
             baseRevision: 6,
             assistantMessage: "Изменил инструкцию.",
             instructionMarkdown: "# Инициализация\n\nНастроить TCA0.\n",
@@ -684,6 +783,10 @@ test("edits a revisioned instruction document without generating a project", asy
       "# Инициализация\n\nНастроить TCA0 на невозможный период.\n",
     skillRefs: [],
   };
+  instructionDocument.authorship = makeAuthorship(
+    instructionDocument.markdown,
+    ["human", "original", "ai"]
+  );
 
   const result = await service.respond({
     prompt: "Исправь инструкцию так, чтобы проект можно было реализовать.",
@@ -754,6 +857,7 @@ test("uses an explicit project tool call and stores only the private AI file", a
   t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
   const draftRoot = path.join(tempRoot, "drafts");
   const capturedRequests = [];
+  const compileRequests = [];
   const reviewedInstruction = {
     schemaVersion: 1,
     revision: 4,
@@ -810,6 +914,10 @@ test("uses an explicit project tool call and stores only the private AI file", a
     miniProjectCatalogPath,
     draftRoot,
     fetch: fakeFetch,
+    compileFetch: async (url, request) => {
+      compileRequests.push({ url, body: JSON.parse(request.body) });
+      return makeCompileResponse({ mcu: JSON.parse(request.body).mcu });
+    },
     now: () => new Date("2026-07-23T12:00:00.000Z"),
     randomUUID: () => generatedUuids.shift(),
   });
@@ -857,6 +965,16 @@ test("uses an explicit project tool call and stores only the private AI file", a
   );
   assert.equal(result.project.aiSpecRef.id, "20260723-11111111-2222-4333-8444-555555555555");
   assert.equal(JSON.stringify(result).includes("Private implementation constraints"), false);
+  assert.equal(result.verification.status, "passed");
+  assert.equal(result.verification.mcu, "attiny1624");
+  assert.equal(result.verification.compileAttempts, 1);
+  assert.deepEqual(
+    result.progress.stages.map(({ id, status }) => ({ id, status })),
+    [
+      { id: "generation", status: "completed" },
+      { id: "compilation", status: "completed" },
+    ]
+  );
 
   const privateSpecPath = path.join(
     draftRoot,
@@ -887,6 +1005,14 @@ test("uses an explicit project tool call and stores only the private AI file", a
       guideLocale: result.project.files[1].locale,
       source: result.project.files[0].content,
       guide: result.project.files[1].content,
+      sourceAuthorship: makeAuthorship(result.project.files[0].content, [
+        "original",
+        "human",
+      ]),
+      guideAuthorship: makeAuthorship(result.project.files[1].content, [
+        "original",
+        "ai",
+      ]),
       aiSpecRef: result.project.aiSpecRef,
     },
   });
@@ -894,6 +1020,11 @@ test("uses an explicit project tool call and stores only the private AI file", a
   assert.equal(updated.operation, "update");
   assert.equal(updated.targetInstanceId, "installed-project-1");
   assert.match(updated.message, /updated/i);
+  assert.equal(updated.verification.status, "passed");
+  assert.equal(compileRequests.length, 2);
+  assert.equal(compileRequests[0].url, "http://127.0.0.1:8082/api/avr/compile");
+  assert.equal(compileRequests[0].body.mcu, "attiny1624");
+  assert.equal(compileRequests[0].body.filename, "BlinkStatus.c");
   assert.deepEqual(
     capturedRequests[1].body.tools.map((tool) => tool.name),
     [
@@ -939,12 +1070,608 @@ test("uses an explicit project tool call and stores only the private AI file", a
       guideLocale: result.project.files[1].locale,
       source: result.project.files[0].content,
       guide: result.project.files[1].content,
+      sourceAuthorship: makeAuthorship(result.project.files[0].content, [
+        "original",
+        "human",
+      ]),
+      guideAuthorship: makeAuthorship(result.project.files[1].content, [
+        "original",
+        "ai",
+      ]),
     }
   );
   assert.deepEqual(
     JSON.parse(capturedRequests[1].body.input).instructionDocument,
     reviewedInstruction
   );
+});
+
+test("compiles a generated project for the requested MCU and repairs compiler failures before returning it", async (t) => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "uartdebug-ai-compile-repair-")
+  );
+  t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  const draftRoot = path.join(tempRoot, "drafts");
+  const initialBundle = makeGeneratedBundle();
+  initialBundle.source.content =
+    "//# Overview\nint main(void) { this_will_not_compile; }\n";
+  const repairedBundle = makeGeneratedBundle();
+  repairedBundle.assistantMessage = "Исправил проект после проверки компилятором.";
+  repairedBundle.source.content =
+    "//# Overview\nint main(void) { for (;;) {} return 0; }\n";
+  repairedBundle.aiSpec.content = "# AI Integration Guide\n\nCompiler-repaired constraints.\n";
+  const providerResponses = [
+    {
+      id: "resp_initial_project",
+      model: "gpt-5.6-terra-2026-08-01",
+      output: [
+        {
+          type: "function_call",
+          name: "create_avr_mini_project",
+          arguments: JSON.stringify(initialBundle),
+        },
+      ],
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 200,
+        total_tokens: 1200,
+      },
+    },
+    {
+      id: "resp_repaired_project",
+      model: "gpt-5.6-terra-2026-08-01",
+      output: [
+        {
+          type: "function_call",
+          name: "create_avr_mini_project",
+          arguments: JSON.stringify(repairedBundle),
+        },
+      ],
+      usage: {
+        input_tokens: 600,
+        output_tokens: 180,
+        total_tokens: 780,
+      },
+    },
+  ];
+  const openAiRequests = [];
+  const inputTokenCounts = [1000, 600];
+  const compileRequests = [];
+  const progressEvents = [];
+  let compileAttempt = 0;
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+      OPENAI_MODEL: "gpt-5.6-terra",
+      AI_COMPILE_MAX_REPAIR_ATTEMPTS: "2",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    skillCatalogPath,
+    draftRoot,
+    fetch: async (url, request) => {
+      const body = JSON.parse(request.body);
+      openAiRequests.push({ url, body });
+      if (url.endsWith("/responses/input_tokens")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { input_tokens: inputTokenCounts.shift() };
+          },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return providerResponses.shift();
+        },
+      };
+    },
+    compileFetch: async (url, request) => {
+      const body = JSON.parse(request.body);
+      compileRequests.push({ url, body });
+      compileAttempt += 1;
+      return compileAttempt === 1
+        ? makeCompileResponse({
+            ok: false,
+            stage: "compile",
+            stderr: "BlinkStatus.c:2: error: 'this_will_not_compile' undeclared",
+          })
+        : makeCompileResponse({ mcu: body.mcu });
+    },
+    now: () => new Date("2026-08-26T12:00:00.000Z"),
+    randomUUID: () => "11111111-2222-4333-8444-555555555555",
+  });
+  let reservationQuote;
+  let extensionQuote;
+  let providerStarted = 0;
+
+  const result = await service.respond(
+    {
+      prompt: "Создай проект и проверь его.",
+      mcu: "auto",
+      detectedMcu: "attiny3227",
+      locale: "ru",
+    },
+    {
+      requestId: "018f1234-5678-7abc-8def-0123456789ab",
+      async reserveBudget(quote) {
+        reservationQuote = quote;
+        return { maxOutputTokens: 10_000 };
+      },
+      async extendBudget(quote) {
+        extensionQuote = quote;
+        return { additionalMaxOutputTokens: 9_000 };
+      },
+      markProviderCalled() {
+        providerStarted += 1;
+      },
+      onProgress(event) {
+        progressEvents.push(event);
+      },
+    }
+  );
+
+  assert.equal(result.kind, "project");
+  assert.equal(result.project.files[0].content, repairedBundle.source.content.trim());
+  assert.deepEqual(result.verification, {
+    schemaVersion: 1,
+    status: "passed",
+    mcu: "attiny3227",
+    mcuSource: "detected",
+    compileAttempts: 2,
+    repairAttempts: 1,
+  });
+  assert.deepEqual(
+    result.progress.stages.map((stage) => ({
+      id: stage.id,
+      status: stage.status,
+      attempt: stage.attempt,
+    })),
+    [
+      { id: "generation", status: "completed", attempt: 1 },
+      { id: "compilation", status: "failed", attempt: 1 },
+      { id: "repair", status: "completed", attempt: 1 },
+      { id: "compilation", status: "completed", attempt: 2 },
+    ]
+  );
+  assert.equal(compileRequests.length, 2);
+  assert.equal(compileRequests[0].body.mcu, "attiny3227");
+  assert.equal(compileRequests[1].body.code, repairedBundle.source.content.trim());
+  assert.equal(
+    JSON.parse(
+      openAiRequests.filter(({ url }) => url.endsWith("/responses"))[0].body
+        .input
+    ).targetMcu,
+    "attiny3227"
+  );
+  const repairRequest = openAiRequests.filter(({ url }) =>
+    url.endsWith("/responses")
+  )[1].body;
+  assert.deepEqual(repairRequest.tool_choice, {
+    type: "function",
+    name: "create_avr_mini_project",
+  });
+  assert.equal(repairRequest.max_output_tokens, 9_000);
+  const repairEnvelope = JSON.parse(repairRequest.input);
+  const repairInput = repairEnvelope.compilerRepair;
+  assert.equal(repairEnvelope.originalContext.task, "Создай проект и проверь его.");
+  assert.equal(repairEnvelope.originalContext.targetMcu, "attiny3227");
+  assert.equal(repairInput.targetMcu, "attiny3227");
+  assert.equal(repairInput.diagnostics.compilerStage, "compile");
+  assert.match(repairInput.diagnostics.stderr, /undeclared/);
+  assert.equal(repairInput.diagnostics.cmd, undefined);
+  assert.deepEqual(reservationQuote, {
+    model: "gpt-5.6-terra",
+    inputTokens: 1000,
+    maxOutputTokens: 24_000,
+    minOutputTokens: 8_000,
+  });
+  assert.deepEqual(extensionQuote, {
+    model: "gpt-5.6-terra",
+    additionalInputTokens: 600,
+    additionalMaxOutputTokens: 10_000,
+    minAdditionalOutputTokens: 8_000,
+  });
+  assert.equal(providerStarted, 2);
+  assert.deepEqual(
+    progressEvents.map(({ id, status, attempt }) => ({ id, status, attempt })),
+    [
+      { id: "generation", status: "in_progress", attempt: 1 },
+      { id: "generation", status: "completed", attempt: 1 },
+      { id: "compilation", status: "in_progress", attempt: 1 },
+      { id: "compilation", status: "failed", attempt: 1 },
+      { id: "repair", status: "in_progress", attempt: 1 },
+      { id: "repair", status: "completed", attempt: 1 },
+      { id: "compilation", status: "in_progress", attempt: 2 },
+      { id: "compilation", status: "completed", attempt: 2 },
+    ]
+  );
+  assert.deepEqual(result._metering, {
+    provider: "openai",
+    responseId: "resp_repaired_project",
+    model: "gpt-5.6-terra-2026-08-01",
+    usage: {
+      inputTokens: 1600,
+      cachedInputTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 380,
+      reasoningTokens: 0,
+      totalTokens: 1980,
+    },
+    responses: [
+      {
+        provider: "openai",
+        responseId: "resp_initial_project",
+        model: "gpt-5.6-terra-2026-08-01",
+        usage: {
+          inputTokens: 1000,
+          cachedInputTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 200,
+          reasoningTokens: 0,
+          totalTokens: 1200,
+        },
+      },
+      {
+        provider: "openai",
+        responseId: "resp_repaired_project",
+        model: "gpt-5.6-terra-2026-08-01",
+        usage: {
+          inputTokens: 600,
+          cachedInputTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 180,
+          reasoningTokens: 0,
+          totalTokens: 780,
+        },
+      },
+    ],
+  });
+  assert.match(
+    await fs.readFile(
+      path.join(
+        draftRoot,
+        "20260826-11111111-2222-4333-8444-555555555555",
+        "BlinkStatus_AI.md"
+      ),
+      "utf8"
+    ),
+    /Compiler-repaired constraints/
+  );
+});
+
+test("fails before a paid OpenAI call when compiler readiness is unavailable", async (t) => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "uartdebug-ai-preflight-")
+  );
+  t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  let providerCalls = 0;
+  let reservations = 0;
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    draftRoot: path.join(tempRoot, "drafts"),
+    compileHealthFetch: async () =>
+      makeCompilerHealthResponse({
+        ok: false,
+        status: 503,
+        body: createCompileEnvelope({
+          ok: false,
+          service: AVR_COMPILE_HEALTH_SERVICE,
+          checks: { compiler: false, objcopy: true, devicePack: true },
+        }),
+      }),
+    fetch: async () => {
+      providerCalls += 1;
+      throw new Error("must not call OpenAI");
+    },
+  });
+
+  await assert.rejects(
+    service.respond(
+      { prompt: "Create a project.", mcu: "attiny1624" },
+      {
+        reserveBudget() {
+          reservations += 1;
+        },
+      }
+    ),
+    (error) =>
+      error instanceof AiServiceError && error.code === "compiler_unavailable"
+  );
+  assert.equal(providerCalls, 0);
+  assert.equal(reservations, 0);
+  assert.equal(service.getRuntimeConfig().compileTimeoutMs, 65_000);
+});
+
+test("marks repair usage uncertain and does not store a draft when repair usage cannot be settled", async (t) => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "uartdebug-ai-uncertain-repair-")
+  );
+  t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  const draftRoot = path.join(tempRoot, "drafts");
+  const initialBundle = makeGeneratedBundle();
+  initialBundle.source.content =
+    "//# Overview\nint main(void) { this_will_not_compile; }\n";
+  const repairedBundle = makeGeneratedBundle();
+  repairedBundle.source.content =
+    "//# Overview\nint main(void) { for (;;) {} return 0; }\n";
+  const providerResponses = [
+    {
+      id: "resp_initial_uncertain",
+      model: "gpt-5.6-terra",
+      output: [
+        {
+          type: "function_call",
+          name: "create_avr_mini_project",
+          arguments: JSON.stringify(initialBundle),
+        },
+      ],
+      usage: { input_tokens: 1000, output_tokens: 200, total_tokens: 1200 },
+    },
+    {
+      id: "resp_repair_without_usage",
+      model: "gpt-5.6-terra",
+      output: [
+        {
+          type: "function_call",
+          name: "create_avr_mini_project",
+          arguments: JSON.stringify(repairedBundle),
+        },
+      ],
+    },
+  ];
+  const inputTokenCounts = [1000, 600];
+  const progressEvents = [];
+  let providerStarts = 0;
+  let extensions = 0;
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+      OPENAI_MODEL: "gpt-5.6-terra",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    draftRoot,
+    fetch: async (url) => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return url.endsWith("/responses/input_tokens")
+          ? { input_tokens: inputTokenCounts.shift() }
+          : providerResponses.shift();
+      },
+    }),
+    compileFetch: async () =>
+      makeCompileResponse({
+        ok: false,
+        stage: "compile",
+        stderr: "source.c: error: undeclared identifier",
+      }),
+  });
+
+  let failure;
+  try {
+    await service.respond(
+      { prompt: "Create a project.", mcu: "attiny1624" },
+      {
+        reserveBudget() {
+          return { maxOutputTokens: 10_000 };
+        },
+        extendBudget() {
+          extensions += 1;
+          return { additionalMaxOutputTokens: 9_000 };
+        },
+        markProviderCalled() {
+          providerStarts += 1;
+        },
+        onProgress(event) {
+          progressEvents.push(event);
+        },
+      }
+    );
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.ok(failure instanceof AiServiceError);
+  assert.equal(failure.code, "openai_usage_invalid");
+  assert.equal(failure._usageUncertain, true);
+  assert.equal(Object.keys(failure).includes("_usageUncertain"), false);
+  assert.equal(failure._metering.responseId, "resp_initial_uncertain");
+  assert.equal(providerStarts, 2);
+  assert.equal(extensions, 1);
+  assert.deepEqual(progressEvents.at(-1), {
+    schemaVersion: 1,
+    id: "repair",
+    status: "failed",
+    attempt: 1,
+    errorCode: "openai_usage_invalid",
+  });
+  await assert.rejects(fs.stat(draftRoot), { code: "ENOENT" });
+});
+
+test("rejects compiler success responses that do not match the shared contract", async (t) => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "uartdebug-ai-contract-mismatch-")
+  );
+  t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  const draftRoot = path.join(tempRoot, "drafts");
+  let providerCalls = 0;
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    draftRoot,
+    fetch: async () => {
+      providerCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            output: [
+              {
+                type: "function_call",
+                name: "create_avr_mini_project",
+                arguments: JSON.stringify(makeGeneratedBundle()),
+              },
+            ],
+          };
+        },
+      };
+    },
+    compileFetch: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return { ok: true, mcu: "attiny1624" };
+      },
+    }),
+  });
+
+  await assert.rejects(
+    service.respond({ prompt: "Create a project.", mcu: "attiny1624" }),
+    (error) =>
+      error instanceof AiServiceError &&
+      error.code === "compiler_contract_mismatch"
+  );
+  assert.equal(providerCalls, 1);
+  await assert.rejects(fs.stat(draftRoot), { code: "ENOENT" });
+});
+
+test("fails closed without storing a draft when compiler repair attempts are exhausted", async (t) => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "uartdebug-ai-compile-failure-")
+  );
+  t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  const draftRoot = path.join(tempRoot, "drafts");
+  const responses = [makeGeneratedBundle(), makeGeneratedBundle()];
+  let compileCalls = 0;
+  const service = createAvrAiService({
+    environment: {
+      AI_ENABLED: "1",
+      OPENAI_API_KEY: "test-key",
+      AI_COMPILE_MAX_REPAIR_ATTEMPTS: "1",
+    },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    skillCatalogPath,
+    draftRoot,
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          output: [
+            {
+              type: "function_call",
+              name: "create_avr_mini_project",
+              arguments: JSON.stringify(responses.shift()),
+            },
+          ],
+        };
+      },
+    }),
+    compileFetch: async () => {
+      compileCalls += 1;
+      return makeCompileResponse({
+        ok: false,
+        stage: "compile",
+        stderr: "main.c: error: still broken",
+      });
+    },
+  });
+
+  await assert.rejects(
+    service.respond({ prompt: "Create a broken project", mcu: "attiny1624" }),
+    (error) => {
+      assert.ok(error instanceof AiServiceError);
+      assert.equal(error.code, "generated_project_does_not_compile");
+      assert.equal(error.progress.status, "failed");
+      assert.deepEqual(
+        error.progress.stages.map(({ id, status, attempt }) => ({
+          id,
+          status,
+          attempt,
+        })),
+        [
+          { id: "generation", status: "completed", attempt: 1 },
+          { id: "compilation", status: "failed", attempt: 1 },
+          { id: "repair", status: "completed", attempt: 1 },
+          { id: "compilation", status: "failed", attempt: 2 },
+        ]
+      );
+      return true;
+    }
+  );
+  assert.equal(compileCalls, 2);
+  await assert.rejects(fs.stat(draftRoot), { code: "ENOENT" });
+});
+
+test("does not ask the model to repair an unsupported compiler target", async (t) => {
+  const tempRoot = await fs.mkdtemp(
+    path.join(os.tmpdir(), "uartdebug-ai-unsupported-mcu-")
+  );
+  t.after(() => fs.rm(tempRoot, { recursive: true, force: true }));
+  let providerCalls = 0;
+  let compilerCalls = 0;
+  const service = createAvrAiService({
+    environment: { AI_ENABLED: "1", OPENAI_API_KEY: "test-key" },
+    rulePackRoot,
+    miniProjectCatalogPath,
+    draftRoot: path.join(tempRoot, "drafts"),
+    fetch: async () => {
+      providerCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            output: [
+              {
+                type: "function_call",
+                name: "create_avr_mini_project",
+                arguments: JSON.stringify(makeGeneratedBundle()),
+              },
+            ],
+          };
+        },
+      };
+    },
+    compileFetch: async () => {
+      compilerCalls += 1;
+      return makeCompileResponse({
+        ok: false,
+        stage: "request",
+        stderr: "Unsupported MCU target.",
+      });
+    },
+  });
+
+  await assert.rejects(
+    service.respond({ prompt: "Create a project", mcu: "atmega9999" }),
+    (error) => {
+      assert.equal(error.code, "unsupported_mcu");
+      assert.equal(error.progress.stages.at(-1).id, "compilation");
+      assert.equal(error.progress.stages.at(-1).status, "failed");
+      return true;
+    }
+  );
+  assert.equal(providerCalls, 1);
+  assert.equal(compilerCalls, 1);
 });
 
 test("rejects update actions without a target and rejects renamed current-project files", async (t) => {
@@ -1141,6 +1868,44 @@ test("ignores legacy static paths but keeps opaque draft ids strict", () => {
       error instanceof AiServiceError &&
       error.code === "invalid_conversation"
   );
+  assert.throws(
+    () =>
+      service.validateRequestInput({
+        prompt: "Edit the instruction.",
+        instructionDocument: {
+          schemaVersion: 1,
+          revision: 1,
+          markdown: "# One\n\nTwo\n",
+          skillRefs: [],
+          authorship: {
+            schemaVersion: 1,
+            lines: ["human"],
+            updatedAt: 1,
+          },
+        },
+      }),
+    (error) =>
+      error instanceof AiServiceError &&
+      error.code === "invalid_instruction_document" &&
+      /lines must match/i.test(error.message)
+  );
+  assert.throws(
+    () =>
+      service.validateRequestInput({
+        prompt: "Edit the project.",
+        currentProject: {
+          instanceId: "installed-project-1",
+          source: "int main(void) {}\n",
+          sourceAuthorship: {
+            schemaVersion: 1,
+            lines: ["human", "robot"],
+            updatedAt: 1,
+          },
+        },
+      }),
+    (error) =>
+      error instanceof AiServiceError && error.code === "invalid_current_project"
+  );
 });
 
 test("rejects generated source markers without matching guide headings", () => {
@@ -1233,7 +1998,37 @@ test("parses REST Responses output and rejects a refusal", () => {
         },
       ],
     }),
-    { kind: "answer", message: "Plain AVR answer." }
+    { kind: "answer", message: "Plain AVR answer.", chatTitle: null }
+  );
+  assert.deepEqual(
+    parseAssistantResponse(
+      {
+        output_text: JSON.stringify({
+          message: "TCA0 is a timer.",
+          chatTitle: "Understanding TCA0 timers",
+        }),
+      },
+      { chatTitleRequested: true }
+    ),
+    {
+      kind: "answer",
+      message: "TCA0 is a timer.",
+      chatTitle: "Understanding TCA0 timers",
+    }
+  );
+  assert.throws(
+    () =>
+      parseAssistantResponse(
+        {
+          output_text: JSON.stringify({
+            message: "No rename.",
+            chatTitle: "Unexpected chat rename",
+          }),
+        },
+        { chatTitleRequested: false }
+      ),
+    (error) =>
+      error instanceof AiServiceError && error.code === "invalid_ai_chat_title"
   );
   const created = parseAssistantResponse({
     output: [
@@ -1265,6 +2060,7 @@ test("parses REST Responses output and rejects a refusal", () => {
         type: "function_call",
         name: "edit_avr_project_instruction",
         arguments: JSON.stringify({
+          chatTitle: "Updated project instruction",
           baseRevision: 3,
           assistantMessage: "Updated the instruction.",
           instructionMarkdown: "# Initialization\n\nConfigure the clock.\n",
@@ -1275,6 +2071,7 @@ test("parses REST Responses output and rejects a refusal", () => {
   assert.deepEqual(instruction, {
     kind: "instruction",
     operation: "edit",
+    chatTitle: "Updated project instruction",
     baseRevision: 3,
     message: "Updated the instruction.",
     instructionMarkdown: "# Initialization\n\nConfigure the clock.",

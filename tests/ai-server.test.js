@@ -476,6 +476,150 @@ test("handles a conversational AI response through the HTTP boundary", async (t)
   assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
 });
 
+test("streams progress and terminal result or error events as NDJSON", async (t) => {
+  let calls = 0;
+  const streamedQuota = {
+    unit: "AI Credit",
+    granted: 100,
+    spent: 4,
+    remaining: 96,
+  };
+  const accessService = {
+    async authorizeAiRequest() {
+      return { mode: "google", reservationId: "stream-reservation" };
+    },
+    async recordAiUsage() {
+      return { quota: streamedQuota };
+    },
+    async releaseAiRequest() {},
+  };
+  const aiService = {
+    authorizeAccessToken() {
+      return true;
+    },
+    validateRequestInput() {},
+    async getStatus() {
+      return {
+        ok: true,
+        enabled: true,
+        configured: true,
+        accessRequired: false,
+        accessConfigured: false,
+        rules: { packageId: "rules-v1" },
+        compilerVerification: { enabled: true, ready: true },
+      };
+    },
+    async respond(body, context) {
+      calls += 1;
+      assert.equal(context.compilerReady, true);
+      await context.onProgress({
+        schemaVersion: 1,
+        id: "generation",
+        status: "in_progress",
+        attempt: 1,
+      });
+      await context.onProgress({
+        schemaVersion: 1,
+        id: "generation",
+        status: calls === 1 ? "completed" : "failed",
+        attempt: 1,
+      });
+      if (calls === 2) {
+        const error = new AiServiceError(502, "generation_failed", "Failed.");
+        Object.defineProperty(error, "progress", {
+          value: {
+            schemaVersion: 1,
+            status: "failed",
+            stages: [
+              { id: "generation", status: "failed", attempt: 1 },
+            ],
+          },
+        });
+        throw error;
+      }
+      return {
+        ok: true,
+        kind: "answer",
+        message: `Answer: ${body.prompt}`,
+        _metering: {
+          provider: "openai",
+          responseId: "resp_stream",
+          model: "gpt-5.6-terra",
+          usage: {
+            inputTokens: 10,
+            cachedInputTokens: 0,
+            cacheWriteTokens: 0,
+            outputTokens: 2,
+            reasoningTokens: 0,
+            totalTokens: 12,
+          },
+        },
+      };
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService,
+    accessService,
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const post = async (prompt) => {
+    const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+      method: "POST",
+      headers: {
+        Accept: "application/x-ndjson",
+        "Content-Type": "application/json",
+        Origin: baseUrl,
+      },
+      body: JSON.stringify({ prompt }),
+    });
+    const events = (await response.text())
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    return { response, events };
+  };
+
+  const success = await post("One");
+  assert.match(
+    success.response.headers.get("content-type"),
+    /^application\/x-ndjson/
+  );
+  assert.equal(success.response.headers.get("x-accel-buffering"), "no");
+  assert.deepEqual(
+    success.events.map((event) => event.type),
+    ["progress", "progress", "result"]
+  );
+  assert.deepEqual(success.events[0].progress, {
+    schemaVersion: 1,
+    status: "in_progress",
+    stages: [
+      {
+        id: "generation",
+        status: "in_progress",
+        attempt: 1,
+      },
+    ],
+  });
+  assert.equal(success.events[2].status, 200);
+  assert.equal(success.events[2].data.message, "Answer: One");
+  assert.deepEqual(success.events[2].data.quota, streamedQuota);
+  assert.equal(success.events[2].data._metering, undefined);
+  assert.match(success.events[2].data.requestId, /^[a-f0-9-]{36}$/i);
+
+  const failure = await post("Two");
+  assert.deepEqual(
+    failure.events.map((event) => event.type),
+    ["progress", "progress", "error"]
+  );
+  assert.equal(failure.events[2].status, 502);
+  assert.equal(failure.events[2].data.code, "generation_failed");
+  assert.equal(failure.events[2].data.progress.status, "failed");
+});
+
 test("routes Google access endpoints and records metering without exposing it", async (t) => {
   const calls = [];
   const accessContext = {
@@ -535,6 +679,17 @@ test("routes Google access endpoints and records metering without exposing it", 
       });
       return { maxOutputTokens: 12_000 };
     },
+    async extendAiBudgetReservation(context, quote) {
+      calls.push("extend");
+      assert.equal(context, accessContext);
+      assert.deepEqual(quote, {
+        model: "gpt-5.6-terra",
+        additionalInputTokens: 5,
+        additionalMaxOutputTokens: 12_000,
+        minAdditionalOutputTokens: 8_000,
+      });
+      return { additionalMaxOutputTokens: 10_000 };
+    },
     async recordAiUsage(context, record) {
       calls.push("record");
       assert.equal(context, accessContext);
@@ -587,6 +742,13 @@ test("routes Google access endpoints and records metering without exposing it", 
         minOutputTokens: 8_000,
       });
       assert.equal(reservation.maxOutputTokens, 12_000);
+      const extension = await context.extendBudget({
+        model: "gpt-5.6-terra",
+        additionalInputTokens: 5,
+        additionalMaxOutputTokens: 12_000,
+        minAdditionalOutputTokens: 8_000,
+      });
+      assert.equal(extension.additionalMaxOutputTokens, 10_000);
       context.markProviderCalled();
       return {
         ok: true,
@@ -649,6 +811,7 @@ test("routes Google access endpoints and records metering without exposing it", 
     "logout",
     "authorize",
     "reserve",
+    "extend",
     "record",
     "release",
   ]);
@@ -720,6 +883,16 @@ test("records provider usage when a paid AI response fails validation", async (t
         "The paid provider response was invalid."
       );
       Object.defineProperty(error, "_metering", { value: metering });
+      Object.defineProperty(error, "progress", {
+        value: {
+          schemaVersion: 1,
+          status: "failed",
+          stages: [
+            { id: "generation", status: "completed", attempt: 1 },
+            { id: "compilation", status: "failed", attempt: 1 },
+          ],
+        },
+      });
       throw error;
     },
   };
@@ -741,6 +914,8 @@ test("records provider usage when a paid AI response fails validation", async (t
   const body = await response.json();
   assert.equal(body.code, "invalid_ai_response");
   assert.equal(body._metering, undefined);
+  assert.equal(body.progress.status, "failed");
+  assert.equal(body.progress.stages[1].id, "compilation");
   assert.deepEqual(calls, ["authorize", "record", "release"]);
 });
 
@@ -884,6 +1059,172 @@ test("passes an explicit provider rejection to reservation cleanup", async (t) =
   assert.deepEqual(releaseOutcome, {
     providerCalled: true,
     providerRejected: true,
+    usageRecorded: false,
+  });
+});
+
+test("does not release metered provider work when a later call is rejected", async (t) => {
+  const accessContext = {
+    mode: "google",
+    reservationId: "reservation-metered-before-rejection",
+  };
+  let releaseOutcome = null;
+  let recordCalls = 0;
+  const accessService = {
+    async authorizeAiRequest() {
+      return accessContext;
+    },
+    async recordAiUsage(context, record) {
+      assert.equal(context, accessContext);
+      assert.equal(record.responseId, "resp_initial_generation");
+      recordCalls += 1;
+      throw new Error("temporary settlement failure");
+    },
+    async releaseAiRequest(context, outcome) {
+      assert.equal(context, accessContext);
+      releaseOutcome = outcome;
+    },
+  };
+  const aiService = {
+    authorizeAccessToken() {
+      return true;
+    },
+    validateRequestInput() {},
+    async getStatus() {
+      return {
+        enabled: true,
+        configured: true,
+        accessRequired: false,
+        rules: { packageId: "rules-v1" },
+      };
+    },
+    async respond(_body, context) {
+      await context.markProviderCalled();
+      const error = new AiServiceError(
+        429,
+        "openai_rate_limited",
+        "The repair request was rejected by the AI provider."
+      );
+      Object.defineProperty(error, "_providerRejected", { value: true });
+      Object.defineProperty(error, "_metering", {
+        value: {
+          provider: "openai",
+          responseId: "resp_initial_generation",
+          model: "gpt-5.6-terra",
+          usage: {
+            inputTokens: 1000,
+            cachedInputTokens: 0,
+            cacheWriteTokens: 0,
+            outputTokens: 200,
+            reasoningTokens: 0,
+            totalTokens: 1200,
+          },
+        },
+      });
+      throw error;
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService,
+    accessService,
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    body: JSON.stringify({ prompt: "Repair it" }),
+  });
+  assert.equal(response.status, 429);
+  assert.equal(recordCalls, 1);
+  assert.deepEqual(releaseOutcome, {
+    providerCalled: true,
+    providerRejected: false,
+    usageRecorded: false,
+  });
+});
+
+test("leaves an uncertain repair reservation unresolved instead of partially settling it", async (t) => {
+  const accessContext = {
+    mode: "google",
+    reservationId: "reservation-uncertain-repair",
+  };
+  let releaseOutcome = null;
+  let recordCalls = 0;
+  const accessService = {
+    async authorizeAiRequest() {
+      return accessContext;
+    },
+    async recordAiUsage() {
+      recordCalls += 1;
+      throw new Error("uncertain usage must not be partially recorded");
+    },
+    async releaseAiRequest(context, outcome) {
+      assert.equal(context, accessContext);
+      releaseOutcome = outcome;
+    },
+  };
+  const aiService = {
+    authorizeAccessToken() {
+      return true;
+    },
+    validateRequestInput() {},
+    async getStatus() {
+      return {
+        enabled: true,
+        configured: true,
+        accessRequired: false,
+        rules: { packageId: "rules-v1" },
+      };
+    },
+    async respond(_body, context) {
+      await context.markProviderCalled();
+      const error = new AiServiceError(
+        502,
+        "openai_usage_invalid",
+        "The AI provider did not return valid usage information."
+      );
+      Object.defineProperty(error, "_usageUncertain", { value: true });
+      Object.defineProperty(error, "_metering", {
+        value: {
+          provider: "openai",
+          responseId: "resp_initial_before_repair",
+          model: "gpt-5.6-terra",
+          usage: {
+            inputTokens: 1000,
+            cachedInputTokens: 0,
+            cacheWriteTokens: 0,
+            outputTokens: 200,
+            reasoningTokens: 0,
+            totalTokens: 1200,
+          },
+        },
+      });
+      throw error;
+    },
+  };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService,
+    accessService,
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+
+  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: baseUrl },
+    body: JSON.stringify({ prompt: "Repair it" }),
+  });
+  assert.equal(response.status, 502);
+  assert.equal(recordCalls, 0);
+  assert.deepEqual(releaseOutcome, {
+    providerCalled: true,
+    providerRejected: false,
     usageRecorded: false,
   });
 });

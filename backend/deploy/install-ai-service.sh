@@ -29,6 +29,8 @@ required=(
   "${stage}/ai-server.js"
   "${stage}/ai-access-service.js"
   "${stage}/avr-ai-service.js"
+  "${stage}/avr-compiler-contract.js"
+  "${stage}/avr-compiler-readiness.js"
   "${stage}/avr-documentation-markers.js"
   "${stage}/package.json"
   "${stage}/package-lock.json"
@@ -177,6 +179,10 @@ if [ "${stage}" != "${backend_dir}" ]; then
   install -o deploy -g deploy -m 0644 \
     "${stage}/avr-ai-service.js" \
     "${backend_dir}/avr-ai-service.js"
+  install -o deploy -g deploy -m 0644 \
+    "${stage}/avr-compiler-contract.js" \
+    "${stage}/avr-compiler-readiness.js" \
+    "${backend_dir}/"
   install -o deploy -g deploy -m 0644 \
     "${stage}/avr-documentation-markers.js" \
     "${backend_dir}/avr-documentation-markers.js"

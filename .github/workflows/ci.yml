@@ -28,13 +28,23 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/markdown-runtime/package-lock.json
 
       - name: Install backend dependencies
         run: npm ci --prefix backend --ignore-scripts
 
+      - name: Install Markdown runtime dependencies
+        run: npm ci --prefix frontend/markdown-runtime --ignore-scripts
+
       - name: Run tests
         run: npm test --prefix backend
+
+      - name: Test vendored Markdown runtime
+        run: |
+          npm run build:check --prefix frontend/markdown-runtime
+          npm test --prefix frontend/markdown-runtime
 
       - name: Check JavaScript syntax
         run: |
@@ -44,6 +54,8 @@ jobs:
           node --check public/avr-mini-project-archive.js
           node --check public/uart.js
           node --check public/sw.js
+          node --check frontend/markdown-runtime/src/index.js
+          node --check frontend/markdown-runtime/scripts/build.mjs
 
       - name: Check deployment shell scripts
         run: bash -n backend/deploy/*.sh

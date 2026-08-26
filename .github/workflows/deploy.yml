@@ -384,6 +384,21 @@ jobs:
               if command -v systemctl >/dev/null 2>&1 &&
                 systemctl list-unit-files --type=service --no-pager | awk '{print $1}' | grep -qx "uartdebug-ai.service"; then
                 if [ -f "${BE_DIR}/ai-server.js" ]; then
+                  ai_unit_template="${BE_DIR}/deploy/uartdebug-ai.service"
+                  if [ -f "${ai_unit_template}" ]; then
+                    echo "Validating the release's uartdebug-ai.service unit"
+                    run_sudo systemd-analyze verify "${ai_unit_template}"
+                    echo "Installing the release's uartdebug-ai.service unit"
+                    run_sudo install -o root -g root -m 0644 \
+                      "${ai_unit_template}" \
+                      /etc/systemd/system/uartdebug-ai.service
+                    run_sudo systemctl daemon-reload
+                  elif [ -z "${ROLLBACK}" ]; then
+                    echo "Missing AI service unit in ${BE_DIR}"
+                    exit 1
+                  else
+                    echo "Rollback release has no AI service unit; retaining the installed unit"
+                  fi
                   [ -f "${BE_DIR}/deploy/install-ai-rule-pack.sh" ] || {
                     echo "Missing AI rule-pack installer in ${BE_DIR}"
                     exit 1

@@ -67,6 +67,7 @@ def main():
     revisioned_page_assets = [
         "AVR-Programming.css",
         "AVR-Programming.js",
+        "vendor/uartdebug-markdown.js",
     ]
     revisioned_page_asset_patterns = [
         (

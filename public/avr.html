@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="uart.css?v=20260709-terminal-polish-v3" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260825-account-modal-live-panel-v1"
+      href="AVR-Programming.css?v=20260826-commonmark-gfm-v1"
     />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
 
@@ -32,6 +32,7 @@
     <script src="vendor/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
     <script src="vendor/codemirror/5.65.16/addon/hint/anyword-hint.min.js"></script>
     <script src="vendor/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+    <script defer src="vendor/uartdebug-markdown.js?v=20260826-commonmark-gfm-v1"></script>
   </head>
 
   <body>
@@ -183,7 +184,7 @@
                     heading marker open the matching project guide section.
                     Press Alt and Enter while the cursor is on such a line.
                   </p>
-                  <div class="editor-surface">
+                  <div class="editor-surface markdown-live-editor editor-markdown-live-editor">
                     <div id="editorHost"></div>
                   </div>
                 </div>
@@ -225,16 +226,6 @@
                     <option value="en">English</option>
                   </select>
                 </div>
-
-                <button
-                  class="connect-btn secondary-btn documentation-edit-toggle"
-                  id="documentationEditToggle"
-                  type="button"
-                  aria-pressed="false"
-                  disabled
-                >
-                  Edit
-                </button>
               </div>
 
               <div
@@ -249,7 +240,7 @@
                   hidden
                 ></div>
                 <div
-                  class="project-documentation-scroll"
+                  class="project-documentation-scroll project-documentation-live-editor markdown-live-editor"
                   id="projectDocumentationScroll"
                   role="region"
                   aria-label="Project documentation content"
@@ -258,13 +249,13 @@
                   <article
                     class="project-documentation-content"
                     id="projectDocumentationContent"
+                    hidden
                   ></article>
                   <textarea
                     class="project-documentation-editor"
                     id="projectDocumentationEditor"
-                    aria-label="Edit project guide Markdown"
-                    spellcheck="false"
-                    hidden
+                    aria-label="Project guide Markdown"
+                    spellcheck="true"
                   ></textarea>
                 </div>
               </div>
@@ -911,7 +902,7 @@
     <script defer src="avr-mini-project-archive.js?v=20260821-localized-zip-v1"></script>
     <script
       defer
-      src="AVR-Programming.js?v=20260825-account-modal-live-panel-v1"
+      src="AVR-Programming.js?v=20260826-commonmark-gfm-v1"
     ></script>
     <script defer src="updi-test.js?v=20260709-terminal-avr-sync-v1"></script>
   </body>

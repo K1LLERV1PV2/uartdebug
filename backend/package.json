@@ -11,7 +11,7 @@
     "start:compiler": "node compile-server.js",
     "start:ai": "node ai-server.js",
     "test": "node --test ../tests/*.test.js",
-    "check": "node --check compile-server.js && node --check ai-server.js && node --check ai-access-service.js && node --check avr-ai-service.js"
+    "check": "node --check avr-compiler-contract.js && node --check avr-compiler-readiness.js && node --check compile-server.js && node --check ai-server.js && node --check ai-access-service.js && node --check avr-ai-service.js"
   },
   "engines": {
     "node": ">=22.13.0"

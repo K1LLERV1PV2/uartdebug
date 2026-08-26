@@ -38,6 +38,8 @@
   const PROJECT_AI_REQUEST_TARGET_BYTES = 768 * 1024;
   const PROJECT_AI_MAX_CHATS = 100;
   const PROJECT_AI_CHAT_TITLE_LENGTH = 52;
+  const MARKDOWN_AUTHORSHIP_SCHEMA_VERSION = 1;
+  const MARKDOWN_AUTHORSHIP_VALUES = new Set(["original", "human", "ai"]);
   const LEGACY_STORAGE_KEY = "ud_c_canvas_files_v1";
   const LEGACY_STORAGE_CURRENT = "ud_c_canvas_current_v1";
   const AVR_UPDI_RUNTIME_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI__";
@@ -114,6 +116,7 @@
 
   let editor = null;
   let files = Object.create(null);
+  let fileAuthorship = Object.create(null);
   let fileGroups = Object.create(null);
   let miniProjects = Object.create(null);
   let current = null;
@@ -133,7 +136,8 @@
   let documentationMarkerFrame = null;
   let documentationRenderTimer = null;
   let documentationTargetTimer = null;
-  let documentationEditMode = false;
+  let documentationEditor = null;
+  let documentationEditorSyncing = false;
   let documentationEditSaveTimer = null;
   let projectWorkspaceMode = "avr";
   let projectWorkspaceTransitionTimer = null;
@@ -150,6 +154,11 @@
     revision: 0,
     markdown: DEFAULT_PROJECT_INSTRUCTION,
     skillRefs: [],
+    authorship: {
+      schemaVersion: MARKDOWN_AUTHORSHIP_SCHEMA_VERSION,
+      lines: ["original"],
+      updatedAt: 1,
+    },
   };
   let projectInstructionSaveTimer = null;
   let projectInstructionSaveAttempts = 0;
@@ -158,8 +167,8 @@
   let projectInstructionEditor = null;
   let projectInstructionEditorSyncing = false;
   let projectInstructionCompositionActive = false;
-  let projectInstructionPreviewMarks = [];
-  let projectInstructionPreviewLineClasses = [];
+  const markdownLiveEditors = new Map();
+  let projectAiSelectionQuote = null;
   const projectAiSkills = new Map();
   let projectAiSkillsLoaded = false;
   let devicePanelState = "expanded";
@@ -172,6 +181,9 @@
     chats: [],
   };
   let projectAiConversation = [];
+  let projectAiChatRenameId = "";
+  let projectAiPendingChatPointerAction = null;
+  let projectAiChatRenameRenderPending = false;
   let projectAiChatsSaveTimer = null;
   let projectAiAccountFilesSaveTimer = null;
   let projectAiAccountInstructionSaveTimer = null;
@@ -252,6 +264,137 @@
     } catch {
       return fallback;
     }
+  }
+
+  function splitMarkdownAuthorshipLines(value) {
+    return String(value ?? "").replace(/\r\n?/g, "\n").split("\n");
+  }
+
+  function normalizeMarkdownAuthorship(
+    value,
+    markdown,
+    { fallbackAuthor = "original" } = {}
+  ) {
+    const source = value && typeof value === "object" ? value : {};
+    const fallback = MARKDOWN_AUTHORSHIP_VALUES.has(fallbackAuthor)
+      ? fallbackAuthor
+      : "original";
+    const lineCount = splitMarkdownAuthorshipLines(markdown).length;
+    const lines = Array.isArray(source.lines)
+      ? source.lines
+          .slice(0, lineCount)
+          .map((author) =>
+            MARKDOWN_AUTHORSHIP_VALUES.has(String(author))
+              ? String(author)
+              : fallback
+          )
+      : [];
+    while (lines.length < lineCount) lines.push(fallback);
+    const updatedAt = Number(source.updatedAt);
+    return {
+      schemaVersion: MARKDOWN_AUTHORSHIP_SCHEMA_VERSION,
+      lines,
+      updatedAt:
+        Number.isSafeInteger(updatedAt) && updatedAt > 0
+          ? updatedAt
+          : 1,
+    };
+  }
+
+  function createMarkdownAuthorship(markdown, author = "original") {
+    return {
+      ...normalizeMarkdownAuthorship(null, markdown, {
+        fallbackAuthor: author,
+      }),
+      updatedAt: Date.now(),
+    };
+  }
+
+  function updateMarkdownAuthorshipForChange(
+    authorship,
+    previousMarkdown,
+    change,
+    author = "human"
+  ) {
+    const normalized = normalizeMarkdownAuthorship(
+      authorship,
+      previousMarkdown
+    );
+    if (!change?.from || !change?.to || !Array.isArray(change.text)) {
+      return createMarkdownAuthorship(previousMarkdown, author);
+    }
+    const startLine = Math.max(0, Number(change.from.line) || 0);
+    const removedLineCount =
+      Math.max(startLine, Number(change.to.line) || startLine) - startLine + 1;
+    const insertedLineCount = Math.max(1, change.text.length);
+    normalized.lines.splice(
+      startLine,
+      removedLineCount,
+      ...Array(insertedLineCount).fill(author)
+    );
+    normalized.updatedAt = Date.now();
+    return normalized;
+  }
+
+  function mergeMarkdownAuthorshipForReplacement(
+    previousMarkdown,
+    nextMarkdown,
+    previousAuthorship,
+    author = "ai"
+  ) {
+    const previousLines = splitMarkdownAuthorshipLines(previousMarkdown);
+    const nextLines = splitMarkdownAuthorshipLines(nextMarkdown);
+    const previous = normalizeMarkdownAuthorship(
+      previousAuthorship,
+      previousMarkdown
+    );
+    let prefix = 0;
+    while (
+      prefix < previousLines.length &&
+      prefix < nextLines.length &&
+      previousLines[prefix] === nextLines[prefix]
+    ) {
+      prefix += 1;
+    }
+    let suffix = 0;
+    while (
+      suffix < previousLines.length - prefix &&
+      suffix < nextLines.length - prefix &&
+      previousLines[previousLines.length - 1 - suffix] ===
+        nextLines[nextLines.length - 1 - suffix]
+    ) {
+      suffix += 1;
+    }
+    const nextAuthors = [
+      ...previous.lines.slice(0, prefix),
+      ...Array(Math.max(0, nextLines.length - prefix - suffix)).fill(author),
+      ...(suffix
+        ? previous.lines.slice(previous.lines.length - suffix)
+        : []),
+    ];
+    return {
+      schemaVersion: MARKDOWN_AUTHORSHIP_SCHEMA_VERSION,
+      lines: nextAuthors,
+      updatedAt: Date.now(),
+    };
+  }
+
+  function getFileAuthorship(fileName) {
+    const name = String(fileName || "");
+    const content = hasFile(name) ? getLiveFileContent(name) : "";
+    const normalized = normalizeMarkdownAuthorship(
+      fileAuthorship[name],
+      content
+    );
+    fileAuthorship[name] = normalized;
+    return normalized;
+  }
+
+  function setFileAuthorship(fileName, authorship, markdown = null) {
+    const name = String(fileName || "");
+    if (!name) return;
+    const source = markdown === null ? getLiveFileContent(name) : markdown;
+    fileAuthorship[name] = normalizeMarkdownAuthorship(authorship, source);
   }
 
   function normalizeProjectAssets(value) {
@@ -1120,6 +1263,10 @@
           !Array.isArray(state.files)
         ) {
           files = state.files;
+          fileAuthorship =
+            state.authorship && typeof state.authorship === "object"
+              ? state.authorship
+              : {};
           fileGroups =
             state.fileGroups && typeof state.fileGroups === "object"
               ? state.fileGroups
@@ -1143,6 +1290,7 @@
           localStorage.getItem(LEGACY_STORAGE_KEY) ??
           "{}";
         files = JSON.parse(storedFiles || "{}");
+        fileAuthorship = {};
         fileGroups = JSON.parse(localStorage.getItem(STORAGE_GROUPS) || "{}");
         current =
           localStorage.getItem(STORAGE_CURRENT) ??
@@ -1150,6 +1298,7 @@
           null;
       } catch {
         files = Object.create(null);
+        fileAuthorship = Object.create(null);
         fileGroups = Object.create(null);
         current = null;
       }
@@ -1164,6 +1313,14 @@
     }
 
     files = createDictionary(files);
+    fileAuthorship = createDictionary(fileAuthorship);
+    for (const fileName of Object.keys(fileAuthorship)) {
+      if (!Object.prototype.hasOwnProperty.call(files, fileName)) {
+        delete fileAuthorship[fileName];
+        continue;
+      }
+      setFileAuthorship(fileName, fileAuthorship[fileName], files[fileName]);
+    }
     normalizeFileGroups();
     normalizeMiniProjectInstances();
     if (current && !hasFile(current)) current = null;
@@ -1180,6 +1337,7 @@
         JSON.stringify({
           schemaVersion: 2,
           files,
+          authorship: fileAuthorship,
           fileGroups,
           miniProjects,
           current,
@@ -1671,12 +1829,18 @@
 
   function renameFileKey(oldName, newName) {
     const nextFiles = Object.create(null);
+    const nextAuthorship = Object.create(null);
 
     for (const name of Object.keys(files)) {
       nextFiles[name === oldName ? newName : name] = files[name];
     }
 
+    for (const name of Object.keys(fileAuthorship)) {
+      nextAuthorship[name === oldName ? newName : name] = fileAuthorship[name];
+    }
+
     files = nextFiles;
+    fileAuthorship = nextAuthorship;
   }
 
   function renameGroupKey(oldName, newName) {
@@ -1700,7 +1864,18 @@
   }
 
   function getEditorModeForFile(fileName) {
-    return isCFileName(fileName) ? "text/x-csrc" : "text/plain";
+    if (isCFileName(fileName)) return "text/x-csrc";
+    if (/\.md$/i.test(fileName || "")) {
+      return {
+        name: "markdown",
+        highlightFormatting: true,
+        fencedCodeBlockHighlighting: false,
+        strikethrough: true,
+        taskLists: true,
+        xml: false,
+      };
+    }
+    return "text/plain";
   }
 
   function getNewFileContent(fileName) {
@@ -1900,6 +2075,10 @@
       uniqueImportedName(safeRequestedName) || uniqueName("main.c");
 
     files[normalizedName] = String(content || "").replace(/\r\n/g, "\n");
+    fileAuthorship[normalizedName] = createMarkdownAuthorship(
+      files[normalizedName],
+      "human"
+    );
     selectFile(normalizedName);
   }
 
@@ -2068,6 +2247,7 @@
     const mediaTypes = {};
     const guides = {};
     const previousFiles = files;
+    const previousAuthorship = fileAuthorship;
     const previousGroups = fileGroups;
     const previousProjects = miniProjects;
     const previousCurrent = current;
@@ -2078,12 +2258,17 @@
     }
 
     files = createDictionary(files);
+    fileAuthorship = createDictionary(fileAuthorship);
     fileGroups = createDictionary(fileGroups);
     miniProjects = createDictionary(miniProjects);
 
     try {
       for (const projectFile of pendingFiles) {
         files[projectFile.name] = projectFile.content;
+        fileAuthorship[projectFile.name] = createMarkdownAuthorship(
+          projectFile.content,
+          String(origin || "local") === "ai" ? "ai" : "original"
+        );
         if (projectFile.role === miniProjectCore.ROLES.GUIDE) {
           let locale =
             projectFile.locale || definition.defaultLocale || `guide-${Object.keys(guides).length + 1}`;
@@ -2143,6 +2328,7 @@
       return getPublicMiniProjectInstance(instanceId);
     } catch (error) {
       files = previousFiles;
+      fileAuthorship = previousAuthorship;
       fileGroups = previousGroups;
       miniProjects = previousProjects;
       current = previousCurrent;
@@ -2209,6 +2395,7 @@
     }
 
     const previousFiles = files;
+    const previousAuthorship = fileAuthorship;
     const previousGroups = fileGroups;
     const previousProjects = miniProjects;
     const previousCurrent = current;
@@ -2219,6 +2406,7 @@
     }
 
     files = createDictionary(files);
+    fileAuthorship = createDictionary(cloneJsonMetadata(fileAuthorship, {}));
     fileGroups = createDictionary(cloneJsonMetadata(fileGroups, {}));
     miniProjects = createDictionary(cloneJsonMetadata(miniProjects, {}));
 
@@ -2235,6 +2423,8 @@
         throw new Error("The current mini-project guide file was not found.");
       }
 
+      const previousSource = files[sourceName];
+      const previousGuide = files[guide.fileName];
       files[sourceName] = String(definition.files.source.content || "").replace(
         /\r\n?/g,
         "\n"
@@ -2242,6 +2432,19 @@
       files[guide.fileName] = String(generatedGuide.content || "").replace(
         /\r\n?/g,
         "\n"
+      );
+      const replacementAuthor = String(origin || "ai") === "ai" ? "ai" : "original";
+      fileAuthorship[sourceName] = mergeMarkdownAuthorshipForReplacement(
+        previousSource,
+        files[sourceName],
+        fileAuthorship[sourceName],
+        replacementAuthor
+      );
+      fileAuthorship[guide.fileName] = mergeMarkdownAuthorshipForReplacement(
+        previousGuide,
+        files[guide.fileName],
+        fileAuthorship[guide.fileName],
+        replacementAuthor
       );
 
       project.title = definition.title || project.title;
@@ -2272,6 +2475,7 @@
       return getPublicMiniProjectInstance(normalizedInstanceId);
     } catch (error) {
       files = previousFiles;
+      fileAuthorship = previousAuthorship;
       fileGroups = previousGroups;
       miniProjects = previousProjects;
       current = previousCurrent;
@@ -2438,6 +2642,7 @@
     if (Object.keys(files).length === 0) {
       const name = "main.c";
       files[name] = "";
+      fileAuthorship[name] = createMarkdownAuthorship("", "human");
       current = name;
       persistState();
     }
@@ -2776,14 +2981,42 @@
     });
   }
 
+  function getDocumentationMinWidth() {
+    const strip = document.querySelector(".documentation-action-strip");
+    if (!strip) return DOCUMENTATION_MIN_WIDTH;
+    const style = window.getComputedStyle?.(strip);
+    const controls = [...strip.children].filter((element) => {
+      const controlStyle = window.getComputedStyle?.(element);
+      return !element.hidden && controlStyle?.display !== "none";
+    });
+    const gap = Number.parseFloat(style?.columnGap || style?.gap || "0") || 0;
+    const horizontalPadding =
+      (Number.parseFloat(style?.paddingLeft || "0") || 0) +
+      (Number.parseFloat(style?.paddingRight || "0") || 0);
+    const controlsWidth = controls.reduce(
+      (total, element) => total + element.getBoundingClientRect().width,
+      0
+    );
+    return Math.max(
+      DOCUMENTATION_MIN_WIDTH,
+      Math.ceil(
+        horizontalPadding +
+          controlsWidth +
+          Math.max(0, controls.length - 1) * gap +
+          2
+      )
+    );
+  }
+
   function getDocumentationMaxWidth() {
+    const minimum = getDocumentationMinWidth();
     const container = getCanvasSplitContainer();
     if (!container) {
-      return Math.max(DOCUMENTATION_MIN_WIDTH, documentationWidth);
+      return Math.max(minimum, documentationWidth);
     }
     if (isStackedCanvasLayout()) {
       return Math.max(
-        DOCUMENTATION_MIN_WIDTH,
+        minimum,
         Math.round(container.getBoundingClientRect().width)
       );
     }
@@ -2795,7 +3028,7 @@
       OUTLINER_EDITOR_MIN_WIDTH -
       SPLIT_RESIZER_TOTAL_WIDTH;
     return Math.max(
-      DOCUMENTATION_MIN_WIDTH,
+      minimum,
       availableDocumentationWidth
     );
   }
@@ -2810,8 +3043,9 @@
   function normalizeDocumentationWidth(width) {
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return DOCUMENTATION_DEFAULT_WIDTH;
+    const minimum = getDocumentationMinWidth();
     return Math.max(
-      DOCUMENTATION_MIN_WIDTH,
+      minimum,
       Math.min(getDocumentationMaxWidth(), numeric)
     );
   }
@@ -2819,7 +3053,7 @@
   function normalizeDocumentationPreference(width) {
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return DOCUMENTATION_DEFAULT_WIDTH;
-    return Math.max(DOCUMENTATION_MIN_WIDTH, numeric);
+    return Math.max(getDocumentationMinWidth(), numeric);
   }
 
   function syncSplitResizerAria() {
@@ -2837,7 +3071,7 @@
     if (documentationResizer) {
       documentationResizer.setAttribute(
         "aria-valuemin",
-        String(DOCUMENTATION_MIN_WIDTH)
+        String(getDocumentationMinWidth())
       );
       documentationResizer.setAttribute(
         "aria-valuemax",
@@ -2945,7 +3179,7 @@
       } else if (event.key === "ArrowRight") {
         nextWidth -= step;
       } else if (event.key === "Home") {
-        nextWidth = DOCUMENTATION_MIN_WIDTH;
+        nextWidth = getDocumentationMinWidth();
       } else if (event.key === "End") {
         nextWidth = getDocumentationMaxWidth();
       } else {
@@ -3430,6 +3664,10 @@
 
     if (inlineFileEdit.mode === "create") {
       files[nextName] = getNewFileContent(nextName);
+      fileAuthorship[nextName] = createMarkdownAuthorship(
+        files[nextName],
+        "human"
+      );
       inlineFileEdit = null;
       selectFile(nextName);
       return true;
@@ -4724,6 +4962,34 @@
   ) {
     if (!content) return;
 
+    const markdownRuntime = window.UartDebugMarkdown;
+    if (markdownRuntime?.renderInto) {
+      if (indexDocumentationHeadings) documentationHeadingIndex = new Map();
+      markdownRuntime.renderInto(content, String(markdown || ""), {
+        allowImages,
+        resolveLinkUrl: (href) => resolveSafeDocumentationLinkUrl(href),
+        resolveImageUrl: (href) =>
+          allowImages ? resolveDocumentationImageUrl(href, context) : "",
+        onHeading: ({ element, level, text, node }) => {
+          if (!indexDocumentationHeadings || !element) return;
+          const headingKey = miniProjectCore.normalizeHeadingKey(text);
+          const indexKey = `${level}:${headingKey}`;
+          element.dataset.documentationHeading = indexKey;
+          if (Number.isSafeInteger(node?.position?.start?.offset)) {
+            element.dataset.sourceStart = String(node.position.start.offset);
+          }
+          if (Number.isSafeInteger(node?.position?.end?.offset)) {
+            element.dataset.sourceEnd = String(node.position.end.offset);
+          }
+          element.tabIndex = -1;
+          if (headingKey && !documentationHeadingIndex.has(indexKey)) {
+            documentationHeadingIndex.set(indexKey, element);
+          }
+        },
+      });
+      return;
+    }
+
     content.replaceChildren();
     if (indexDocumentationHeadings) documentationHeadingIndex = new Map();
 
@@ -4915,6 +5181,12 @@
           ? source.markdown
           : DEFAULT_PROJECT_INSTRUCTION,
       skillRefs: normalizeInstructionSkillRefs(source.skillRefs),
+      authorship: normalizeMarkdownAuthorship(
+        source.authorship,
+        typeof source.markdown === "string"
+          ? source.markdown
+          : DEFAULT_PROJECT_INSTRUCTION
+      ),
     };
   }
 
@@ -4947,6 +5219,10 @@
       skillRefs: skillRefs.map((skillRef) => ({
         ...skillRef,
       })),
+      authorship: normalizeMarkdownAuthorship(
+        projectInstructionDocument.authorship,
+        projectInstructionDocument.markdown
+      ),
     };
   }
 
@@ -4976,6 +5252,10 @@
                   ...legacyDocument,
                   markdown: DEFAULT_PROJECT_INSTRUCTION,
                   skillRefs: [],
+                  authorship: normalizeMarkdownAuthorship(
+                    null,
+                    DEFAULT_PROJECT_INSTRUCTION
+                  ),
                 }
               : legacyDocument;
           try {
@@ -5054,51 +5334,138 @@
     else projectInstructionSaveTimer = window.setTimeout(save, 240);
   }
 
-  function clearProjectInstructionPreviewDecorations() {
-    for (const marker of projectInstructionPreviewMarks) {
+  function walkMarkdownAst(node, visitor, parent = null) {
+    if (!node || typeof node !== "object") return;
+    if (visitor(node, parent) === false) return;
+    for (const child of Array.isArray(node.children) ? node.children : []) {
+      walkMarkdownAst(child, visitor, node);
+    }
+  }
+
+  function getMarkdownAstText(node) {
+    if (!node || typeof node !== "object") return "";
+    if (["image", "imageReference"].includes(node.type)) {
+      return String(node.alt || "");
+    }
+    if (Object.prototype.hasOwnProperty.call(node, "value")) {
+      return String(node.value || "");
+    }
+    return (Array.isArray(node.children) ? node.children : [])
+      .map(getMarkdownAstText)
+      .join("");
+  }
+
+  function markdownPositionToCodeMirror(position, edge = "start") {
+    const point = position?.[edge];
+    if (!point) return null;
+    return CodeMirror.Pos(
+      Math.max(0, Number(point.line || 1) - 1),
+      Math.max(0, Number(point.column || 1) - 1)
+    );
+  }
+
+  function registerMarkdownLiveEditor(id, codeMirror, options = {}) {
+    if (!id || !codeMirror) return null;
+    const previous = markdownLiveEditors.get(id);
+    if (previous?.frame != null) {
+      window.cancelAnimationFrame(previous.frame);
+    }
+    if (previous) clearMarkdownLiveDecorations(previous);
+    const state = {
+      id,
+      editor: codeMirror,
+      frame: null,
+      marks: [],
+      widgets: [],
+      lineClasses: [],
+      compositionActive: false,
+      renderCache: null,
+      renderSequence: 0,
+      getAuthorship:
+        typeof options.getAuthorship === "function"
+          ? options.getAuthorship
+          : () => null,
+      getContextKey:
+        typeof options.getContextKey === "function"
+          ? options.getContextKey
+          : () => "",
+      onHeadings:
+        typeof options.onHeadings === "function" ? options.onHeadings : null,
+      isMarkdown:
+        typeof options.isMarkdown === "function"
+          ? options.isMarkdown
+          : () => true,
+      resolveImageUrl:
+        typeof options.resolveImageUrl === "function"
+          ? options.resolveImageUrl
+          : () => "",
+      resolveLinkUrl:
+        typeof options.resolveLinkUrl === "function"
+          ? options.resolveLinkUrl
+          : resolveSafeDocumentationLinkUrl,
+    };
+    markdownLiveEditors.set(id, state);
+    codeMirror.on?.("focus", () => scheduleMarkdownLivePreview(id));
+    codeMirror.on?.("blur", () =>
+      window.setTimeout(() => scheduleMarkdownLivePreview(id), 0)
+    );
+    scheduleMarkdownLivePreview(id);
+    return state;
+  }
+
+  function clearMarkdownLiveDecorations(state) {
+    if (!state?.editor) return;
+    for (const widget of state.widgets) {
+      try {
+        widget.clear();
+      } catch {}
+    }
+    state.widgets = [];
+    for (const marker of state.marks) {
       try {
         marker.clear();
       } catch {}
     }
-    projectInstructionPreviewMarks = [];
-    if (projectInstructionEditor) {
-      for (const { line, where, className } of
-        projectInstructionPreviewLineClasses) {
-        try {
-          projectInstructionEditor.removeLineClass(line, where, className);
-        } catch {}
-      }
+    state.marks = [];
+    for (const { line, where, className } of state.lineClasses) {
+      try {
+        state.editor.removeLineClass(line, where, className);
+      } catch {}
     }
-    projectInstructionPreviewLineClasses = [];
+    state.lineClasses = [];
+    try {
+      state.editor.clearGutter("markdown-authorship-gutter");
+    } catch {}
   }
 
-  function addProjectInstructionPreviewMark(from, to, options) {
-    if (!projectInstructionEditor) return null;
-    if (from.line === to.line && from.ch >= to.ch) return null;
-    const marker = projectInstructionEditor.markText(from, to, {
+  function addMarkdownLiveMark(state, from, to, options = {}) {
+    if (!from || !to || (from.line === to.line && from.ch >= to.ch)) {
+      return null;
+    }
+    const marker = state.editor.markText(from, to, {
       clearOnEnter: true,
       ...options,
     });
-    projectInstructionPreviewMarks.push(marker);
+    state.marks.push(marker);
     return marker;
   }
 
-  function addProjectInstructionPreviewLineClass(line, where, className) {
-    if (!projectInstructionEditor) return;
-    const lineHandle = projectInstructionEditor.getLineHandle(line);
+  function addMarkdownLiveLineClass(state, line, where, className) {
+    const lineHandle = state.editor.getLineHandle(line);
     if (!lineHandle) return;
-    projectInstructionEditor.addLineClass(lineHandle, where, className);
-    projectInstructionPreviewLineClasses.push({
-      line: lineHandle,
-      where,
-      className,
-    });
+    state.editor.addLineClass(lineHandle, where, className);
+    state.lineClasses.push({ line: lineHandle, where, className });
   }
 
-  function getProjectInstructionActiveLines() {
+  function getMarkdownEditorActiveLines(codeMirror) {
     const activeLines = new Set();
-    if (!projectInstructionEditor) return activeLines;
-    for (const selection of projectInstructionEditor.listSelections()) {
+    if (
+      typeof codeMirror?.hasFocus === "function" &&
+      !codeMirror.hasFocus()
+    ) {
+      return activeLines;
+    }
+    for (const selection of codeMirror.listSelections()) {
       const from = Math.min(selection.anchor.line, selection.head.line);
       const to = Math.max(selection.anchor.line, selection.head.line);
       for (let line = from; line <= to; line += 1) activeLines.add(line);
@@ -5106,454 +5473,676 @@
     return activeLines;
   }
 
-  function decorateProjectInstructionInline(lineNumber, lineText) {
-    const occupied = [];
-    const isEscaped = (index) => {
-      let backslashes = 0;
-      for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
-        if (lineText[cursor] !== "\\") break;
-        backslashes += 1;
-      }
-      return backslashes % 2 === 1;
-    };
-    const rangeIsFree = (start, end) =>
-      start < end &&
-      !occupied.some(
-        ([occupiedStart, occupiedEnd]) =>
-          start < occupiedEnd && end > occupiedStart
-      );
-    const reserve = (start, end) => {
-      occupied.push([start, end]);
-      occupied.sort((left, right) => left[0] - right[0]);
-    };
-    const collapse = (start, end) =>
-      addProjectInstructionPreviewMark(
-        CodeMirror.Pos(lineNumber, start),
-        CodeMirror.Pos(lineNumber, end),
-        { collapsed: true }
-      );
-    const style = (start, end, className) =>
-      addProjectInstructionPreviewMark(
-        CodeMirror.Pos(lineNumber, start),
-        CodeMirror.Pos(lineNumber, end),
-        { className }
-      );
-    const decorateDelimited = (
-      expression,
-      delimiterLength,
-      className,
-      { allowBoundaryWhitespace = false } = {}
-    ) => {
-      let match;
-      while ((match = expression.exec(lineText))) {
-        const start = match.index;
-        const end = start + match[0].length;
-        if (!rangeIsFree(start, end)) continue;
-        const resolvedDelimiterLength =
-          typeof delimiterLength === "function"
-            ? delimiterLength(match)
-            : delimiterLength;
-        const contentStart = start + resolvedDelimiterLength;
-        const contentEnd = end - resolvedDelimiterLength;
-        const content = lineText.slice(contentStart, contentEnd);
-        if (
-          isEscaped(start) ||
-          isEscaped(contentEnd) ||
-          (!allowBoundaryWhitespace &&
-            (!content || /^\s|\s$/.test(content)))
-        ) {
-          continue;
-        }
-        reserve(start, end);
-        collapse(start, start + resolvedDelimiterLength);
-        style(contentStart, contentEnd, className);
-        collapse(end - resolvedDelimiterLength, end);
-      }
-    };
+  function getMarkdownNodeOffsets(node) {
+    const start = Number(node?.position?.start?.offset);
+    const end = Number(node?.position?.end?.offset);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) {
+      return null;
+    }
+    return { start, end };
+  }
 
-    const codeRunExpression = /`+/g;
-    let openingCodeRun;
-    while ((openingCodeRun = codeRunExpression.exec(lineText))) {
-      if (isEscaped(openingCodeRun.index)) continue;
-      const openingStart = openingCodeRun.index;
-      const delimiterLength = openingCodeRun[0].length;
-      const restartAt = codeRunExpression.lastIndex;
-      let closingCodeRun = null;
-      let candidateCodeRun;
-      while ((candidateCodeRun = codeRunExpression.exec(lineText))) {
-        if (
-          candidateCodeRun[0].length === delimiterLength &&
-          !isEscaped(candidateCodeRun.index)
-        ) {
-          closingCodeRun = candidateCodeRun;
-          break;
-        }
-      }
-      if (!closingCodeRun) {
-        codeRunExpression.lastIndex = restartAt;
-        continue;
-      }
-      const closingStart = closingCodeRun.index;
-      const end = closingStart + delimiterLength;
-      if (!rangeIsFree(openingStart, end)) {
-        codeRunExpression.lastIndex = end;
-        continue;
-      }
-      reserve(openingStart, end);
-      collapse(openingStart, openingStart + delimiterLength);
-      let contentStart = openingStart + delimiterLength;
-      let contentEnd = closingStart;
-      const content = lineText.slice(contentStart, contentEnd);
-      if (
-        content.startsWith(" ") &&
-        content.endsWith(" ") &&
-        /\S/.test(content)
-      ) {
-        collapse(contentStart, contentStart + 1);
-        collapse(contentEnd - 1, contentEnd);
-        contentStart += 1;
-        contentEnd -= 1;
-      }
-      style(contentStart, contentEnd, "project-instruction-live-code");
-      collapse(closingStart, end);
-      codeRunExpression.lastIndex = end;
+  function addMarkdownAuthorshipGutter(state, markdown) {
+    const authorship = normalizeMarkdownAuthorship(
+      state.getAuthorship?.(),
+      markdown
+    );
+    for (let line = 0; line < authorship.lines.length; line += 1) {
+      const author = authorship.lines[line];
+      if (author === "original") continue;
+      const marker = document.createElement("span");
+      marker.className = `markdown-authorship-marker is-${author}`;
+      marker.textContent = author === "ai" ? "AI" : "H";
+      marker.title =
+        author === "ai"
+          ? "This line was generated or changed by AI"
+          : "This line was written or changed by a person";
+      marker.setAttribute("aria-label", marker.title);
+      state.editor.setGutterMarker(line, "markdown-authorship-gutter", marker);
+    }
+  }
+
+  function captureMarkdownLiveScrollAnchor(codeMirror) {
+    if (
+      typeof codeMirror?.getScrollInfo !== "function" ||
+      typeof codeMirror?.lineAtHeight !== "function" ||
+      typeof codeMirror?.heightAtLine !== "function"
+    ) {
+      return null;
+    }
+    const scroll = codeMirror.getScrollInfo();
+    const top = Math.max(0, Number(scroll?.top || 0));
+    const line = Math.max(0, codeMirror.lineAtHeight(top, "local"));
+    const lineTop = Number(codeMirror.heightAtLine(line, "local", true) || 0);
+    return {
+      line,
+      offset: top - lineTop,
+      left: Math.max(0, Number(scroll?.left || 0)),
+    };
+  }
+
+  function restoreMarkdownLiveScrollAnchor(codeMirror, anchor) {
+    if (!anchor || typeof codeMirror?.scrollTo !== "function") return;
+    const line = Math.min(
+      Math.max(0, Number(anchor.line || 0)),
+      Math.max(0, codeMirror.lineCount() - 1)
+    );
+    const lineTop = Number(codeMirror.heightAtLine(line, "local", true) || 0);
+    codeMirror.scrollTo(anchor.left, Math.max(0, lineTop + anchor.offset));
+  }
+
+  function markdownLiveRangeKey(start, end) {
+    return `${Number(start)}:${Number(end)}`;
+  }
+
+  function createMarkdownLiveRenderIndex(container) {
+    const elementsByRange = new Map();
+    const targetOffsets = new Map();
+    if (!container) return { elementsByRange, targetOffsets };
+
+    for (const element of container.querySelectorAll(
+      "[data-source-start][data-source-end]"
+    )) {
+      const start = Number(element.getAttribute("data-source-start"));
+      const end = Number(element.getAttribute("data-source-end"));
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) continue;
+      const key = markdownLiveRangeKey(start, end);
+      const entries = elementsByRange.get(key) || [];
+      entries.push(element);
+      elementsByRange.set(key, entries);
     }
 
-    const imageRanges = [];
-    let imageMatch;
-    const imageExpression = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g;
-    while ((imageMatch = imageExpression.exec(lineText))) {
-      const start = imageMatch.index;
-      const end = start + imageMatch[0].length;
-      if (isEscaped(start) || isEscaped(start + 1) || !rangeIsFree(start, end)) {
-        continue;
+    for (const element of container.querySelectorAll("[id]")) {
+      const owner = element.closest("[data-source-start]");
+      const offset = Number(owner?.getAttribute("data-source-start"));
+      if (element.id && Number.isSafeInteger(offset)) {
+        targetOffsets.set(element.id, offset);
       }
-      const labelStart = start + 2;
-      const labelEnd = labelStart + imageMatch[1].length;
-      imageRanges.push([start, end]);
-      reserve(start, labelStart);
-      reserve(labelEnd, end);
-      collapse(start, labelStart);
-      style(labelStart, labelEnd, "project-instruction-live-link");
-      collapse(labelEnd, end);
     }
+    return { elementsByRange, targetOffsets };
+  }
 
-    let linkMatch;
-    const linkExpression = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
-    while ((linkMatch = linkExpression.exec(lineText))) {
-      const start = linkMatch.index;
-      const end = start + linkMatch[0].length;
-      if (
-        isEscaped(start) ||
-        imageRanges.some(
-          ([imageStart, imageEnd]) => start >= imageStart && end <= imageEnd
+  function getMarkdownLiveRenderCache(state, markdown, markdownRuntime) {
+    const contextKey = String(state.getContextKey?.() || "");
+    const key = `${contextKey}\u0000${markdown}`;
+    if (state.renderCache?.key === key) return state.renderCache;
+
+    const analysis = markdownRuntime.analyze(markdown);
+    const rendered = document.createElement("div");
+    rendered.className = "project-documentation-content";
+    state.renderSequence += 1;
+    markdownRuntime.renderInto(rendered, markdown, {
+      allowImages: true,
+      sourceId: `markdown-live-${state.id}-${state.renderSequence}`,
+      resolveLinkUrl: (href, node, context) =>
+        state.resolveLinkUrl(href, node, context),
+      resolveImageUrl: (href, node, context) =>
+        state.resolveImageUrl(href, node, context),
+    });
+    const index = createMarkdownLiveRenderIndex(rendered);
+    state.renderCache = { key, analysis, rendered, ...index };
+    return state.renderCache;
+  }
+
+  function getMarkdownLiveRenderedElement(cache, node, selector) {
+    const offsets = getMarkdownNodeOffsets(node);
+    if (!offsets) return null;
+    const entries =
+      cache?.elementsByRange?.get(
+        markdownLiveRangeKey(offsets.start, offsets.end)
+      ) || [];
+    return entries.find((element) => element.matches(selector)) || null;
+  }
+
+  function getMarkdownLiveNavigationOffset(event, cache, fallbackOffset) {
+    const target =
+      event?.target && typeof event.target.closest === "function"
+        ? event.target
+        : null;
+    const hashLink = target?.closest?.('a[href^="#"]');
+    if (hashLink) {
+      const targetId = String(hashLink.getAttribute("href") || "").slice(1);
+      const linkedOffset = cache?.targetOffsets?.get(targetId);
+      if (Number.isSafeInteger(linkedOffset)) return linkedOffset;
+    }
+    const sourceElement = target?.closest?.("[data-source-start]");
+    const sourceOffset = Number(
+      sourceElement?.getAttribute("data-source-start")
+    );
+    return Number.isSafeInteger(sourceOffset) ? sourceOffset : fallbackOffset;
+  }
+
+  function revealMarkdownLiveSource(state, offset) {
+    if (!state?.editor || !Number.isSafeInteger(offset)) return;
+    const position = state.editor.posFromIndex(offset);
+    state.editor.operation(() => {
+      clearMarkdownLiveDecorations(state);
+      state.editor.setCursor(position);
+    });
+    state.editor.scrollIntoView({ from: position, to: position }, 48);
+    state.editor.focus();
+    scheduleMarkdownLivePreview(state.id);
+  }
+
+  function bindMarkdownLiveSourceReveal(
+    state,
+    element,
+    fallbackOffset,
+    cache
+  ) {
+    if (!element) return;
+    const navigate = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      revealMarkdownLiveSource(
+        state,
+        getMarkdownLiveNavigationOffset(event, cache, fallbackOffset)
+      );
+    };
+    element.addEventListener("pointerdown", navigate);
+    element.addEventListener("click", (event) => {
+      if (Number(event.detail) > 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      navigate(event);
+    });
+    if (!element.querySelector?.("a[href]")) {
+      element.tabIndex = 0;
+      element.setAttribute("aria-label", "Edit Markdown source");
+      element.addEventListener("keydown", (event) => {
+        if (!["Enter", " "].includes(event.key)) return;
+        navigate(event);
+      });
+    }
+  }
+
+  function observeMarkdownLiveMediaSize(
+    state,
+    root,
+    decoration,
+    collectionName
+  ) {
+    if (!root || !decoration || typeof decoration.changed !== "function") return;
+    const images = [
+      ...(root.matches?.("img") ? [root] : []),
+      ...(root.querySelectorAll?.("img") || []),
+    ];
+    const refreshSize = () => {
+      if (!state[collectionName]?.includes(decoration)) return;
+      const anchor = captureMarkdownLiveScrollAnchor(state.editor);
+      decoration.changed();
+      restoreMarkdownLiveScrollAnchor(state.editor, anchor);
+    };
+    for (const image of images) {
+      image.addEventListener("load", refreshSize, { once: true });
+      image.addEventListener("error", refreshSize, { once: true });
+    }
+  }
+
+  function addMarkdownLiveBlockWidget(state, node, renderedElement, cache) {
+    const offsets = getMarkdownNodeOffsets(node);
+    const start = markdownPositionToCodeMirror(node.position, "start");
+    const end = markdownPositionToCodeMirror(node.position, "end");
+    if (!offsets || !start || !end || !renderedElement) return null;
+
+    const marker = addMarkdownLiveMark(state, start, end, { collapsed: true });
+    if (!marker) return null;
+    const wrapper = document.createElement("div");
+    wrapper.className =
+      "markdown-live-block-widget project-documentation-content";
+    wrapper.appendChild(renderedElement.cloneNode(true));
+    bindMarkdownLiveSourceReveal(state, wrapper, offsets.start, cache);
+    const widget = state.editor.addLineWidget(start.line, wrapper, {
+      above: true,
+      coverGutter: false,
+      noHScroll: true,
+      showIfHidden: true,
+    });
+    state.widgets.push(widget);
+    observeMarkdownLiveMediaSize(state, wrapper, widget, "widgets");
+    return widget;
+  }
+
+  function addMarkdownLiveInlineWidget(state, node, renderedElement, cache) {
+    const offsets = getMarkdownNodeOffsets(node);
+    const start = markdownPositionToCodeMirror(node.position, "start");
+    const end = markdownPositionToCodeMirror(node.position, "end");
+    if (!offsets || !start || !end || !renderedElement) return null;
+    const replacement = renderedElement.cloneNode(true);
+    bindMarkdownLiveSourceReveal(state, replacement, offsets.start, cache);
+    const marker = addMarkdownLiveMark(state, start, end, {
+      replacedWith: replacement,
+    });
+    observeMarkdownLiveMediaSize(state, replacement, marker, "marks");
+    return marker;
+  }
+
+  function addMarkdownLiveFootnotesWidget(state, section, cache) {
+    if (!section || !state?.editor) return null;
+    const wrapper = document.createElement("div");
+    wrapper.className =
+      "markdown-live-block-widget markdown-live-footnotes-widget project-documentation-content";
+    wrapper.appendChild(section.cloneNode(true));
+    const firstDefinitionOffset = Number(
+      section
+        .querySelector('[role="doc-endnote"][data-source-start]')
+        ?.getAttribute("data-source-start")
+    );
+    bindMarkdownLiveSourceReveal(
+      state,
+      wrapper,
+      Number.isSafeInteger(firstDefinitionOffset) ? firstDefinitionOffset : 0,
+      cache
+    );
+    const widget = state.editor.addLineWidget(state.editor.lastLine(), wrapper, {
+      above: false,
+      coverGutter: false,
+      noHScroll: true,
+      showIfHidden: true,
+    });
+    state.widgets.push(widget);
+    observeMarkdownLiveMediaSize(state, wrapper, widget, "widgets");
+    return widget;
+  }
+
+  function renderMarkdownLivePreviewState(state) {
+    state.frame = null;
+    if (!state.editor || state.compositionActive) return;
+    const markdownRuntime = window.UartDebugMarkdown;
+    const markdown = state.editor.getValue();
+    if (!state.isMarkdown()) {
+      state.renderCache = null;
+      state.editor.operation(() => {
+        clearMarkdownLiveDecorations(state);
+        addMarkdownAuthorshipGutter(state, markdown);
+      });
+      state.onHeadings?.(new Map());
+      return;
+    }
+    if (!markdownRuntime?.analyze || !markdownRuntime?.renderInto) {
+      state.renderCache = null;
+      state.editor.operation(() => {
+        clearMarkdownLiveDecorations(state);
+        addMarkdownAuthorshipGutter(state, markdown);
+      });
+      state.onHeadings?.(new Map());
+      return;
+    }
+    let cache;
+    try {
+      cache = getMarkdownLiveRenderCache(state, markdown, markdownRuntime);
+    } catch (error) {
+      state.renderCache = null;
+      state.editor.operation(() => {
+        clearMarkdownLiveDecorations(state);
+        addMarkdownAuthorshipGutter(state, markdown);
+      });
+      state.onHeadings?.(new Map());
+      console.warn("Markdown preview could not be rendered:", error);
+      return;
+    }
+    const tree = cache.analysis.tree;
+    const activeLines = getMarkdownEditorActiveLines(state.editor);
+    const viewport = state.editor.getViewport();
+    const firstVisibleLine = Math.max(0, viewport.from - 40);
+    const lastVisibleLine = Math.min(state.editor.lineCount(), viewport.to + 40);
+    const headings = new Map();
+    const renderedFootnotes = cache.rendered.querySelector(".footnotes");
+    const footnoteDefinitionIsActive = (cache.analysis.blocks || []).some(
+      (block) =>
+        block.type === "footnoteDefinition" &&
+        [...activeLines].some(
+          (line) => line >= block.startLine - 1 && line <= block.endLine - 1
         )
-      ) {
-        continue;
+    );
+    const showFootnotes = !!renderedFootnotes && !footnoteDefinitionIsActive;
+    const scrollAnchor = captureMarkdownLiveScrollAnchor(state.editor);
+
+    state.editor.operation(() => {
+      clearMarkdownLiveDecorations(state);
+      addMarkdownAuthorshipGutter(state, markdown);
+      for (const activeLine of activeLines) {
+        if (activeLine < firstVisibleLine || activeLine >= lastVisibleLine) continue;
+        addMarkdownLiveLineClass(
+          state,
+          activeLine,
+          "background",
+          "project-instruction-active-line"
+        );
       }
-      const labelStart = start + 1;
-      const labelEnd = labelStart + linkMatch[1].length;
-      if (
-        !rangeIsFree(start, labelStart) ||
-        !rangeIsFree(labelEnd, end)
-      ) {
-        continue;
+
+      walkMarkdownAst(tree, (node, parent) => {
+        const start = markdownPositionToCodeMirror(node.position, "start");
+        const end = markdownPositionToCodeMirror(node.position, "end");
+        const offsets = getMarkdownNodeOffsets(node);
+        if (!start || !end || !offsets) return;
+        const inViewport =
+          end.line >= firstVisibleLine && start.line < lastVisibleLine;
+        const active = [...activeLines].some(
+          (line) => line >= start.line && line <= end.line
+        );
+        const raw = markdown.slice(offsets.start, offsets.end);
+
+        if (
+          node.type === "footnoteDefinition" &&
+          !footnoteDefinitionIsActive &&
+          !active
+        ) {
+          addMarkdownLiveMark(state, start, end, { collapsed: true });
+          return false;
+        }
+
+        if (node.type === "definition" && !active) {
+          addMarkdownLiveMark(state, start, end, { collapsed: true });
+          return false;
+        }
+
+        if (node.type === "heading") {
+          const headingText = getMarkdownAstText(node).trim();
+          const key = miniProjectCore.normalizeHeadingKey(headingText);
+          if (key && !headings.has(`${node.depth}:${key}`)) {
+            headings.set(`${node.depth}:${key}`, {
+              line: start.line,
+              ch: start.ch,
+              level: node.depth,
+              title: headingText,
+            });
+          }
+          if (!inViewport) return;
+          addMarkdownLiveLineClass(
+            state,
+            start.line,
+            "text",
+            "project-instruction-line-heading"
+          );
+          addMarkdownLiveLineClass(
+            state,
+            start.line,
+            "text",
+            `project-instruction-line-heading-${node.depth}`
+          );
+          if (!active) {
+            const firstChild = node.children?.[0];
+            const childStart = markdownPositionToCodeMirror(
+              firstChild?.position,
+              "start"
+            );
+            if (childStart && childStart.line === start.line) {
+              addMarkdownLiveMark(state, start, childStart, { collapsed: true });
+            }
+            const lastChild = node.children?.[node.children.length - 1];
+            const childEnd = markdownPositionToCodeMirror(
+              lastChild?.position,
+              "end"
+            );
+            if (
+              childEnd &&
+              childEnd.line === end.line &&
+              childEnd.ch < end.ch
+            ) {
+              addMarkdownLiveMark(state, childEnd, end, { collapsed: true });
+            }
+            if (end.line > start.line) {
+              const underline = state.editor.getLine(end.line) || "";
+              addMarkdownLiveMark(
+                state,
+                CodeMirror.Pos(end.line, 0),
+                CodeMirror.Pos(end.line, underline.length),
+                { collapsed: true }
+              );
+            }
+          }
+          return;
+        }
+
+        if (!inViewport) return;
+
+        if (node.type === "table" && !active) {
+          const table = getMarkdownLiveRenderedElement(cache, node, "table");
+          if (table && addMarkdownLiveBlockWidget(state, node, table, cache)) {
+            return false;
+          }
+        }
+
+        if (node.type === "blockquote") {
+          for (let line = start.line; line <= end.line; line += 1) {
+            addMarkdownLiveLineClass(
+              state,
+              line,
+              "text",
+              "project-instruction-line-quote"
+            );
+            if (!active) {
+              const text = state.editor.getLine(line) || "";
+              const prefix = text.match(/^\s{0,3}(?:>[ \t]?)+/)?.[0] || "";
+              if (prefix) {
+                addMarkdownLiveMark(
+                  state,
+                  CodeMirror.Pos(line, 0),
+                  CodeMirror.Pos(line, prefix.length),
+                  { collapsed: true }
+                );
+              }
+            }
+          }
+          return;
+        }
+
+        if (node.type === "code") {
+          for (let line = start.line; line <= end.line; line += 1) {
+            addMarkdownLiveLineClass(
+              state,
+              line,
+              "text",
+              "project-instruction-line-code"
+            );
+          }
+          if (!active && /^\s{0,3}(`{3,}|~{3,})/.test(raw)) {
+            const first = state.editor.getLine(start.line) || "";
+            const last = state.editor.getLine(end.line) || "";
+            addMarkdownLiveMark(
+              state,
+              CodeMirror.Pos(start.line, 0),
+              CodeMirror.Pos(start.line, first.length),
+              { collapsed: true }
+            );
+            if (end.line > start.line) {
+              addMarkdownLiveMark(
+                state,
+                CodeMirror.Pos(end.line, 0),
+                CodeMirror.Pos(end.line, last.length),
+                { collapsed: true }
+              );
+            }
+          }
+          return;
+        }
+
+        if (node.type === "thematicBreak") {
+          addMarkdownLiveLineClass(
+            state,
+            start.line,
+            "text",
+            "project-instruction-line-rule"
+          );
+          if (!active) addMarkdownLiveMark(state, start, end, { collapsed: true });
+          return;
+        }
+
+        if (node.type === "tableRow") {
+          addMarkdownLiveLineClass(
+            state,
+            start.line,
+            "text",
+            "markdown-live-table-row"
+          );
+        }
+
+        if (node.type === "listItem" && !active) {
+          const line = state.editor.getLine(start.line) || "";
+          const task = line.match(/^(\s*)([-+*]|\d{1,9}[.)])\s+\[([ xX])\]\s+/);
+          const marker = line.match(/^(\s*)([-+*]|\d{1,9}[.)])\s+/);
+          if (task) {
+            const checkboxStart = line.indexOf("[", task[1].length);
+            const replacement = document.createElement("span");
+            const checked = task[3].toLowerCase() === "x";
+            replacement.className = `project-instruction-task-marker${
+              checked ? " is-checked" : ""
+            }`;
+            replacement.textContent = checked ? "✓" : "";
+            replacement.setAttribute("aria-hidden", "true");
+            addMarkdownLiveMark(
+              state,
+              CodeMirror.Pos(start.line, checkboxStart),
+              CodeMirror.Pos(start.line, checkboxStart + 3),
+              { replacedWith: replacement }
+            );
+          } else if (marker && /^[-+*]$/.test(marker[2])) {
+            const replacement = document.createElement("span");
+            replacement.className = "project-instruction-list-marker";
+            replacement.textContent = "•";
+            addMarkdownLiveMark(
+              state,
+              CodeMirror.Pos(start.line, marker[1].length),
+              CodeMirror.Pos(start.line, marker[0].length),
+              { replacedWith: replacement }
+            );
+          } else if (marker) {
+            addMarkdownLiveMark(
+              state,
+              CodeMirror.Pos(start.line, marker[1].length),
+              CodeMirror.Pos(start.line, marker[1].length + marker[2].length),
+              { className: "project-instruction-ordered-marker" }
+            );
+          }
+          return;
+        }
+
+        if (["image", "imageReference"].includes(node.type) && !active) {
+          const renderedImage = getMarkdownLiveRenderedElement(
+            cache,
+            node,
+            "img, .ud-markdown-image-alt"
+          );
+          if (!renderedImage) return;
+          const figure = document.createElement("span");
+          figure.className = renderedImage.matches("img")
+            ? "markdown-live-image"
+            : "markdown-live-image-fallback";
+          figure.appendChild(renderedImage.cloneNode(true));
+          if (addMarkdownLiveInlineWidget(state, node, figure, cache)) {
+            return false;
+          }
+          return;
+        }
+
+        if (node.type === "footnoteReference" && showFootnotes && !active) {
+          const renderedReference = getMarkdownLiveRenderedElement(
+            cache,
+            node,
+            "sup.footnote-ref"
+          );
+          if (
+            renderedReference &&
+            addMarkdownLiveInlineWidget(
+              state,
+              node,
+              renderedReference,
+              cache
+            )
+          ) {
+            return false;
+          }
+          return;
+        }
+
+        const inlineClass = {
+          strong: "project-instruction-live-strong",
+          emphasis: "project-instruction-live-emphasis",
+          delete: "project-instruction-live-deleted",
+          inlineCode: "project-instruction-live-code",
+          link: "project-instruction-live-link",
+          linkReference: "project-instruction-live-link",
+        }[node.type];
+        if (!inlineClass || active) return;
+
+        if (node.type === "inlineCode") {
+          const delimiter = raw.match(/^`+/)?.[0]?.length || 0;
+          if (delimiter && raw.length >= delimiter * 2) {
+            const contentFrom = state.editor.posFromIndex(offsets.start + delimiter);
+            const contentTo = state.editor.posFromIndex(offsets.end - delimiter);
+            addMarkdownLiveMark(state, start, contentFrom, { collapsed: true });
+            addMarkdownLiveMark(state, contentFrom, contentTo, {
+              className: inlineClass,
+            });
+            addMarkdownLiveMark(state, contentTo, end, { collapsed: true });
+          }
+          return;
+        }
+
+        const firstChild = node.children?.[0];
+        const lastChild = node.children?.[node.children.length - 1];
+        const contentFrom = markdownPositionToCodeMirror(
+          firstChild?.position,
+          "start"
+        );
+        const contentTo = markdownPositionToCodeMirror(lastChild?.position, "end");
+        if (!contentFrom || !contentTo) return;
+        addMarkdownLiveMark(state, start, contentFrom, { collapsed: true });
+        addMarkdownLiveMark(state, contentFrom, contentTo, {
+          className: inlineClass,
+        });
+        addMarkdownLiveMark(state, contentTo, end, { collapsed: true });
+      });
+
+      if (showFootnotes) {
+        addMarkdownLiveFootnotesWidget(state, renderedFootnotes, cache);
       }
-      reserve(start, labelStart);
-      reserve(labelEnd, end);
-      collapse(start, labelStart);
-      style(labelStart, labelEnd, "project-instruction-live-link");
-      collapse(labelEnd, end);
-    }
+    });
+    restoreMarkdownLiveScrollAnchor(state.editor, scrollAnchor);
+    state.onHeadings?.(headings);
+  }
 
-    decorateDelimited(
-      /\*\*([^*\n]|\*(?!\*))+\*\*/g,
-      2,
-      "project-instruction-live-strong"
+  function scheduleMarkdownLivePreview(id) {
+    const state = markdownLiveEditors.get(id);
+    if (!state || state.compositionActive || state.frame !== null) return;
+    state.frame = window.requestAnimationFrame(() =>
+      renderMarkdownLivePreviewState(state)
     );
-    decorateDelimited(
-      /(?<![A-Za-z0-9])__([^_\n]|_(?!_))+__(?![A-Za-z0-9])/g,
-      2,
-      "project-instruction-live-strong"
-    );
-    decorateDelimited(
-      /~~([^~\n]|~(?!~))+~~/g,
-      2,
-      "project-instruction-live-deleted"
-    );
+  }
 
-    let emphasisMatch;
-    const emphasisExpression = /(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?!\*)/g;
-    while ((emphasisMatch = emphasisExpression.exec(lineText))) {
-      const start = emphasisMatch.index + emphasisMatch[1].length;
-      const end = start + emphasisMatch[0].length - emphasisMatch[1].length;
-      if (!rangeIsFree(start, end)) continue;
-      reserve(start, end);
-      collapse(start, start + 1);
-      style(start + 1, end - 1, "project-instruction-live-emphasis");
-      collapse(end - 1, end);
-    }
-
-    const underscoreExpression =
-      /(^|[^A-Za-z0-9_])_(?=\S)([^_\n]*?\S)_(?![A-Za-z0-9_])/g;
-    while ((emphasisMatch = underscoreExpression.exec(lineText))) {
-      const start = emphasisMatch.index + emphasisMatch[1].length;
-      const end = start + emphasisMatch[0].length - emphasisMatch[1].length;
-      if (!rangeIsFree(start, end)) continue;
-      reserve(start, end);
-      collapse(start, start + 1);
-      style(start + 1, end - 1, "project-instruction-live-emphasis");
-      collapse(end - 1, end);
-    }
-
-    const escapablePunctuation = new Set(
-      "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".split("")
-    );
-    for (let index = 0; index + 1 < lineText.length; index += 1) {
-      if (
-        lineText[index] !== "\\" ||
-        isEscaped(index) ||
-        !escapablePunctuation.has(lineText[index + 1]) ||
-        !rangeIsFree(index, index + 1)
-      ) {
-        continue;
-      }
-      reserve(index, index + 1);
-      collapse(index, index + 1);
+  function setMarkdownLiveComposition(id, active) {
+    const state = markdownLiveEditors.get(id);
+    if (!state) return;
+    state.compositionActive = !!active;
+    if (active) {
+      if (state.frame !== null) window.cancelAnimationFrame(state.frame);
+      state.frame = null;
+      clearMarkdownLiveDecorations(state);
+    } else {
+      scheduleMarkdownLivePreview(id);
     }
   }
 
   function renderProjectInstructionPreview() {
     projectInstructionRenderFrame = null;
-    if (!projectInstructionEditor || projectInstructionCompositionActive) {
+    const unifiedMarkdownState = markdownLiveEditors.get("instruction");
+    if (unifiedMarkdownState) {
+      renderMarkdownLivePreviewState(unifiedMarkdownState);
       return;
     }
 
-    projectInstructionEditor.operation(() => {
-      clearProjectInstructionPreviewDecorations();
-      const activeLines = getProjectInstructionActiveLines();
-      const viewport = projectInstructionEditor.getViewport();
-      const firstVisibleLine = Math.max(0, viewport.from - 20);
-      const lastVisibleLine = Math.min(
-        projectInstructionEditor.lineCount(),
-        viewport.to + 20
-      );
-      let fenceCharacter = "";
-
-      for (let lineNumber = 0; lineNumber < lastVisibleLine; lineNumber += 1) {
-        const lineText = projectInstructionEditor.getLine(lineNumber) || "";
-        const fence = lineText.match(/^\s{0,3}(`{3,}|~{3,})/);
-        const insideFence = !!fenceCharacter;
-        const inDecorationRange = lineNumber >= firstVisibleLine;
-        const activeLine = activeLines.has(lineNumber);
-
-        if (inDecorationRange && activeLine) {
-          addProjectInstructionPreviewLineClass(
-            lineNumber,
-            "background",
-            "project-instruction-active-line"
-          );
-        }
-
-        if (fence) {
-          if (inDecorationRange && !activeLine) {
-            addProjectInstructionPreviewMark(
-              CodeMirror.Pos(lineNumber, 0),
-              CodeMirror.Pos(lineNumber, lineText.length),
-              { collapsed: true }
-            );
-          }
-          if (!insideFence) fenceCharacter = fence[1][0];
-          else if (fence[1][0] === fenceCharacter) fenceCharacter = "";
-          continue;
-        }
-
-        if (!inDecorationRange) continue;
-        if (insideFence) {
-          addProjectInstructionPreviewLineClass(
-            lineNumber,
-            "text",
-            "project-instruction-line-code"
-          );
-          continue;
-        }
-
-        const setextHeading = lineText.match(/^\s{0,3}(=+|-+)\s*$/);
-        const previousLineText =
-          lineNumber > 0
-            ? projectInstructionEditor.getLine(lineNumber - 1) || ""
-            : "";
-        const previousLineIsThematicBreak =
-          /^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(
-            previousLineText
-          );
-        const previousLineIsParagraph =
-          previousLineText.trim() &&
-          !/^(?: {4}|\t)/.test(previousLineText) &&
-          !/^\s{0,3}(?:#{1,6}(?:[ \t]+|$)|`{3,}|~{3,})/.test(
-            previousLineText
-          ) &&
-          !/^\s{0,3}(?:=+|-+)\s*$/.test(previousLineText) &&
-          !/^\s{0,3}(?:>|[-+*]|\d{1,9}[.)])[ \t]/.test(
-            previousLineText
-          ) &&
-          !previousLineIsThematicBreak;
-        if (
-          setextHeading &&
-          previousLineIsParagraph
-        ) {
-          const level = setextHeading[1][0] === "=" ? 1 : 2;
-          addProjectInstructionPreviewLineClass(
-            lineNumber - 1,
-            "text",
-            "project-instruction-line-heading"
-          );
-          addProjectInstructionPreviewLineClass(
-            lineNumber - 1,
-            "text",
-            `project-instruction-line-heading-${level}`
-          );
-          if (!activeLine && !activeLines.has(lineNumber - 1)) {
-            addProjectInstructionPreviewMark(
-              CodeMirror.Pos(lineNumber, 0),
-              CodeMirror.Pos(lineNumber, lineText.length),
-              { collapsed: true }
-            );
-          }
-          continue;
-        }
-
-        if (
-          /^\s{0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(
-            lineText
-          )
-        ) {
-          addProjectInstructionPreviewLineClass(
-            lineNumber,
-            "text",
-            "project-instruction-line-rule"
-          );
-          if (!activeLine) {
-            addProjectInstructionPreviewMark(
-              CodeMirror.Pos(lineNumber, 0),
-              CodeMirror.Pos(lineNumber, lineText.length),
-              { collapsed: true }
-            );
-          }
-          continue;
-        }
-
-        const heading = lineText.match(/^(\s{0,3})(#{1,6})[ \t]+/);
-        if (heading) {
-          const level = heading[2].length;
-          addProjectInstructionPreviewLineClass(
-            lineNumber,
-            "text",
-            "project-instruction-line-heading"
-          );
-          addProjectInstructionPreviewLineClass(
-            lineNumber,
-            "text",
-            `project-instruction-line-heading-${level}`
-          );
-          if (!activeLine) {
-            addProjectInstructionPreviewMark(
-              CodeMirror.Pos(lineNumber, heading[1].length),
-              CodeMirror.Pos(lineNumber, heading[0].length),
-              { collapsed: true }
-            );
-            const closingHashes = lineText.match(/[ \t]+#+[ \t]*$/);
-            if (closingHashes) {
-              addProjectInstructionPreviewMark(
-                CodeMirror.Pos(lineNumber, closingHashes.index),
-                CodeMirror.Pos(lineNumber, lineText.length),
-                { collapsed: true }
-              );
-            }
-          }
-        }
-
-        const quote = lineText.match(/^(\s{0,3}(?:>[ \t]?)+)/);
-        if (quote) {
-          addProjectInstructionPreviewLineClass(
-            lineNumber,
-            "text",
-            "project-instruction-line-quote"
-          );
-          if (!activeLine) {
-            addProjectInstructionPreviewMark(
-              CodeMirror.Pos(lineNumber, 0),
-              CodeMirror.Pos(lineNumber, quote[0].length),
-              { collapsed: true }
-            );
-          }
-        }
-
-        const taskMarker = lineText.match(
-          /^(\s{0,3})([-+*]|\d{1,9}[.)])([ \t]+)\[([ xX])\][ \t]+/
-        );
-        const listMarker = lineText.match(/^(\s{0,3})([-+*])[ \t]+/);
-        if (listMarker && !taskMarker && !activeLine) {
-          const marker = document.createElement("span");
-          marker.className = "project-instruction-list-marker";
-          marker.textContent = "•";
-          addProjectInstructionPreviewMark(
-            CodeMirror.Pos(lineNumber, listMarker[1].length),
-            CodeMirror.Pos(lineNumber, listMarker[0].length),
-            { replacedWith: marker }
-          );
-        }
-
-        const orderedMarker = lineText.match(
-          /^(\s{0,3})(\d{1,9}[.)])([ \t]+)/
-        );
-        if (orderedMarker && !taskMarker && !activeLine) {
-          addProjectInstructionPreviewMark(
-            CodeMirror.Pos(lineNumber, orderedMarker[1].length),
-            CodeMirror.Pos(
-              lineNumber,
-              orderedMarker[1].length + orderedMarker[2].length
-            ),
-            { className: "project-instruction-ordered-marker" }
-          );
-        }
-
-        if (taskMarker && !activeLine) {
-          const tokenStart = lineText.indexOf("[", taskMarker[1].length);
-          const task = document.createElement("span");
-          const checked = taskMarker[4].toLowerCase() === "x";
-          const orderedTask = /^\d/.test(taskMarker[2]);
-          task.className = `project-instruction-task-marker${
-            checked ? " is-checked" : ""
-          }`;
-          task.textContent = checked ? "✓" : "";
-          task.setAttribute("aria-hidden", "true");
-          if (orderedTask) {
-            addProjectInstructionPreviewMark(
-              CodeMirror.Pos(lineNumber, taskMarker[1].length),
-              CodeMirror.Pos(
-                lineNumber,
-                taskMarker[1].length + taskMarker[2].length
-              ),
-              { className: "project-instruction-ordered-marker" }
-            );
-          }
-          addProjectInstructionPreviewMark(
-            CodeMirror.Pos(
-              lineNumber,
-              orderedTask ? tokenStart : taskMarker[1].length
-            ),
-            CodeMirror.Pos(lineNumber, tokenStart + 3),
-            { replacedWith: task }
-          );
-        }
-
-        if (!activeLine) decorateProjectInstructionInline(lineNumber, lineText);
-      }
-    });
+    // Without the shared CommonMark/GFM runtime, keep the Markdown source
+    // intact instead of presenting a second, incompatible interpretation.
   }
 
   function scheduleProjectInstructionPreview() {
+    if (markdownLiveEditors.has("instruction")) {
+      scheduleMarkdownLivePreview("instruction");
+      return;
+    }
     if (projectInstructionCompositionActive) return;
     if (projectInstructionRenderFrame !== null) return;
     projectInstructionRenderFrame = window.requestAnimationFrame(
@@ -5606,6 +6195,7 @@
       );
     }
 
+    const previousMarkdown = projectInstructionDocument.markdown;
     projectInstructionDocument = {
       schemaVersion: 1,
       revision: projectInstructionDocument.revision + 1,
@@ -5614,6 +6204,12 @@
         skillRefs === undefined
           ? projectInstructionDocument.skillRefs
           : normalizeInstructionSkillRefs(skillRefs),
+      authorship: mergeMarkdownAuthorshipForReplacement(
+        previousMarkdown,
+        markdown,
+        projectInstructionDocument.authorship,
+        "ai"
+      ),
     };
     setProjectInstructionEditorValue(projectInstructionDocument.markdown);
     scheduleProjectInstructionPreview();
@@ -5828,6 +6424,7 @@
         theme: "material-darker",
         inputStyle: "contenteditable",
         lineNumbers: false,
+        gutters: ["markdown-authorship-gutter"],
         lineWrapping: true,
         indentUnit: 2,
         tabSize: 2,
@@ -5841,6 +6438,15 @@
         },
       });
       projectInstructionEditor.setSize("100%", "100%");
+      registerMarkdownLiveEditor("instruction", projectInstructionEditor, {
+        getAuthorship: () => projectInstructionDocument.authorship,
+        getContextKey: () => "project-instruction",
+        resolveImageUrl: (href) => resolveDocumentationImageUrl(href, null),
+      });
+      bindCodeMirrorQuoteSurface(
+        projectInstructionEditor,
+        "Project instruction"
+      );
 
       const inputField = projectInstructionEditor.getInputField();
       inputField.setAttribute("aria-label", "Project instruction Markdown");
@@ -5850,25 +6456,33 @@
       inputField.setAttribute("spellcheck", "true");
       inputField.addEventListener("compositionstart", () => {
         projectInstructionCompositionActive = true;
+        setMarkdownLiveComposition("instruction", true);
         if (projectInstructionRenderFrame !== null) {
           window.cancelAnimationFrame(projectInstructionRenderFrame);
           projectInstructionRenderFrame = null;
         }
-        clearProjectInstructionPreviewDecorations();
       });
       inputField.addEventListener("compositionend", () => {
         projectInstructionCompositionActive = false;
+        setMarkdownLiveComposition("instruction", false);
         scheduleProjectInstructionPreview();
       });
 
-      projectInstructionEditor.on("change", (cm) => {
+      projectInstructionEditor.on("change", (cm, change) => {
         cm.save();
         if (projectInstructionEditorSyncing) return;
+        const previousMarkdown = projectInstructionDocument.markdown;
         const markdown = cm.getValue();
         projectInstructionDocument = {
           ...projectInstructionDocument,
           revision: projectInstructionDocument.revision + 1,
           markdown,
+          authorship: updateMarkdownAuthorshipForChange(
+            projectInstructionDocument.authorship,
+            previousMarkdown,
+            change,
+            "human"
+          ),
           skillRefs: getCompatibleInstructionSkillRefs(
             markdown,
             projectInstructionDocument.skillRefs
@@ -5879,11 +6493,11 @@
       });
       projectInstructionEditor.on(
         "cursorActivity",
-        scheduleProjectInstructionPreview
+        () => scheduleMarkdownLivePreview("instruction")
       );
       projectInstructionEditor.on(
         "viewportChange",
-        scheduleProjectInstructionPreview
+        () => scheduleMarkdownLivePreview("instruction")
       );
       window.setTimeout(() => {
         projectInstructionEditor?.refresh();
@@ -5895,10 +6509,15 @@
     } else if (editorElement) {
       editorElement.value = projectInstructionDocument.markdown;
       editorElement.addEventListener("input", () => {
+        const previousMarkdown = projectInstructionDocument.markdown;
         projectInstructionDocument = {
           ...projectInstructionDocument,
           revision: projectInstructionDocument.revision + 1,
           markdown: editorElement.value,
+          authorship: createMarkdownAuthorship(
+            editorElement.value,
+            previousMarkdown === editorElement.value ? "original" : "human"
+          ),
           skillRefs: getCompatibleInstructionSkillRefs(
             editorElement.value,
             projectInstructionDocument.skillRefs
@@ -5993,6 +6612,8 @@
     return {
       id: createProjectAiRecordId("chat"),
       title: "New chat",
+      titleSource: "auto",
+      titleLocked: false,
       createdAt: now,
       updatedAt: now,
       messages: [],
@@ -6004,6 +6625,7 @@
     const content = String(rawMessage?.content || "").trim();
     if (!content || !["user", "assistant"].includes(role)) return null;
     const createdAt = Number(rawMessage?.createdAt);
+    const editedAt = Number(rawMessage?.editedAt);
     return {
       id:
         String(rawMessage?.id || "").trim() ||
@@ -6015,6 +6637,9 @@
         Number.isSafeInteger(createdAt) && createdAt > 0
           ? createdAt
           : Date.now(),
+      ...(Number.isSafeInteger(editedAt) && editedAt >= createdAt
+        ? { editedAt }
+        : {}),
     };
   }
 
@@ -6036,6 +6661,10 @@
       id:
         String(rawChat.id || "").trim() || createProjectAiRecordId("chat"),
       title: (title || "New chat").slice(0, PROJECT_AI_CHAT_TITLE_LENGTH),
+      titleSource:
+        rawChat.titleSource === "manual" ? "manual" : "auto",
+      titleLocked:
+        rawChat.titleLocked === true || rawChat.titleSource === "manual",
       createdAt:
         Number.isSafeInteger(createdAt) && createdAt > 0
           ? createdAt
@@ -6101,7 +6730,9 @@
     getActiveProjectAiChat();
   }
 
-  function persistProjectAiChats({ syncAccount = true } = {}) {
+  function persistProjectAiChats(
+    { syncAccount = true, renderList = true } = {}
+  ) {
     try {
       window.localStorage.setItem(
         STORAGE_PROJECT_AI_CHATS,
@@ -6110,7 +6741,7 @@
     } catch (error) {
       console.warn("The AI chats could not be saved locally:", error);
     }
-    renderProjectAiChatList();
+    if (renderList) renderProjectAiChatList();
     if (
       syncAccount &&
       projectAiBootComplete &&
@@ -6122,11 +6753,15 @@
 
   function deriveProjectAiChatTitle(message) {
     const singleLine = String(message || "")
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/[#>*_`~\[\]()]/g, " ")
       .replace(/\s+/g, " ")
+      .replace(/^(?:please|could you|can you|нужно|пожалуйста)\s+/i, "")
       .trim();
     if (!singleLine) return "New chat";
-    if (singleLine.length <= PROJECT_AI_CHAT_TITLE_LENGTH) return singleLine;
-    return `${singleLine.slice(0, PROJECT_AI_CHAT_TITLE_LENGTH - 1).trim()}…`;
+    const shortTitle = singleLine.split(" ").slice(0, 7).join(" ");
+    if (shortTitle.length <= PROJECT_AI_CHAT_TITLE_LENGTH) return shortTitle;
+    return `${shortTitle.slice(0, PROJECT_AI_CHAT_TITLE_LENGTH - 1).trim()}…`;
   }
 
   function recordProjectAiMessage(kind, message, title = "") {
@@ -6143,6 +6778,8 @@
     chat.messages.push(normalized);
     if (kind === "user" && chat.title === "New chat") {
       chat.title = deriveProjectAiChatTitle(normalized.content);
+      chat.titleSource = "auto";
+      chat.titleLocked = false;
     }
     chat.updatedAt = Date.now();
     projectAiConversation = chat.messages;
@@ -6150,13 +6787,19 @@
     return normalized;
   }
 
-  function renderProjectAiMessageElement(kind, message, title = "") {
+  function renderProjectAiMessageElement(
+    kind,
+    message,
+    title = "",
+    record = null
+  ) {
     const history = $("projectAiHistory");
     if (!history) return null;
 
     const article = document.createElement("article");
     article.className = `project-ai-message is-${kind}`;
-    article.dataset.aiTransient = "true";
+    if (record?.id) article.dataset.messageId = record.id;
+    else article.dataset.aiTransient = "true";
 
     const speaker = document.createElement("span");
     speaker.className = "sr-only";
@@ -6185,14 +6828,46 @@
       paragraph.textContent = String(message || "");
       article.appendChild(paragraph);
     }
+    if (record?.editedAt) {
+      const edited = document.createElement("span");
+      edited.className = "project-ai-message-edited";
+      edited.textContent = "Edited";
+      article.appendChild(edited);
+    }
+    if (record?.id && ["user", "assistant"].includes(kind)) {
+      const actions = document.createElement("div");
+      actions.className = "project-ai-message-actions";
+      if (kind === "user") {
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "project-ai-message-action";
+        edit.dataset.editMessageId = record.id;
+        edit.textContent = "Edit";
+        edit.setAttribute("aria-label", "Edit message");
+        actions.appendChild(edit);
+      }
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "project-ai-message-action";
+      copy.dataset.copyMessageId = record.id;
+      copy.textContent = "Copy";
+      copy.setAttribute("aria-label", "Copy message");
+      actions.appendChild(copy);
+      article.appendChild(actions);
+    }
     history.appendChild(article);
     history.scrollTop = history.scrollHeight;
     return article;
   }
 
   function appendProjectAiMessage(kind, message, title = "") {
-    const article = renderProjectAiMessageElement(kind, message, title);
-    recordProjectAiMessage(kind, message, title);
+    const record = recordProjectAiMessage(kind, message, title);
+    const article = renderProjectAiMessageElement(
+      kind,
+      message,
+      title,
+      record
+    );
     return article;
   }
 
@@ -6212,9 +6887,324 @@
       renderProjectAiMessageElement(
         message.role,
         message.content,
-        message.title
+        message.title,
+        message
       );
     }
+  }
+
+  function findProjectAiMessage(messageId) {
+    const chat = getActiveProjectAiChat();
+    const index = chat.messages.findIndex(
+      (message) => message.id === String(messageId || "")
+    );
+    return index >= 0 ? { chat, message: chat.messages[index], index } : null;
+  }
+
+  async function copyTextToClipboard(text) {
+    const value = String(text || "");
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+    const fallback = document.createElement("textarea");
+    fallback.value = value;
+    fallback.setAttribute("readonly", "");
+    fallback.style.position = "fixed";
+    fallback.style.opacity = "0";
+    document.body.appendChild(fallback);
+    fallback.select();
+    const copied = document.execCommand?.("copy");
+    fallback.remove();
+    if (!copied) throw new Error("Clipboard access is unavailable.");
+  }
+
+  async function copyProjectAiMessage(messageId, button = null) {
+    const found = findProjectAiMessage(messageId);
+    if (!found) return;
+    try {
+      await copyTextToClipboard(found.message.content);
+      if (button) {
+        const previous = button.textContent;
+        button.textContent = "Copied";
+        window.setTimeout(() => {
+          if (button.isConnected) button.textContent = previous;
+        }, 1200);
+      }
+    } catch (error) {
+      appendProjectAiMessage(
+        "system",
+        error?.message || "The message could not be copied."
+      );
+    }
+  }
+
+  function truncateProjectAiMessageBranchForEdit(found, content, editedAt) {
+    if (
+      !found?.chat ||
+      !Array.isArray(found.chat.messages) ||
+      found.message?.role !== "user" ||
+      !Number.isSafeInteger(found.index) ||
+      found.index < 0 ||
+      found.chat.messages[found.index] !== found.message
+    ) {
+      return null;
+    }
+    const timestamp =
+      Number.isSafeInteger(editedAt) && editedAt > 0 ? editedAt : Date.now();
+    const editedMessage = {
+      ...found.message,
+      content: String(content || "").trim(),
+      editedAt: timestamp,
+    };
+    found.chat.messages.splice(found.index);
+    found.chat.updatedAt = timestamp;
+    projectAiConversation = found.chat.messages;
+    return editedMessage;
+  }
+
+  function beginProjectAiMessageEdit(messageId) {
+    if (projectAiRequestInFlight) return;
+    const found = findProjectAiMessage(messageId);
+    if (!found || found.message.role !== "user") return;
+    const article = document.querySelector(
+      `.project-ai-message[data-message-id="${CSS.escape(found.message.id)}"]`
+    );
+    if (!article || article.classList.contains("is-editing")) return;
+    article.classList.add("is-editing");
+    const paragraph = article.querySelector("p");
+    const actions = article.querySelector(".project-ai-message-actions");
+    if (!paragraph) return;
+    paragraph.hidden = true;
+    if (actions) actions.hidden = true;
+    const form = document.createElement("form");
+    form.className = "project-ai-message-edit-form";
+    const textarea = document.createElement("textarea");
+    textarea.value = found.message.content;
+    textarea.rows = Math.min(12, Math.max(3, textarea.value.split("\n").length));
+    textarea.setAttribute("aria-label", "Edit message");
+    const controls = document.createElement("div");
+    controls.className = "project-ai-message-edit-controls";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "connect-btn secondary-btn";
+    cancel.textContent = "Cancel";
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.className = "connect-btn";
+    save.textContent = "Save";
+    controls.append(cancel, save);
+    form.append(textarea, controls);
+    article.appendChild(form);
+
+    const close = () => {
+      form.remove();
+      paragraph.hidden = false;
+      if (actions) actions.hidden = false;
+      article.classList.remove("is-editing");
+    };
+    cancel.addEventListener("click", close);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const content = textarea.value.trim();
+      if (!content) {
+        textarea.focus();
+        return;
+      }
+      const editedAt = Date.now();
+      if (
+        found.index === 0 &&
+        !found.chat.titleLocked &&
+        found.chat.titleSource !== "manual"
+      ) {
+        found.chat.title = deriveProjectAiChatTitle(content);
+        found.chat.titleSource = "auto";
+      }
+      const editedMessage = truncateProjectAiMessageBranchForEdit(
+        found,
+        content,
+        editedAt
+      );
+      if (!editedMessage) return;
+      void submitProjectAiRequest(content, {
+        existingUserMessage: editedMessage,
+        clearPromptOnSuccess: false,
+      });
+    });
+    textarea.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+      }
+    });
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }
+
+  function applyProjectAiChatTitle(rawTitle) {
+    const title = String(rawTitle || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, PROJECT_AI_CHAT_TITLE_LENGTH);
+    if (!title) return false;
+    const chat = getActiveProjectAiChat();
+    if (chat.titleLocked || chat.titleSource === "manual") return false;
+    chat.title = title;
+    chat.titleSource = "auto";
+    chat.updatedAt = Date.now();
+    persistProjectAiChats();
+    return true;
+  }
+
+  function getProjectAiSelectionQuoteButton() {
+    let button = $("projectAiSelectionQuoteBtn");
+    if (button) return button;
+    button = document.createElement("button");
+    button.id = "projectAiSelectionQuoteBtn";
+    button.className = "project-ai-selection-quote";
+    button.type = "button";
+    button.textContent = "Quote in AI";
+    button.hidden = true;
+    button.setAttribute("aria-label", "Quote selected text in AI chat");
+    button.addEventListener("pointerdown", (event) => event.preventDefault());
+    button.addEventListener("click", insertProjectAiSelectionQuote);
+    document.body.appendChild(button);
+    return button;
+  }
+
+  function hideProjectAiSelectionQuote() {
+    const button = $("projectAiSelectionQuoteBtn");
+    if (button) button.hidden = true;
+    projectAiSelectionQuote = null;
+  }
+
+  function showProjectAiSelectionQuote(selection, rect) {
+    const text = String(selection?.text || "").trim();
+    if (!text || text.length > 16 * 1024 || !rect) {
+      hideProjectAiSelectionQuote();
+      return;
+    }
+    projectAiSelectionQuote = { ...selection, text };
+    const button = getProjectAiSelectionQuoteButton();
+    button.hidden = false;
+    const left = Math.min(
+      window.innerWidth - button.offsetWidth - 10,
+      Math.max(10, rect.left + Math.min(rect.width || 0, 32))
+    );
+    const top = Math.min(
+      window.innerHeight - button.offsetHeight - 10,
+      Math.max(10, rect.bottom + 8)
+    );
+    button.style.left = `${Math.round(left)}px`;
+    button.style.top = `${Math.round(top)}px`;
+  }
+
+  function insertProjectAiSelectionQuote() {
+    const selection = projectAiSelectionQuote;
+    const prompt = $("projectAiPrompt");
+    if (!selection || !prompt) return;
+    const source = String(selection.label || "Selected text").trim();
+    const body = selection.text
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    const quote = `> **${source.replace(/[\r\n]+/g, " ")}**\n${body}`;
+    const existing = prompt.value.trimEnd();
+    prompt.value = existing ? `${existing}\n\n${quote}\n\n` : `${quote}\n\n`;
+    hideProjectAiSelectionQuote();
+    if (projectWorkspaceMode !== "ai") {
+      setProjectWorkspaceMode("ai", { focusPrompt: true });
+    }
+    window.setTimeout(() => {
+      prompt.focus({ preventScroll: true });
+      prompt.setSelectionRange(prompt.value.length, prompt.value.length);
+    }, projectWorkspaceMode === "ai" ? 0 : PROJECT_WORKSPACE_SWITCH_MS);
+  }
+
+  function showCodeMirrorSelectionQuote(codeMirror, label) {
+    const text = codeMirror?.getSelection?.() || "";
+    if (!text.trim()) {
+      hideProjectAiSelectionQuote();
+      return;
+    }
+    const from = codeMirror.getCursor("from");
+    const to = codeMirror.getCursor("to");
+    const coords = codeMirror.cursorCoords(to, "window");
+    showProjectAiSelectionQuote(
+      {
+        text,
+        label: typeof label === "function" ? label() : label,
+        from: codeMirror.indexFromPos(from),
+        to: codeMirror.indexFromPos(to),
+      },
+      {
+        left: coords.left,
+        bottom: coords.bottom,
+        width: Math.max(0, coords.right - coords.left),
+      }
+    );
+  }
+
+  function bindCodeMirrorQuoteSurface(codeMirror, label) {
+    const wrapper = codeMirror?.getWrapperElement?.();
+    if (!wrapper || wrapper.dataset.aiQuoteBound === "true") return;
+    wrapper.dataset.aiQuoteBound = "true";
+    const show = () =>
+      window.setTimeout(() => showCodeMirrorSelectionQuote(codeMirror, label), 0);
+    const showFocusedSelection = () => {
+      if (
+        typeof codeMirror.hasFocus !== "function" ||
+        codeMirror.hasFocus()
+      ) {
+        show();
+      }
+    };
+    wrapper.addEventListener("mouseup", show);
+    codeMirror.on?.("cursorActivity", showFocusedSelection);
+    wrapper.addEventListener("keyup", (event) => {
+      if (
+        event.shiftKey ||
+        ((event.ctrlKey || event.metaKey) &&
+          String(event.key || "").toLowerCase() === "a") ||
+        ["Shift", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(
+          event.key
+        )
+      ) {
+        showFocusedSelection();
+      }
+    });
+  }
+
+  function showDomSelectionQuote(container, label) {
+    const selection = window.getSelection?.();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) {
+      hideProjectAiSelectionQuote();
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!container.contains(range.commonAncestorContainer)) return;
+    const commonElement =
+      range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer.parentElement;
+    const article = commonElement?.closest?.(".project-ai-message") || null;
+    const sourceLabel =
+      typeof label === "function" ? label(article) : String(label || "");
+    showProjectAiSelectionQuote(
+      { text: selection.toString(), label: sourceLabel },
+      range.getBoundingClientRect()
+    );
+  }
+
+  function showProjectAiHistorySelectionQuote(history) {
+    if (!history) return;
+    showDomSelectionQuote(history, (article) => {
+      const found = findProjectAiMessage(article?.dataset.messageId || "");
+      return found?.message.role === "user"
+        ? "Chat — your message"
+        : "Chat — AI response";
+    });
   }
 
   function closeProjectAiChatsMenu({ restoreFocus = false } = {}) {
@@ -6247,6 +7237,44 @@
     else closeProjectAiChatsMenu();
   }
 
+  function getProjectAiChatAction(target) {
+    const rename = target?.closest?.("[data-rename-chat-id]");
+    if (rename) {
+      return { type: "rename", chatId: rename.dataset.renameChatId || "" };
+    }
+    const select = target?.closest?.("[data-chat-id]");
+    if (select) {
+      return { type: "select", chatId: select.dataset.chatId || "" };
+    }
+    const remove = target?.closest?.("[data-delete-chat-id]");
+    if (remove) {
+      return { type: "delete", chatId: remove.dataset.deleteChatId || "" };
+    }
+    return null;
+  }
+
+  function runProjectAiChatAction(action) {
+    if (!action?.chatId) return;
+    if (action.type === "rename") {
+      beginProjectAiChatRename(action.chatId);
+    } else if (action.type === "select") {
+      selectProjectAiChat(action.chatId);
+    } else if (action.type === "delete") {
+      void deleteProjectAiChat(action.chatId);
+    }
+  }
+
+  function flushProjectAiChatRenameRender() {
+    if (
+      !projectAiChatRenameRenderPending ||
+      projectAiPendingChatPointerAction
+    ) {
+      return;
+    }
+    projectAiChatRenameRenderPending = false;
+    if (!projectAiChatRenameId) renderProjectAiChatList();
+  }
+
   function renderProjectAiChatList() {
     const list = $("projectAiChatList");
     if (!list) return;
@@ -6271,6 +7299,14 @@
       select.textContent = chat.title || "New chat";
       select.title = select.textContent;
 
+      const rename = document.createElement("button");
+      rename.type = "button";
+      rename.className = "project-ai-chat-rename";
+      rename.dataset.renameChatId = chat.id;
+      rename.setAttribute("role", "menuitem");
+      rename.setAttribute("aria-label", `Rename chat ${select.textContent}`);
+      rename.textContent = "Rename";
+
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "project-ai-chat-delete";
@@ -6279,15 +7315,70 @@
       remove.setAttribute("aria-label", `Delete chat ${select.textContent}`);
       remove.textContent = "×";
 
-      row.append(select, remove);
+      if (projectAiChatRenameId === chat.id) {
+        const input = document.createElement("input");
+        input.className = "project-ai-chat-rename-input";
+        input.value = chat.title || "New chat";
+        input.maxLength = PROJECT_AI_CHAT_TITLE_LENGTH;
+        input.setAttribute("aria-label", "Chat name");
+        let renameCommitted = false;
+        const saveRename = ({ deferRender = false } = {}) => {
+          if (renameCommitted) return;
+          const title = input.value.replace(/\s+/g, " ").trim();
+          if (!title) {
+            input.focus();
+            return;
+          }
+          renameCommitted = true;
+          chat.title = title.slice(0, PROJECT_AI_CHAT_TITLE_LENGTH);
+          chat.titleSource = "manual";
+          chat.titleLocked = true;
+          chat.updatedAt = Date.now();
+          projectAiChatRenameId = "";
+          persistProjectAiChats({ renderList: !deferRender });
+          if (deferRender) {
+            projectAiChatRenameRenderPending = true;
+            flushProjectAiChatRenameRender();
+          }
+        };
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            saveRename();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            projectAiChatRenameId = "";
+            renderProjectAiChatList();
+          }
+        });
+        input.addEventListener("blur", () => saveRename({ deferRender: true }));
+        row.append(input, rename, remove);
+        window.requestAnimationFrame(() => {
+          input.focus({ preventScroll: true });
+          input.select();
+        });
+      } else {
+        row.append(select, rename, remove);
+      }
       list.appendChild(row);
     }
+  }
+
+  function beginProjectAiChatRename(chatId) {
+    if (projectAiRequestInFlight) return;
+    const chat = projectAiChats.chats.find(
+      (candidate) => candidate.id === String(chatId || "")
+    );
+    if (!chat) return;
+    projectAiChatRenameId = chat.id;
+    renderProjectAiChatList();
   }
 
   function selectProjectAiChat(chatId) {
     if (projectAiRequestInFlight) return;
     const chat = projectAiChats.chats.find((candidate) => candidate.id === chatId);
     if (!chat) return;
+    projectAiChatRenameId = "";
     projectAiChats.activeChatId = chat.id;
     projectAiConversation = chat.messages;
     persistProjectAiChats();
@@ -6307,6 +7398,7 @@
       return;
     }
     const chat = createEmptyProjectAiChat();
+    projectAiChatRenameId = "";
     projectAiChats.chats.push(chat);
     projectAiChats.activeChatId = chat.id;
     projectAiConversation = chat.messages;
@@ -6434,12 +7526,40 @@
     if (editor && current && hasFile(current)) {
       files[current] = editor.getValue();
     }
+    for (const fileName of Object.keys(files)) {
+      setFileAuthorship(fileName, fileAuthorship[fileName], files[fileName]);
+    }
     return {
       schemaVersion: 2,
       files: cloneJsonMetadata(files, {}),
+      authorship: cloneJsonMetadata(fileAuthorship, {}),
       fileGroups: cloneJsonMetadata(fileGroups, {}),
       miniProjects: cloneJsonMetadata(miniProjects, {}),
       current: typeof current === "string" ? current : null,
+    };
+  }
+
+  function normalizeProjectAiAccountFilesSnapshot(rawData) {
+    const source = rawData && typeof rawData === "object" ? rawData : {};
+    const normalizedFiles = createDictionary(cloneJsonMetadata(source.files, {}));
+    const normalizedAuthorship = createDictionary(
+      cloneJsonMetadata(source.authorship, {})
+    );
+    for (const [fileName, content] of Object.entries(normalizedFiles)) {
+      normalizedAuthorship[fileName] = normalizeMarkdownAuthorship(
+        normalizedAuthorship[fileName],
+        content
+      );
+    }
+    return {
+      schemaVersion: 2,
+      files: normalizedFiles,
+      authorship: normalizedAuthorship,
+      fileGroups: createDictionary(cloneJsonMetadata(source.fileGroups, {})),
+      miniProjects: createDictionary(
+        cloneJsonMetadata(source.miniProjects, {})
+      ),
+      current: typeof source.current === "string" ? source.current : null,
     };
   }
 
@@ -6458,7 +7578,7 @@
           ? normalizeProjectAiChats(remoteData)
           : kind === "instruction"
             ? normalizeProjectInstructionDocument(remoteData)
-            : remoteData;
+            : normalizeProjectAiAccountFilesSnapshot(remoteData);
       return JSON.stringify(localData) === JSON.stringify(normalizedRemote);
     } catch {
       return false;
@@ -6471,6 +7591,9 @@
       return {
         schemaVersion: 2,
         files: { "main.c": "" },
+        authorship: {
+          "main.c": createMarkdownAuthorship("", "human"),
+        },
         fileGroups: {},
         miniProjects: {},
         current: "main.c",
@@ -6545,8 +7668,20 @@
     ) {
       throw new TypeError("The saved account file workspace is invalid.");
     }
-    const previousWorkspace = { files, fileGroups, miniProjects, current };
+    const previousWorkspace = {
+      files,
+      fileAuthorship,
+      fileGroups,
+      miniProjects,
+      current,
+    };
     files = createDictionary(cloneJsonMetadata(rawData.files, {}));
+    fileAuthorship = createDictionary(
+      cloneJsonMetadata(rawData.authorship, {})
+    );
+    for (const fileName of Object.keys(files)) {
+      setFileAuthorship(fileName, fileAuthorship[fileName], files[fileName]);
+    }
     fileGroups = createDictionary(cloneJsonMetadata(rawData.fileGroups, {}));
     miniProjects = createDictionary(cloneJsonMetadata(rawData.miniProjects, {}));
     current = typeof rawData.current === "string" ? rawData.current : null;
@@ -6558,7 +7693,8 @@
     try {
       persistState({ throwOnError: true });
     } catch (error) {
-      ({ files, fileGroups, miniProjects, current } = previousWorkspace);
+      ({ files, fileAuthorship, fileGroups, miniProjects, current } =
+        previousWorkspace);
       console.warn("The cloud AVR workspace could not be saved locally:", error);
       return false;
     }
@@ -6576,6 +7712,7 @@
       editor.setOption("mode", getEditorModeForFile(current));
       editor.setValue(current ? files[current] || "" : "");
       editor.refresh();
+      scheduleMarkdownLivePreview("editor");
     }
     updateEditorFileWatermark(current || "");
     refreshDocumentationPane();
@@ -7311,8 +8448,8 @@
     article.setAttribute("role", "status");
 
     const label = document.createElement("span");
-    label.className = "sr-only";
-    label.textContent = "AI assistant is thinking";
+    label.className = "project-ai-thinking-stage";
+    label.textContent = "Analyzing the request";
 
     const dots = document.createElement("span");
     dots.className = "project-ai-thinking-dots";
@@ -7323,6 +8460,21 @@
       document.createElement("span")
     );
 
+    const phases = [
+      "Preparing the relevant project context",
+      "Waiting for the model response",
+    ];
+    let phaseIndex = 0;
+    article._phaseTimer = window.setInterval(() => {
+      if (!article.isConnected || phaseIndex >= phases.length) {
+        window.clearInterval(article._phaseTimer);
+        article._phaseTimer = null;
+        return;
+      }
+      label.textContent = phases[phaseIndex];
+      phaseIndex += 1;
+    }, 2400);
+
     article.append(label, dots);
     history.appendChild(article);
     history.scrollTop = history.scrollHeight;
@@ -7330,7 +8482,153 @@
   }
 
   function removeProjectAiThinking(indicator) {
+    if (indicator?._phaseTimer) {
+      window.clearInterval(indicator._phaseTimer);
+      indicator._phaseTimer = null;
+    }
     indicator?.remove();
+  }
+
+  function renderProjectAiThinkingProgress(indicator, progress, verification) {
+    if (!indicator || !progress || !Array.isArray(progress.stages)) return;
+    if (indicator._phaseTimer) {
+      window.clearInterval(indicator._phaseTimer);
+      indicator._phaseTimer = null;
+    }
+    if (!(indicator._progressStages instanceof Map)) {
+      indicator._progressStages = new Map();
+    }
+    for (const stage of progress.stages) {
+      const id = String(stage?.id || "step");
+      const attempt = Number(stage?.attempt);
+      const key = `${id}:${Number.isSafeInteger(attempt) ? attempt : 1}`;
+      indicator._progressStages.set(key, { ...stage, id });
+    }
+    const labels = {
+      generation: {
+        in_progress: "Generating the response",
+        completed: "Response generated",
+        failed: "Response generation failed",
+      },
+      compilation: {
+        in_progress: "Checking with the AVR compiler",
+        completed: "Compiler check passed",
+        failed: "Compiler check found a problem",
+      },
+      repair: {
+        in_progress: "Repairing the compiler error",
+        completed: "Compiler error repaired",
+        failed: "Compiler repair failed",
+      },
+    };
+    let list = indicator.querySelector(".project-ai-progress-stages");
+    if (!list) {
+      list = document.createElement("ol");
+      list.className = "project-ai-progress-stages";
+      indicator.appendChild(list);
+    }
+    list.replaceChildren();
+    for (const stage of indicator._progressStages.values()) {
+      const item = document.createElement("li");
+      const status = String(stage?.status || "completed");
+      item.className = `is-${status}`;
+      const attempt = Number(stage?.attempt);
+      const stageLabels = labels[stage?.id];
+      item.textContent = `${
+        stageLabels?.[status] || stageLabels?.completed || String(stage?.id || "Step")
+      }${
+        Number.isSafeInteger(attempt) && attempt > 1
+          ? ` · attempt ${attempt}`
+          : ""
+      }`;
+      list.appendChild(item);
+    }
+    const heading = indicator.querySelector(".project-ai-thinking-stage");
+    if (heading) {
+      heading.textContent =
+        verification?.status === "passed"
+          ? `Verified with ${verification.mcu || "the selected MCU"}`
+          : progress.status === "failed"
+            ? "Project verification failed"
+            : progress.status === "completed"
+              ? "Response ready"
+              : "Working on the project";
+    }
+    indicator.querySelector(".project-ai-thinking-dots")?.remove();
+    const history = $("projectAiHistory");
+    if (history) history.scrollTop = history.scrollHeight;
+  }
+
+  async function readProjectAiApiResponse(response, onProgress) {
+    const contentType = String(response.headers.get("content-type") || "")
+      .split(";", 1)[0]
+      .trim()
+      .toLowerCase();
+    if (contentType !== "application/x-ndjson") {
+      return {
+        status: response.status,
+        data: await response.json().catch(() => ({})),
+        streamed: false,
+      };
+    }
+    if (!response.body?.getReader) {
+      throw new Error("The streamed AI response is not supported by this browser.");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const maximumBytes = 5 * 1024 * 1024;
+    let receivedBytes = 0;
+    let buffer = "";
+    let finalEvent = null;
+
+    const consumeLine = (rawLine) => {
+      const line = String(rawLine || "").trim();
+      if (!line) return;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        throw new Error("The AI server returned an invalid progress stream.");
+      }
+      if (event?.type === "progress" && event.progress) {
+        onProgress?.(event.progress);
+        return;
+      }
+      if (event?.type === "result" || event?.type === "error") {
+        finalEvent = event;
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      receivedBytes += value?.byteLength || 0;
+      if (receivedBytes > maximumBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error("The AI server response is too large.");
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        consumeLine(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
+    }
+    buffer += decoder.decode();
+    consumeLine(buffer);
+    if (!finalEvent || !finalEvent.data || typeof finalEvent.data !== "object") {
+      throw new Error("The AI server closed the progress stream before the result.");
+    }
+    const streamedStatus = Number(finalEvent.status);
+    return {
+      status: Number.isSafeInteger(streamedStatus)
+        ? streamedStatus
+        : response.status,
+      data: finalEvent.data,
+      streamed: true,
+    };
   }
 
   function renderProjectAiQuota(quota) {
@@ -7923,10 +9221,17 @@
           source: sourceEntry?.name
             ? getLiveFileContent(sourceEntry.name)
             : "",
+          sourceAuthorship: sourceEntry?.name
+            ? getFileAuthorship(sourceEntry.name)
+            : null,
           guide:
             documentation.guideFile && hasFile(documentation.guideFile)
               ? getLiveFileContent(documentation.guideFile)
               : "",
+          guideAuthorship:
+            documentation.guideFile && hasFile(documentation.guideFile)
+              ? getFileAuthorship(documentation.guideFile)
+              : null,
           aiSpecRef:
             typeof publicProject.aiSpecRef?.id === "string" &&
             publicProject.aiSpecRef.id.trim()
@@ -7934,9 +9239,18 @@
               : null,
         }
       : null;
+    const selectedMcu = String(mcuSelect?.value || "auto");
+    const updiBridge =
+      window[AVR_UPDI_BRIDGE_KEY] || window[LEGACY_UPDI_BRIDGE_KEY] || null;
+    const detectedMcu =
+      selectedMcu === "auto" &&
+      typeof updiBridge?.getDetectedTargetKey === "function"
+        ? String(updiBridge.getDetectedTargetKey() || "").trim()
+        : "";
     const payload = {
       prompt: String(prompt || "").trim(),
-      mcu: String(mcuSelect?.value || "auto"),
+      mcu: selectedMcu,
+      ...(detectedMcu ? { detectedMcu } : {}),
       locale: String(
         localeSelect?.value ||
           publicProject?.selectedLocale ||
@@ -8053,19 +9367,38 @@
     return definition;
   }
 
-  async function handleProjectAiSubmit(event) {
-    event.preventDefault();
-    if (projectAiRequestInFlight) return;
+  function appendExistingProjectAiUserMessage(rawMessage) {
+    const message = normalizeProjectAiMessage(rawMessage);
+    if (!message || message.role !== "user") {
+      throw new TypeError("The edited user message is invalid.");
+    }
+    const chat = getActiveProjectAiChat();
+    chat.messages.push(message);
+    chat.updatedAt = Math.max(Date.now(), message.editedAt || message.createdAt);
+    projectAiConversation = chat.messages;
+    persistProjectAiChats();
+    renderProjectAiHistory();
+    return message;
+  }
 
+  async function submitProjectAiRequest(
+    rawRequest,
+    { existingUserMessage = null, clearPromptOnSuccess = true } = {}
+  ) {
+    if (projectAiRequestInFlight) return false;
     const prompt = $("projectAiPrompt");
-    const request = prompt?.value?.trim() || "";
+    const request = String(rawRequest || "").trim();
     if (!request) {
       prompt?.focus({ preventScroll: true });
-      return;
+      return false;
     }
 
     const requestPayload = getProjectAiRequestPayload(request);
-    appendProjectAiMessage("user", request);
+    if (existingUserMessage) {
+      appendExistingProjectAiUserMessage(existingUserMessage);
+    } else {
+      appendProjectAiMessage("user", request);
+    }
     let thinkingIndicator = appendProjectAiThinking();
     let quotaUpdatedFromResponse = false;
     setProjectAiFormBusy(true);
@@ -8074,29 +9407,43 @@
       const response = await fetch("/api/avr/ai/respond", {
         method: "POST",
         headers: {
-          Accept: "application/json",
+          Accept: "application/x-ndjson, application/json",
           "Content-Type": "application/json",
         },
         credentials: "same-origin",
         body: JSON.stringify(requestPayload),
       });
-      const data = await response.json().catch(() => ({}));
+      const apiResponse = await readProjectAiApiResponse(response, (progress) =>
+        renderProjectAiThinkingProgress(thinkingIndicator, progress)
+      );
+      const data = apiResponse.data;
+      const responseStatus = apiResponse.status;
       if (data?.quota) {
         updateProjectAiQuota(data.quota);
         quotaUpdatedFromResponse = true;
       }
+      if (data?.progress) {
+        renderProjectAiThinkingProgress(
+          thinkingIndicator,
+          data.progress,
+          data.verification
+        );
+        if (!apiResponse.streamed) {
+          await new Promise((resolve) => window.setTimeout(resolve, 700));
+        }
+      }
       removeProjectAiThinking(thinkingIndicator);
       thinkingIndicator = null;
 
-      if (!response.ok || data?.ok !== true) {
+      if (responseStatus < 200 || responseStatus >= 300 || data?.ok !== true) {
         const errorCode = String(data?.code || data?.error?.code || "");
         const apiKeyMissing =
           errorCode === "api_key_not_configured" ||
-          (response.status === 503 &&
+          (responseStatus === 503 &&
             /api key is not configured/i.test(String(data?.message || "")));
         if (
           errorCode === "free_quota_exhausted" &&
-          response.status === 429 &&
+          responseStatus === 429 &&
           projectAiAuthSession?.quota
         ) {
           updateProjectAiQuota({
@@ -8106,9 +9453,9 @@
           quotaUpdatedFromResponse = true;
         }
         const message =
-          errorCode === "google_sign_in_required" && response.status === 401
+          errorCode === "google_sign_in_required" && responseStatus === 401
             ? "Sign in with Google to use Uart Debug AI."
-            : errorCode === "free_quota_exhausted" && response.status === 429
+            : errorCode === "free_quota_exhausted" && responseStatus === 429
               ? "The free AI Credits for this browser installation are exhausted. More access is not available yet."
               : apiKeyMissing
                 ? "API key is not configured"
@@ -8116,11 +9463,13 @@
                     data?.error?.message ||
                       data?.error ||
                       data?.message ||
-                      `AI request failed (${response.status}).`
+                      `AI request failed (${responseStatus}).`
                   );
         appendProjectAiMessage("system", message);
         return;
       }
+
+      applyProjectAiChatTitle(data.chatTitle);
 
       if (data.kind === "answer") {
         const answer = String(data.message || "").trim();
@@ -8128,7 +9477,7 @@
           throw new Error("The AI response did not include an answer.");
         }
         appendProjectAiMessage("assistant", answer);
-        if (prompt) prompt.value = "";
+        if (clearPromptOnSuccess && prompt) prompt.value = "";
         return;
       }
 
@@ -8178,7 +9527,7 @@
           String(data.message || "").trim() ||
           "I revised the Markdown instruction. Review it before asking me to create or update the project.";
         appendProjectAiMessage("assistant", instructionMessage);
-        if (prompt) prompt.value = "";
+        if (clearPromptOnSuccess && prompt) prompt.value = "";
         return;
       }
 
@@ -8227,7 +9576,7 @@
         projectMessage,
         savedProject?.displayName || definition.displayName
       );
-      if (prompt) prompt.value = "";
+      if (clearPromptOnSuccess && prompt) prompt.value = "";
     } catch (error) {
       removeProjectAiThinking(thinkingIndicator);
       thinkingIndicator = null;
@@ -8243,6 +9592,12 @@
         void fetchProjectAiAuthSession().catch(() => {});
       }
     }
+  }
+
+  function handleProjectAiSubmit(event) {
+    event.preventDefault();
+    const prompt = $("projectAiPrompt");
+    void submitProjectAiRequest(prompt?.value || "");
   }
 
   function renderProjectWorkspaceToggleLabel(label, words) {
@@ -8618,7 +9973,6 @@
 
   function refreshDocumentationControls(context) {
     const localeSelect = $("documentationLocaleSelect");
-    const editToggle = $("documentationEditToggle");
     const guideFile = context?.guideFile || "";
     const project = context?.linkedProject?.project || null;
     const guides = project ? getMiniProjectGuideEntries(project) : [];
@@ -8644,12 +9998,12 @@
       }
     }
 
-    if (editToggle) {
-      const canEdit = !!project && !!guideFile && guideFile !== current;
-      editToggle.disabled = !canEdit;
-      editToggle.textContent = documentationEditMode ? "Preview" : "Edit";
-      editToggle.setAttribute("aria-pressed", String(documentationEditMode));
-    }
+    window.requestAnimationFrame(() => {
+      applyDocumentationWidth(documentationPreferredWidth, {
+        persist: false,
+        remember: false,
+      });
+    });
   }
 
   function saveDocumentationEditorValue({ persistNow = false } = {}) {
@@ -8657,7 +10011,9 @@
     const guideFile = markdownEditor?.dataset.guideFile || "";
     if (!markdownEditor || !guideFile || !hasFile(guideFile)) return;
 
-    files[guideFile] = markdownEditor.value;
+    files[guideFile] = documentationEditor
+      ? documentationEditor.getValue()
+      : markdownEditor.value;
     if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
       markProjectAiAccountDocumentDirty("files");
     }
@@ -8675,21 +10031,142 @@
     }
   }
 
-  function setDocumentationEditMode(editing) {
-    const context = getDocumentationContext(current);
-    const nextMode =
-      !!editing &&
-      !!context.linkedProject?.project &&
-      !!context.guideFile &&
-      context.guideFile !== current;
-    if (documentationEditMode && !nextMode) {
-      saveDocumentationEditorValue({ persistNow: true });
+  function setDocumentationEditorValue(markdown) {
+    const value = String(markdown ?? "");
+    const element = $("projectDocumentationEditor");
+    if (!documentationEditor) {
+      if (element && element.value !== value) element.value = value;
+      return;
     }
-    documentationEditMode = nextMode;
-    refreshDocumentationPane({ preserveScroll: !nextMode });
-    if (nextMode) {
-      window.requestAnimationFrame(() => $("projectDocumentationEditor")?.focus());
+    if (documentationEditor.getValue() === value) return;
+    documentationEditorSyncing = true;
+    try {
+      documentationEditor.setValue(value);
+      documentationEditor.save();
+    } finally {
+      documentationEditorSyncing = false;
     }
+    scheduleMarkdownLivePreview("documentation");
+  }
+
+  function bindDocumentationWorkspace() {
+    const editorElement = $("projectDocumentationEditor");
+    if (
+      !editorElement ||
+      typeof window.CodeMirror?.fromTextArea !== "function"
+    ) {
+      editorElement?.addEventListener("input", () =>
+        saveDocumentationEditorValue()
+      );
+      return;
+    }
+
+    documentationEditor = CodeMirror.fromTextArea(editorElement, {
+      mode: {
+        name: "markdown",
+        highlightFormatting: true,
+        fencedCodeBlockHighlighting: false,
+        strikethrough: true,
+        taskLists: true,
+        xml: false,
+      },
+      theme: "material-darker",
+      inputStyle: "contenteditable",
+      lineNumbers: false,
+      gutters: ["markdown-authorship-gutter"],
+      lineWrapping: true,
+      indentUnit: 2,
+      tabSize: 2,
+      indentWithTabs: false,
+      viewportMargin: 30,
+      autofocus: false,
+      extraKeys: {
+        Tab(cm) {
+          cm.replaceSelection("  ", "end", "+input");
+        },
+      },
+    });
+    documentationEditor.setSize("100%", "100%");
+    const input = documentationEditor.getInputField();
+    input.setAttribute("aria-label", "Project guide Markdown");
+    input.setAttribute("aria-multiline", "true");
+    input.setAttribute("data-tooltip-disabled", "");
+    input.setAttribute("role", "textbox");
+    input.setAttribute("spellcheck", "true");
+    registerMarkdownLiveEditor("documentation", documentationEditor, {
+      getContextKey: () =>
+        `${editorElement.dataset.guideFile || ""}\u0000${current || ""}`,
+      getAuthorship: () => {
+        const guideFile = editorElement.dataset.guideFile || "";
+        return guideFile ? getFileAuthorship(guideFile) : null;
+      },
+      onHeadings: (headings) => {
+        documentationHeadingIndex = headings;
+      },
+      resolveImageUrl: (href) =>
+        resolveDocumentationImageUrl(href, getDocumentationContext(current)),
+    });
+    bindCodeMirrorQuoteSurface(documentationEditor, () => {
+      const guideFile = editorElement.dataset.guideFile || "Project guide";
+      return `Project guide — ${guideFile}`;
+    });
+    input.addEventListener("compositionstart", () =>
+      setMarkdownLiveComposition("documentation", true)
+    );
+    input.addEventListener("compositionend", () =>
+      setMarkdownLiveComposition("documentation", false)
+    );
+    documentationEditor.on("change", (cm, change) => {
+      cm.save();
+      if (documentationEditorSyncing) return;
+      const guideFile = editorElement.dataset.guideFile || "";
+      if (!guideFile || !hasFile(guideFile)) return;
+      const previousMarkdown = files[guideFile] || "";
+      const markdown = cm.getValue();
+      fileAuthorship[guideFile] = updateMarkdownAuthorshipForChange(
+        fileAuthorship[guideFile],
+        previousMarkdown,
+        change,
+        "human"
+      );
+      files[guideFile] = markdown;
+      if (current === guideFile && editor && editor.getValue() !== markdown) {
+        editor.setValue(markdown);
+      }
+      scheduleMarkdownLivePreview("documentation");
+      scheduleMarkdownLivePreview("editor");
+      saveDocumentationEditorValue();
+    });
+    documentationEditor.on("cursorActivity", () =>
+      scheduleMarkdownLivePreview("documentation")
+    );
+    documentationEditor.on("viewportChange", () =>
+      scheduleMarkdownLivePreview("documentation")
+    );
+    window.addEventListener("resize", () => documentationEditor?.refresh());
+  }
+
+  function indexDocumentationMarkdownHeadings(markdown) {
+    const headings = new Map();
+    try {
+      const analysis = window.UartDebugMarkdown?.analyze?.(markdown);
+      for (const heading of Array.isArray(analysis?.headings)
+        ? analysis.headings
+        : []) {
+        const key = miniProjectCore.normalizeHeadingKey(heading.text);
+        const indexKey = `${heading.level}:${key}`;
+        if (!key || headings.has(indexKey)) continue;
+        headings.set(indexKey, {
+          line: Math.max(0, Number(heading.startLine || 1) - 1),
+          ch: Math.max(0, Number(heading.startColumn || 1) - 1),
+          level: heading.level,
+          title: heading.text,
+        });
+      }
+    } catch (error) {
+      console.warn("Project guide headings could not be indexed:", error);
+    }
+    documentationHeadingIndex = headings;
   }
 
   function refreshDocumentationPane({ preserveScroll = false } = {}) {
@@ -8701,14 +10178,11 @@
 
     const context = getDocumentationContext(current);
     const previousGuide = pane.dataset.guideFile || "";
-    const previousScrollTop = scroll.scrollTop;
+    const previousScrollTop = documentationEditor?.getScrollInfo?.().top || 0;
     const guideFile = context.guideFile;
 
     if (previousGuide && previousGuide !== guideFile) {
-      if (documentationEditMode) {
-        saveDocumentationEditorValue({ persistNow: true });
-      }
-      documentationEditMode = false;
+      saveDocumentationEditorValue({ persistNow: true });
     }
     pane.dataset.guideFile = guideFile;
     markdownEditor.dataset.guideFile = guideFile;
@@ -8716,10 +10190,9 @@
     refreshDocumentationControls(context);
 
     if (!guideFile || !hasFile(guideFile)) {
-      documentationEditMode = false;
       content.hidden = false;
+      documentationEditor?.getWrapperElement?.().setAttribute("hidden", "");
       markdownEditor.hidden = true;
-      scroll.classList.remove("is-editing");
       showDocumentationEmpty(
         "Guide file is not connected yet",
         "When a mini-project includes a human-readable .md file, it will appear here automatically."
@@ -8729,21 +10202,19 @@
     }
 
     const markdown = getLiveFileContent(guideFile);
-    if (documentationEditMode) {
-      content.hidden = true;
-      markdownEditor.hidden = false;
-      scroll.classList.add("is-editing");
-      if (markdownEditor.value !== markdown) markdownEditor.value = markdown;
-      scroll.scrollTop = 0;
-      return;
-    }
-
-    content.hidden = false;
-    markdownEditor.hidden = true;
-    scroll.classList.remove("is-editing");
-    renderMarkdownGuide(markdown, context);
-    scroll.scrollTop =
-      preserveScroll && previousGuide === guideFile ? previousScrollTop : 0;
+    indexDocumentationMarkdownHeadings(markdown);
+    content.hidden = true;
+    markdownEditor.hidden = false;
+    const wrapper = documentationEditor?.getWrapperElement?.();
+    wrapper?.removeAttribute("hidden");
+    setDocumentationEditorValue(markdown);
+    documentationEditor?.setOption("readOnly", false);
+    documentationEditor?.refresh();
+    scheduleMarkdownLivePreview("documentation");
+    documentationEditor?.scrollTo(
+      null,
+      preserveScroll && previousGuide === guideFile ? previousScrollTop : 0
+    );
   }
 
   function scheduleDocumentationPaneRefresh() {
@@ -8783,38 +10254,49 @@
       return false;
     }
 
-    if (documentationEditMode) {
-      saveDocumentationEditorValue({ persistNow: true });
-      documentationEditMode = false;
-      refreshDocumentationPane();
-    }
-
     const pane = $("projectDocumentationPane");
     if (pane?.dataset.guideFile !== context.guideFile) refreshDocumentationPane();
 
     const headingKey = miniProjectCore.normalizeHeadingKey(marker.title);
-    const target = documentationHeadingIndex.get(`${marker.level}:${headingKey}`);
+    let target = documentationHeadingIndex.get(`${marker.level}:${headingKey}`);
+    if (!target) {
+      indexDocumentationMarkdownHeadings(
+        getLiveFileContent(context.guideFile)
+      );
+      target = documentationHeadingIndex.get(`${marker.level}:${headingKey}`);
+    }
     if (!target) {
       setDocumentationNotice(`Section not found: ${marker.title}`);
       return false;
     }
 
     setDocumentationNotice();
-    document
-      .querySelectorAll(".is-documentation-target")
-      .forEach((element) => element.classList.remove("is-documentation-target"));
-    target.classList.add("is-documentation-target");
-    scrollDocumentationTargetIntoView(
-      target,
-      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
-        ? "auto"
-        : "smooth"
+    if (!documentationEditor) return false;
+    const targetPosition = CodeMirror.Pos(target.line, target.ch || 0);
+    documentationEditor.scrollIntoView(
+      { from: targetPosition, to: targetPosition },
+      48
     );
-    target.focus({ preventScroll: true });
+    documentationEditor.setCursor(targetPosition);
+    documentationEditor.focus();
+    const lineHandle = documentationEditor.getLineHandle(target.line);
+    if (lineHandle) {
+      documentationEditor.addLineClass(
+        lineHandle,
+        "background",
+        "is-documentation-target"
+      );
+    }
 
     if (documentationTargetTimer) window.clearTimeout(documentationTargetTimer);
     documentationTargetTimer = window.setTimeout(() => {
-      target.classList.remove("is-documentation-target");
+      if (lineHandle) {
+        documentationEditor?.removeLineClass(
+          lineHandle,
+          "background",
+          "is-documentation-target"
+        );
+      }
       documentationTargetTimer = null;
     }, 1800);
     return true;
@@ -8900,6 +10382,10 @@
       editor.setOption("readOnly", false);
       editor.setOption("mode", getEditorModeForFile(name));
       editor.setValue(files[name]);
+      editor.getWrapperElement()?.classList.toggle(
+        "is-markdown-live",
+        /\.md$/i.test(name)
+      );
     }
 
     resetHexArtifact();
@@ -8908,6 +10394,7 @@
     updateEditorFileWatermark(name);
     refreshDocumentationPane();
     scheduleDocumentationMarkerRefresh();
+    scheduleMarkdownLivePreview("editor");
     persistState();
     renderOutliner();
     if (editor) setTimeout(() => editor.refresh(), 0);
@@ -9022,6 +10509,7 @@
     const deletedCurrent = namesToDelete.includes(current);
     for (const fileName of namesToDelete) {
       delete files[fileName];
+      delete fileAuthorship[fileName];
       hexArtifactsBySource.delete(fileName);
       removeFileFromGroups(fileName);
     }
@@ -9210,6 +10698,7 @@
       mode: getEditorModeForFile(current),
       theme: "material-darker",
       lineNumbers: true,
+      gutters: ["CodeMirror-linenumbers", "markdown-authorship-gutter"],
       indentUnit: 2,
       tabSize: 2,
       indentWithTabs: false,
@@ -9222,6 +10711,14 @@
         "Alt-Enter": (cm) => openDocumentationMarkerAtLine(cm.getCursor().line),
       },
     });
+    registerMarkdownLiveEditor("editor", editor, {
+      getContextKey: () => current || "",
+      getAuthorship: () => (current ? getFileAuthorship(current) : null),
+      isMarkdown: () => /\.md$/i.test(current || ""),
+      resolveImageUrl: (href) =>
+        resolveDocumentationImageUrl(href, getDocumentationContext(current)),
+    });
+    bindCodeMirrorQuoteSurface(editor, () => `Editor — ${current || "file"}`);
     bindDocumentationMarkerNavigation();
     editor.on("inputRead", function (cm, change) {
       if (!isCFileName(current)) return;
@@ -9252,9 +10749,21 @@
       window.addEventListener("resize", () => editor && editor.refresh());
     }
     if (!current) editor.setOption("readOnly", "nocursor");
-    editor.on("change", () => {
+    editor.on("change", (cm, change) => {
       clearCompileErrorHighlight();
       if (!current) return;
+      const previousMarkdown = files[current] || "";
+      const liveMarkdown = cm.getValue();
+      if (change?.origin !== "setValue" && !projectAiAccountWorkspaceApplying) {
+        fileAuthorship[current] = updateMarkdownAuthorshipForChange(
+          fileAuthorship[current],
+          previousMarkdown,
+          change,
+          "human"
+        );
+      }
+      files[current] = liveMarkdown;
+      scheduleMarkdownLivePreview("editor");
       if (projectAiAccountWorkspaceApplying) {
         scheduleDocumentationMarkerRefresh();
         if (resolveGuideFileName(current) === current) {
@@ -9271,7 +10780,7 @@
       }
       if (saveTimer) clearTimeout(saveTimer);
 
-      const codeSnapshot = editor.getValue();
+      const codeSnapshot = liveMarkdown;
       const fileNameSnapshot = current;
 
       saveTimer = setTimeout(() => {
@@ -9281,6 +10790,8 @@
         persistState();
       }, 250);
     });
+    editor.on("cursorActivity", () => scheduleMarkdownLivePreview("editor"));
+    editor.on("viewportChange", () => scheduleMarkdownLivePreview("editor"));
     scheduleDocumentationMarkerRefresh();
     editor.addKeyMap({
       "Ctrl-S": function () {
@@ -9493,11 +11004,10 @@
       const updiOptionsCloseBtn = $("updiOptionsCloseBtn");
       const mcuSelect = $("mcuSelect");
       const documentationLocaleSelect = $("documentationLocaleSelect");
-      const documentationEditToggle = $("documentationEditToggle");
-      const documentationEditor = $("projectDocumentationEditor");
       const projectAiToggle = $("projectAiToggle");
       const projectAiForm = $("projectAiForm");
       const projectAiPrompt = $("projectAiPrompt");
+      const projectAiHistory = $("projectAiHistory");
       const projectAiChatsBtn = $("projectAiChatsBtn");
       const projectAiChatsMenu = $("projectAiChatsMenu");
       const projectAiNewChatBtn = $("projectAiNewChatBtn");
@@ -9516,6 +11026,7 @@
     bindProjectAiResizers();
     bindDevicePanelResizer();
     bindProjectInstructionWorkspace();
+    bindDocumentationWorkspace();
     bindWorkspaceResizeObserver();
     newBtn && newBtn.addEventListener("click", startInlineCreate);
     renameBtn &&
@@ -9581,19 +11092,12 @@
         const guide = project?.guides?.[locale];
         if (!project || !guide?.fileName || !hasFile(guide.fileName)) return;
 
-        if (documentationEditMode) {
-          saveDocumentationEditorValue({ persistNow: true });
-          documentationEditMode = false;
-        }
+        saveDocumentationEditorValue({ persistNow: true });
         project.selectedLocale = locale;
         project.files.guide = guide.fileName;
         project.mediaTypes.guide = guide.mediaType || "text/markdown";
         persistState();
         refreshDocumentationPane();
-      });
-    documentationEditToggle &&
-      documentationEditToggle.addEventListener("click", () => {
-        setDocumentationEditMode(!documentationEditMode);
       });
     projectAiToggle &&
       projectAiToggle.addEventListener("click", () => {
@@ -9616,15 +11120,53 @@
     projectAiNewChatBtn &&
       projectAiNewChatBtn.addEventListener("click", createProjectAiChat);
     projectAiChatList &&
+      projectAiChatList.addEventListener("pointerdown", (event) => {
+        projectAiPendingChatPointerAction = getProjectAiChatAction(event.target);
+      });
+    projectAiChatList &&
+      projectAiChatList.addEventListener("pointercancel", () => {
+        projectAiPendingChatPointerAction = null;
+        flushProjectAiChatRenameRender();
+      });
+    projectAiChatList &&
       projectAiChatList.addEventListener("click", (event) => {
-        const select = event.target.closest("[data-chat-id]");
-        if (select) {
-          selectProjectAiChat(select.dataset.chatId || "");
+        const action =
+          projectAiPendingChatPointerAction ||
+          getProjectAiChatAction(event.target);
+        projectAiPendingChatPointerAction = null;
+        runProjectAiChatAction(action);
+        flushProjectAiChatRenameRender();
+      });
+    projectAiHistory &&
+      projectAiHistory.addEventListener("click", (event) => {
+        const copy = event.target.closest("[data-copy-message-id]");
+        if (copy) {
+          void copyProjectAiMessage(copy.dataset.copyMessageId || "", copy);
           return;
         }
-        const remove = event.target.closest("[data-delete-chat-id]");
-        if (remove) {
-          void deleteProjectAiChat(remove.dataset.deleteChatId || "");
+        const edit = event.target.closest("[data-edit-message-id]");
+        if (edit) beginProjectAiMessageEdit(edit.dataset.editMessageId || "");
+      });
+    projectAiHistory &&
+      projectAiHistory.addEventListener("mouseup", () =>
+        window.setTimeout(
+          () => showProjectAiHistorySelectionQuote(projectAiHistory),
+          0
+        )
+      );
+    projectAiHistory &&
+      document.addEventListener("selectionchange", () => {
+        const selection = window.getSelection?.();
+        const anchorNode = selection?.anchorNode || null;
+        const focusNode = selection?.focusNode || null;
+        if (
+          (anchorNode && projectAiHistory.contains(anchorNode)) ||
+          (focusNode && projectAiHistory.contains(focusNode))
+        ) {
+          window.setTimeout(
+            () => showProjectAiHistorySelectionQuote(projectAiHistory),
+            0
+          );
         }
       });
     projectAiAccountBtn &&
@@ -9656,10 +11198,6 @@
         }
         event.preventDefault();
         projectAiForm?.requestSubmit();
-      });
-    documentationEditor &&
-      documentationEditor.addEventListener("input", () => {
-        saveDocumentationEditorValue();
       });
     fileAddModal &&
       fileAddModal.addEventListener("click", (event) => {
@@ -9736,6 +11274,18 @@
       }
       closeFileContextMenu();
     });
+    document.addEventListener("pointerdown", (event) => {
+      if (event.target.closest?.("#projectAiSelectionQuoteBtn")) return;
+      if (!event.target.closest?.(".CodeMirror, #projectAiHistory")) {
+        hideProjectAiSelectionQuote();
+      }
+    });
+    document.addEventListener("pointerup", () => {
+      window.setTimeout(() => {
+        projectAiPendingChatPointerAction = null;
+        flushProjectAiChatRenameRender();
+      }, 0);
+    });
 
     // Close context menu on Escape
     document.addEventListener("keydown", (e) => {
@@ -9768,9 +11318,7 @@
 
     window.addEventListener("beforeunload", () => {
       persistProjectInstruction({ immediate: true });
-      if (documentationEditMode) {
-        saveDocumentationEditorValue({ persistNow: true });
-      }
+      saveDocumentationEditorValue({ persistNow: true });
       if (editor && current) {
         files[current] = editor.getValue();
         persistState();

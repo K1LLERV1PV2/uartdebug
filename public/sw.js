@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260825-account-modal-live-panel-v1";
+const CACHE_NAME = "uartdebug-shell-20260826-commonmark-gfm-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -72,6 +72,7 @@ const APP_SHELL_ASSETS = [
   "/vendor/codemirror/5.65.16/addon/hint/anyword-hint.min.js",
   "/vendor/codemirror/5.65.16/addon/edit/closebrackets.min.js",
   "/vendor/chart.umd.js",
+  "/vendor/uartdebug-markdown.js",
   "/favicon.ico",
   "/icons/favicon-192.png",
   "/icons/logo-512.png",

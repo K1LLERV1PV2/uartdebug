@@ -8,12 +8,180 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const { parseHTML } = require("../frontend/markdown-runtime/node_modules/linkedom");
 
 const core = require("../public/avr-mini-projects.js");
 const {
   extractDocumentationMarkers,
   extractMarkdownHeadings,
 } = require("../backend/avr-documentation-markers");
+
+function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
+  const windowListeners = new Map();
+  const documentListeners = new Map();
+  const fakeWindow = {
+    UartDebugAvrMiniProjectCore: core,
+    addEventListener(type, listener) {
+      windowListeners.set(type, listener);
+    },
+    dispatchEvent() {
+      return true;
+    },
+    ...(overrides.window || {}),
+  };
+  const fakeDocument =
+    overrides.document ||
+    {
+      addEventListener(type, listener) {
+        documentListeners.set(type, listener);
+      },
+    };
+  const source = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.js"),
+    "utf8"
+  );
+  const marker = "  initMiniProjectBridge();";
+  assert.ok(source.includes(marker), "AVR frontend bootstrap marker is missing");
+  const instrumented = source.replace(
+    marker,
+    `  window.__avrFrontendTestHooks = { ${functionNames.join(", ")} };\n${marker}`
+  );
+
+  vm.runInNewContext(instrumented, {
+    window: fakeWindow,
+    document: fakeDocument,
+    CodeMirror: overrides.CodeMirror || { registerHelper() {} },
+    console,
+    Promise,
+    Map,
+    Set,
+    TextDecoder,
+    URL,
+  });
+  return fakeWindow.__avrFrontendTestHooks;
+}
+
+function loadVendoredMarkdownRuntime(document) {
+  const runtimeSource = fs.readFileSync(
+    path.join(__dirname, "../public/vendor/uartdebug-markdown.js"),
+    "utf8"
+  );
+  const sandbox = { console, document };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(runtimeSource, sandbox, {
+    filename: "uartdebug-markdown.js",
+  });
+  return sandbox.UartDebugMarkdown;
+}
+
+function createMarkdownCodeMirrorStub(markdown, document) {
+  let value = String(markdown);
+  let focused = false;
+  let selections = [{ anchor: { line: 0, ch: 0 }, head: { line: 0, ch: 0 } }];
+  const listeners = new Map();
+  const marks = [];
+  const widgets = [];
+  const scrollCalls = [];
+  const editor = {
+    marks,
+    widgets,
+    scrollCalls,
+    operation(callback) {
+      return callback();
+    },
+    on(type, listener) {
+      const entries = listeners.get(type) || [];
+      entries.push(listener);
+      listeners.set(type, entries);
+    },
+    emit(type) {
+      for (const listener of listeners.get(type) || []) listener(editor);
+    },
+    getValue: () => value,
+    setValue(nextValue) {
+      value = String(nextValue);
+    },
+    hasFocus: () => focused,
+    setFocused(nextFocused) {
+      focused = Boolean(nextFocused);
+    },
+    listSelections: () => selections,
+    setSelections(nextSelections) {
+      selections = nextSelections;
+    },
+    getViewport: () => ({ from: 0, to: editor.lineCount() }),
+    lineCount: () => value.split("\n").length,
+    lastLine: () => editor.lineCount() - 1,
+    getLine(line) {
+      return value.split("\n")[line] || "";
+    },
+    getLineHandle(line) {
+      return line >= 0 && line < editor.lineCount() ? { line } : null;
+    },
+    addLineClass() {},
+    removeLineClass() {},
+    clearGutter() {},
+    setGutterMarker() {},
+    markText(from, to, options) {
+      const mark = {
+        from,
+        to,
+        options,
+        cleared: false,
+        changedCalls: 0,
+        clear() {
+          mark.cleared = true;
+        },
+        changed() {
+          mark.changedCalls += 1;
+        },
+      };
+      marks.push(mark);
+      return mark;
+    },
+    addLineWidget(line, node, options) {
+      assert.equal(node.ownerDocument, document);
+      const widget = {
+        line,
+        node,
+        options,
+        cleared: false,
+        changedCalls: 0,
+        clear() {
+          widget.cleared = true;
+        },
+        changed() {
+          widget.changedCalls += 1;
+        },
+      };
+      widgets.push(widget);
+      return widget;
+    },
+    getScrollInfo: () => ({ top: 46, left: 7 }),
+    lineAtHeight: () => 2,
+    heightAtLine: (line) => line * 20,
+    scrollTo(left, top) {
+      scrollCalls.push({ kind: "scrollTo", left, top });
+    },
+    posFromIndex(offset) {
+      const prefix = value.slice(0, Math.max(0, offset));
+      const lines = prefix.split("\n");
+      return { line: lines.length - 1, ch: lines.at(-1).length };
+    },
+    setCursor(position) {
+      editor.cursor = position;
+      selections = [{ anchor: position, head: position }];
+    },
+    scrollIntoView(range, margin) {
+      scrollCalls.push({ kind: "scrollIntoView", range, margin });
+    },
+    focus() {
+      focused = true;
+    },
+  };
+  return editor;
+}
 
 test("exposes the mini-project bridge before DOMContentLoaded", () => {
   const windowListeners = new Map();
@@ -57,6 +225,407 @@ test("exposes the mini-project bridge before DOMContentLoaded", () => {
   assert.equal(typeof bridge.ready?.then, "function");
   assert.equal(typeof windowListeners.get(bridge.importEvent), "function");
   assert.equal(typeof documentListeners.get("DOMContentLoaded"), "function");
+});
+
+test("truncates an edited AI-chat branch before resubmission", () => {
+  const { truncateProjectAiMessageBranchForEdit } =
+    loadAvrFrontendFunctionHooks(["truncateProjectAiMessageBranchForEdit"]);
+  const userMessage = {
+    id: "message-user",
+    role: "user",
+    content: "old request",
+    createdAt: 100,
+  };
+  const chat = {
+    id: "chat-one",
+    updatedAt: 300,
+    messages: [
+      { id: "message-before", role: "assistant", content: "context" },
+      userMessage,
+      { id: "message-stale", role: "assistant", content: "stale answer" },
+      { id: "message-after", role: "user", content: "stale follow-up" },
+    ],
+  };
+
+  const edited = truncateProjectAiMessageBranchForEdit(
+    { chat, message: userMessage, index: 1 },
+    "new request",
+    500
+  );
+
+  assert.equal(edited.id, userMessage.id);
+  assert.equal(edited.content, "new request");
+  assert.equal(edited.editedAt, 500);
+  assert.equal(chat.updatedAt, 500);
+  assert.deepEqual(
+    chat.messages.map((message) => message.id),
+    ["message-before"]
+  );
+});
+
+test("streams AI progress events before the final NDJSON result", async () => {
+  const { readProjectAiApiResponse } = loadAvrFrontendFunctionHooks([
+    "readProjectAiApiResponse",
+  ]);
+  const encoder = new TextEncoder();
+  const chunks = [
+    encoder.encode(
+      '{"type":"progress","progress":{"schemaVersion":1,"status":"in_progress","stages":[{"id":"generation","status":"completed","attempt":1}]}}\n' +
+        '{"type":"progress","progress":{"schemaVersion":1,"status":"in_progress","stages":[{"id":"compilation","status":"in_progress","attempt":1}]}}\n'
+    ),
+    encoder.encode(
+      '{"type":"result","status":200,"data":{"ok":true,"kind":"answer","message":"Ready"}}\n'
+    ),
+  ];
+  let index = 0;
+  const response = {
+    status: 200,
+    headers: {
+      get(name) {
+        return String(name).toLowerCase() === "content-type"
+          ? "application/x-ndjson; charset=utf-8"
+          : null;
+      },
+    },
+    body: {
+      getReader() {
+        return {
+          async read() {
+            return index < chunks.length
+              ? { value: chunks[index++], done: false }
+              : { value: undefined, done: true };
+          },
+          async cancel() {},
+        };
+      },
+    },
+  };
+  const progressEvents = [];
+
+  const result = await readProjectAiApiResponse(response, (progress) => {
+    progressEvents.push(progress);
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.streamed, true);
+  assert.equal(result.data.message, "Ready");
+  assert.deepEqual(
+    progressEvents.map((progress) => progress.stages[0].id),
+    ["generation", "compilation"]
+  );
+});
+
+test("only exposes Markdown source markers for a focused live editor", () => {
+  const { getMarkdownEditorActiveLines } = loadAvrFrontendFunctionHooks([
+    "getMarkdownEditorActiveLines",
+  ]);
+  const unfocused = getMarkdownEditorActiveLines({
+    hasFocus: () => false,
+    listSelections() {
+      throw new Error("unfocused selections must not be treated as active");
+    },
+  });
+  const focused = getMarkdownEditorActiveLines({
+    hasFocus: () => true,
+    listSelections: () => [
+      { anchor: { line: 4 }, head: { line: 2 } },
+      { anchor: { line: 7 }, head: { line: 7 } },
+    ],
+  });
+
+  assert.deepEqual(Array.from(unfocused), []);
+  assert.deepEqual(Array.from(focused), [2, 3, 4, 7]);
+});
+
+test("renders semantic Markdown widgets without changing CM5 source or page scroll", () => {
+  const { document } = parseHTML("<html><body></body></html>");
+  const baseRuntime = loadVendoredMarkdownRuntime(document);
+  const runtimeCalls = { analyze: 0, renderInto: 0 };
+  const runtime = {
+    ...baseRuntime,
+    analyze(markdown) {
+      runtimeCalls.analyze += 1;
+      return baseRuntime.analyze(markdown);
+    },
+    renderInto(target, markdown, options) {
+      runtimeCalls.renderInto += 1;
+      return baseRuntime.renderInto(target, markdown, options);
+    },
+  };
+  const scheduledFrames = [];
+  const fakeWindow = {
+    UartDebugMarkdown: runtime,
+    requestAnimationFrame(callback) {
+      scheduledFrames.push(callback);
+      return scheduledFrames.length;
+    },
+    cancelAnimationFrame() {},
+    setTimeout(callback) {
+      callback();
+      return 1;
+    },
+  };
+  const CodeMirror = {
+    registerHelper() {},
+    Pos(line, ch) {
+      return { line, ch };
+    },
+  };
+  const hooks = loadAvrFrontendFunctionHooks(
+    [
+      "registerMarkdownLiveEditor",
+      "renderMarkdownLivePreviewState",
+      "setMarkdownLiveComposition",
+    ],
+    { document, window: fakeWindow, CodeMirror }
+  );
+  const markdown = [
+    "Before[^note] and again[^note].",
+    "",
+    "| Pin | Mode |",
+    "| --- | --- |",
+    "| `PA\\|1` | output \\| safe |",
+    "",
+    "![Inline](inline.png)",
+    "![Reference][HeRo   Image]",
+    "![Blocked](blocked.svg)",
+    "",
+    "[hero image]: reference.png \"Reference title\"",
+    "",
+    "[^unused]: This unreferenced definition stays in the source.",
+    "[^note]: **Rendered** note.",
+  ].join("\n");
+  const editor = createMarkdownCodeMirrorStub(markdown, document);
+  const dataImage = "data:image/png;base64,iVBORw0KGgo=";
+  let contextKey = "project-a";
+  const state = hooks.registerMarkdownLiveEditor("widget-test", editor, {
+    getContextKey: () => contextKey,
+    resolveImageUrl: (href) =>
+      ["inline.png", "reference.png"].includes(href) ? dataImage : "",
+  });
+
+  hooks.renderMarkdownLivePreviewState(state);
+  assert.equal(editor.getValue(), markdown);
+  assert.deepEqual(runtimeCalls, { analyze: 1, renderInto: 1 });
+  assert.equal(state.widgets.filter((widget) => !widget.cleared).length, 2);
+  assert.equal(
+    state.widgets.filter((widget) => widget.node.querySelector("table")).length,
+    1
+  );
+  assert.equal(
+    state.widgets.filter((widget) => widget.node.querySelector(".footnotes"))
+      .length,
+    1
+  );
+  const tableCells = state.widgets
+    .find((widget) => widget.node.querySelector("table"))
+    .node.querySelectorAll("td");
+  assert.deepEqual(
+    [...tableCells].map((cell) => cell.textContent),
+    ["PA|1", "output | safe"]
+  );
+  const footnoteWidget = state.widgets.find((widget) =>
+    widget.node.querySelector(".footnotes")
+  );
+  assert.equal(footnoteWidget.node.querySelectorAll('[role="doc-endnote"]').length, 1);
+  assert.equal(footnoteWidget.node.querySelectorAll('[role="doc-backlink"]').length, 2);
+  assert.match(footnoteWidget.node.textContent, /Rendered note/);
+  assert.deepEqual(
+    Array.from(state.marks, (mark) =>
+        mark.options.replacedWith?.querySelector?.('[role="doc-noteref"]')
+          ?.textContent
+      ).filter(Boolean),
+    ["1", "1"]
+  );
+  const renderedImages = state.marks
+    .map((mark) => mark.options.replacedWith?.querySelector?.("img"))
+    .filter(Boolean);
+  assert.equal(renderedImages.length, 2);
+  assert.ok(renderedImages.every((image) => image.getAttribute("src") === dataImage));
+  assert.equal(renderedImages[1].getAttribute("title"), "Reference title");
+  const imageMark = state.marks.find(
+    (mark) => mark.options.replacedWith?.querySelector?.("img") === renderedImages[0]
+  );
+  renderedImages[0].dispatchEvent(new document.defaultView.Event("load"));
+  assert.equal(imageMark.changedCalls, 1);
+  assert.deepEqual(editor.scrollCalls.at(-1), {
+    kind: "scrollTo",
+    left: 7,
+    top: 46,
+  });
+  assert.ok(
+    state.marks.some(
+      (mark) =>
+        mark.options.replacedWith?.classList?.contains(
+          "markdown-live-image-fallback"
+        ) && mark.options.replacedWith.textContent === "Blocked"
+    )
+  );
+
+  const analysis = baseRuntime.analyze(markdown);
+  const usedDefinition = analysis.blocks.find(
+    (block) =>
+      block.type === "footnoteDefinition" &&
+      markdown.slice(block.start, block.end).startsWith("[^note]")
+  );
+  const unusedDefinition = analysis.blocks.find(
+    (block) =>
+      block.type === "footnoteDefinition" &&
+      markdown.slice(block.start, block.end).startsWith("[^unused]")
+  );
+  const collapsedOffsets = state.marks
+    .filter((mark) => mark.options.collapsed)
+    .map((mark) => [
+      markdown.split("\n").slice(0, mark.from.line).join("\n").length +
+        (mark.from.line ? 1 : 0) +
+        mark.from.ch,
+      markdown.split("\n").slice(0, mark.to.line).join("\n").length +
+        (mark.to.line ? 1 : 0) +
+        mark.to.ch,
+    ]);
+  assert.ok(
+    collapsedOffsets.some(
+      ([start, end]) => start === usedDefinition.start && end === usedDefinition.end
+    )
+  );
+  assert.equal(
+    collapsedOffsets.some(
+      ([start, end]) => start === unusedDefinition.start && end === unusedDefinition.end
+    ),
+    true
+  );
+
+  const firstWidgets = [...state.widgets];
+  const staleImageMark = state.marks.find(
+    (mark) => mark.options.replacedWith?.querySelector?.("img") === renderedImages[1]
+  );
+  hooks.renderMarkdownLivePreviewState(state);
+  assert.deepEqual(runtimeCalls, { analyze: 1, renderInto: 1 });
+  assert.ok(firstWidgets.every((widget) => widget.cleared));
+  renderedImages[1].dispatchEvent(new document.defaultView.Event("load"));
+  assert.equal(staleImageMark.changedCalls, 0);
+  assert.deepEqual(editor.scrollCalls.at(-1), {
+    kind: "scrollTo",
+    left: 7,
+    top: 46,
+  });
+
+  contextKey = "project-b";
+  hooks.renderMarkdownLivePreviewState(state);
+  assert.deepEqual(runtimeCalls, { analyze: 2, renderInto: 2 });
+
+  const footnoteReferences = analysis.inline.filter(
+    (entry) => entry.type === "footnoteReference"
+  );
+  const secondBacklink = state.widgets
+    .find((widget) => widget.node.querySelector(".footnotes"))
+    .node.querySelectorAll('[role="doc-backlink"]')[1];
+  secondBacklink.dispatchEvent(
+    new document.defaultView.Event("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+    })
+  );
+  assert.deepEqual(editor.cursor, editor.posFromIndex(footnoteReferences[1].start));
+  editor.setFocused(false);
+  editor.setSelections([
+    { anchor: { line: 0, ch: 0 }, head: { line: 0, ch: 0 } },
+  ]);
+  hooks.renderMarkdownLivePreviewState(state);
+
+  const referenceMark = state.marks.find((mark) =>
+    mark.options.replacedWith?.querySelector?.('[role="doc-noteref"]')
+  );
+  const referenceLink = referenceMark.options.replacedWith.querySelector(
+    '[role="doc-noteref"]'
+  );
+  const navigationCountBefore = editor.scrollCalls.filter(
+    (entry) => entry.kind === "scrollIntoView"
+  ).length;
+  referenceLink.dispatchEvent(
+    new document.defaultView.Event("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+    })
+  );
+  assert.deepEqual(editor.cursor, editor.posFromIndex(usedDefinition.start));
+  assert.equal(editor.scrollCalls.at(-1).kind, "scrollIntoView");
+  const pointerClick = new document.defaultView.Event("click", {
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(pointerClick, "detail", { value: 1 });
+  referenceLink.dispatchEvent(pointerClick);
+  assert.equal(
+    editor.scrollCalls.filter((entry) => entry.kind === "scrollIntoView").length,
+    navigationCountBefore + 1
+  );
+
+  editor.setFocused(false);
+  editor.setSelections([
+    { anchor: { line: 0, ch: 0 }, head: { line: 0, ch: 0 } },
+  ]);
+  hooks.renderMarkdownLivePreviewState(state);
+  const tableWidget = state.widgets.find((widget) =>
+    widget.node.querySelector("table")
+  );
+  const tableCell = tableWidget.node.querySelector("td");
+  const tableCellOffset = Number(tableCell.getAttribute("data-source-start"));
+  tableCell.dispatchEvent(
+    new document.defaultView.Event("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+    })
+  );
+  assert.deepEqual(editor.cursor, editor.posFromIndex(tableCellOffset));
+
+  hooks.renderMarkdownLivePreviewState(state);
+  assert.equal(
+    state.widgets.some((widget) => widget.node.querySelector("table")),
+    false,
+    "an active table remains editable Markdown source"
+  );
+  hooks.setMarkdownLiveComposition("widget-test", true);
+  assert.equal(state.widgets.length, 0);
+  assert.equal(state.marks.length, 0);
+  assert.equal(editor.getValue(), markdown);
+});
+
+test("defers rename rendering and listens for keyboard text selections", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.js"),
+    "utf8"
+  );
+
+  assert.match(
+    source,
+    /input\.addEventListener\("blur", \(\) =>\s*saveRename\(\{ deferRender: true \}\)\s*\)/
+  );
+  assert.match(source, /persistProjectAiChats\(\{ renderList: !deferRender \}\)/);
+  assert.match(
+    source,
+    /addEventListener\("pointerdown", \(event\) => \{\s*projectAiPendingChatPointerAction = getProjectAiChatAction\(event\.target\)/
+  );
+  assert.match(
+    source,
+    /const action =\s*projectAiPendingChatPointerAction \|\|\s*getProjectAiChatAction\(event\.target\)/
+  );
+  assert.match(
+    source,
+    /codeMirror\.on\?\.\("cursorActivity", showFocusedSelection\)/
+  );
+  assert.match(
+    source,
+    /\(event\.ctrlKey \|\| event\.metaKey\)[\s\S]*?\.toLowerCase\(\) === "a"/
+  );
+  assert.match(
+    source,
+    /document\.addEventListener\("selectionchange",[\s\S]*?showProjectAiHistorySelectionQuote/
+  );
+  assert.match(
+    source,
+    /submitProjectAiRequest\(content, \{[\s\S]*?existingUserMessage: editedMessage,[\s\S]*?clearPromptOnSuccess: false/
+  );
 });
 
 test("vendored Markdown mode uses a non-ambiguous HTML tag lookahead", () => {
@@ -501,6 +1070,42 @@ test("keeps only technical AI concurrency safeguards", () => {
   assert.match(deployWorkflow, /run_sudo nginx -t/);
 });
 
+test("installs the release AI unit before restarting the service", () => {
+  const deployWorkflow = fs.readFileSync(
+    path.join(__dirname, "../.github/workflows/deploy.yml"),
+    "utf8"
+  );
+  const verifyUnit = deployWorkflow.indexOf(
+    'run_sudo systemd-analyze verify "${ai_unit_template}"'
+  );
+  const installUnit = deployWorkflow.indexOf(
+    "run_sudo install -o root -g root -m 0644",
+    verifyUnit
+  );
+  const unitTarget = deployWorkflow.indexOf(
+    "/etc/systemd/system/uartdebug-ai.service",
+    installUnit
+  );
+  const daemonReload = deployWorkflow.indexOf(
+    "run_sudo systemctl daemon-reload",
+    unitTarget
+  );
+  const restart = deployWorkflow.indexOf(
+    "run_sudo systemctl restart uartdebug-ai.service",
+    daemonReload
+  );
+
+  assert.ok(verifyUnit >= 0, "the release unit must be verified before install");
+  assert.ok(installUnit > verifyUnit, "the deployed release must install its AI unit");
+  assert.ok(unitTarget > installUnit);
+  assert.ok(daemonReload > unitTarget);
+  assert.ok(restart > daemonReload);
+  assert.match(
+    deployWorkflow,
+    /elif \[ -z "\$\{ROLLBACK\}" \]; then\s+echo "Missing AI service unit in \$\{BE_DIR\}"\s+exit 1/
+  );
+});
+
 test("scopes the AI credential umask to secret generation", () => {
   const installer = fs.readFileSync(
     path.join(__dirname, "../backend/deploy/install-ai-service.sh"),
@@ -618,7 +1223,9 @@ test("does not render the obsolete AI context row", () => {
   assert.doesNotMatch(html, /id="projectAiContextMcu"/);
   assert.doesNotMatch(css, /\.project-ai-context/);
   assert.doesNotMatch(source, /refreshProjectAiContext/);
-  assert.match(source, /mcu:\s*String\(mcuSelect\?\.value/);
+  assert.match(source, /const selectedMcu = String\(mcuSelect\?\.value/);
+  assert.match(source, /mcu:\s*selectedMcu/);
+  assert.match(source, /detectedMcu/);
 });
 
 test("lets the guide pane grow until the editor reaches its minimum width", () => {
@@ -651,6 +1258,73 @@ test("lets the guide pane grow until the editor reaches its minimum width", () =
     source,
     /PROJECT_AI_CHAT_MAX_WIDTH|PROJECT_AI_SKILLS_MAX_WIDTH/
   );
+  assert.match(
+    source,
+    /function getDocumentationMinWidth\(\)[\s\S]*?strip\.children[\s\S]*?controlsWidth[\s\S]*?horizontalPadding/
+  );
+  assert.doesNotMatch(
+    source,
+    /function getDocumentationMinWidth\(\)[\s\S]{0,900}?strip\.scrollWidth/
+  );
+});
+
+test("uses one CommonMark GFM runtime across every Markdown surface", () => {
+  const html = fs.readFileSync(
+    path.join(__dirname, "../public/avr.html"),
+    "utf8"
+  );
+  const source = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.js"),
+    "utf8"
+  );
+  const sw = fs.readFileSync(path.join(__dirname, "../public/sw.js"), "utf8");
+  const runtimeIndex = html.indexOf("vendor/uartdebug-markdown.js");
+  const avrIndex = html.indexOf("AVR-Programming.js");
+
+  assert.ok(runtimeIndex >= 0 && runtimeIndex < avrIndex);
+  assert.match(sw, /\/vendor\/uartdebug-markdown\.js/);
+  assert.doesNotMatch(html, /id="documentationEditToggle"/);
+  assert.match(
+    html,
+    /project-documentation-scroll project-documentation-live-editor markdown-live-editor[\s\S]*?id="projectDocumentationScroll"[\s\S]*?id="projectDocumentationEditor"/
+  );
+  assert.match(html, /editor-surface markdown-live-editor/);
+  assert.match(source, /window\.UartDebugMarkdown\?\.analyze/);
+  assert.match(source, /markdownRuntime\?\.renderInto/);
+  assert.match(source, /markdownRuntime\?\.analyze/);
+  assert.match(source, /registerMarkdownLiveEditor\("instruction"/);
+  assert.match(source, /registerMarkdownLiveEditor\("documentation"/);
+  assert.match(source, /registerMarkdownLiveEditor\("editor"/);
+  assert.match(source, /getMarkdownLiveRenderedElement\(cache, node, "table"\)/);
+  assert.match(source, /\["image", "imageReference"\]\.includes\(node\.type\)/);
+  assert.match(source, /node\.type === "footnoteReference"/);
+  assert.match(source, /addMarkdownLiveFootnotesWidget/);
+  assert.match(source, /instead of presenting a second, incompatible interpretation/);
+  assert.match(source, /childEnd\.ch < end\.ch/);
+});
+
+test("wires AI quotes, authorship, chat actions, and detected MCU context", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.js"),
+    "utf8"
+  );
+
+  assert.match(source, /function bindCodeMirrorQuoteSurface/);
+  assert.match(
+    source,
+    /showProjectAiHistorySelectionQuote\(projectAiHistory\)/
+  );
+  assert.match(source, /id = "projectAiSelectionQuoteBtn"/);
+  assert.match(source, /dataset\.copyMessageId/);
+  assert.match(source, /dataset\.editMessageId/);
+  assert.match(source, /dataset\.renameChatId/);
+  assert.match(source, /deriveProjectAiChatTitle/);
+  assert.match(source, /MARKDOWN_AUTHORSHIP_VALUES/);
+  assert.match(source, /sourceAuthorship/);
+  assert.match(source, /guideAuthorship/);
+  assert.match(source, /instructionDocument:[\s\S]*?getProjectInstructionSnapshot/);
+  assert.match(source, /detectedMcu/);
+  assert.match(source, /renderProjectAiThinkingProgress/);
 });
 
 test("uses three sibling AI panels with live Markdown and a framed composer", () => {
@@ -746,7 +1420,11 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
     source,
     /inputField\.setAttribute\("data-tooltip-disabled", ""\)/
   );
-  assert.match(source, /projectInstructionEditor\.markText\(/);
+  assert.match(
+    source,
+    /function addMarkdownLiveMark[\s\S]*?state\.editor\.markText\(/
+  );
+  assert.doesNotMatch(source, /projectInstructionEditor\.markText\(/);
   assert.match(source, /"cursorActivity"/);
   assert.match(source, /projectInstructionEditor\.replaceRange\(/);
   assert.doesNotMatch(source, /setRangeText\(/);
@@ -791,27 +1469,16 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
       )
     );
   }
-  assert.match(source, /setextHeading/);
-  assert.match(source, /previousLineIsParagraph/);
-  assert.match(source, /previousLineIsThematicBreak/);
-  assert.match(source, /orderedMarker/);
-  assert.match(source, /underscoreExpression/);
-  assert.match(source, /function decorateProjectInstructionInline[\s\S]*?isEscaped/);
-  assert.match(source, /const imageExpression = \/!\\\[/);
-  const inlinePreviewStart = source.indexOf(
-    "function decorateProjectInstructionInline"
-  );
-  const codePriority = source.indexOf("const codeRunExpression", inlinePreviewStart);
-  const strongPriority = source.indexOf(
-    '"project-instruction-live-strong"',
-    inlinePreviewStart
-  );
-  assert.ok(
-    codePriority > inlinePreviewStart && strongPriority > codePriority,
-    "code spans must reserve their content before strong/emphasis"
+  assert.doesNotMatch(source, /setextHeading|underscoreExpression/);
+  assert.doesNotMatch(source, /function decorateProjectInstructionInline/);
+  assert.match(source, /node\.type === "heading"/);
+  assert.match(source, /node\.type === "inlineCode"/);
+  assert.match(
+    source,
+    /strong:\s*"project-instruction-live-strong"[\s\S]*?emphasis:[\s\S]*?delete:/
   );
   assert.match(source, /project-instruction-task-marker/);
-  assert.match(source, /const orderedTask = \/\^\\d\//);
+  assert.match(source, /node\.type === "listItem"/);
   assert.match(source, /renderMarkdownInto\(markdown, message, null, \{ allowImages: false \}\)/);
   assert.match(source, /match\[0\]\.startsWith\("\*\*"\)/);
   assert.match(source, /document\.createElement\("strong"\)/);
@@ -1043,7 +1710,7 @@ test("deploy revisions AVR script and stylesheet URLs for returning browsers", (
 
   assert.match(
     stampScript,
-    /revisioned_page_assets\s*=\s*\[[\s\S]*?"AVR-Programming\.css"[\s\S]*?"AVR-Programming\.js"/
+    /revisioned_page_assets\s*=\s*\[[\s\S]*?"AVR-Programming\.css"[\s\S]*?"AVR-Programming\.js"[\s\S]*?"vendor\/uartdebug-markdown\.js"/
   );
   assert.match(
     stampScript,
