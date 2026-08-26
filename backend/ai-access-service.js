@@ -3084,18 +3084,19 @@ function normalizeCompositeProviderUsage(responses, fallback) {
     }
   }
   const provider = segments[0].provider;
-  const digest = crypto
-    .createHash("sha256")
-    .update(
-      JSON.stringify(
-        segments.map((segment) => [segment.provider, segment.responseId])
-      ),
-      "utf8"
-    )
-    .digest("hex");
+  const providerResponseId = `bundle:${segments
+    .map((segment) => `${segment.responseId.length}:${segment.responseId}`)
+    .join("")}`;
+  if (providerResponseId.length > 160) {
+    throw new AiAccessError(
+      500,
+      "provider_usage_id_too_long",
+      "Composite AI usage contains provider response identifiers that are too long."
+    );
+  }
   return {
     provider,
-    providerResponseId: `bundle:${digest}`,
+    providerResponseId,
     model: segments[0].model,
     usage,
     segments,

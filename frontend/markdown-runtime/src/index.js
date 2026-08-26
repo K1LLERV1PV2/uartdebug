@@ -707,7 +707,8 @@ function slugifyHeading(value) {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
   return slug || "section";
 }
 
@@ -721,7 +722,8 @@ function toClassToken(value) {
     String(value || "plain")
       .toLowerCase()
       .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "plain"
+      .replace(/^-+/, "")
+      .replace(/-+$/, "") || "plain"
   );
 }
 

@@ -936,7 +936,10 @@ test("charges compiler-repair provider responses at their individual context tie
          FROM usage_ledger WHERE request_id = ?`
     )
     .get("composite-provider-request");
-  assert.match(ledger.provider_response_id, /^bundle:[a-f0-9]{64}$/);
+  assert.equal(
+    ledger.provider_response_id,
+    "bundle:18:resp-composite-one18:resp-composite-two"
+  );
   assert.equal(ledger.tier, "long_context");
   assert.equal(ledger.input_tokens, 300_000);
   assert.equal(ledger.cost_nano_usd, 600_000_000);
