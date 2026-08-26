@@ -11,7 +11,7 @@ const {
   createAiAccessService,
 } = require("./ai-access-service");
 
-const AI_SERVER_VERSION = "20260826-account-workspace-v1";
+const AI_SERVER_VERSION = "20260826-compiler-verification-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -417,6 +417,7 @@ function createAiHttpServer(options = {}) {
       }
 
       let requestBody;
+      let serviceStatus = null;
       try {
         requestBody = await readJsonBody(req, MAX_REQUEST_BYTES);
       } catch (error) {
@@ -439,6 +440,7 @@ function createAiHttpServer(options = {}) {
           validateInput.call(aiService, requestBody);
         }
         const status = await aiService.getStatus();
+        serviceStatus = status;
         if (!status.enabled) {
           throw new AiServiceError(
             503,
@@ -465,6 +467,16 @@ function createAiHttpServer(options = {}) {
             503,
             status.rulesError || "rules_unavailable",
             "The active AI rules are unavailable."
+          );
+        }
+        if (
+          status.compilerVerification?.enabled === true &&
+          status.compilerVerification?.ready !== true
+        ) {
+          throw new AiServiceError(
+            503,
+            status.compilerVerification?.error || "compiler_unavailable",
+            "The AVR compiler service is unavailable."
           );
         }
       } catch (error) {
@@ -506,6 +518,7 @@ function createAiHttpServer(options = {}) {
       let providerCalled = false;
       let providerRejected = false;
       let usageRecorded = false;
+      let ndjsonStarted = false;
       try {
         const respond = aiService.respond || aiService.generate;
         if (typeof respond !== "function") {
@@ -515,13 +528,35 @@ function createAiHttpServer(options = {}) {
             "The AI assistant is unavailable."
           );
         }
+        if (acceptsNdjson(req)) {
+          beginNdjson(res);
+          ndjsonStarted = true;
+        }
         const result = await respond.call(aiService, requestBody, {
           requestId,
           safetyIdentifier: accessContext?.safetyIdentifier || "",
+          compilerReady:
+            serviceStatus?.compilerVerification?.ready === true,
+          onProgress: ndjsonStarted
+            ? (progress) =>
+                sendNdjsonEvent(res, {
+                  type: "progress",
+                  progress: toStreamingProgress(progress),
+                })
+            : undefined,
           reserveBudget:
             accessContext?.mode === "google" &&
             typeof accessService.reserveAiBudget === "function"
               ? (quote) => accessService.reserveAiBudget(accessContext, quote)
+              : undefined,
+          extendBudget:
+            accessContext?.mode === "google" &&
+            typeof accessService.extendAiBudgetReservation === "function"
+              ? (quote) =>
+                  accessService.extendAiBudgetReservation(
+                    accessContext,
+                    quote
+                  )
               : undefined,
           async markProviderCalled() {
             if (
@@ -551,18 +586,30 @@ function createAiHttpServer(options = {}) {
             now() - startedAt
           )}`
         );
-        return sendJson(res, 200, {
+        const successPayload = {
           ...publicResult,
           ...(quota ? { quota } : {}),
           requestId,
-        });
+        };
+        if (ndjsonStarted) {
+          sendNdjsonEvent(res, {
+            type: "result",
+            status: 200,
+            data: successPayload,
+          });
+          return endNdjson(res);
+        }
+        return sendJson(res, 200, successPayload);
       } catch (error) {
-        providerRejected = error?._providerRejected === true;
-        if (error?._metering) {
+        const errorMetering = error?._metering || null;
+        providerRejected =
+          error?._providerRejected === true && !errorMetering;
+        const usageUncertain = error?._usageUncertain === true;
+        if (errorMetering && !usageUncertain) {
           try {
             await accessService.recordAiUsage(accessContext, {
               requestId,
-              ...error._metering,
+              ...errorMetering,
             });
             usageRecorded = true;
           } catch (meteringError) {
@@ -582,12 +629,22 @@ function createAiHttpServer(options = {}) {
             normalized.code
           } duration_ms=${Math.max(0, now() - startedAt)}`
         );
-        return sendJson(res, normalized.status, {
+        const errorPayload = {
           ok: false,
           code: normalized.code,
           message: normalized.message,
+          ...(error?.progress ? { progress: error.progress } : {}),
           requestId,
-        });
+        };
+        if (ndjsonStarted) {
+          sendNdjsonEvent(res, {
+            type: "error",
+            status: normalized.status,
+            data: errorPayload,
+          });
+          return endNdjson(res);
+        }
+        return sendJson(res, normalized.status, errorPayload);
       } finally {
         concurrentRequests = Math.max(0, concurrentRequests - 1);
         try {
@@ -965,6 +1022,41 @@ function sendJson(res, status, body) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Content-Length", Buffer.byteLength(payload));
   res.end(payload);
+}
+
+function acceptsNdjson(req) {
+  return String(req?.headers?.accept || "")
+    .split(",")
+    .map((value) => value.split(";")[0].trim().toLowerCase())
+    .includes("application/x-ndjson");
+}
+
+function toStreamingProgress(event) {
+  if (event && Array.isArray(event.stages)) return event;
+  const stage = event && typeof event === "object" ? { ...event } : null;
+  if (stage) delete stage.schemaVersion;
+  return {
+    schemaVersion: 1,
+    status: "in_progress",
+    stages: stage ? [stage] : [],
+  };
+}
+
+function beginNdjson(res) {
+  if (res.headersSent || res.writableEnded) return;
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+}
+
+function sendNdjsonEvent(res, event) {
+  if (res.writableEnded || res.destroyed) return false;
+  return res.write(`${JSON.stringify(event)}\n`);
+}
+
+function endNdjson(res) {
+  if (!res.writableEnded && !res.destroyed) res.end();
 }
 
 function sendText(res, status, body) {

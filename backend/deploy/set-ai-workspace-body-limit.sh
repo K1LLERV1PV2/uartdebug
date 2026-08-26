@@ -24,8 +24,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! awk '
-  BEGIN { targets = 0; directives = 0; inside = 0 }
+existing_buffering="$({
+  awk '
+    BEGIN { inside = 0; count = 0 }
+    /^[[:space:]]*location[[:space:]]+\^~[[:space:]]+\/api\/avr\/ai\/[[:space:]]*\{/ { inside = 1 }
+    inside && /^[[:space:]]*proxy_buffering[[:space:]]+/ { count += 1 }
+    inside && /^[[:space:]]*\}[[:space:]]*$/ { inside = 0 }
+    END { print count }
+  ' "${site_file}"
+})"
+[ "${existing_buffering}" = "0" ] || [ "${existing_buffering}" = "1" ] || {
+  echo "Could not safely normalize AVR AI nginx proxy buffering." >&2
+  exit 65
+}
+
+if ! awk -v insert_buffering="$([ "${existing_buffering}" = "0" ] && echo 1 || echo 0)" '
+  BEGIN { targets = 0; body_directives = 0; timeout_directives = 0; buffering_directives = 0; inside = 0 }
   /^[[:space:]]*location[[:space:]]+\^~[[:space:]]+\/api\/avr\/ai\/[[:space:]]*\{/ {
     targets += 1
     inside = 1
@@ -33,21 +47,40 @@ if ! awk '
   inside && /^[[:space:]]*client_max_body_size[[:space:]]+/ {
     match($0, /^[[:space:]]*/)
     printf "%sclient_max_body_size 5m;\n", substr($0, 1, RLENGTH)
-    directives += 1
+    body_directives += 1
+    next
+  }
+  inside && /^[[:space:]]*proxy_read_timeout[[:space:]]+/ {
+    match($0, /^[[:space:]]*/)
+    printf "%sproxy_read_timeout 1200s;\n", substr($0, 1, RLENGTH)
+    timeout_directives += 1
+    next
+  }
+  inside && /^[[:space:]]*proxy_buffering[[:space:]]+/ {
+    match($0, /^[[:space:]]*/)
+    printf "%sproxy_buffering off;\n", substr($0, 1, RLENGTH)
+    buffering_directives += 1
+    next
+  }
+  inside && insert_buffering && /^[[:space:]]*proxy_http_version[[:space:]]+/ {
+    print
+    match($0, /^[[:space:]]*/)
+    printf "%sproxy_buffering off;\n", substr($0, 1, RLENGTH)
+    buffering_directives += 1
     next
   }
   { print }
   inside && /^[[:space:]]*\}[[:space:]]*$/ { inside = 0 }
   END {
-    if (targets != 1 || directives != 1 || inside) exit 42
+    if (targets != 1 || body_directives != 1 || timeout_directives != 1 || buffering_directives != 1 || inside) exit 42
   }
 ' "${site_file}" > "${site_tmp}"; then
-  echo "Could not identify exactly one AVR AI nginx location and body-size directive." >&2
+  echo "Could not identify exactly one AVR AI nginx location, body-size directive, read timeout, and buffering directive." >&2
   exit 65
 fi
 
 if cmp -s "${site_file}" "${site_tmp}"; then
-  echo "AVR AI nginx body limit is already 5m."
+  echo "AVR AI nginx body limit and response timeout are already configured."
   exit 0
 fi
 
@@ -66,4 +99,4 @@ if ! nginx -t; then
   exit 78
 fi
 
-echo "Updated AVR AI nginx body limit to 5m. Backup: ${backup_file}"
+echo "Updated AVR AI nginx body limit to 5m and response timeout to 1200s. Backup: ${backup_file}"

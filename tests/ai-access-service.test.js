@@ -818,6 +818,130 @@ test("reservation dynamically caps output to the affordable token count", async 
   await service.releaseAiRequest(context, { providerCalled: false });
 });
 
+test("extends a provider-started reservation for compiler repair and records aggregate usage", async (t) => {
+  const { service, oauthClient } = makeService({
+    freeDeviceGrantCredits: "20",
+  });
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {
+    code: "compiler-repair-budget",
+    sub: "compiler-repair-account",
+    email: "repair@example.com",
+  });
+  const context = await service.authorizeAiRequest(
+    request(login.cookie),
+    new MockResponse(),
+    { requestId: "compiler-repair-request" }
+  );
+  await service.reserveAiBudget(context, {
+    model: "gpt-5.6-terra",
+    inputTokens: 100,
+    maxOutputTokens: 100,
+    minOutputTokens: 10,
+  });
+  await service.markAiProviderStarted(context);
+
+  const extension = await service.extendAiBudgetReservation(context, {
+    model: "gpt-5.6-terra-2026-08-01",
+    additionalInputTokens: 50,
+    additionalMaxOutputTokens: 200,
+    minAdditionalOutputTokens: 100,
+  });
+  assert.equal(extension.additionalMaxOutputTokens, 200);
+  assert.equal(extension.cumulativeInputTokens, 150);
+  assert.equal(extension.cumulativeMaxOutputTokens, 300);
+  const inflight = service.database
+    .prepare(
+      `SELECT state, reservation_input_tokens,
+              reservation_max_output_tokens, reserved_nano_usd
+         FROM inflight_requests WHERE reservation_id = ?`
+    )
+    .get(context.reservationId);
+  assert.equal(inflight.state, "provider_started");
+  assert.equal(inflight.reservation_input_tokens, 150);
+  assert.equal(inflight.reservation_max_output_tokens, 300);
+  assert.equal(inflight.reserved_nano_usd, extension.reservedNanoUsd);
+
+  const recorded = await service.recordAiUsage(context, {
+    requestId: "compiler-repair-request",
+    provider: "openai",
+    responseId: "resp-compiler-repair",
+    model: "gpt-5.6-terra-2026-08-01",
+    usage: {
+      inputTokens: 150,
+      outputTokens: 250,
+      totalTokens: 400,
+    },
+  });
+  assert.equal(recorded.recorded, true);
+  assert.equal(
+    service.database
+      .prepare("SELECT COUNT(*) AS count FROM inflight_requests")
+      .get().count,
+    0
+  );
+});
+
+test("charges compiler-repair provider responses at their individual context tiers", async (t) => {
+  const { service, oauthClient } = makeService({
+    freeDeviceGrantCredits: "2000",
+  });
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {
+    code: "composite-provider-usage",
+    sub: "composite-provider-account",
+    email: "composite@example.com",
+  });
+  const context = await service.authorizeAiRequest(
+    request(login.cookie),
+    new MockResponse(),
+    { requestId: "composite-provider-request" }
+  );
+  await service.reserveAiBudget(context, {
+    model: "gpt-5.6-terra",
+    inputTokens: 150_000,
+    maxOutputTokens: 0,
+    minOutputTokens: 0,
+  });
+  await service.markAiProviderStarted(context);
+  await service.extendAiBudgetReservation(context, {
+    model: "gpt-5.6-terra",
+    additionalInputTokens: 150_000,
+    additionalMaxOutputTokens: 0,
+    minAdditionalOutputTokens: 0,
+  });
+
+  const result = await service.recordAiUsage(context, {
+    requestId: "composite-provider-request",
+    responses: [
+      {
+        provider: "openai",
+        responseId: "resp-composite-one",
+        model: "gpt-5.6-terra-2026-08-01",
+        usage: { inputTokens: 150_000, outputTokens: 0 },
+      },
+      {
+        provider: "openai",
+        responseId: "resp-composite-two",
+        model: "gpt-5.6-terra-2026-08-01",
+        usage: { inputTokens: 150_000, outputTokens: 0 },
+      },
+    ],
+  });
+  assert.equal(result.tier, "long_context");
+  assert.equal(result.costNanoUsd, 600_000_000);
+  const ledger = service.database
+    .prepare(
+      `SELECT provider_response_id, tier, input_tokens, cost_nano_usd
+         FROM usage_ledger WHERE request_id = ?`
+    )
+    .get("composite-provider-request");
+  assert.match(ledger.provider_response_id, /^bundle:[a-f0-9]{64}$/);
+  assert.equal(ledger.tier, "long_context");
+  assert.equal(ledger.input_tokens, 300_000);
+  assert.equal(ledger.cost_nano_usd, 600_000_000);
+});
+
 test("reservation denies a request whose input and minimum output do not fit", async (t) => {
   const { service, oauthClient } = makeService({
     freeDeviceGrantCredits: "0.3",
@@ -1309,8 +1433,10 @@ test("account workspace snapshots persist independently without spending AI cred
       {
         id: "chat-1",
         title: "First chat",
+        titleSource: "auto",
+        titleLocked: false,
         createdAt: 1,
-        updatedAt: 2,
+        updatedAt: 3,
         messages: [
           {
             id: "message-1",
@@ -1325,6 +1451,7 @@ test("account workspace snapshots persist independently without spending AI cred
             content: "Answer",
             title: "",
             createdAt: 2,
+            editedAt: 3,
           },
         ],
       },
@@ -1336,12 +1463,24 @@ test("account workspace snapshots persist independently without spending AI cred
     fileGroups: {},
     miniProjects: {},
     current: "main.c",
+    authorship: {
+      "main.c": {
+        schemaVersion: 1,
+        lines: ["original", "human"],
+        updatedAt: 3,
+      },
+    },
   };
   const instruction = {
     schemaVersion: 1,
     revision: 4,
     markdown: "# Project\n",
     skillRefs: [{ id: "initialization", version: "1.0.0" }],
+    authorship: {
+      schemaVersion: 1,
+      lines: ["original", "ai"],
+      updatedAt: 4,
+    },
   };
 
   assert.equal(
@@ -1527,6 +1666,72 @@ test("account workspace validates authentication, schemas, and payload limits", 
       error instanceof AiAccessError &&
       error.status === 400 &&
       error.code === "invalid_account_data"
+  );
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(context, "chats", {
+        baseRevision: 0,
+        expectedAccountKey: context.accountKey,
+        data: {
+          schemaVersion: 1,
+          activeChatId: "chat-metadata",
+          chats: [
+            {
+              id: "chat-metadata",
+              title: "Metadata",
+              titleSource: "visitor",
+              createdAt: 1,
+              updatedAt: 1,
+              messages: [],
+            },
+          ],
+        },
+      }),
+    (error) =>
+      error instanceof AiAccessError && error.code === "invalid_account_data"
+  );
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(context, "files", {
+        baseRevision: 0,
+        expectedAccountKey: context.accountKey,
+        data: {
+          schemaVersion: 2,
+          files: { "main.c": "line one\nline two" },
+          fileGroups: {},
+          miniProjects: {},
+          current: "main.c",
+          authorship: {
+            "missing.c": {
+              schemaVersion: 1,
+              lines: ["human"],
+              updatedAt: 1,
+            },
+          },
+        },
+      }),
+    (error) =>
+      error instanceof AiAccessError && error.code === "invalid_account_data"
+  );
+  assert.throws(
+    () =>
+      service.writeAccountWorkspace(context, "instruction", {
+        baseRevision: 0,
+        expectedAccountKey: context.accountKey,
+        data: {
+          schemaVersion: 1,
+          revision: 0,
+          markdown: "# Instruction\n",
+          skillRefs: [],
+          authorship: {
+            schemaVersion: 1,
+            lines: ["human"],
+            updatedAt: 1,
+          },
+        },
+      }),
+    (error) =>
+      error instanceof AiAccessError && error.code === "invalid_account_data"
   );
   const largeMessages = Array.from({ length: 9 }, (_, index) => ({
     id: `large-message-${index}`,

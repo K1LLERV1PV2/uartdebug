@@ -29,6 +29,12 @@ Environment=AI_DRAFTS_DIR=/var/lib/uartdebug-ai/drafts
 Environment=AI_DRAFT_TTL_HOURS=720
 Environment=AI_MAX_DRAFTS=100
 Environment=AI_MAX_CONCURRENT=1
+Environment=AI_COMPILE_VERIFY_ENABLED=1
+Environment=AI_COMPILE_URL=http://127.0.0.1:8082/api/avr/compile
+Environment=AI_COMPILE_HEALTH_URL=http://127.0.0.1:8082/health
+Environment=AI_COMPILE_HEALTH_TIMEOUT_MS=5000
+Environment=AI_COMPILE_TIMEOUT_MS=65000
+Environment=AI_COMPILE_MAX_REPAIR_ATTEMPTS=2
 Environment=OPENAI_MODEL=gpt-5.6-terra
 Environment=OPENAI_REASONING_EFFORT=medium
 Environment=OPENAI_TIMEOUT_MS=120000

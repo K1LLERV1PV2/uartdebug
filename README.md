@@ -25,7 +25,9 @@ The repository is under active development. Hardware access requires a browser t
 
 ### AVR Programming
 
-- Edit C source and related project files in a CodeMirror workspace.
+- Edit C source and related project files in a CodeMirror workspace. Markdown
+  files, project guides, Project instruction, and AI replies share one safe
+  CommonMark/GFM parser and live-rendering behavior.
 - Keep working copies in the browser, organize files into groups, and, after
   Google sign-in, synchronize the AVR file workspace with the signed-in
   account.
@@ -35,6 +37,8 @@ The repository is under active development. Hardware access requires a browser t
 - Compile supported tinyAVR projects with Microchip XC8 on the compiler service.
 - Detect a supported chip and flash Intel HEX over UPDI from the browser.
 - Ask the AVR assistant ordinary questions, revise a reviewable Markdown project instruction, create a new mini-project, or update the currently open mini-project.
+- Verify AI-created or updated source with the server-side AVR compiler and let
+  the assistant repair compiler errors before returning the project.
 - Build that instruction manually or from versioned drag-and-drop blocks, with an immediate formatted preview.
 
 ## Browser and hardware requirements
@@ -69,6 +73,9 @@ The old README described the entire project as client-only. That is true for ser
   service and configured OpenAI API. The API request uses `store: false`.
 - When enabled, the Google access layer identifies a signed-in account by Google's verified `sub` claim and a “device” only as a best-effort browser installation. It does not collect or prove a hardware identifier.
 - When the assistant creates or updates a project, the default server configuration makes the generated AI specification eligible for cleanup after 30 days and keeps at most 100 drafts. Cleanup runs during later draft activity. Source and human-guide copies are returned to the browser.
+- Before those generated project files are returned, the AI service submits the
+  source to the loopback-only compiler service for the resolved target MCU and
+  can make up to two compiler-guided repair attempts.
 - The OpenAI API key is a server-side systemd credential and is never sent to browser code.
 
 Do not put secrets in editor files, prompts, issues, pull requests, or repository configuration. See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
@@ -95,6 +102,7 @@ flowchart LR
   Skills[Versioned instruction blocks] --> AI
   AI --> AccessDB[Account-scoped SQLite]
   AI --> OpenAI[OpenAI Responses API]
+  AI -->|verify generated source| Compiler
 ```
 
 The compiler and AI services bind to loopback by default. nginx is the public same-origin boundary and routes only the required API paths to them.
@@ -137,6 +145,7 @@ Prerequisites: Git, Node.js 22.13 or newer, npm, Python 3, and a compatible brow
 git clone https://github.com/K1LLERV1PV2/uartdebug.git
 cd uartdebug
 npm ci --prefix backend
+npm ci --prefix frontend/markdown-runtime
 npm test --prefix backend
 python -m http.server 8000 --directory public
 ```
@@ -165,6 +174,8 @@ The test suite uses Node's built-in test runner:
 
 ```sh
 npm test --prefix backend
+npm test --prefix frontend/markdown-runtime
+npm run build:check --prefix frontend/markdown-runtime
 ```
 
 Tests cover the AI HTTP boundary, rule packs, project actions, mini-project normalization and ZIP validation, documentation markers, catalog rendering, and AVR page wiring. Pull requests and pushes to `main` are checked by [GitHub Actions](.github/workflows/ci.yml).
@@ -181,6 +192,7 @@ Production setup is intentionally not a copy-and-paste local quick start: it als
 | --- | --- |
 | `public/` | Static PWA, UART terminal, AVR editor/programmer, mini-project source and guides, vendored browser libraries |
 | `backend/` | Compiler service, AI service, versioned rules, AI references, instruction blocks, and deployment files |
+| `frontend/markdown-runtime/` | Source, tests, and deterministic build for the vendored CommonMark/GFM browser runtime |
 | `docs/` | Product architecture decisions, access/credit design, and explicit limitations |
 | `tests/` | Node test suite |
 | `.github/workflows/` | CI and production deployment workflows |

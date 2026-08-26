@@ -16,6 +16,8 @@ const ACCOUNT_WORKSPACE_SCHEMA_VERSIONS = Object.freeze({
   files: 2,
   instruction: 1,
 });
+const WORKSPACE_AUTHORSHIP_VALUES = new Set(["original", "human", "ai"]);
+const MAX_WORKSPACE_AUTHORSHIP_LINES = 20_000;
 const ACCOUNT_WORKSPACE_MAX_BYTES = Object.freeze({
   chats: 1024 * 1024,
   files: 4 * 1024 * 1024,
@@ -1144,6 +1146,225 @@ class AiAccessService {
     return result;
   }
 
+  async extendAiBudgetReservation(
+    context,
+    {
+      model,
+      additionalInputTokens,
+      additionalMaxOutputTokens,
+      minAdditionalOutputTokens = 1024,
+    } = {}
+  ) {
+    if (!context || context.mode === "public") {
+      return {
+        reserved: false,
+        mode: "public",
+        additionalMaxOutputTokens: readUsageInteger(
+          additionalMaxOutputTokens
+        ),
+        quota: null,
+      };
+    }
+    if (!context.reservationId || !context.deviceId || !context.accountHash) {
+      throw new AiAccessError(
+        500,
+        "invalid_access_context",
+        "The AI access context is invalid."
+      );
+    }
+    const normalizedAdditionalInputTokens = readUsageInteger(
+      additionalInputTokens
+    );
+    const normalizedAdditionalMaxOutputTokens = readRequiredUsageInteger(
+      additionalMaxOutputTokens,
+      "additionalMaxOutputTokens"
+    );
+    const normalizedMinAdditionalOutputTokens = readUsageInteger(
+      minAdditionalOutputTokens
+    );
+    if (
+      normalizedAdditionalMaxOutputTokens <
+      normalizedMinAdditionalOutputTokens
+    ) {
+      throw new AiAccessError(
+        400,
+        "output_budget_invalid",
+        "additionalMaxOutputTokens cannot be lower than minAdditionalOutputTokens."
+      );
+    }
+    const catalogModel = resolveCatalogModel(model);
+    const price = readCatalogPrice(
+      this.database,
+      catalogModel,
+      this.priceCatalogVersion
+    );
+    if (!price) {
+      throw new AiAccessError(
+        503,
+        "model_price_unavailable",
+        "The AI model price is not configured."
+      );
+    }
+
+    let result;
+    this._transaction(() => {
+      const inflight = this.database
+        .prepare(
+          `SELECT request_id, device_id, source_device_id, account_hash,
+                  state, reserved_nano_usd, reservation_model,
+                  reservation_input_tokens, reservation_max_output_tokens
+             FROM inflight_requests
+            WHERE reservation_id = ?`
+        )
+        .get(context.reservationId);
+      if (
+        !inflight ||
+        inflight.device_id !== context.deviceId ||
+        inflight.account_hash !== context.accountHash ||
+        (context.sourceDeviceId &&
+          inflight.source_device_id !== context.sourceDeviceId)
+      ) {
+        throw new AiAccessError(
+          409,
+          "access_reservation_missing",
+          "The AI access reservation is missing or no longer valid."
+        );
+      }
+      if (inflight.state === "needs_reconciliation") {
+        throw new AiAccessError(
+          503,
+          "budget_reconciliation_required",
+          "This AI usage reservation requires reconciliation."
+        );
+      }
+      if (inflight.state !== "provider_started") {
+        throw new AiAccessError(
+          409,
+          "budget_extension_state_conflict",
+          "An AI budget can only be extended after the provider call starts."
+        );
+      }
+      if (inflight.reservation_model !== catalogModel) {
+        throw new AiAccessError(
+          409,
+          "reserved_model_mismatch",
+          "The AI budget extension uses a different model."
+        );
+      }
+
+      const cumulativeInputTokens = addUsageCounts(
+        Number(inflight.reservation_input_tokens),
+        normalizedAdditionalInputTokens
+      );
+      const previousMaxOutputTokens = Number(
+        inflight.reservation_max_output_tokens
+      );
+      const longContext = cumulativeInputTokens > price.longContextThreshold;
+      const tier = longContext ? "long_context" : "standard";
+      const additionalLongContext =
+        normalizedAdditionalInputTokens > price.longContextThreshold;
+      const inputRate = additionalLongContext
+        ? price.longCacheWriteNanoUsdPerToken
+        : price.cacheWriteNanoUsdPerToken;
+      const outputRate = additionalLongContext
+        ? price.longOutputNanoUsdPerToken
+        : price.outputNanoUsdPerToken;
+      const inputCostNanoUsd = multiplyCost(
+        normalizedAdditionalInputTokens,
+        inputRate
+      );
+      const currentBudget = this._readBudget(
+        context.deviceId,
+        context.accountHash
+      );
+      const availableAdditionalNanoUsd = Number(
+        currentBudget?.remaining_nano_usd || 0
+      );
+      const minimumRequiredNanoUsd = addCosts(
+        inputCostNanoUsd,
+        multiplyCost(normalizedMinAdditionalOutputTokens, outputRate)
+      );
+      if (availableAdditionalNanoUsd < minimumRequiredNanoUsd) {
+        throw new AiAccessError(
+          429,
+          "free_quota_insufficient",
+          "The remaining free AI credits cannot cover an automatic compiler repair."
+        );
+      }
+      const affordableAdditionalOutputTokens = Math.floor(
+        (availableAdditionalNanoUsd - inputCostNanoUsd) / outputRate
+      );
+      const allowedAdditionalMaxOutputTokens = Math.min(
+        normalizedAdditionalMaxOutputTokens,
+        affordableAdditionalOutputTokens
+      );
+      if (
+        allowedAdditionalMaxOutputTokens <
+        normalizedMinAdditionalOutputTokens
+      ) {
+        throw new AiAccessError(
+          429,
+          "free_quota_insufficient",
+          "The remaining free AI credits cannot cover an automatic compiler repair."
+        );
+      }
+      const cumulativeMaxOutputTokens = addUsageCounts(
+        previousMaxOutputTokens,
+        allowedAdditionalMaxOutputTokens
+      );
+      const reservedNanoUsd = addCosts(
+        Number(inflight.reserved_nano_usd),
+        addCosts(
+          inputCostNanoUsd,
+          multiplyCost(allowedAdditionalMaxOutputTokens, outputRate)
+        )
+      );
+      const updated = this.database
+        .prepare(
+          `UPDATE inflight_requests
+              SET reserved_nano_usd = ?, reservation_tier = ?,
+                  reservation_input_tokens = ?,
+                  reservation_max_output_tokens = ?
+            WHERE reservation_id = ? AND state = 'provider_started'`
+        )
+        .run(
+          reservedNanoUsd,
+          tier,
+          cumulativeInputTokens,
+          cumulativeMaxOutputTokens,
+          context.reservationId
+        );
+      if (Number(updated.changes) !== 1) {
+        throw new AiAccessError(
+          409,
+          "budget_extension_state_conflict",
+          "The AI budget reservation changed before it could be extended."
+        );
+      }
+      const updatedBudget = this._readBudget(
+        context.deviceId,
+        context.accountHash
+      );
+      result = {
+        reserved: true,
+        requestId: inflight.request_id,
+        model: catalogModel,
+        tier,
+        additionalInputTokens: normalizedAdditionalInputTokens,
+        additionalMaxOutputTokens: allowedAdditionalMaxOutputTokens,
+        cumulativeInputTokens,
+        cumulativeMaxOutputTokens,
+        reservedNanoUsd,
+        reservedCredits: nanoUsdToCredits(reservedNanoUsd),
+        quota: toPublicQuota(updatedBudget),
+      };
+    });
+
+    context.reservedNanoUsd = result.reservedNanoUsd;
+    context.maxOutputTokens = result.cumulativeMaxOutputTokens;
+    return result;
+  }
+
   async markAiProviderStarted(context) {
     if (!context || context.mode === "public") return false;
     if (!context.reservationId) {
@@ -1193,7 +1414,15 @@ class AiAccessService {
 
   async recordAiUsage(
     context,
-    { requestId, provider, responseId, providerResponseId, model, usage } = {}
+    {
+      requestId,
+      provider,
+      responseId,
+      providerResponseId,
+      model,
+      usage,
+      responses,
+    } = {}
   ) {
     if (!context || context.mode === "public") {
       return {
@@ -1219,12 +1448,14 @@ class AiAccessService {
         "AI usage could not be recorded without a request identifier."
       );
     }
-    const normalizedProvider = normalizeIdentifier(provider || "openai", 48)
-      .toLowerCase();
-    const normalizedProviderResponseId = normalizeIdentifier(
-      firstDefined(providerResponseId, responseId),
-      160
-    );
+    const composite = normalizeCompositeProviderUsage(responses, {
+      provider,
+      responseId: firstDefined(providerResponseId, responseId),
+      model,
+      usage,
+    });
+    const normalizedProvider = composite.provider;
+    const normalizedProviderResponseId = composite.providerResponseId;
     if (!normalizedProvider || !normalizedProviderResponseId) {
       throw new AiAccessError(
         500,
@@ -1232,7 +1463,7 @@ class AiAccessService {
         "AI usage could not be recorded without a provider response identifier."
       );
     }
-    const catalogModel = resolveCatalogModel(model);
+    const catalogModel = composite.model;
     const price = readCatalogPrice(
       this.database,
       catalogModel,
@@ -1245,8 +1476,10 @@ class AiAccessService {
         "The AI model price is not configured."
       );
     }
-    const normalizedUsage = normalizeUsage(usage);
-    const calculated = calculateUsageCostNanoUsd(normalizedUsage, price);
+    const normalizedUsage = composite.usage;
+    const calculated = composite.segments
+      ? calculateCompositeUsageCost(composite.segments, price)
+      : calculateUsageCostNanoUsd(normalizedUsage, price);
     const now = this._now();
     let result;
     let reconciliation = null;
@@ -2270,7 +2503,15 @@ function validateAccountChats(data) {
       !isPlainJsonObject(chat) ||
       Object.keys(chat).some(
         (key) =>
-          !["id", "title", "createdAt", "updatedAt", "messages"].includes(key)
+          ![
+            "id",
+            "title",
+            "titleSource",
+            "titleLocked",
+            "createdAt",
+            "updatedAt",
+            "messages",
+          ].includes(key)
       )
     ) {
       throwInvalidAccountData("Each chat must be a JSON object.");
@@ -2281,6 +2522,15 @@ function validateAccountChats(data) {
     }
     ids.add(id);
     normalizeBoundedWorkspaceText(chat.title, 256, { required: false });
+    if (
+      chat.titleSource != null &&
+      !["auto", "manual"].includes(chat.titleSource)
+    ) {
+      throwInvalidAccountData("Chat title metadata is invalid.");
+    }
+    if (chat.titleLocked != null && typeof chat.titleLocked !== "boolean") {
+      throwInvalidAccountData("Chat title metadata is invalid.");
+    }
     validateRequiredWorkspaceTimestamp(chat.createdAt);
     validateRequiredWorkspaceTimestamp(chat.updatedAt);
     if (chat.updatedAt < chat.createdAt) {
@@ -2294,7 +2544,14 @@ function validateAccountChats(data) {
         !isPlainJsonObject(message) ||
         Object.keys(message).some(
           (key) =>
-            !["id", "role", "content", "title", "createdAt"].includes(key)
+            ![
+              "id",
+              "role",
+              "content",
+              "title",
+              "createdAt",
+              "editedAt",
+            ].includes(key)
         ) ||
         !["user", "assistant"].includes(String(message.role || ""))
       ) {
@@ -2315,6 +2572,12 @@ function validateAccountChats(data) {
       });
       normalizeBoundedWorkspaceText(message.title, 512, { required: false });
       validateRequiredWorkspaceTimestamp(message.createdAt);
+      if (message.editedAt != null) {
+        validateRequiredWorkspaceTimestamp(message.editedAt);
+        if (message.editedAt < message.createdAt) {
+          throwInvalidAccountData("Chat message timestamps are invalid.");
+        }
+      }
     }
   }
 
@@ -2335,6 +2598,7 @@ function validateAccountFiles(data) {
     "fileGroups",
     "miniProjects",
     "current",
+    "authorship",
   ]);
   if (
     Object.keys(data).some((key) => !allowedKeys.has(key)) ||
@@ -2365,6 +2629,19 @@ function validateAccountFiles(data) {
       throwInvalidAccountData("The file workspace contains an invalid file.");
     }
   }
+  if (data.authorship != null) {
+    if (!isPlainJsonObject(data.authorship)) {
+      throwInvalidAccountData("The file authorship metadata is invalid.");
+    }
+    for (const [name, authorship] of Object.entries(data.authorship)) {
+      if (!Object.prototype.hasOwnProperty.call(data.files, name)) {
+        throwInvalidAccountData(
+          "File authorship must identify an existing stored file."
+        );
+      }
+      validateWorkspaceAuthorship(authorship, data.files[name]);
+    }
+  }
   if (
     data.current != null &&
     (typeof data.current !== "string" ||
@@ -2380,6 +2657,7 @@ function validateAccountInstruction(data) {
     "revision",
     "markdown",
     "skillRefs",
+    "authorship",
   ]);
   if (
     Object.keys(data).some((key) => !allowedKeys.has(key)) ||
@@ -2414,6 +2692,34 @@ function validateAccountInstruction(data) {
     }
     skillIds.add(id);
   }
+  if (data.authorship != null) {
+    validateWorkspaceAuthorship(data.authorship, data.markdown);
+  }
+}
+
+function validateWorkspaceAuthorship(authorship, content) {
+  if (
+    !isPlainJsonObject(authorship) ||
+    Object.keys(authorship).some(
+      (key) => !["schemaVersion", "lines", "updatedAt"].includes(key)
+    ) ||
+    Number(authorship.schemaVersion) !== 1 ||
+    !Array.isArray(authorship.lines) ||
+    authorship.lines.length > MAX_WORKSPACE_AUTHORSHIP_LINES
+  ) {
+    throwInvalidAccountData("Workspace authorship metadata is invalid.");
+  }
+  const expectedLines = String(content).replace(/\r\n?/g, "\n").split("\n");
+  if (
+    authorship.lines.length !== expectedLines.length ||
+    authorship.lines.some(
+      (author) =>
+        typeof author !== "string" || !WORKSPACE_AUTHORSHIP_VALUES.has(author)
+    )
+  ) {
+    throwInvalidAccountData("Workspace authorship lines are invalid.");
+  }
+  validateRequiredWorkspaceTimestamp(authorship.updatedAt);
 }
 
 function normalizeBoundedWorkspaceText(value, maxBytes, { required }) {
@@ -2707,6 +3013,111 @@ function readCatalogPrice(database, model, version) {
       row.long_cache_write_nano_usd_per_token
     ),
     longOutputNanoUsdPerToken: Number(row.long_output_nano_usd_per_token),
+  };
+}
+
+function normalizeCompositeProviderUsage(responses, fallback) {
+  if (!Array.isArray(responses) || responses.length <= 1) {
+    return {
+      provider: normalizeIdentifier(fallback.provider || "openai", 48)
+        .toLowerCase(),
+      providerResponseId: normalizeIdentifier(fallback.responseId, 160),
+      model: resolveCatalogModel(fallback.model),
+      usage: normalizeUsage(fallback.usage),
+      segments: null,
+    };
+  }
+  if (responses.length > 3) {
+    throw new AiAccessError(
+      500,
+      "usage_counts_invalid",
+      "AI usage contains too many provider responses."
+    );
+  }
+  const segments = responses.map((response) => {
+    const provider = normalizeIdentifier(response?.provider || "openai", 48)
+      .toLowerCase();
+    const responseId = normalizeIdentifier(
+      firstDefined(response?.providerResponseId, response?.responseId),
+      160
+    );
+    const model = resolveCatalogModel(response?.model);
+    if (!provider || !responseId || !model) {
+      throw new AiAccessError(
+        500,
+        "provider_usage_id_missing",
+        "AI usage could not be recorded without provider response identifiers."
+      );
+    }
+    return {
+      provider,
+      responseId,
+      model,
+      usage: normalizeUsage(response?.usage),
+    };
+  });
+  const providers = new Set(segments.map((segment) => segment.provider));
+  const models = new Set(segments.map((segment) => segment.model));
+  const responseIds = new Set(segments.map((segment) => segment.responseId));
+  if (
+    providers.size !== 1 ||
+    models.size !== 1 ||
+    responseIds.size !== segments.length
+  ) {
+    throw new AiAccessError(
+      500,
+      "usage_counts_invalid",
+      "Composite AI usage contains inconsistent provider responses."
+    );
+  }
+  const usage = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 0,
+  };
+  for (const segment of segments) {
+    for (const key of Object.keys(usage)) {
+      usage[key] = addUsageCounts(usage[key], segment.usage[key]);
+    }
+  }
+  const provider = segments[0].provider;
+  const digest = crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify(
+        segments.map((segment) => [segment.provider, segment.responseId])
+      ),
+      "utf8"
+    )
+    .digest("hex");
+  return {
+    provider,
+    providerResponseId: `bundle:${digest}`,
+    model: segments[0].model,
+    usage,
+    segments,
+  };
+}
+
+function calculateCompositeUsageCost(segments, price) {
+  let costNanoUsd = 0;
+  let inputTokens = 0;
+  for (const segment of segments) {
+    inputTokens = addUsageCounts(inputTokens, segment.usage.inputTokens);
+    costNanoUsd = addCosts(
+      costNanoUsd,
+      calculateUsageCostNanoUsd(segment.usage, price).costNanoUsd
+    );
+  }
+  return {
+    costNanoUsd,
+    tier:
+      inputTokens > price.longContextThreshold
+        ? "long_context"
+        : "standard",
   };
 }
 

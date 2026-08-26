@@ -7,6 +7,15 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFile } = require("child_process");
+const {
+  AVR_COMPILE_CONTRACT,
+  AVR_COMPILE_HEALTH_SERVICE,
+  AVR_COMPILE_SERVER_VERSION,
+  createCompileEnvelope,
+} = require("./avr-compiler-contract");
+const {
+  inspectCompilerReadiness,
+} = require("./avr-compiler-readiness");
 
 const app = express();
 const SERVER_CWD = __dirname;
@@ -28,7 +37,12 @@ const ALLOWED_ORIGINS = new Set(
     .map((origin) => origin.trim())
     .filter(Boolean)
 );
-const COMPILE_SERVER_VERSION = "20260617-security-hardening-v1";
+// Keep this literal for the deployment health-check extractor. Runtime use is
+// guarded against the shared contract constant below.
+const COMPILE_SERVER_VERSION = "20260826-verification-contract-v1";
+if (COMPILE_SERVER_VERSION !== AVR_COMPILE_SERVER_VERSION) {
+  throw new Error("AVR compiler contract version mismatch.");
+}
 const MAX_CODE_SIZE = 64 * 1024;
 const MAX_PROJECT_SIZE = 512 * 1024;
 const MAX_PROJECT_FILES = 64;
@@ -157,24 +171,22 @@ app.use(express.json({ limit: "1mb" }));
 
 app.use((err, req, res, next) => {
   if (err && err.type === "entity.too.large") {
-    return res.status(413).json({
+    return res.status(413).json(createCompileEnvelope({
       ok: false,
-      compile_server_version: COMPILE_SERVER_VERSION,
       stage: "request",
       stderr: "Request body is too large.",
-    });
+    }));
   }
 
   if (
     err instanceof SyntaxError &&
     Object.prototype.hasOwnProperty.call(err, "body")
   ) {
-    return res.status(400).json({
+    return res.status(400).json(createCompileEnvelope({
       ok: false,
-      compile_server_version: COMPILE_SERVER_VERSION,
       stage: "request",
       stderr: "Invalid JSON request body.",
-    });
+    }));
   }
 
   return next(err);
@@ -183,12 +195,11 @@ app.use((err, req, res, next) => {
 function rejectCrossSiteApiRequests(req, res, next) {
   const fetchSite = String(req.get("sec-fetch-site") || "").toLowerCase();
   if (fetchSite === "cross-site") {
-    return res.status(403).json({
+    return res.status(403).json(createCompileEnvelope({
       ok: false,
-      compile_server_version: COMPILE_SERVER_VERSION,
       stage: "request",
       stderr: "Cross-site API requests are not allowed.",
-    });
+    }));
   }
 
   const origin = String(req.get("origin") || "").trim();
@@ -196,12 +207,11 @@ function rejectCrossSiteApiRequests(req, res, next) {
     return next();
   }
 
-  return res.status(403).json({
+  return res.status(403).json(createCompileEnvelope({
     ok: false,
-    compile_server_version: COMPILE_SERVER_VERSION,
     stage: "request",
     stderr: "Origin is not allowed.",
-  });
+  }));
 }
 
 function isAllowedOrigin(origin, req) {
@@ -219,12 +229,11 @@ function isAllowedOrigin(origin, req) {
 
 function requireJsonRequest(req, res, next) {
   if (!req.is("application/json")) {
-    return res.status(415).json({
+    return res.status(415).json(createCompileEnvelope({
       ok: false,
-      compile_server_version: COMPILE_SERVER_VERSION,
       stage: "request",
       stderr: "Content-Type must be application/json.",
-    });
+    }));
   }
 
   return next();
@@ -577,22 +586,29 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
     const { filename, code, mcu, optimize, project_files } = req.body || {};
 
     if (typeof code !== "string" || !code.length) {
-      return res.status(400).send('Missing "code".');
+      return res.status(400).json(createCompileEnvelope({
+        ok: false,
+        stage: "request",
+        stderr: 'Missing "code".',
+      }));
     }
     if (code.length > MAX_CODE_SIZE) {
-      return res.status(413).send("Code too large.");
+      return res.status(413).json(createCompileEnvelope({
+        ok: false,
+        stage: "request",
+        stderr: "Code too large.",
+      }));
     }
 
     const safeName = normalizeProjectFileName(filename) || "main.c";
 
     const MCU = normalizeMcu(mcu);
     if (!MCU) {
-      return res.status(400).json({
+      return res.status(400).json(createCompileEnvelope({
         ok: false,
-        compile_server_version: COMPILE_SERVER_VERSION,
         stage: "request",
         stderr: "Unsupported MCU target.",
-      });
+      }));
     }
 
     const requestedOptimize =
@@ -605,12 +621,11 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
     try {
       projectFiles = normalizeProjectFiles(project_files, safeName, code);
     } catch (error) {
-      return res.status(400).json({
+      return res.status(400).json(createCompileEnvelope({
         ok: false,
-        compile_server_version: COMPILE_SERVER_VERSION,
         stage: "project",
         stderr: error.message || String(error),
-      });
+      }));
     }
 
     const compilePlan = buildCompilePlan(safeName, projectFiles);
@@ -666,9 +681,8 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
         compileStderr += result.stderr.toString();
       } catch (err) {
         await rm(tmp, { recursive: true, force: true });
-        return res.status(400).json({
+        return res.status(400).json(createCompileEnvelope({
           ok: false,
-          compile_server_version: COMPILE_SERVER_VERSION,
           stage: "compile",
           compiler: getToolLabel(XC8_CC),
           failed_file: file.sourceName,
@@ -677,7 +691,7 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
           compiled_files: compilePlan.compileSourceNames,
           project_files: compilePlan.requiredFiles,
           ...getRunErrorDetails(err, XC8_CC, tmp),
-        });
+        }));
       }
     }
 
@@ -699,9 +713,8 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
       compileStderr += result.stderr.toString();
     } catch (err) {
       await rm(tmp, { recursive: true, force: true });
-      return res.status(400).json({
+      return res.status(400).json(createCompileEnvelope({
         ok: false,
-        compile_server_version: COMPILE_SERVER_VERSION,
         stage: "link",
         compiler: getToolLabel(XC8_CC),
         cmd: linkCommand,
@@ -709,7 +722,7 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
         compiled_files: compilePlan.compileSourceNames,
         project_files: compilePlan.requiredFiles,
         ...getRunErrorDetails(err, XC8_CC, tmp),
-      });
+      }));
     }
 
     const objcopyArgs = ["-O", "ihex", elfPath, hexPath];
@@ -718,24 +731,22 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
       await run(AVR_OBJCOPY, objcopyArgs, { timeout: 10000, cwd: tmp });
     } catch (err) {
       await rm(tmp, { recursive: true, force: true });
-      return res.status(400).json({
+      return res.status(400).json(createCompileEnvelope({
         ok: false,
-        compile_server_version: COMPILE_SERVER_VERSION,
         stage: "objcopy",
         tool: getToolLabel(AVR_OBJCOPY),
         cmd: getDisplayCommand(AVR_OBJCOPY, objcopyArgs, tmp),
         compiled_files: compilePlan.compileSourceNames,
         project_files: compilePlan.requiredFiles,
         ...getRunErrorDetails(err, AVR_OBJCOPY, tmp),
-      });
+      }));
     }
 
     const hex = await readFile(hexPath, "utf8");
     await rm(tmp, { recursive: true, force: true });
 
-    res.json({
+    res.json(createCompileEnvelope({
       ok: true,
-      compile_server_version: COMPILE_SERVER_VERSION,
       hex,
       hex_name: safeName.replace(/\.c$/i, "") + ".hex",
       compiler: getToolLabel(XC8_CC),
@@ -745,7 +756,7 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
       project_files: compilePlan.requiredFiles,
       compile_stdout: sanitizeTextForResponse(compileStdout, tmp),
       compile_stderr: sanitizeTextForResponse(compileStderr, tmp),
-    });
+    }));
   } catch (e) {
     if (tmp) {
       try {
@@ -754,13 +765,27 @@ app.post("/api/avr/compile", requireJsonRequest, async (req, res) => {
     }
 
     console.error(e);
-    res.status(500).send("Internal error.");
+    res.status(500).json(createCompileEnvelope({
+      ok: false,
+      stage: "server",
+      stderr: "Internal compiler service error.",
+    }));
   }
 });
 
-app.get("/health", (req, res) =>
-  res.type("text/plain").send(`ok ${COMPILE_SERVER_VERSION}\n`)
-);
+app.get("/health", (req, res) => {
+  const readiness = inspectCompilerReadiness({
+    xc8Cc: XC8_CC,
+    avrObjcopy: AVR_OBJCOPY,
+    dfpPath: DFP_PATH,
+  });
+  return res.status(readiness.ready ? 200 : 503).json(createCompileEnvelope({
+    ok: readiness.ready,
+    service: AVR_COMPILE_HEALTH_SERVICE,
+    contract: AVR_COMPILE_CONTRACT,
+    checks: readiness.checks,
+  }));
+});
 
 app.listen(PORT, HOST, () => {
   console.log(

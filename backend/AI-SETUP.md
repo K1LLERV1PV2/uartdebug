@@ -153,6 +153,36 @@ generated drafts go to the operating system's temporary directory. Set
 Starting the process without `AI_ENABLED=1` and a readable key file keeps the
 health and status endpoints available but disables assistant responses.
 
+## Compiler verification and repair
+
+Project create/update responses are not persisted or returned until their C
+source passes the trusted AVR compiler service. The AI service checks compiler
+readiness before input-token accounting or any paid OpenAI request. The compiler
+health endpoint fails closed unless `XC8_CC` and `AVR_OBJCOPY` resolve to regular
+executable files and `XC8_DFP` is a readable, traversable directory. Health and
+compile responses carry the shared `uartdebug-avr-compile/v1` contract and exact
+server version; a missing, stale, or malformed contract is an error, never a
+successful verification.
+
+These AI-service variables control the integration:
+
+| Variable | Production value | Meaning |
+| --- | --- | --- |
+| `AI_COMPILE_VERIFY_ENABLED` | `1` | Require compiler verification for project create/update requests. |
+| `AI_COMPILE_URL` | `http://127.0.0.1:8082/api/avr/compile` | Private compiler endpoint. |
+| `AI_COMPILE_HEALTH_URL` | `http://127.0.0.1:8082/health` | Readiness and contract endpoint checked before OpenAI. |
+| `AI_COMPILE_HEALTH_TIMEOUT_MS` | `5000` | Readiness-request deadline. |
+| `AI_COMPILE_TIMEOUT_MS` | `65000` | Deadline for each generated-project compile attempt. |
+| `AI_COMPILE_MAX_REPAIR_ATTEMPTS` | `2` | Maximum compiler-guided AI repair calls after the initial generation. |
+
+Repair calls receive the original untrusted user context, the complete candidate
+project, and sanitized compiler diagnostics. Each repaired candidate is compiled
+again. Generation, compilation, and repair expose `in_progress`, `completed`,
+and `failed` progress events over optional NDJSON streaming; ordinary JSON
+clients remain supported. If provider usage becomes ambiguous during repair,
+the expanded reservation is retained for reconciliation instead of being
+partially settled or released.
+
 Generation is public to visitors of the AVR page during the prototype stage.
 The OpenAI key remains server-only; the browser never receives it. Same-origin
 checks and technical request safeguards still apply. There is currently no
@@ -222,8 +252,9 @@ have the authorized client send the credential in the
 access credential.
 
 Before the first GitHub deployment that contains `ai-server.js`, bootstrap the
-service once with `deploy/install-ai-service.sh`. Run it again whenever the
-checked-in unit, credential list, writable paths, or one-time host setup changes:
+service once with `deploy/install-ai-service.sh`. Run it again when the
+credential list, service account, writable paths, or another one-time host
+foundation changes:
 
 ```sh
 sudo /bin/bash /var/www/uartdebug/backend/deploy/install-ai-service.sh \
@@ -237,11 +268,12 @@ it, and restarts the service. If an access database already exists, `sqlite3` is
 required and the installer takes a consistent online backup before changing the
 service.
 
-This manual step matters: the normal GitHub deployment uploads versioned backend
-files and restarts the already-installed `uartdebug-ai.service`, but it does not
-copy a changed unit into `/etc/systemd/system`, create new credential files, or
-create new persistent data directories. A code deploy alone therefore does not
-activate systemd-foundation changes.
+The normal GitHub deployment validates and installs the checked-in
+`uartdebug-ai.service` unit, runs `systemctl daemon-reload`, and then restarts the
+already-bootstrapped service. It deliberately does not create the service
+account, credential files, or persistent data directories. A unit-only change
+therefore ships with the normal workflow, while a host-foundation change still
+requires the installer above.
 
 The deployment workflow invokes `backup-ai-access-database.sh` before switching
 the backend release or restarting the AI service. The helper uses SQLite's
