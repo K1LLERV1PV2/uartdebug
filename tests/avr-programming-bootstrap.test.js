@@ -1228,7 +1228,7 @@ test("does not render the obsolete AI context row", () => {
   assert.match(source, /detectedMcu/);
 });
 
-test("lets the guide pane grow until the editor reaches its minimum width", () => {
+test("snaps the guide pane and resolves one shared AVR side-panel budget", () => {
   const css = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.css"),
     "utf8"
@@ -1240,7 +1240,39 @@ test("lets the guide pane grow until the editor reaches its minimum width", () =
 
   assert.match(
     source,
-    /rect\.width\s*-\s*outlinerWidth\s*-\s*OUTLINER_EDITOR_MIN_WIDTH\s*-\s*SPLIT_RESIZER_TOTAL_WIDTH/
+    /const DOCUMENTATION_COMPACT_WIDTH\s*=\s*62;/
+  );
+  assert.match(
+    source,
+    /const DOCUMENTATION_COMPACT_THRESHOLD\s*=\s*112;/
+  );
+  assert.match(
+    source,
+    /function getAvrSidePanelBudget\(\)[\s\S]*?OUTLINER_EDITOR_MIN_WIDTH\s*-\s*SPLIT_RESIZER_TOTAL_WIDTH/
+  );
+  assert.match(
+    source,
+    /function resolveAvrWorkspaceWidths\([\s\S]*?priority === "outliner"[\s\S]*?budget - outliner[\s\S]*?priority === "documentation"[\s\S]*?budget - documentation/
+  );
+  assert.match(
+    source,
+    /function applyOutlinerWidth\([\s\S]*?resolveAvrWorkspaceWidths\(\s*requested,\s*documentationPreferredWidth,\s*"outliner"\s*\)/
+  );
+  assert.match(
+    source,
+    /function applyDocumentationWidth\([\s\S]*?resolveAvrWorkspaceWidths\(\s*outlinerPreferredWidth,\s*requested,\s*"documentation"\s*\)/
+  );
+  assert.match(
+    source,
+    /outlinerPreferredWidth\s*=\s*resolved\.outliner;[\s\S]*?documentationPreferredWidth\s*=\s*resolved\.documentation;/
+  );
+  assert.match(
+    source,
+    /normalizeDocumentationPreference\(width\)[\s\S]*?numeric <= DOCUMENTATION_COMPACT_THRESHOLD[\s\S]*?return DOCUMENTATION_COMPACT_WIDTH;/
+  );
+  assert.match(
+    source,
+    /documentationExpandedMinWidth\s*=\s*Math\.max\([\s\S]*?panelChrome\s*\+[\s\S]*?controlsWidth/
   );
   assert.doesNotMatch(source, /halfSplitWidth/);
   assert.doesNotMatch(source, /availableDocumentationWidth\s*\/\s*2/);
@@ -1248,6 +1280,19 @@ test("lets the guide pane grow until the editor reaches its minimum width", () =
   assert.match(
     css,
     /--editor-workspace-min-width:\s*500px;[\s\S]*?minmax\(var\(--editor-workspace-min-width\), 1fr\)/
+  );
+  assert.match(css, /--documentation-compact-width:\s*62px;/);
+  assert.match(
+    css,
+    /minmax\(var\(--documentation-compact-width\), var\(--documentation-width\)\)/
+  );
+  assert.match(
+    css,
+    /\.canvas-split-container\.is-documentation-compact\s*\{[\s\S]*?--documentation-width:\s*var\(--documentation-compact-width\);/
+  );
+  assert.match(
+    css,
+    /\.canvas-split-container\.is-documentation-compact[\s\S]*?\.project-documentation-panel\s*> \*\s*\{[\s\S]*?display:\s*none !important;/
   );
   assert.match(
     css,
@@ -1283,7 +1328,10 @@ test("uses one CommonMark GFM runtime across every Markdown surface", () => {
 
   assert.ok(runtimeIndex >= 0 && runtimeIndex < avrIndex);
   assert.match(sw, /\/vendor\/uartdebug-markdown\.js/);
-  assert.doesNotMatch(html, /id="documentationEditToggle"/);
+  assert.match(
+    html,
+    /id="documentationEditToggle"[\s\S]*?aria-pressed="false"[\s\S]*?>\s*Edit\s*<\/button>/
+  );
   assert.match(
     html,
     /project-documentation-scroll project-documentation-live-editor markdown-live-editor[\s\S]*?id="projectDocumentationScroll"[\s\S]*?id="projectDocumentationEditor"/
@@ -1295,6 +1343,22 @@ test("uses one CommonMark GFM runtime across every Markdown surface", () => {
   assert.match(source, /registerMarkdownLiveEditor\("instruction"/);
   assert.match(source, /registerMarkdownLiveEditor\("documentation"/);
   assert.match(source, /registerMarkdownLiveEditor\("editor"/);
+  assert.match(
+    source,
+    /function bindDocumentationWorkspace\(\)[\s\S]*?CodeMirror\.fromTextArea\(editorElement,[\s\S]*?readOnly:\s*true,/
+  );
+  assert.match(
+    source,
+    /function setDocumentationEditMode\(editing\)[\s\S]*?documentationEditMode\s*=\s*nextMode;[\s\S]*?refreshDocumentationPane\(\{ preserveScroll: true \}\)/
+  );
+  assert.match(
+    source,
+    /const readOnly\s*=\s*!documentationEditMode;[\s\S]*?documentationEditor\?\.setOption\("readOnly", readOnly\)[\s\S]*?aria-readonly/
+  );
+  assert.match(
+    source,
+    /documentationEditToggle\.addEventListener\("click", \(\) => \{[\s\S]*?setDocumentationEditMode\(!documentationEditMode\)/
+  );
   assert.match(source, /getMarkdownLiveRenderedElement\(cache, node, "table"\)/);
   assert.match(source, /\["image", "imageReference"\]\.includes\(node\.type\)/);
   assert.match(source, /node\.type === "footnoteReference"/);
@@ -1303,10 +1367,29 @@ test("uses one CommonMark GFM runtime across every Markdown surface", () => {
   assert.match(source, /childEnd\.ch < end\.ch/);
 });
 
-test("wires AI quotes, authorship, chat actions, and detected MCU context", () => {
+test("wires safe prompt quotes, external chat actions, and hidden provenance", () => {
+  const html = fs.readFileSync(
+    path.join(__dirname, "../public/avr.html"),
+    "utf8"
+  );
+  const css = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.css"),
+    "utf8"
+  );
   const source = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.js"),
     "utf8"
+  );
+  const promptHighlightStart = source.indexOf(
+    "function renderProjectAiPromptHighlight()"
+  );
+  const promptHighlightEnd = source.indexOf(
+    "function setProjectAiPromptValue",
+    promptHighlightStart
+  );
+  const promptHighlightSource = source.slice(
+    promptHighlightStart,
+    promptHighlightEnd
   );
 
   assert.match(source, /function bindCodeMirrorQuoteSurface/);
@@ -1319,9 +1402,74 @@ test("wires AI quotes, authorship, chat actions, and detected MCU context", () =
   assert.match(source, /dataset\.editMessageId/);
   assert.match(source, /dataset\.renameChatId/);
   assert.match(source, /deriveProjectAiChatTitle/);
+  assert.match(
+    html,
+    /class="project-ai-prompt-field"[\s\S]*?id="projectAiPromptHighlight"[\s\S]*?aria-hidden="true"[\s\S]*?id="projectAiPrompt"/
+  );
+  assert.ok(
+    promptHighlightStart >= 0 && promptHighlightEnd > promptHighlightStart
+  );
+  assert.match(promptHighlightSource, /document\.createDocumentFragment\(\)/);
+  assert.match(promptHighlightSource, /document\.createElement\("span"\)/);
+  assert.match(promptHighlightSource, /line\.textContent\s*=\s*rawLine/);
+  assert.match(promptHighlightSource, /highlight\.replaceChildren\(fragment\)/);
+  assert.doesNotMatch(promptHighlightSource, /innerHTML/);
+  assert.match(
+    source,
+    /projectAiPrompt\.addEventListener\("input", renderProjectAiPromptHighlight\)/
+  );
+  assert.match(
+    source,
+    /projectAiPrompt\.addEventListener\(\s*"scroll",\s*syncProjectAiPromptHighlightScroll/
+  );
+  assert.match(
+    source,
+    /prompt\.offsetWidth\s*-\s*prompt\.clientWidth[\s\S]*?highlight\.style\.right/
+  );
+  assert.match(
+    css,
+    /\.project-ai-prompt-highlight\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?color:\s*transparent;[\s\S]*?pointer-events:\s*none;/
+  );
+  assert.match(
+    css,
+    /\.project-ai-prompt-highlight-line\.is-quote\s*\{[\s\S]*?linear-gradient\([\s\S]*?rgba\(112, 205, 145, 0\.075\);/
+  );
+  assert.match(
+    css,
+    /#projectAiPrompt\s*\{[\s\S]*?scrollbar-gutter:\s*stable;/
+  );
+  assert.match(
+    source,
+    /article\.appendChild\(bubble\);[\s\S]*?actions\.className = "project-ai-message-actions";[\s\S]*?article\.appendChild\(actions\);/
+  );
+  assert.match(
+    css,
+    /\.project-ai-message-bubble\s*\{[\s\S]*?padding:\s*10px 11px;[\s\S]*?border-radius:/
+  );
+  assert.match(
+    css,
+    /\.project-ai-message-actions\s*\{[\s\S]*?margin-top:\s*3px;[\s\S]*?align-self:\s*flex-start;/
+  );
+  assert.match(
+    source,
+    /bubble\.hidden\s*=\s*true;[\s\S]*?actions\.hidden\s*=\s*true;[\s\S]*?form\.className\s*=\s*"project-ai-message-edit-form";/
+  );
+  assert.match(
+    css,
+    /\.project-ai-message-edit-form\s*\{[\s\S]*?padding:\s*12px;[\s\S]*?border:\s*1px solid[\s\S]*?border-radius:\s*14px;[\s\S]*?box-shadow:/
+  );
+  assert.match(
+    css,
+    /\.project-ai-message-edit-form textarea:focus\s*\{[\s\S]*?box-shadow:\s*0 0 0 3px/
+  );
   assert.match(source, /MARKDOWN_AUTHORSHIP_VALUES/);
   assert.match(source, /sourceAuthorship/);
   assert.match(source, /guideAuthorship/);
+  assert.doesNotMatch(source, /addMarkdownAuthorshipGutter/);
+  assert.doesNotMatch(source, /setGutterMarker\(/);
+  assert.doesNotMatch(source, /markdown-authorship-gutter/);
+  assert.doesNotMatch(css, /markdown-authorship-gutter/);
+  assert.doesNotMatch(css, /markdown-authorship-marker/);
   assert.match(source, /instructionDocument:[\s\S]*?getProjectInstructionSnapshot/);
   assert.match(source, /detectedMcu/);
   assert.match(source, /renderProjectAiThinkingProgress/);

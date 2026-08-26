@@ -54,6 +54,8 @@
   const OUTLINER_MIN_EXPANDED_WIDTH = 180;
   const OUTLINER_EDITOR_MIN_WIDTH = 500;
   const DOCUMENTATION_DEFAULT_WIDTH = 360;
+  const DOCUMENTATION_COMPACT_WIDTH = 62;
+  const DOCUMENTATION_COMPACT_THRESHOLD = 112;
   const DOCUMENTATION_MIN_WIDTH = 240;
   const SPLIT_RESIZER_TOTAL_WIDTH = 28;
   const PROJECT_AI_CHAT_DEFAULT_WIDTH = 320;
@@ -130,12 +132,14 @@
   let outlinerResizeState = null;
   let documentationWidth = DOCUMENTATION_DEFAULT_WIDTH;
   let documentationPreferredWidth = DOCUMENTATION_DEFAULT_WIDTH;
+  let documentationExpandedMinWidth = DOCUMENTATION_MIN_WIDTH;
   let documentationResizeState = null;
   let documentationHeadingIndex = new Map();
   let documentationMarkerHandles = [];
   let documentationMarkerFrame = null;
   let documentationRenderTimer = null;
   let documentationTargetTimer = null;
+  let documentationEditMode = false;
   let documentationEditor = null;
   let documentationEditorSyncing = false;
   let documentationEditSaveTimer = null;
@@ -2814,25 +2818,26 @@
     return window.matchMedia?.("(max-width: 1040px)")?.matches || false;
   }
 
-  function getOutlinerMaxWidth() {
+  function getAvrSidePanelBudget() {
     const container = getCanvasSplitContainer();
-    if (!container) return Math.max(OUTLINER_MIN_EXPANDED_WIDTH, outlinerWidth);
-    if (isStackedCanvasLayout()) {
+    if (!container || isStackedCanvasLayout()) {
       return Math.max(
-        OUTLINER_MIN_EXPANDED_WIDTH,
-        Math.round(container.getBoundingClientRect().width)
+        OUTLINER_MIN_EXPANDED_WIDTH + DOCUMENTATION_MIN_WIDTH,
+        outlinerWidth + documentationWidth
       );
     }
+    return Math.max(
+      OUTLINER_COMPACT_WIDTH + DOCUMENTATION_COMPACT_WIDTH,
+      Math.round(container.getBoundingClientRect().width) -
+        OUTLINER_EDITOR_MIN_WIDTH -
+        SPLIT_RESIZER_TOTAL_WIDTH
+    );
+  }
 
-    const rect = container.getBoundingClientRect();
-    const available =
-      rect.width -
-      OUTLINER_EDITOR_MIN_WIDTH -
-      documentationWidth -
-      SPLIT_RESIZER_TOTAL_WIDTH;
+  function getOutlinerMaxWidth() {
     return Math.max(
       OUTLINER_MIN_EXPANDED_WIDTH,
-      available
+      getAvrSidePanelBudget() - DOCUMENTATION_COMPACT_WIDTH
     );
   }
 
@@ -2844,6 +2849,129 @@
       OUTLINER_MIN_EXPANDED_WIDTH,
       Math.min(getOutlinerMaxWidth(), numeric)
     );
+  }
+
+  function fitAvrSidePanelWidth(width, available, expandedMinimum, compactWidth) {
+    if (width <= compactWidth) return compactWidth;
+    if (available < expandedMinimum) return compactWidth;
+    return Math.max(expandedMinimum, Math.min(width, available));
+  }
+
+  function resolveAvrWorkspaceWidths(
+    requestedOutlinerWidth,
+    requestedDocumentationWidth,
+    priority = "balanced"
+  ) {
+    const budget = getAvrSidePanelBudget();
+    const documentationMinimum = getDocumentationMinWidth();
+    let outliner = normalizeOutlinerPreference(requestedOutlinerWidth);
+    let documentation = normalizeDocumentationPreference(
+      requestedDocumentationWidth
+    );
+
+    outliner = Math.min(getOutlinerMaxWidth(), outliner);
+    documentation = Math.min(getDocumentationMaxWidth(), documentation);
+    if (outliner + documentation <= budget) {
+      return { outliner: Math.round(outliner), documentation: Math.round(documentation) };
+    }
+
+    if (priority === "outliner") {
+      documentation = fitAvrSidePanelWidth(
+        documentation,
+        budget - outliner,
+        documentationMinimum,
+        DOCUMENTATION_COMPACT_WIDTH
+      );
+      outliner = fitAvrSidePanelWidth(
+        outliner,
+        budget - documentation,
+        OUTLINER_MIN_EXPANDED_WIDTH,
+        OUTLINER_COMPACT_WIDTH
+      );
+    } else if (priority === "documentation") {
+      outliner = fitAvrSidePanelWidth(
+        outliner,
+        budget - documentation,
+        OUTLINER_MIN_EXPANDED_WIDTH,
+        OUTLINER_COMPACT_WIDTH
+      );
+      documentation = fitAvrSidePanelWidth(
+        documentation,
+        budget - outliner,
+        documentationMinimum,
+        DOCUMENTATION_COMPACT_WIDTH
+      );
+    } else {
+      const reducibleOutliner = Math.max(
+        0,
+        outliner - OUTLINER_MIN_EXPANDED_WIDTH
+      );
+      const reducibleDocumentation = Math.max(
+        0,
+        documentation - documentationMinimum
+      );
+      const reducibleTotal = reducibleOutliner + reducibleDocumentation;
+      const overflow = outliner + documentation - budget;
+      if (reducibleTotal > 0) {
+        const appliedOverflow = Math.min(overflow, reducibleTotal);
+        outliner -=
+          appliedOverflow * (reducibleOutliner / reducibleTotal);
+        documentation -=
+          appliedOverflow * (reducibleDocumentation / reducibleTotal);
+      }
+      if (outliner + documentation > budget) {
+        outliner = OUTLINER_COMPACT_WIDTH;
+        documentation = fitAvrSidePanelWidth(
+          documentation,
+          budget - outliner,
+          documentationMinimum,
+          DOCUMENTATION_COMPACT_WIDTH
+        );
+      }
+    }
+
+    return {
+      outliner: Math.round(outliner),
+      documentation: Math.round(documentation),
+    };
+  }
+
+  function renderAvrWorkspaceWidths(
+    resolved,
+    { persist = true, remember = true } = {}
+  ) {
+    const container = getCanvasSplitContainer();
+    outlinerWidth = resolved.outliner;
+    documentationWidth = resolved.documentation;
+    if (remember) {
+      outlinerPreferredWidth = resolved.outliner;
+      documentationPreferredWidth = resolved.documentation;
+    }
+
+    if (container) {
+      const outlinerCompact = outlinerWidth <= OUTLINER_COMPACT_THRESHOLD;
+      const documentationCompact =
+        !isStackedCanvasLayout() &&
+        documentationWidth <= DOCUMENTATION_COMPACT_THRESHOLD;
+      container.style.setProperty("--outliner-width", `${outlinerWidth}px`);
+      container.style.setProperty(
+        "--documentation-width",
+        `${documentationWidth}px`
+      );
+      container.classList.toggle("is-outliner-compact", outlinerCompact);
+      container.classList.toggle(
+        "is-documentation-compact",
+        documentationCompact
+      );
+    }
+
+    syncSplitResizerAria();
+    if (persist) {
+      persistOutlinerWidth(outlinerPreferredWidth);
+      persistDocumentationWidth(documentationPreferredWidth);
+    }
+    refreshEditorAfterOutlinerResize();
+    window.requestAnimationFrame(() => documentationEditor?.refresh());
   }
 
   function persistOutlinerWidth(width) {
@@ -2865,30 +2993,13 @@
     width,
     { persist = true, remember = true } = {}
   ) {
-    const container = getCanvasSplitContainer();
-    if (remember) outlinerPreferredWidth = normalizeOutlinerPreference(width);
-    const normalized = normalizeOutlinerWidth(width);
-    outlinerWidth = normalized;
-
-    if (container) {
-      const isCompact = normalized <= OUTLINER_COMPACT_THRESHOLD;
-      container.style.setProperty("--outliner-width", `${normalized}px`);
-      container.classList.toggle("is-outliner-compact", isCompact);
-    }
-
-    if (
-      container &&
-      !isStackedCanvasLayout() &&
-      documentationWidth > getDocumentationMaxWidth()
-    ) {
-      applyDocumentationWidth(documentationPreferredWidth, {
-        persist: false,
-        remember: false,
-      });
-    }
-    syncSplitResizerAria();
-    if (persist) persistOutlinerWidth(outlinerPreferredWidth);
-    refreshEditorAfterOutlinerResize();
+    const requested = normalizeOutlinerPreference(width);
+    const resolved = resolveAvrWorkspaceWidths(
+      requested,
+      documentationPreferredWidth,
+      "outliner"
+    );
+    renderAvrWorkspaceWidths(resolved, { persist, remember });
   }
 
   function restoreOutlinerWidth() {
@@ -2899,14 +3010,29 @@
     } catch (error) {
       console.warn("Failed to restore file list width:", error);
     }
-    applyOutlinerWidth(Number.isFinite(stored) ? stored : OUTLINER_DEFAULT_WIDTH, {
-      persist: false,
-    });
+    outlinerPreferredWidth = normalizeOutlinerPreference(
+      Number.isFinite(stored) ? stored : OUTLINER_DEFAULT_WIDTH
+    );
+    renderAvrWorkspaceWidths(
+      resolveAvrWorkspaceWidths(
+        outlinerPreferredWidth,
+        documentationPreferredWidth,
+        "balanced"
+      ),
+      { persist: false, remember: false }
+    );
   }
 
   function expandOutlinerForEditing() {
     if (outlinerWidth <= OUTLINER_COMPACT_THRESHOLD) {
       applyOutlinerWidth(OUTLINER_DEFAULT_WIDTH);
+    }
+  }
+
+  function expandDocumentationForNavigation() {
+    if (documentationWidth <= DOCUMENTATION_COMPACT_THRESHOLD) {
+      applyDocumentationWidth(DOCUMENTATION_DEFAULT_WIDTH);
+      documentationEditor?.refresh();
     }
   }
 
@@ -2983,8 +3109,11 @@
 
   function getDocumentationMinWidth() {
     const strip = document.querySelector(".documentation-action-strip");
-    if (!strip) return DOCUMENTATION_MIN_WIDTH;
+    const panel = $("projectDocumentationPane");
+    if (!strip || !panel) return documentationExpandedMinWidth;
     const style = window.getComputedStyle?.(strip);
+    if (style?.display === "none") return documentationExpandedMinWidth;
+    const panelStyle = window.getComputedStyle?.(panel);
     const controls = [...strip.children].filter((element) => {
       const controlStyle = window.getComputedStyle?.(element);
       return !element.hidden && controlStyle?.display !== "none";
@@ -2993,43 +3122,33 @@
     const horizontalPadding =
       (Number.parseFloat(style?.paddingLeft || "0") || 0) +
       (Number.parseFloat(style?.paddingRight || "0") || 0);
+    const panelChrome =
+      (Number.parseFloat(panelStyle?.paddingLeft || "0") || 0) +
+      (Number.parseFloat(panelStyle?.paddingRight || "0") || 0) +
+      (Number.parseFloat(panelStyle?.borderLeftWidth || "0") || 0) +
+      (Number.parseFloat(panelStyle?.borderRightWidth || "0") || 0);
     const controlsWidth = controls.reduce(
       (total, element) => total + element.getBoundingClientRect().width,
       0
     );
-    return Math.max(
+    documentationExpandedMinWidth = Math.max(
       DOCUMENTATION_MIN_WIDTH,
       Math.ceil(
+        panelChrome +
         horizontalPadding +
           controlsWidth +
           Math.max(0, controls.length - 1) * gap +
           2
       )
     );
+    return documentationExpandedMinWidth;
   }
 
   function getDocumentationMaxWidth() {
     const minimum = getDocumentationMinWidth();
-    const container = getCanvasSplitContainer();
-    if (!container) {
-      return Math.max(minimum, documentationWidth);
-    }
-    if (isStackedCanvasLayout()) {
-      return Math.max(
-        minimum,
-        Math.round(container.getBoundingClientRect().width)
-      );
-    }
-
-    const rect = container.getBoundingClientRect();
-    const availableDocumentationWidth =
-      rect.width -
-      outlinerWidth -
-      OUTLINER_EDITOR_MIN_WIDTH -
-      SPLIT_RESIZER_TOTAL_WIDTH;
     return Math.max(
       minimum,
-      availableDocumentationWidth
+      getAvrSidePanelBudget() - OUTLINER_COMPACT_WIDTH
     );
   }
 
@@ -3043,6 +3162,9 @@
   function normalizeDocumentationWidth(width) {
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return DOCUMENTATION_DEFAULT_WIDTH;
+    if (numeric <= DOCUMENTATION_COMPACT_THRESHOLD) {
+      return DOCUMENTATION_COMPACT_WIDTH;
+    }
     const minimum = getDocumentationMinWidth();
     return Math.max(
       minimum,
@@ -3053,6 +3175,9 @@
   function normalizeDocumentationPreference(width) {
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return DOCUMENTATION_DEFAULT_WIDTH;
+    if (numeric <= DOCUMENTATION_COMPACT_THRESHOLD) {
+      return DOCUMENTATION_COMPACT_WIDTH;
+    }
     return Math.max(getDocumentationMinWidth(), numeric);
   }
 
@@ -3071,7 +3196,7 @@
     if (documentationResizer) {
       documentationResizer.setAttribute(
         "aria-valuemin",
-        String(getDocumentationMinWidth())
+        String(DOCUMENTATION_COMPACT_WIDTH)
       );
       documentationResizer.setAttribute(
         "aria-valuemax",
@@ -3081,6 +3206,13 @@
         "aria-valuenow",
         String(documentationWidth)
       );
+      const compact =
+        documentationWidth <= DOCUMENTATION_COMPACT_THRESHOLD;
+      documentationResizer.setAttribute(
+        "aria-valuetext",
+        compact ? "Collapsed" : `${documentationWidth} pixels`
+      );
+      documentationResizer.setAttribute("aria-expanded", String(!compact));
     }
   }
 
@@ -3096,20 +3228,13 @@
     width,
     { persist = true, remember = true } = {}
   ) {
-    const container = getCanvasSplitContainer();
-    if (remember) {
-      documentationPreferredWidth = normalizeDocumentationPreference(width);
-    }
-    const normalized = normalizeDocumentationWidth(width);
-    documentationWidth = normalized;
-
-    if (container) {
-      container.style.setProperty("--documentation-width", `${normalized}px`);
-    }
-
-    syncSplitResizerAria();
-    if (persist) persistDocumentationWidth(documentationPreferredWidth);
-    refreshEditorAfterOutlinerResize();
+    const requested = normalizeDocumentationPreference(width);
+    const resolved = resolveAvrWorkspaceWidths(
+      outlinerPreferredWidth,
+      requested,
+      "documentation"
+    );
+    renderAvrWorkspaceWidths(resolved, { persist, remember });
   }
 
   function restoreDocumentationWidth() {
@@ -3121,9 +3246,16 @@
       console.warn("Failed to restore project guide width:", error);
     }
 
-    applyDocumentationWidth(
-      Number.isFinite(stored) ? stored : DOCUMENTATION_DEFAULT_WIDTH,
-      { persist: false }
+    documentationPreferredWidth = normalizeDocumentationPreference(
+      Number.isFinite(stored) ? stored : DOCUMENTATION_DEFAULT_WIDTH
+    );
+    renderAvrWorkspaceWidths(
+      resolveAvrWorkspaceWidths(
+        outlinerPreferredWidth,
+        documentationPreferredWidth,
+        "balanced"
+      ),
+      { persist: false, remember: false }
     );
   }
 
@@ -3175,11 +3307,14 @@
       let nextWidth = documentationWidth;
 
       if (event.key === "ArrowLeft") {
-        nextWidth += step;
+        nextWidth =
+          documentationWidth <= DOCUMENTATION_COMPACT_THRESHOLD
+            ? getDocumentationMinWidth()
+            : documentationWidth + step;
       } else if (event.key === "ArrowRight") {
         nextWidth -= step;
       } else if (event.key === "Home") {
-        nextWidth = getDocumentationMinWidth();
+        nextWidth = DOCUMENTATION_COMPACT_WIDTH;
       } else if (event.key === "End") {
         nextWidth = getDocumentationMaxWidth();
       } else {
@@ -3487,18 +3622,14 @@
       if (workspaceResizeFrame !== null) return;
       workspaceResizeFrame = window.requestAnimationFrame(() => {
         workspaceResizeFrame = null;
-        applyDocumentationWidth(documentationPreferredWidth, {
-          persist: false,
-          remember: false,
-        });
-        applyOutlinerWidth(outlinerPreferredWidth, {
-          persist: false,
-          remember: false,
-        });
-        applyDocumentationWidth(documentationPreferredWidth, {
-          persist: false,
-          remember: false,
-        });
+        renderAvrWorkspaceWidths(
+          resolveAvrWorkspaceWidths(
+            outlinerPreferredWidth,
+            documentationPreferredWidth,
+            "balanced"
+          ),
+          { persist: false, remember: false }
+        );
         applyProjectAiWidths(
           projectAiChatPreferredWidth,
           projectAiSkillsPreferredWidth,
@@ -5433,9 +5564,6 @@
       } catch {}
     }
     state.lineClasses = [];
-    try {
-      state.editor.clearGutter("markdown-authorship-gutter");
-    } catch {}
   }
 
   function addMarkdownLiveMark(state, from, to, options = {}) {
@@ -5480,26 +5608,6 @@
       return null;
     }
     return { start, end };
-  }
-
-  function addMarkdownAuthorshipGutter(state, markdown) {
-    const authorship = normalizeMarkdownAuthorship(
-      state.getAuthorship?.(),
-      markdown
-    );
-    for (let line = 0; line < authorship.lines.length; line += 1) {
-      const author = authorship.lines[line];
-      if (author === "original") continue;
-      const marker = document.createElement("span");
-      marker.className = `markdown-authorship-marker is-${author}`;
-      marker.textContent = author === "ai" ? "AI" : "H";
-      marker.title =
-        author === "ai"
-          ? "This line was generated or changed by AI"
-          : "This line was written or changed by a person";
-      marker.setAttribute("aria-label", marker.title);
-      state.editor.setGutterMarker(line, "markdown-authorship-gutter", marker);
-    }
   }
 
   function captureMarkdownLiveScrollAnchor(codeMirror) {
@@ -5756,7 +5864,6 @@
       state.renderCache = null;
       state.editor.operation(() => {
         clearMarkdownLiveDecorations(state);
-        addMarkdownAuthorshipGutter(state, markdown);
       });
       state.onHeadings?.(new Map());
       return;
@@ -5765,7 +5872,6 @@
       state.renderCache = null;
       state.editor.operation(() => {
         clearMarkdownLiveDecorations(state);
-        addMarkdownAuthorshipGutter(state, markdown);
       });
       state.onHeadings?.(new Map());
       return;
@@ -5777,7 +5883,6 @@
       state.renderCache = null;
       state.editor.operation(() => {
         clearMarkdownLiveDecorations(state);
-        addMarkdownAuthorshipGutter(state, markdown);
       });
       state.onHeadings?.(new Map());
       console.warn("Markdown preview could not be rendered:", error);
@@ -5802,7 +5907,6 @@
 
     state.editor.operation(() => {
       clearMarkdownLiveDecorations(state);
-      addMarkdownAuthorshipGutter(state, markdown);
       for (const activeLine of activeLines) {
         if (activeLine < firstVisibleLine || activeLine >= lastVisibleLine) continue;
         addMarkdownLiveLineClass(
@@ -6424,7 +6528,6 @@
         theme: "material-darker",
         inputStyle: "contenteditable",
         lineNumbers: false,
-        gutters: ["markdown-authorship-gutter"],
         lineWrapping: true,
         indentUnit: 2,
         tabSize: 2,
@@ -6787,6 +6890,67 @@
     return normalized;
   }
 
+  function createProjectAiMessageActionIcon(kind) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    if (kind === "edit") {
+      const path = document.createElementNS(
+        "http://www.w3.org/2000/svg",
+        "path"
+      );
+      path.setAttribute(
+        "d",
+        "M4.75 16.75V19.25H7.25L17.8 8.7L15.3 6.2L4.75 16.75ZM14.6 6.9L17.1 9.4M14.9 6.6L16.25 5.25C16.8 4.7 17.7 4.7 18.25 5.25L18.75 5.75C19.3 6.3 19.3 7.2 18.75 7.75L17.4 9.1"
+      );
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "currentColor");
+      path.setAttribute("stroke-width", "1.7");
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+      return svg;
+    }
+
+    const back = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "rect"
+    );
+    back.setAttribute("x", "8");
+    back.setAttribute("y", "8");
+    back.setAttribute("width", "10");
+    back.setAttribute("height", "11");
+    back.setAttribute("rx", "2");
+    const front = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "path"
+    );
+    front.setAttribute("d", "M15 8V7A2 2 0 0 0 13 5H7A2 2 0 0 0 5 7V14A2 2 0 0 0 7 16H8");
+    for (const element of [back, front]) {
+      element.setAttribute("fill", "none");
+      element.setAttribute("stroke", "currentColor");
+      element.setAttribute("stroke-width", "1.7");
+      element.setAttribute("stroke-linecap", "round");
+      element.setAttribute("stroke-linejoin", "round");
+    }
+    svg.append(back, front);
+    return svg;
+  }
+
+  function createProjectAiMessageAction(kind, messageId) {
+    const button = document.createElement("button");
+    const label = kind === "edit" ? "Edit message" : "Copy message";
+    button.type = "button";
+    button.className = `project-ai-message-action is-${kind}`;
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    if (kind === "edit") button.dataset.editMessageId = messageId;
+    else button.dataset.copyMessageId = messageId;
+    button.appendChild(createProjectAiMessageActionIcon(kind));
+    return button;
+  }
+
   function renderProjectAiMessageElement(
     kind,
     message,
@@ -6801,6 +6965,9 @@
     if (record?.id) article.dataset.messageId = record.id;
     else article.dataset.aiTransient = "true";
 
+    const bubble = document.createElement("div");
+    bubble.className = "project-ai-message-bubble";
+
     const speaker = document.createElement("span");
     speaker.className = "sr-only";
     speaker.textContent =
@@ -6809,12 +6976,12 @@
         : kind === "assistant"
           ? "AI assistant"
           : "System";
-    article.appendChild(speaker);
+    bubble.appendChild(speaker);
 
     if (title) {
       const heading = document.createElement("strong");
       heading.textContent = title;
-      article.appendChild(heading);
+      bubble.appendChild(heading);
     }
 
     if (kind === "assistant") {
@@ -6822,37 +6989,26 @@
       markdown.className =
         "project-ai-message-markdown project-documentation-content";
       renderMarkdownInto(markdown, message, null, { allowImages: false });
-      article.appendChild(markdown);
+      bubble.appendChild(markdown);
     } else {
       const paragraph = document.createElement("p");
       paragraph.textContent = String(message || "");
-      article.appendChild(paragraph);
+      bubble.appendChild(paragraph);
     }
     if (record?.editedAt) {
       const edited = document.createElement("span");
       edited.className = "project-ai-message-edited";
       edited.textContent = "Edited";
-      article.appendChild(edited);
+      bubble.appendChild(edited);
     }
+    article.appendChild(bubble);
     if (record?.id && ["user", "assistant"].includes(kind)) {
       const actions = document.createElement("div");
       actions.className = "project-ai-message-actions";
       if (kind === "user") {
-        const edit = document.createElement("button");
-        edit.type = "button";
-        edit.className = "project-ai-message-action";
-        edit.dataset.editMessageId = record.id;
-        edit.textContent = "Edit";
-        edit.setAttribute("aria-label", "Edit message");
-        actions.appendChild(edit);
+        actions.appendChild(createProjectAiMessageAction("edit", record.id));
       }
-      const copy = document.createElement("button");
-      copy.type = "button";
-      copy.className = "project-ai-message-action";
-      copy.dataset.copyMessageId = record.id;
-      copy.textContent = "Copy";
-      copy.setAttribute("aria-label", "Copy message");
-      actions.appendChild(copy);
+      actions.appendChild(createProjectAiMessageAction("copy", record.id));
       article.appendChild(actions);
     }
     history.appendChild(article);
@@ -6925,10 +7081,16 @@
     try {
       await copyTextToClipboard(found.message.content);
       if (button) {
-        const previous = button.textContent;
-        button.textContent = "Copied";
+        const previousLabel = button.getAttribute("aria-label") || "Copy message";
+        const previousTitle = button.title;
+        button.classList.add("is-copied");
+        button.setAttribute("aria-label", "Copied");
+        button.title = "Copied";
         window.setTimeout(() => {
-          if (button.isConnected) button.textContent = previous;
+          if (!button.isConnected) return;
+          button.classList.remove("is-copied");
+          button.setAttribute("aria-label", previousLabel);
+          button.title = previousTitle;
         }, 1200);
       }
     } catch (error) {
@@ -6972,10 +7134,11 @@
     );
     if (!article || article.classList.contains("is-editing")) return;
     article.classList.add("is-editing");
-    const paragraph = article.querySelector("p");
+    const bubble = article.querySelector(".project-ai-message-bubble");
     const actions = article.querySelector(".project-ai-message-actions");
-    if (!paragraph) return;
-    paragraph.hidden = true;
+    const editButton = actions?.querySelector("[data-edit-message-id]") || null;
+    if (!bubble) return;
+    bubble.hidden = true;
     if (actions) actions.hidden = true;
     const form = document.createElement("form");
     form.className = "project-ai-message-edit-form";
@@ -6992,16 +7155,17 @@
     const save = document.createElement("button");
     save.type = "submit";
     save.className = "connect-btn";
-    save.textContent = "Save";
+    save.textContent = "Send";
     controls.append(cancel, save);
     form.append(textarea, controls);
     article.appendChild(form);
 
     const close = () => {
       form.remove();
-      paragraph.hidden = false;
+      bubble.hidden = false;
       if (actions) actions.hidden = false;
       article.classList.remove("is-editing");
+      editButton?.focus({ preventScroll: true });
     };
     cancel.addEventListener("click", close);
     form.addEventListener("submit", (event) => {
@@ -7054,6 +7218,47 @@
     chat.updatedAt = Date.now();
     persistProjectAiChats();
     return true;
+  }
+
+  function syncProjectAiPromptHighlightScroll() {
+    const prompt = $("projectAiPrompt");
+    const highlight = $("projectAiPromptHighlight");
+    if (!prompt || !highlight) return;
+    const scrollbarWidth = Math.max(0, prompt.offsetWidth - prompt.clientWidth);
+    highlight.style.right = `${scrollbarWidth}px`;
+    highlight.scrollTop = prompt.scrollTop;
+    highlight.scrollLeft = prompt.scrollLeft;
+  }
+
+  function renderProjectAiPromptHighlight() {
+    const prompt = $("projectAiPrompt");
+    const highlight = $("projectAiPromptHighlight");
+    if (!prompt || !highlight) return;
+    const fragment = document.createDocumentFragment();
+    let hasQuote = false;
+    const quotePattern = /^(?: {0,3}>)+(?:[\t ]|$)/;
+    for (const rawLine of String(prompt.value || "")
+      .replace(/\r\n?/g, "\n")
+      .split("\n")) {
+      const line = document.createElement("span");
+      line.className = "project-ai-prompt-highlight-line";
+      if (quotePattern.test(rawLine)) {
+        line.classList.add("is-quote");
+        hasQuote = true;
+      }
+      line.textContent = rawLine || "\u200b";
+      fragment.appendChild(line);
+    }
+    highlight.replaceChildren(fragment);
+    highlight.classList.toggle("has-quote", hasQuote);
+    syncProjectAiPromptHighlightScroll();
+  }
+
+  function setProjectAiPromptValue(value) {
+    const prompt = $("projectAiPrompt");
+    if (!prompt) return;
+    prompt.value = String(value || "");
+    renderProjectAiPromptHighlight();
   }
 
   function getProjectAiSelectionQuoteButton() {
@@ -7111,7 +7316,9 @@
       .join("\n");
     const quote = `> **${source.replace(/[\r\n]+/g, " ")}**\n${body}`;
     const existing = prompt.value.trimEnd();
-    prompt.value = existing ? `${existing}\n\n${quote}\n\n` : `${quote}\n\n`;
+    setProjectAiPromptValue(
+      existing ? `${existing}\n\n${quote}\n\n` : `${quote}\n\n`
+    );
     hideProjectAiSelectionQuote();
     if (projectWorkspaceMode !== "ai") {
       setProjectWorkspaceMode("ai", { focusPrompt: true });
@@ -9477,7 +9684,7 @@
           throw new Error("The AI response did not include an answer.");
         }
         appendProjectAiMessage("assistant", answer);
-        if (clearPromptOnSuccess && prompt) prompt.value = "";
+        if (clearPromptOnSuccess && prompt) setProjectAiPromptValue("");
         return;
       }
 
@@ -9527,7 +9734,7 @@
           String(data.message || "").trim() ||
           "I revised the Markdown instruction. Review it before asking me to create or update the project.";
         appendProjectAiMessage("assistant", instructionMessage);
-        if (clearPromptOnSuccess && prompt) prompt.value = "";
+        if (clearPromptOnSuccess && prompt) setProjectAiPromptValue("");
         return;
       }
 
@@ -9576,7 +9783,7 @@
         projectMessage,
         savedProject?.displayName || definition.displayName
       );
-      if (clearPromptOnSuccess && prompt) prompt.value = "";
+      if (clearPromptOnSuccess && prompt) setProjectAiPromptValue("");
     } catch (error) {
       removeProjectAiThinking(thinkingIndicator);
       thinkingIndicator = null;
@@ -9973,6 +10180,7 @@
 
   function refreshDocumentationControls(context) {
     const localeSelect = $("documentationLocaleSelect");
+    const editToggle = $("documentationEditToggle");
     const guideFile = context?.guideFile || "";
     const project = context?.linkedProject?.project || null;
     const guides = project ? getMiniProjectGuideEntries(project) : [];
@@ -9998,6 +10206,16 @@
       }
     }
 
+    if (editToggle) {
+      const canEdit = !!guideFile && hasFile(guideFile);
+      editToggle.disabled = !canEdit;
+      editToggle.textContent = documentationEditMode ? "Preview" : "Edit";
+      editToggle.setAttribute(
+        "aria-pressed",
+        String(documentationEditMode)
+      );
+    }
+
     window.requestAnimationFrame(() => {
       applyDocumentationWidth(documentationPreferredWidth, {
         persist: false,
@@ -10007,6 +10225,7 @@
   }
 
   function saveDocumentationEditorValue({ persistNow = false } = {}) {
+    if (!documentationEditMode) return;
     const markdownEditor = $("projectDocumentationEditor");
     const guideFile = markdownEditor?.dataset.guideFile || "";
     if (!markdownEditor || !guideFile || !hasFile(guideFile)) return;
@@ -10049,6 +10268,25 @@
     scheduleMarkdownLivePreview("documentation");
   }
 
+  function setDocumentationEditMode(editing) {
+    const context = getDocumentationContext(current);
+    const nextMode =
+      !!editing && !!context.guideFile && hasFile(context.guideFile);
+    if (documentationEditMode && !nextMode) {
+      saveDocumentationEditorValue({ persistNow: true });
+    }
+    documentationEditMode = nextMode;
+    if (nextMode) expandDocumentationForNavigation();
+    refreshDocumentationPane({ preserveScroll: true });
+    if (nextMode) {
+      window.requestAnimationFrame(() => {
+        documentationEditor?.focus({ preventScroll: true });
+      });
+    } else {
+      documentationEditor?.getInputField?.().blur();
+    }
+  }
+
   function bindDocumentationWorkspace() {
     const editorElement = $("projectDocumentationEditor");
     if (
@@ -10073,7 +10311,7 @@
       theme: "material-darker",
       inputStyle: "contenteditable",
       lineNumbers: false,
-      gutters: ["markdown-authorship-gutter"],
+      readOnly: true,
       lineWrapping: true,
       indentUnit: 2,
       tabSize: 2,
@@ -10093,6 +10331,7 @@
     input.setAttribute("data-tooltip-disabled", "");
     input.setAttribute("role", "textbox");
     input.setAttribute("spellcheck", "true");
+    input.setAttribute("aria-readonly", "true");
     registerMarkdownLiveEditor("documentation", documentationEditor, {
       getContextKey: () =>
         `${editorElement.dataset.guideFile || ""}\u0000${current || ""}`,
@@ -10182,7 +10421,10 @@
     const guideFile = context.guideFile;
 
     if (previousGuide && previousGuide !== guideFile) {
-      saveDocumentationEditorValue({ persistNow: true });
+      if (documentationEditMode) {
+        saveDocumentationEditorValue({ persistNow: true });
+      }
+      documentationEditMode = false;
     }
     pane.dataset.guideFile = guideFile;
     markdownEditor.dataset.guideFile = guideFile;
@@ -10190,6 +10432,8 @@
     refreshDocumentationControls(context);
 
     if (!guideFile || !hasFile(guideFile)) {
+      documentationEditMode = false;
+      refreshDocumentationControls(context);
       content.hidden = false;
       documentationEditor?.getWrapperElement?.().setAttribute("hidden", "");
       markdownEditor.hidden = true;
@@ -10208,7 +10452,13 @@
     const wrapper = documentationEditor?.getWrapperElement?.();
     wrapper?.removeAttribute("hidden");
     setDocumentationEditorValue(markdown);
-    documentationEditor?.setOption("readOnly", false);
+    const readOnly = !documentationEditMode;
+    markdownEditor.readOnly = readOnly;
+    markdownEditor.setAttribute("aria-readonly", String(readOnly));
+    documentationEditor?.setOption("readOnly", readOnly);
+    documentationEditor
+      ?.getInputField?.()
+      .setAttribute("aria-readonly", String(readOnly));
     documentationEditor?.refresh();
     scheduleMarkdownLivePreview("documentation");
     documentationEditor?.scrollTo(
@@ -10248,10 +10498,15 @@
     if (projectWorkspaceMode === "ai") {
       setProjectWorkspaceMode("avr");
     }
+    expandDocumentationForNavigation();
     const context = getDocumentationContext(current);
     if (!context.guideFile || !hasFile(context.guideFile)) {
       setDocumentationNotice("This source file has no linked guide yet.");
       return false;
+    }
+
+    if (documentationEditMode) {
+      setDocumentationEditMode(false);
     }
 
     const pane = $("projectDocumentationPane");
@@ -10277,8 +10532,6 @@
       { from: targetPosition, to: targetPosition },
       48
     );
-    documentationEditor.setCursor(targetPosition);
-    documentationEditor.focus();
     const lineHandle = documentationEditor.getLineHandle(target.line);
     if (lineHandle) {
       documentationEditor.addLineClass(
@@ -10698,7 +10951,7 @@
       mode: getEditorModeForFile(current),
       theme: "material-darker",
       lineNumbers: true,
-      gutters: ["CodeMirror-linenumbers", "markdown-authorship-gutter"],
+      gutters: ["CodeMirror-linenumbers"],
       indentUnit: 2,
       tabSize: 2,
       indentWithTabs: false,
@@ -11004,6 +11257,7 @@
       const updiOptionsCloseBtn = $("updiOptionsCloseBtn");
       const mcuSelect = $("mcuSelect");
       const documentationLocaleSelect = $("documentationLocaleSelect");
+      const documentationEditToggle = $("documentationEditToggle");
       const projectAiToggle = $("projectAiToggle");
       const projectAiForm = $("projectAiForm");
       const projectAiPrompt = $("projectAiPrompt");
@@ -11092,12 +11346,19 @@
         const guide = project?.guides?.[locale];
         if (!project || !guide?.fileName || !hasFile(guide.fileName)) return;
 
-        saveDocumentationEditorValue({ persistNow: true });
+        if (documentationEditMode) {
+          saveDocumentationEditorValue({ persistNow: true });
+          documentationEditMode = false;
+        }
         project.selectedLocale = locale;
         project.files.guide = guide.fileName;
         project.mediaTypes.guide = guide.mediaType || "text/markdown";
         persistState();
         refreshDocumentationPane();
+      });
+    documentationEditToggle &&
+      documentationEditToggle.addEventListener("click", () => {
+        setDocumentationEditMode(!documentationEditMode);
       });
     projectAiToggle &&
       projectAiToggle.addEventListener("click", () => {
@@ -11187,6 +11448,14 @@
     projectAiSignOutBtn &&
       projectAiSignOutBtn.addEventListener("click", handleProjectAiSignOut);
     projectAiPrompt &&
+      projectAiPrompt.addEventListener("input", renderProjectAiPromptHighlight);
+    projectAiPrompt &&
+      projectAiPrompt.addEventListener(
+        "scroll",
+        syncProjectAiPromptHighlightScroll,
+        { passive: true }
+      );
+    projectAiPrompt &&
       projectAiPrompt.addEventListener("keydown", (event) => {
         if (
           event.key !== "Enter" ||
@@ -11199,6 +11468,7 @@
         event.preventDefault();
         projectAiForm?.requestSubmit();
       });
+    renderProjectAiPromptHighlight();
     fileAddModal &&
       fileAddModal.addEventListener("click", (event) => {
         const target = event.target;
@@ -11318,7 +11588,9 @@
 
     window.addEventListener("beforeunload", () => {
       persistProjectInstruction({ immediate: true });
-      saveDocumentationEditorValue({ persistNow: true });
+      if (documentationEditMode) {
+        saveDocumentationEditorValue({ persistNow: true });
+      }
       if (editor && current) {
         files[current] = editor.getValue();
         persistState();
@@ -11865,14 +12137,6 @@
     restoreDocumentationWidth();
     restoreOutlinerWidth();
     restoreProjectAiWidths();
-    applyOutlinerWidth(outlinerPreferredWidth, {
-      persist: false,
-      remember: false,
-    });
-    applyDocumentationWidth(documentationPreferredWidth, {
-      persist: false,
-      remember: false,
-    });
     renderOutliner();
     if (!current) current = Object.keys(files)[0];
     initUpdiBridge();
