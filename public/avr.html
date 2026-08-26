@@ -226,6 +226,16 @@
                     <option value="en">English</option>
                   </select>
                 </div>
+
+                <button
+                  class="connect-btn secondary-btn documentation-edit-toggle"
+                  id="documentationEditToggle"
+                  type="button"
+                  aria-pressed="false"
+                  disabled
+                >
+                  Edit
+                </button>
               </div>
 
               <div
@@ -405,12 +415,19 @@
                           <label class="sr-only" for="projectAiPrompt">
                             Message
                           </label>
-                          <textarea
-                            id="projectAiPrompt"
-                            rows="3"
-                            placeholder="Ask, revise the instruction, or request a project"
-                            spellcheck="true"
-                          ></textarea>
+                          <div class="project-ai-prompt-field">
+                            <div
+                              class="project-ai-prompt-highlight"
+                              id="projectAiPromptHighlight"
+                              aria-hidden="true"
+                            ></div>
+                            <textarea
+                              id="projectAiPrompt"
+                              rows="3"
+                              placeholder="Ask, revise the instruction, or request a project"
+                              spellcheck="true"
+                            ></textarea>
+                          </div>
                           <div class="project-ai-form-footer">
                             <button
                               class="connect-btn"
