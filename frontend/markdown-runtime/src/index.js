@@ -702,13 +702,13 @@ function normalizeIdentifier(value) {
 }
 
 function slugifyHeading(value) {
-  const slug = String(value || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "");
+  const slug = trimHyphenEdges(
+    String(value || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+  );
   return slug || "section";
 }
 
@@ -719,12 +719,21 @@ function clampHeadingLevel(value) {
 
 function toClassToken(value) {
   return (
-    String(value || "plain")
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+/, "")
-      .replace(/-+$/, "") || "plain"
+    trimHyphenEdges(
+      String(value || "plain")
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+    ) || "plain"
   );
+}
+
+function trimHyphenEdges(value) {
+  const text = String(value || "");
+  let start = 0;
+  let end = text.length;
+  while (start < end && text.charCodeAt(start) === 45) start += 1;
+  while (end > start && text.charCodeAt(end - 1) === 45) end -= 1;
+  return text.slice(start, end);
 }
 
 let renderId = 0;
