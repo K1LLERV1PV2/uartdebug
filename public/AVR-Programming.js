@@ -38,6 +38,12 @@
   const PROJECT_AI_REQUEST_TARGET_BYTES = 768 * 1024;
   const PROJECT_AI_MAX_CHATS = 100;
   const PROJECT_AI_CHAT_TITLE_LENGTH = 52;
+  const PROJECT_AI_PROMPT_MAX_LENGTH = 6000;
+  const PROJECT_AI_PROMPT_MIN_HEIGHT = 76;
+  const PROJECT_AI_PROMPT_MAX_HEIGHT = 190;
+  const PROJECT_AI_PROMPT_COMPACT_MIN_HEIGHT = 42;
+  const PROJECT_AI_PROMPT_COMPACT_MAX_HEIGHT = 110;
+  const PROJECT_AI_MESSAGE_EDIT_MIN_HEIGHT = 108;
   const MARKDOWN_AUTHORSHIP_SCHEMA_VERSION = 1;
   const MARKDOWN_AUTHORSHIP_VALUES = new Set(["original", "human", "ai"]);
   const LEGACY_STORAGE_KEY = "ud_c_canvas_files_v1";
@@ -135,6 +141,7 @@
   let documentationExpandedMinWidth = DOCUMENTATION_MIN_WIDTH;
   let documentationResizeState = null;
   let documentationHeadingIndex = new Map();
+  let documentationRenderedHeadingIndex = new Map();
   let documentationMarkerHandles = [];
   let documentationMarkerFrame = null;
   let documentationRenderTimer = null;
@@ -173,6 +180,7 @@
   let projectInstructionCompositionActive = false;
   const markdownLiveEditors = new Map();
   let projectAiSelectionQuote = null;
+  let projectAiPromptQuotes = [];
   const projectAiSkills = new Map();
   let projectAiSkillsLoaded = false;
   let devicePanelState = "expanded";
@@ -5095,7 +5103,9 @@
 
     const markdownRuntime = window.UartDebugMarkdown;
     if (markdownRuntime?.renderInto) {
-      if (indexDocumentationHeadings) documentationHeadingIndex = new Map();
+      if (indexDocumentationHeadings) {
+        documentationRenderedHeadingIndex = new Map();
+      }
       markdownRuntime.renderInto(content, String(markdown || ""), {
         allowImages,
         resolveLinkUrl: (href) => resolveSafeDocumentationLinkUrl(href),
@@ -5113,8 +5123,11 @@
             element.dataset.sourceEnd = String(node.position.end.offset);
           }
           element.tabIndex = -1;
-          if (headingKey && !documentationHeadingIndex.has(indexKey)) {
-            documentationHeadingIndex.set(indexKey, element);
+          if (
+            headingKey &&
+            !documentationRenderedHeadingIndex.has(indexKey)
+          ) {
+            documentationRenderedHeadingIndex.set(indexKey, element);
           }
         },
       });
@@ -5122,7 +5135,9 @@
     }
 
     content.replaceChildren();
-    if (indexDocumentationHeadings) documentationHeadingIndex = new Map();
+    if (indexDocumentationHeadings) {
+      documentationRenderedHeadingIndex = new Map();
+    }
 
     const lines = String(markdown || "")
       .replace(/\r\n?/g, "\n")
@@ -5172,8 +5187,11 @@
         const indexKey = `${level}:${headingKey}`;
         heading.dataset.documentationHeading = indexKey;
         heading.tabIndex = -1;
-        if (headingKey && !documentationHeadingIndex.has(indexKey)) {
-          documentationHeadingIndex.set(indexKey, heading);
+        if (
+          headingKey &&
+          !documentationRenderedHeadingIndex.has(indexKey)
+        ) {
+          documentationRenderedHeadingIndex.set(indexKey, heading);
         }
       }
       content.appendChild(heading);
@@ -7144,7 +7162,7 @@
     form.className = "project-ai-message-edit-form";
     const textarea = document.createElement("textarea");
     textarea.value = found.message.content;
-    textarea.rows = Math.min(12, Math.max(3, textarea.value.split("\n").length));
+    textarea.rows = 1;
     textarea.setAttribute("aria-label", "Edit message");
     const controls = document.createElement("div");
     controls.className = "project-ai-message-edit-controls";
@@ -7159,6 +7177,9 @@
     controls.append(cancel, save);
     form.append(textarea, controls);
     article.appendChild(form);
+    autoSizeTextarea(textarea, {
+      minHeight: PROJECT_AI_MESSAGE_EDIT_MIN_HEIGHT,
+    });
 
     const close = () => {
       form.remove();
@@ -7201,6 +7222,11 @@
         close();
       }
     });
+    textarea.addEventListener("input", () =>
+      autoSizeTextarea(textarea, {
+        minHeight: PROJECT_AI_MESSAGE_EDIT_MIN_HEIGHT,
+      })
+    );
     textarea.focus({ preventScroll: true });
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
   }
@@ -7220,45 +7246,133 @@
     return true;
   }
 
-  function syncProjectAiPromptHighlightScroll() {
-    const prompt = $("projectAiPrompt");
-    const highlight = $("projectAiPromptHighlight");
-    if (!prompt || !highlight) return;
-    const scrollbarWidth = Math.max(0, prompt.offsetWidth - prompt.clientWidth);
-    highlight.style.right = `${scrollbarWidth}px`;
-    highlight.scrollTop = prompt.scrollTop;
-    highlight.scrollLeft = prompt.scrollLeft;
+  function autoSizeTextarea(
+    textarea,
+    { minHeight = 0, maxHeight = Number.POSITIVE_INFINITY } = {}
+  ) {
+    if (!textarea) return 0;
+    textarea.style.height = "auto";
+    const borderChrome = Math.max(
+      0,
+      Number(textarea.offsetHeight || 0) - Number(textarea.clientHeight || 0)
+    );
+    const naturalHeight = Math.max(
+      minHeight,
+      Number(textarea.scrollHeight || 0) + borderChrome
+    );
+    const nextHeight = Math.min(naturalHeight, maxHeight);
+    textarea.style.height = `${Math.ceil(nextHeight)}px`;
+    textarea.style.overflowY = naturalHeight > maxHeight ? "auto" : "hidden";
+    return nextHeight;
   }
 
-  function renderProjectAiPromptHighlight() {
+  function getProjectAiPromptHeightLimits() {
+    const compact = window.matchMedia?.(
+      "(max-height: 520px) and (min-width: 990px)"
+    )?.matches;
+    return compact
+      ? {
+          minHeight: PROJECT_AI_PROMPT_COMPACT_MIN_HEIGHT,
+          maxHeight: PROJECT_AI_PROMPT_COMPACT_MAX_HEIGHT,
+        }
+      : {
+          minHeight: PROJECT_AI_PROMPT_MIN_HEIGHT,
+          maxHeight: PROJECT_AI_PROMPT_MAX_HEIGHT,
+        };
+  }
+
+  function resizeProjectAiPrompt() {
     const prompt = $("projectAiPrompt");
-    const highlight = $("projectAiPromptHighlight");
-    if (!prompt || !highlight) return;
-    const fragment = document.createDocumentFragment();
-    let hasQuote = false;
-    const quotePattern = /^(?: {0,3}>)+(?:[\t ]|$)/;
-    for (const rawLine of String(prompt.value || "")
+    if (!prompt) return;
+    autoSizeTextarea(prompt, getProjectAiPromptHeightLimits());
+  }
+
+  function getProjectAiQuoteDisplayText(value) {
+    const lines = String(value || "")
       .replace(/\r\n?/g, "\n")
-      .split("\n")) {
-      const line = document.createElement("span");
-      line.className = "project-ai-prompt-highlight-line";
-      if (quotePattern.test(rawLine)) {
-        line.classList.add("is-quote");
-        hasQuote = true;
-      }
-      line.textContent = rawLine || "\u200b";
-      fragment.appendChild(line);
-    }
-    highlight.replaceChildren(fragment);
-    highlight.classList.toggle("has-quote", hasQuote);
-    syncProjectAiPromptHighlightScroll();
+      .split("\n")
+      .map((line) =>
+        line
+          .replace(/^ {0,3}>+[\t ]?/, "")
+          .replace(/^ {0,3}#{1,6}[\t ]+/, "")
+          .replace(/^\s*(?:[-*+] |\d+[.)] )/, "")
+          .replace(/^\s*(?:\*\*|__)(.*)(?:\*\*|__)\s*$/, "$1")
+          .trimEnd()
+      );
+    const display = lines.join("\n").trim();
+    return display || String(value || "").trim();
   }
 
-  function setProjectAiPromptValue(value) {
+  function removeProjectAiPromptQuote(quoteId) {
+    projectAiPromptQuotes = projectAiPromptQuotes.filter(
+      (quote) => quote.id !== quoteId
+    );
+    renderProjectAiPromptQuotes();
+    const prompt = $("projectAiPrompt");
+    prompt?.setCustomValidity("");
+    prompt?.focus({ preventScroll: true });
+  }
+
+  function renderProjectAiPromptQuotes() {
+    const container = $("projectAiPromptQuotes");
+    if (!container) return;
+    const fragment = document.createDocumentFragment();
+    for (const quote of projectAiPromptQuotes) {
+      const card = document.createElement("div");
+      card.className = "project-ai-prompt-quote";
+      const text = document.createElement("strong");
+      text.textContent = quote.displayText;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "project-ai-prompt-quote-remove";
+      remove.setAttribute("aria-label", "Remove quoted context");
+      remove.title = "Remove quote";
+      remove.textContent = "×";
+      remove.addEventListener("click", () =>
+        removeProjectAiPromptQuote(quote.id)
+      );
+      card.append(text, remove);
+      fragment.appendChild(card);
+    }
+    container.replaceChildren(fragment);
+    container.hidden = projectAiPromptQuotes.length === 0;
+    resizeProjectAiPrompt();
+  }
+
+  function serializeProjectAiPromptRequest(
+    promptValue = "",
+    quotes = projectAiPromptQuotes
+  ) {
+    const quotedContext = quotes.map((quote) => {
+      const source = String(quote.source || "Selected text")
+        .replace(/[\r\n]+/g, " ")
+        .trim();
+      return [
+        "[Uart Debug quoted context]",
+        `Source: ${source}`,
+        "Content:",
+        String(quote.rawText || "").trim(),
+        "[/Uart Debug quoted context]",
+      ].join("\n");
+    });
+    const prompt = String(promptValue || "").trim();
+    return [...quotedContext, prompt].filter(Boolean).join("\n\n").trim();
+  }
+
+  function getProjectAiPromptDisplayRequest(promptValue = "") {
+    const quotedText = projectAiPromptQuotes.map((quote) => quote.displayText);
+    const prompt = String(promptValue || "").trim();
+    return [...quotedText, prompt].filter(Boolean).join("\n\n").trim();
+  }
+
+  function setProjectAiPromptValue(value, { quotes = [] } = {}) {
     const prompt = $("projectAiPrompt");
     if (!prompt) return;
     prompt.value = String(value || "");
-    renderProjectAiPromptHighlight();
+    projectAiPromptQuotes = Array.isArray(quotes) ? quotes : [];
+    prompt.setCustomValidity("");
+    renderProjectAiPromptQuotes();
+    resizeProjectAiPrompt();
   }
 
   function getProjectAiSelectionQuoteButton() {
@@ -7309,16 +7423,26 @@
     const prompt = $("projectAiPrompt");
     if (!selection || !prompt) return;
     const source = String(selection.label || "Selected text").trim();
-    const body = selection.text
-      .replace(/\r\n?/g, "\n")
-      .split("\n")
-      .map((line) => `> ${line}`)
-      .join("\n");
-    const quote = `> **${source.replace(/[\r\n]+/g, " ")}**\n${body}`;
-    const existing = prompt.value.trimEnd();
-    setProjectAiPromptValue(
-      existing ? `${existing}\n\n${quote}\n\n` : `${quote}\n\n`
+    const rawText = String(selection.text || "").replace(/\r\n?/g, "\n");
+    const quote = {
+      id: createProjectAiRecordId("quote"),
+      source,
+      rawText,
+      displayText: getProjectAiQuoteDisplayText(rawText),
+    };
+    const nextQuotes = [...projectAiPromptQuotes, quote];
+    const serialized = serializeProjectAiPromptRequest(
+      prompt.value,
+      nextQuotes
     );
+    if (serialized.length > PROJECT_AI_PROMPT_MAX_LENGTH) {
+      prompt.setCustomValidity(
+        "The message and quoted context must not exceed 6000 characters."
+      );
+      prompt.reportValidity();
+      return;
+    }
+    setProjectAiPromptValue(prompt.value, { quotes: nextQuotes });
     hideProjectAiSelectionQuote();
     if (projectWorkspaceMode !== "ai") {
       setProjectWorkspaceMode("ai", { focusPrompt: true });
@@ -9590,17 +9714,22 @@
 
   async function submitProjectAiRequest(
     rawRequest,
-    { existingUserMessage = null, clearPromptOnSuccess = true } = {}
+    {
+      aiRequest = rawRequest,
+      existingUserMessage = null,
+      clearPromptOnSuccess = true,
+    } = {}
   ) {
     if (projectAiRequestInFlight) return false;
     const prompt = $("projectAiPrompt");
     const request = String(rawRequest || "").trim();
-    if (!request) {
+    const requestForAi = String(aiRequest || "").trim();
+    if (!request || !requestForAi) {
       prompt?.focus({ preventScroll: true });
       return false;
     }
 
-    const requestPayload = getProjectAiRequestPayload(request);
+    const requestPayload = getProjectAiRequestPayload(requestForAi);
     if (existingUserMessage) {
       appendExistingProjectAiUserMessage(existingUserMessage);
     } else {
@@ -9804,7 +9933,20 @@
   function handleProjectAiSubmit(event) {
     event.preventDefault();
     const prompt = $("projectAiPrompt");
-    void submitProjectAiRequest(prompt?.value || "");
+    const visiblePrompt = prompt?.value || "";
+    const requestForAi = serializeProjectAiPromptRequest(visiblePrompt);
+    if (requestForAi.length > PROJECT_AI_PROMPT_MAX_LENGTH) {
+      prompt?.setCustomValidity(
+        "The message and quoted context must not exceed 6000 characters."
+      );
+      prompt?.reportValidity();
+      prompt?.focus({ preventScroll: true });
+      return;
+    }
+    prompt?.setCustomValidity("");
+    void submitProjectAiRequest(getProjectAiPromptDisplayRequest(visiblePrompt), {
+      aiRequest: requestForAi,
+    });
   }
 
   function renderProjectWorkspaceToggleLabel(label, words) {
@@ -10145,6 +10287,7 @@
     const content = $("projectDocumentationContent");
     if (!content) return;
     documentationHeadingIndex = new Map();
+    documentationRenderedHeadingIndex = new Map();
     content.replaceChildren();
 
     const empty = document.createElement("div");
@@ -10289,6 +10432,25 @@
 
   function bindDocumentationWorkspace() {
     const editorElement = $("projectDocumentationEditor");
+    const renderedContent = $("projectDocumentationContent");
+    if (
+      renderedContent &&
+      renderedContent.dataset.aiQuoteBound !== "true"
+    ) {
+      renderedContent.dataset.aiQuoteBound = "true";
+      renderedContent.addEventListener("mouseup", () => {
+        window.setTimeout(
+          () =>
+            showDomSelectionQuote(renderedContent, () => {
+              const guideFile =
+                $("projectDocumentationPane")?.dataset.guideFile ||
+                "Project guide";
+              return `Project guide — ${guideFile}`;
+            }),
+          0
+        );
+      });
+    }
     if (
       !editorElement ||
       typeof window.CodeMirror?.fromTextArea !== "function"
@@ -10417,7 +10579,9 @@
 
     const context = getDocumentationContext(current);
     const previousGuide = pane.dataset.guideFile || "";
-    const previousScrollTop = documentationEditor?.getScrollInfo?.().top || 0;
+    const previousScrollTop = documentationEditMode
+      ? documentationEditor?.getScrollInfo?.().top || 0
+      : scroll.scrollTop;
     const guideFile = context.guideFile;
 
     if (previousGuide && previousGuide !== guideFile) {
@@ -10434,6 +10598,13 @@
     if (!guideFile || !hasFile(guideFile)) {
       documentationEditMode = false;
       refreshDocumentationControls(context);
+      scroll.classList.remove("is-documentation-edit");
+      markdownEditor.readOnly = true;
+      markdownEditor.setAttribute("aria-readonly", "true");
+      documentationEditor?.setOption("readOnly", true);
+      documentationEditor
+        ?.getInputField?.()
+        .setAttribute("aria-readonly", "true");
       content.hidden = false;
       documentationEditor?.getWrapperElement?.().setAttribute("hidden", "");
       markdownEditor.hidden = true;
@@ -10446,25 +10617,41 @@
     }
 
     const markdown = getLiveFileContent(guideFile);
-    indexDocumentationMarkdownHeadings(markdown);
-    content.hidden = true;
-    markdownEditor.hidden = false;
     const wrapper = documentationEditor?.getWrapperElement?.();
-    wrapper?.removeAttribute("hidden");
     setDocumentationEditorValue(markdown);
-    const readOnly = !documentationEditMode;
-    markdownEditor.readOnly = readOnly;
-    markdownEditor.setAttribute("aria-readonly", String(readOnly));
-    documentationEditor?.setOption("readOnly", readOnly);
+    if (documentationEditMode) {
+      scroll.classList.add("is-documentation-edit");
+      content.hidden = true;
+      markdownEditor.hidden = false;
+      wrapper?.removeAttribute("hidden");
+      markdownEditor.readOnly = false;
+      markdownEditor.setAttribute("aria-readonly", "false");
+      documentationEditor?.setOption("readOnly", false);
+      documentationEditor
+        ?.getInputField?.()
+        .setAttribute("aria-readonly", "false");
+      documentationEditor?.refresh();
+      scheduleMarkdownLivePreview("documentation");
+      documentationEditor?.scrollTo(
+        null,
+        preserveScroll && previousGuide === guideFile ? previousScrollTop : 0
+      );
+      return;
+    }
+
+    scroll.classList.remove("is-documentation-edit");
+    markdownEditor.readOnly = true;
+    markdownEditor.setAttribute("aria-readonly", "true");
+    documentationEditor?.setOption("readOnly", true);
     documentationEditor
       ?.getInputField?.()
-      .setAttribute("aria-readonly", String(readOnly));
-    documentationEditor?.refresh();
-    scheduleMarkdownLivePreview("documentation");
-    documentationEditor?.scrollTo(
-      null,
-      preserveScroll && previousGuide === guideFile ? previousScrollTop : 0
-    );
+      .setAttribute("aria-readonly", "true");
+    wrapper?.setAttribute("hidden", "");
+    markdownEditor.hidden = true;
+    content.hidden = false;
+    renderMarkdownGuide(markdown, context);
+    scroll.scrollTop =
+      preserveScroll && previousGuide === guideFile ? previousScrollTop : 0;
   }
 
   function scheduleDocumentationPaneRefresh() {
@@ -10513,12 +10700,11 @@
     if (pane?.dataset.guideFile !== context.guideFile) refreshDocumentationPane();
 
     const headingKey = miniProjectCore.normalizeHeadingKey(marker.title);
-    let target = documentationHeadingIndex.get(`${marker.level}:${headingKey}`);
+    const targetKey = `${marker.level}:${headingKey}`;
+    let target = documentationRenderedHeadingIndex.get(targetKey);
     if (!target) {
-      indexDocumentationMarkdownHeadings(
-        getLiveFileContent(context.guideFile)
-      );
-      target = documentationHeadingIndex.get(`${marker.level}:${headingKey}`);
+      renderMarkdownGuide(getLiveFileContent(context.guideFile), context);
+      target = documentationRenderedHeadingIndex.get(targetKey);
     }
     if (!target) {
       setDocumentationNotice(`Section not found: ${marker.title}`);
@@ -10526,6 +10712,17 @@
     }
 
     setDocumentationNotice();
+    if (target instanceof Element) {
+      scrollDocumentationTargetIntoView(target);
+      target.classList.add("is-documentation-target");
+      if (documentationTargetTimer) window.clearTimeout(documentationTargetTimer);
+      documentationTargetTimer = window.setTimeout(() => {
+        target.classList.remove("is-documentation-target");
+        documentationTargetTimer = null;
+      }, 1800);
+      return true;
+    }
+
     if (!documentationEditor) return false;
     const targetPosition = CodeMirror.Pos(target.line, target.ch || 0);
     documentationEditor.scrollIntoView(
@@ -11448,13 +11645,10 @@
     projectAiSignOutBtn &&
       projectAiSignOutBtn.addEventListener("click", handleProjectAiSignOut);
     projectAiPrompt &&
-      projectAiPrompt.addEventListener("input", renderProjectAiPromptHighlight);
-    projectAiPrompt &&
-      projectAiPrompt.addEventListener(
-        "scroll",
-        syncProjectAiPromptHighlightScroll,
-        { passive: true }
-      );
+      projectAiPrompt.addEventListener("input", () => {
+        projectAiPrompt.setCustomValidity("");
+        resizeProjectAiPrompt();
+      });
     projectAiPrompt &&
       projectAiPrompt.addEventListener("keydown", (event) => {
         if (
@@ -11468,7 +11662,9 @@
         event.preventDefault();
         projectAiForm?.requestSubmit();
       });
-    renderProjectAiPromptHighlight();
+    window.addEventListener("resize", resizeProjectAiPrompt);
+    renderProjectAiPromptQuotes();
+    resizeProjectAiPrompt();
     fileAddModal &&
       fileAddModal.addEventListener("click", (event) => {
         const target = event.target;

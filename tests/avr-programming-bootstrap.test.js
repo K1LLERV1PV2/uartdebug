@@ -1296,6 +1296,10 @@ test("snaps the guide pane and resolves one shared AVR side-panel budget", () =>
   );
   assert.match(
     css,
+    /\.canvas-split-container\.is-documentation-compact[\s\S]*?\.project-documentation-panel::before\s*\{[\s\S]*?content:\s*"D\\A O\\A C\\A U\\A M\\A E\\A N\\A T\\A A\\A T\\A I\\A O\\A N";/
+  );
+  assert.match(
+    css,
     /\.editor-workspace > \.avr-action-strip\s*\{[\s\S]*?flex-wrap:\s*nowrap;[\s\S]*?gap:\s*8px;/
   );
   assert.doesNotMatch(source, /OUTLINER_MAX_WIDTH|DOCUMENTATION_MAX_WIDTH/);
@@ -1322,6 +1326,10 @@ test("uses one CommonMark GFM runtime across every Markdown surface", () => {
     path.join(__dirname, "../public/AVR-Programming.js"),
     "utf8"
   );
+  const css = fs.readFileSync(
+    path.join(__dirname, "../public/AVR-Programming.css"),
+    "utf8"
+  );
   const sw = fs.readFileSync(path.join(__dirname, "../public/sw.js"), "utf8");
   const runtimeIndex = html.indexOf("vendor/uartdebug-markdown.js");
   const avrIndex = html.indexOf("AVR-Programming.js");
@@ -1331,6 +1339,10 @@ test("uses one CommonMark GFM runtime across every Markdown surface", () => {
   assert.match(
     html,
     /id="documentationEditToggle"[\s\S]*?aria-pressed="false"[\s\S]*?>\s*Edit\s*<\/button>/
+  );
+  assert.match(
+    html,
+    /id="projectDocumentationEditor"[\s\S]*?aria-readonly="true"[\s\S]*?readonly/
   );
   assert.match(
     html,
@@ -1353,7 +1365,35 @@ test("uses one CommonMark GFM runtime across every Markdown surface", () => {
   );
   assert.match(
     source,
-    /const readOnly\s*=\s*!documentationEditMode;[\s\S]*?documentationEditor\?\.setOption\("readOnly", readOnly\)[\s\S]*?aria-readonly/
+    /if \(documentationEditMode\) \{[\s\S]*?content\.hidden = true;[\s\S]*?wrapper\?\.removeAttribute\("hidden"\);[\s\S]*?setOption\("readOnly", false\)[\s\S]*?renderMarkdownGuide\(markdown, context\)/
+  );
+  assert.match(
+    source,
+    /markdownEditor\.readOnly = true;[\s\S]*?setOption\("readOnly", true\)[\s\S]*?wrapper\?\.setAttribute\("hidden", ""\);[\s\S]*?content\.hidden = false;[\s\S]*?renderMarkdownGuide\(markdown, context\)/
+  );
+  assert.match(
+    source,
+    /function navigateToDocumentationHeading\(marker\)[\s\S]*?setDocumentationEditMode\(false\)[\s\S]*?documentationRenderedHeadingIndex\.get\(targetKey\)[\s\S]*?target instanceof Element[\s\S]*?scrollDocumentationTargetIntoView\(target\)/
+  );
+  assert.match(
+    source,
+    /renderMarkdownInto\([\s\S]*?documentationRenderedHeadingIndex = new Map\(\)[\s\S]*?documentationRenderedHeadingIndex\.set\(indexKey, element\)/
+  );
+  assert.match(
+    source,
+    /scroll\.classList\.add\("is-documentation-edit"\)[\s\S]*?scroll\.classList\.remove\("is-documentation-edit"\)/
+  );
+  assert.match(
+    css,
+    /\.project-documentation-scroll\.is-documentation-edit\s*\{[\s\S]*?overflow:\s*hidden;/
+  );
+  assert.match(
+    css,
+    /\.project-documentation-live-editor\.is-documentation-edit\s*\{[\s\S]*?overflow:\s*hidden;/
+  );
+  assert.doesNotMatch(
+    css,
+    /\.project-documentation-live-editor\s*\{[\s\S]*?overflow:\s*hidden;/
   );
   assert.match(
     source,
@@ -1368,6 +1408,11 @@ test("uses one CommonMark GFM runtime across every Markdown surface", () => {
 });
 
 test("wires safe prompt quotes, external chat actions, and hidden provenance", () => {
+  const { getProjectAiQuoteDisplayText, serializeProjectAiPromptRequest } =
+    loadAvrFrontendFunctionHooks([
+      "getProjectAiQuoteDisplayText",
+      "serializeProjectAiPromptRequest",
+    ]);
   const html = fs.readFileSync(
     path.join(__dirname, "../public/avr.html"),
     "utf8"
@@ -1380,19 +1425,20 @@ test("wires safe prompt quotes, external chat actions, and hidden provenance", (
     path.join(__dirname, "../public/AVR-Programming.js"),
     "utf8"
   );
-  const promptHighlightStart = source.indexOf(
-    "function renderProjectAiPromptHighlight()"
-  );
-  const promptHighlightEnd = source.indexOf(
-    "function setProjectAiPromptValue",
-    promptHighlightStart
-  );
-  const promptHighlightSource = source.slice(
-    promptHighlightStart,
-    promptHighlightEnd
-  );
-
   assert.match(source, /function bindCodeMirrorQuoteSurface/);
+  assert.equal(
+    getProjectAiQuoteDisplayText("# Архитектура мини-проекта"),
+    "Архитектура мини-проекта"
+  );
+  const serializedQuote = serializeProjectAiPromptRequest("Проверь это", [
+    {
+      source: "Project instruction",
+      rawText: "# Архитектура мини-проекта",
+    },
+  ]);
+  assert.match(serializedQuote, /Source: Project instruction/);
+  assert.match(serializedQuote, /Content:\n# Архитектура мини-проекта/);
+  assert.match(serializedQuote, /Проверь это$/);
   assert.match(
     source,
     /showProjectAiHistorySelectionQuote\(projectAiHistory\)/
@@ -1404,39 +1450,50 @@ test("wires safe prompt quotes, external chat actions, and hidden provenance", (
   assert.match(source, /deriveProjectAiChatTitle/);
   assert.match(
     html,
-    /class="project-ai-prompt-field"[\s\S]*?id="projectAiPromptHighlight"[\s\S]*?aria-hidden="true"[\s\S]*?id="projectAiPrompt"/
+    /class="project-ai-prompt-field"[\s\S]*?id="projectAiPromptQuotes"[\s\S]*?aria-label="Quoted context"[\s\S]*?hidden[\s\S]*?id="projectAiPrompt"[\s\S]*?maxlength="6000"/
   );
-  assert.ok(
-    promptHighlightStart >= 0 && promptHighlightEnd > promptHighlightStart
-  );
-  assert.match(promptHighlightSource, /document\.createDocumentFragment\(\)/);
-  assert.match(promptHighlightSource, /document\.createElement\("span"\)/);
-  assert.match(promptHighlightSource, /line\.textContent\s*=\s*rawLine/);
-  assert.match(promptHighlightSource, /highlight\.replaceChildren\(fragment\)/);
-  assert.doesNotMatch(promptHighlightSource, /innerHTML/);
+  assert.doesNotMatch(html, /projectAiPromptHighlight/);
+  assert.doesNotMatch(source, /renderProjectAiPromptHighlight|syncProjectAiPromptHighlight/);
   assert.match(
     source,
-    /projectAiPrompt\.addEventListener\("input", renderProjectAiPromptHighlight\)/
+    /function getProjectAiQuoteDisplayText\(value\)[\s\S]*?replace\(\/\^ \{0,3\}#\{1,6\}/
   );
   assert.match(
     source,
-    /projectAiPrompt\.addEventListener\(\s*"scroll",\s*syncProjectAiPromptHighlightScroll/
+    /function renderProjectAiPromptQuotes\(\)[\s\S]*?document\.createElement\("strong"\)[\s\S]*?text\.textContent = quote\.displayText[\s\S]*?container\.replaceChildren\(fragment\)/
   );
   assert.match(
     source,
-    /prompt\.offsetWidth\s*-\s*prompt\.clientWidth[\s\S]*?highlight\.style\.right/
+    /function serializeProjectAiPromptRequest\([\s\S]*?Source: \$\{source\}[\s\S]*?String\(quote\.rawText[\s\S]*?\[\/Uart Debug quoted context\]/
+  );
+  assert.match(
+    source,
+    /function getProjectAiPromptDisplayRequest\(promptValue = ""\)[\s\S]*?quote\.displayText/
+  );
+  assert.match(
+    source,
+    /submitProjectAiRequest\(getProjectAiPromptDisplayRequest\(visiblePrompt\), \{[\s\S]*?aiRequest: requestForAi/
+  );
+  assert.doesNotMatch(source, /> \*\*\$\{source\}\*\*/);
+  assert.match(
+    css,
+    /\.project-ai-prompt-quotes\s*\{[\s\S]*?max-height:\s*164px;[\s\S]*?overflow-y:\s*auto;[\s\S]*?\.project-ai-prompt-quote\s*\{[\s\S]*?border-left:[\s\S]*?background:\s*rgba\(112, 205, 145, 0\.11\);[\s\S]*?\.project-ai-prompt-quote strong\s*\{/
   );
   assert.match(
     css,
-    /\.project-ai-prompt-highlight\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?color:\s*transparent;[\s\S]*?pointer-events:\s*none;/
+    /#projectAiPrompt\s*\{[\s\S]*?max-height:\s*190px;[\s\S]*?scrollbar-gutter:\s*auto;[\s\S]*?scrollbar-width:\s*thin;/
   );
   assert.match(
     css,
-    /\.project-ai-prompt-highlight-line\.is-quote\s*\{[\s\S]*?linear-gradient\([\s\S]*?rgba\(112, 205, 145, 0\.075\);/
+    /#projectAiPrompt::-webkit-scrollbar\s*\{[\s\S]*?width:\s*var\(--avr-scrollbar-size\);/
   );
   assert.match(
-    css,
-    /#projectAiPrompt\s*\{[\s\S]*?scrollbar-gutter:\s*stable;/
+    source,
+    /function autoSizeTextarea\([\s\S]*?textarea\.style\.height = "auto";[\s\S]*?textarea\.scrollHeight[\s\S]*?textarea\.style\.overflowY/
+  );
+  assert.match(
+    source,
+    /projectAiPrompt\.addEventListener\("input", \(\) => \{[\s\S]*?resizeProjectAiPrompt\(\)/
   );
   assert.match(
     source,
@@ -1461,6 +1518,14 @@ test("wires safe prompt quotes, external chat actions, and hidden provenance", (
   assert.match(
     css,
     /\.project-ai-message-edit-form textarea:focus\s*\{[\s\S]*?box-shadow:\s*0 0 0 3px/
+  );
+  assert.match(
+    css,
+    /\.project-ai-message-edit-form textarea\s*\{[\s\S]*?max-height:\s*none;[\s\S]*?overflow-y:\s*hidden;[\s\S]*?resize:\s*none;/
+  );
+  assert.match(
+    source,
+    /textarea\.addEventListener\("input", \(\) =>[\s\S]*?autoSizeTextarea\(textarea,[\s\S]*?PROJECT_AI_MESSAGE_EDIT_MIN_HEIGHT/
   );
   assert.match(source, /MARKDOWN_AUTHORSHIP_VALUES/);
   assert.match(source, /sourceAuthorship/);
@@ -1812,6 +1877,22 @@ test("publishes legal pages and links them to Google sign-in", () => {
   }
   assert.match(sw, /icons\/sign-in-with-google-light\.svg/);
   assert.match(index, /optional AI assistant[\s\S]*?Google sign-in is required only/);
+  assert.match(
+    index,
+    /<\/main>[\s\S]*?<footer class="home-footer">[\s\S]*?<p class="service-note">/
+  );
+  assert.match(
+    index,
+    /aria-label="Contacts"[\s\S]*?href="mailto:uartdebug@gmail\.com"[\s\S]*?href="https:\/\/github\.com\/K1LLERV1PV2\/uartdebug\/issues"/
+  );
+  assert.match(
+    index,
+    /body\s*\{[\s\S]*?display:\s*flex;[\s\S]*?min-height:\s*100vh;[\s\S]*?flex-direction:\s*column;/
+  );
+  assert.match(
+    index,
+    /\.home-footer\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;/
+  );
 });
 
 test("deploy verifies legal page content rather than accepting an SPA fallback", () => {
