@@ -39,8 +39,10 @@
       }
 
       body {
+        display: flex;
         margin: 0;
         min-height: 100vh;
+        flex-direction: column;
         overflow: hidden;
         background: var(--home-bg);
         color: var(--home-text);
@@ -114,8 +116,9 @@
         position: relative;
         z-index: 1;
         display: grid;
+        flex: 1 1 auto;
         place-items: center;
-        min-height: 100vh;
+        min-height: 0;
         padding: clamp(18px, 4vw, 38px);
       }
 
@@ -135,33 +138,51 @@
         width: min(100%, 900px);
       }
 
+      .home-footer {
+        position: relative;
+        z-index: 3;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 18px;
+        width: 100%;
+        padding: 0 clamp(18px, 4vw, 38px) 16px;
+      }
+
       .service-note {
-        max-width: 680px;
-        margin: 14px auto 0;
+        max-width: 760px;
+        margin: 0;
         color: var(--home-text-soft);
         font-size: 12px;
         line-height: 1.5;
-        text-align: center;
+        text-align: left;
       }
 
-      .legal-links {
-        position: fixed;
-        z-index: 3;
-        right: 18px;
-        bottom: 14px;
+      .footer-link-groups,
+      .footer-links {
         display: flex;
+        align-items: center;
+      }
+
+      .footer-link-groups {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px 18px;
+      }
+
+      .footer-links {
         gap: 14px;
         font-size: 12px;
       }
 
-      .legal-links a {
+      .footer-links a {
         color: var(--home-text-soft);
         text-decoration-thickness: 1px;
         text-underline-offset: 3px;
       }
 
-      .legal-links a:hover,
-      .legal-links a:focus-visible {
+      .footer-links a:hover,
+      .footer-links a:focus-visible {
         color: var(--home-text);
       }
 
@@ -782,8 +803,22 @@
         }
 
         main {
-          min-height: 100svh;
+          min-height: 0;
           align-items: center;
+        }
+
+        .home-footer {
+          grid-template-columns: 1fr;
+          padding-top: 16px;
+        }
+
+        .service-note {
+          text-align: center;
+        }
+
+        .footer-link-groups,
+        .footer-links {
+          justify-content: center;
         }
 
         .nav-grid {
@@ -1015,18 +1050,29 @@
             <p class="card-description">Terminal &amp; Graphics Online</p>
           </a>
         </div>
-        <p class="service-note">
-          AVR Programming includes an optional AI assistant for AVR questions
-          and mini-project drafts. Google sign-in is required only for AI
-          access; the editor, compiler, flasher, and UART tools remain available
-          without it.
-        </p>
       </section>
     </main>
 
-    <footer class="legal-links" aria-label="Legal">
-      <a href="/privacy">Privacy</a>
-      <a href="/terms">Terms</a>
+    <footer class="home-footer">
+      <p class="service-note">
+        AVR Programming includes an optional AI assistant for AVR questions and
+        mini-project drafts. Google sign-in is required only for AI access; the
+        editor, compiler, flasher, and UART tools remain available without it.
+      </p>
+      <div class="footer-link-groups">
+        <nav class="footer-links contact-links" aria-label="Contacts">
+          <a href="mailto:uartdebug@gmail.com">uartdebug@gmail.com</a>
+          <a
+            href="https://github.com/K1LLERV1PV2/uartdebug/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+          >GitHub Issues</a>
+        </nav>
+        <nav class="footer-links legal-links" aria-label="Legal">
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+        </nav>
+      </div>
     </footer>
 
     <script>

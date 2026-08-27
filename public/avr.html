@@ -265,6 +265,8 @@
                     class="project-documentation-editor"
                     id="projectDocumentationEditor"
                     aria-label="Project guide Markdown"
+                    aria-readonly="true"
+                    readonly
                     spellcheck="true"
                   ></textarea>
                 </div>
@@ -417,13 +419,15 @@
                           </label>
                           <div class="project-ai-prompt-field">
                             <div
-                              class="project-ai-prompt-highlight"
-                              id="projectAiPromptHighlight"
-                              aria-hidden="true"
+                              class="project-ai-prompt-quotes"
+                              id="projectAiPromptQuotes"
+                              aria-label="Quoted context"
+                              hidden
                             ></div>
                             <textarea
                               id="projectAiPrompt"
                               rows="3"
+                              maxlength="6000"
                               placeholder="Ask, revise the instruction, or request a project"
                               spellcheck="true"
                             ></textarea>
