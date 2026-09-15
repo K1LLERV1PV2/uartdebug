@@ -75,6 +75,8 @@ body,
 .CodeMirror-hints,
 .compile-log,
 .project-documentation-scroll,
+.project-ai-workspace,
+.project-ai-history,
 .updi-pane-body,
 .probe-log,
 .hex-textarea {
@@ -82,13 +84,14 @@ body,
   scrollbar-color: var(--avr-scrollbar-thumb) var(--avr-scrollbar-track);
 }
 
-.feature-panel,
 .canvas-updi-section,
 .canvas-updi-scroll,
 .outliner-list,
 .CodeMirror-hints,
 .compile-log,
 .project-documentation-scroll,
+.project-ai-workspace,
+.project-ai-history,
 .updi-pane-body,
 .probe-log,
 .hex-textarea {
@@ -129,6 +132,7 @@ main,
   gap: 14px;
   padding: 18px;
   overflow: hidden;
+  scrollbar-gutter: auto;
 }
 
 .feature-panel:has(
@@ -2630,6 +2634,9 @@ body.is-device-panel-resizing * {
   flex-direction: column;
   gap: 12px;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--avr-scrollbar-thumb) var(--avr-scrollbar-track);
 }
 
 .project-ai-history {
@@ -2642,6 +2649,8 @@ body.is-device-panel-resizing * {
   gap: 9px;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--avr-scrollbar-thumb) var(--avr-scrollbar-track);
 }
 
 .project-ai-message {

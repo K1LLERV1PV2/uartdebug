@@ -705,6 +705,18 @@ test("keeps every workspace on one canvas and stacks instruction above chat", ()
     source,
     /setProjectWorkspaceMode|fetchProjectAiSkills|AI_SKILL_DRAG_MIME|projectAiStackCollapsedPanel|is-instruction-collapsed|is-chat-collapsed/
   );
+  assert.doesNotMatch(html, /project-ai-eyebrow[^>]*>\s*Reviewed Markdown/);
+  assert.match(source, /function applyFileListResizerWidths\(/);
+  assert.match(source, /startCombinedWidth/);
+  assert.match(
+    source,
+    /outlinerResizeState\s*\|\|[\s\S]*projectAiColumnResizeState/
+  );
+  assert.match(
+    css,
+    /\.project-ai-workspace[\s\S]*?scrollbar-width:\s*thin;[\s\S]*?scrollbar-color:/
+  );
+  assert.match(css, /\.feature-panel\s*\{[\s\S]*?scrollbar-gutter:\s*auto;/);
 });
 
 test("wires the project AI pane to the AVR AI API contract", () => {

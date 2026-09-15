@@ -3035,6 +3035,132 @@
     }
   }
 
+  /*
+   * The file-list divider is the boundary between the outliner and the
+   * instruction/chat column. Move the neighboring AI track first and only
+   * consume editor slack when an expanded minimum requires more room, rather
+   * than letting the editor absorb every movement by itself.
+   */
+  function getFileListAiAvailableWidth(documentation = documentationWidth) {
+    const container = getCanvasSplitContainer();
+    if (!container || isStackedCanvasLayout()) {
+      return Math.max(
+        OUTLINER_COMPACT_WIDTH + PROJECT_AI_COLUMN_COMPACT_WIDTH,
+        outlinerWidth + projectAiColumnWidth
+      );
+    }
+    return Math.max(
+      OUTLINER_COMPACT_WIDTH + PROJECT_AI_COLUMN_COMPACT_WIDTH,
+      Math.round(container.getBoundingClientRect().width) -
+        Number(documentation || 0) -
+        OUTLINER_EDITOR_MIN_WIDTH -
+        SPLIT_RESIZER_TOTAL_WIDTH -
+        PROJECT_AI_STACK_RESIZER_HEIGHT
+    );
+  }
+
+  function getFileListResizerMaxWidth() {
+    return Math.max(
+      OUTLINER_MIN_EXPANDED_WIDTH,
+      Math.round(outlinerWidth + projectAiColumnWidth) -
+        PROJECT_AI_COLUMN_COMPACT_WIDTH
+    );
+  }
+
+  function resolveFileListResizerWidths(
+    requestedOutlinerWidth,
+    combinedWidth = outlinerWidth + projectAiColumnWidth,
+    startOutlinerWidth = outlinerWidth,
+    startProjectAiWidth = projectAiColumnWidth
+  ) {
+    const available = getFileListAiAvailableWidth(documentationWidth);
+    const numeric = Number(requestedOutlinerWidth);
+    const startOutliner = Number.isFinite(Number(startOutlinerWidth))
+      ? Number(startOutlinerWidth)
+      : outlinerWidth;
+    const fallbackProjectAi = Number(combinedWidth) - startOutliner;
+    const startProjectAi = Number.isFinite(Number(startProjectAiWidth))
+      ? Number(startProjectAiWidth)
+      : Number.isFinite(fallbackProjectAi)
+        ? fallbackProjectAi
+        : projectAiColumnWidth;
+    const rawOutliner = Number.isFinite(numeric) ? numeric : startOutliner;
+    let outliner = rawOutliner;
+
+    if (outliner <= OUTLINER_COMPACT_THRESHOLD) {
+      outliner = OUTLINER_COMPACT_WIDTH;
+    } else {
+      outliner = Math.max(OUTLINER_MIN_EXPANDED_WIDTH, outliner);
+    }
+
+    const delta = rawOutliner - startOutliner;
+    let projectAi = startProjectAi - delta;
+    if (projectAi <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD) {
+      projectAi = PROJECT_AI_COLUMN_COMPACT_WIDTH;
+    } else if (projectAi < PROJECT_AI_COLUMN_MIN_WIDTH) {
+      projectAi = PROJECT_AI_COLUMN_MIN_WIDTH;
+    }
+
+    /* If the viewport cannot fit two expanded columns, use the same compact
+       snap as the standalone AI resizer instead of producing a sub-minimum
+       expanded outliner. */
+    if (
+      available < OUTLINER_MIN_EXPANDED_WIDTH + PROJECT_AI_COLUMN_MIN_WIDTH &&
+      outliner > OUTLINER_COMPACT_WIDTH &&
+      projectAi > PROJECT_AI_COLUMN_COMPACT_THRESHOLD
+    ) {
+      projectAi = PROJECT_AI_COLUMN_COMPACT_WIDTH;
+    }
+
+    let overflow = Math.max(0, outliner + projectAi - available);
+    if (overflow > 0) {
+      const aiFloor =
+        projectAi > PROJECT_AI_COLUMN_COMPACT_THRESHOLD
+          ? PROJECT_AI_COLUMN_MIN_WIDTH
+          : PROJECT_AI_COLUMN_COMPACT_WIDTH;
+      const reduceAi = Math.min(overflow, Math.max(0, projectAi - aiFloor));
+      projectAi -= reduceAi;
+      overflow -= reduceAi;
+    }
+    if (overflow > 0) {
+      outliner = Math.max(OUTLINER_COMPACT_WIDTH, outliner - overflow);
+    }
+
+    return {
+      outliner: Math.round(
+        Math.max(OUTLINER_COMPACT_WIDTH, outliner)
+      ),
+      projectAi: Math.round(
+        Math.max(PROJECT_AI_COLUMN_COMPACT_WIDTH, projectAi)
+      ),
+    };
+  }
+
+  function applyFileListResizerWidths(
+    requestedOutlinerWidth,
+    combinedWidth = outlinerWidth + projectAiColumnWidth,
+    startOutlinerWidth = outlinerWidth,
+    startProjectAiWidth = projectAiColumnWidth
+  ) {
+    const resolved = resolveFileListResizerWidths(
+      requestedOutlinerWidth,
+      combinedWidth,
+      startOutlinerWidth,
+      startProjectAiWidth
+    );
+    renderAvrWorkspaceWidths(
+      {
+        outliner: resolved.outliner,
+        documentation: documentationWidth,
+      },
+      { persist: false, remember: false }
+    );
+    applyProjectAiWidths(resolved.projectAi, projectAiInstructionHeight, {
+      persist: false,
+      remember: false,
+    });
+  }
+
   function bindFileListResizer() {
     const resizer = $("fileListResizer");
     const container = getCanvasSplitContainer();
@@ -3046,10 +3172,10 @@
       outlinerResizeState = null;
       container.classList.remove("is-outliner-resizing");
       document.body.classList.remove("is-outliner-resizing");
-      applyOutlinerWidth(outlinerPreferredWidth, {
-        persist: true,
-        remember: false,
-      });
+      outlinerPreferredWidth = outlinerWidth;
+      projectAiColumnPreferredWidth = projectAiColumnWidth;
+      persistOutlinerWidth(outlinerPreferredWidth);
+      persistProjectAiWidths();
       event?.preventDefault?.();
     };
 
@@ -3060,6 +3186,8 @@
         pointerId: event.pointerId,
         startX: event.clientX,
         startWidth: outlinerWidth,
+        startCombinedWidth: outlinerWidth + projectAiColumnWidth,
+        startProjectAiWidth: projectAiColumnWidth,
       };
       resizer.setPointerCapture?.(event.pointerId);
       container.classList.add("is-outliner-resizing");
@@ -3071,7 +3199,12 @@
       event.preventDefault();
       const nextWidth =
         outlinerResizeState.startWidth + event.clientX - outlinerResizeState.startX;
-      applyOutlinerWidth(nextWidth, { persist: false });
+      applyFileListResizerWidths(
+        nextWidth,
+        outlinerResizeState.startCombinedWidth,
+        outlinerResizeState.startWidth,
+        outlinerResizeState.startProjectAiWidth
+      );
     });
 
     resizer.addEventListener("pointerup", finishResize);
@@ -3097,7 +3230,11 @@
       }
 
       event.preventDefault();
-      applyOutlinerWidth(nextWidth);
+      applyFileListResizerWidths(nextWidth);
+      outlinerPreferredWidth = outlinerWidth;
+      projectAiColumnPreferredWidth = projectAiColumnWidth;
+      persistOutlinerWidth(outlinerPreferredWidth);
+      persistProjectAiWidths();
     });
 
     applyOutlinerWidth(outlinerPreferredWidth, {
@@ -3187,7 +3324,10 @@
         "aria-valuemin",
         String(OUTLINER_COMPACT_WIDTH)
       );
-      outlinerResizer.setAttribute("aria-valuemax", String(getOutlinerMaxWidth()));
+      outlinerResizer.setAttribute(
+        "aria-valuemax",
+        String(getFileListResizerMaxWidth())
+      );
       outlinerResizer.setAttribute("aria-valuenow", String(outlinerWidth));
     }
 
@@ -3646,10 +3786,21 @@
       ) {
         return;
       }
-      if (projectAiColumnResizeState || projectAiStackResizeState) return;
+      if (
+        outlinerResizeState ||
+        (projectAiColumnResizeState || projectAiStackResizeState)
+      ) {
+        return;
+      }
       if (workspaceResizeFrame !== null) return;
       workspaceResizeFrame = window.requestAnimationFrame(() => {
         workspaceResizeFrame = null;
+        if (
+          outlinerResizeState ||
+          (projectAiColumnResizeState || projectAiStackResizeState)
+        ) {
+          return;
+        }
         renderAvrWorkspaceWidths(
           resolveAvrWorkspaceWidths(
             outlinerPreferredWidth,
