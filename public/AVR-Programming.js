@@ -64,8 +64,9 @@
   const SPLIT_RESIZER_TOTAL_WIDTH = 28;
   const PROJECT_AI_COLUMN_DEFAULT_WIDTH = 318;
   const PROJECT_AI_COLUMN_MIN_WIDTH = 238;
+  const PROJECT_AI_COLUMN_COMPACT_WIDTH = 62;
+  const PROJECT_AI_COLUMN_COMPACT_THRESHOLD = 112;
   const PROJECT_AI_STACK_MIN_HEIGHT = 190;
-  const PROJECT_AI_STACK_COLLAPSED_HEIGHT = 62;
   const PROJECT_AI_STACK_RESIZER_HEIGHT = 14;
   const DEVICE_PANEL_EXPANDED_HEIGHT = 112;
   const DEVICE_PANEL_COMPACT_HEIGHT = 54;
@@ -150,7 +151,6 @@
   let projectAiInstructionHeight = 0;
   let projectAiInstructionPreferredHeight = 0;
   let projectAiStackResizeState = null;
-  let projectAiStackCollapsedPanel = "";
   let projectInstructionDocument = {
     schemaVersion: 1,
     revision: 0,
@@ -3337,6 +3337,9 @@
   function normalizeProjectAiColumnPreference(width) {
     const numeric = Number(width);
     if (!Number.isFinite(numeric)) return PROJECT_AI_COLUMN_DEFAULT_WIDTH;
+    if (numeric <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD) {
+      return PROJECT_AI_COLUMN_COMPACT_WIDTH;
+    }
     return Math.max(PROJECT_AI_COLUMN_MIN_WIDTH, numeric);
   }
 
@@ -3356,9 +3359,13 @@
   }
 
   function resolveProjectAiColumnWidth(width) {
+    const normalized = normalizeProjectAiColumnPreference(width);
+    if (normalized <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD) {
+      return PROJECT_AI_COLUMN_COMPACT_WIDTH;
+    }
     return Math.min(
       getProjectAiColumnMaxWidth(),
-      Math.max(PROJECT_AI_COLUMN_MIN_WIDTH, normalizeProjectAiColumnPreference(width))
+      Math.max(PROJECT_AI_COLUMN_MIN_WIDTH, normalized)
     );
   }
 
@@ -3378,25 +3385,33 @@
   function syncProjectAiResizerAria() {
     const chatResizer = $("projectAiChatResizer");
     if (chatResizer) {
-      chatResizer.setAttribute("aria-valuemin", String(PROJECT_AI_STACK_COLLAPSED_HEIGHT));
+      chatResizer.setAttribute("aria-valuemin", String(PROJECT_AI_STACK_MIN_HEIGHT));
       chatResizer.setAttribute("aria-valuemax", String(getProjectAiInstructionMaxHeight()));
       chatResizer.setAttribute(
         "aria-valuenow",
-        String(projectAiInstructionHeight || getProjectAiInstructionMaxHeight())
+        String(
+          projectAiInstructionHeight ||
+            Math.round(
+              (PROJECT_AI_STACK_MIN_HEIGHT + getProjectAiInstructionMaxHeight()) / 2
+            )
+        )
       );
-      chatResizer.setAttribute(
-        "aria-valuetext",
-        projectAiStackCollapsedPanel
-          ? `${projectAiStackCollapsedPanel} collapsed`
-          : "Instruction and chat split"
-      );
+      chatResizer.setAttribute("aria-valuetext", "Instruction and chat split");
     }
     const columnResizer = $("projectAiColumnResizer");
     if (columnResizer) {
-      columnResizer.setAttribute("aria-valuemin", String(PROJECT_AI_COLUMN_MIN_WIDTH));
+      columnResizer.setAttribute(
+        "aria-valuemin",
+        String(PROJECT_AI_COLUMN_COMPACT_WIDTH)
+      );
       columnResizer.setAttribute("aria-valuemax", String(getProjectAiColumnMaxWidth()));
       columnResizer.setAttribute("aria-valuenow", String(Math.round(projectAiColumnWidth)));
-      columnResizer.setAttribute("aria-valuetext", `${Math.round(projectAiColumnWidth)} pixels`);
+      columnResizer.setAttribute(
+        "aria-valuetext",
+        projectAiColumnWidth <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD
+          ? "Collapsed"
+          : `${Math.round(projectAiColumnWidth)} pixels`
+      );
     }
   }
 
@@ -3428,16 +3443,22 @@
 
     const layout = getProjectAiLayout();
     const container = getCanvasSplitContainer();
-    if (container && !isStackedCanvasLayout()) {
-      container.style.setProperty("--project-ai-width", `${resolved}px`);
+    if (container) {
+      if (!isStackedCanvasLayout()) {
+        container.style.setProperty("--project-ai-width", `${resolved}px`);
+      }
+      container.classList.toggle(
+        "is-project-ai-compact",
+        !isStackedCanvasLayout() &&
+          resolved <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD
+      );
     }
     const stackHeight = getProjectAiStackHeight();
     if (
       layout &&
       Number.isFinite(Number(instructionHeight)) &&
       Number(instructionHeight) > 0 &&
-      stackHeight > 0 &&
-      !projectAiStackCollapsedPanel
+      stackHeight > 0
     ) {
       const maximum = getProjectAiInstructionMaxHeight();
       projectAiInstructionHeight = Math.max(
@@ -3453,7 +3474,7 @@
         "--project-ai-chat-height",
         `max(${PROJECT_AI_STACK_MIN_HEIGHT}px, calc(100% - ${projectAiInstructionHeight + PROJECT_AI_STACK_RESIZER_HEIGHT}px))`
       );
-    } else if (layout && !projectAiStackCollapsedPanel) {
+    } else if (layout) {
       layout.style.removeProperty("--project-ai-instruction-height");
       layout.style.removeProperty("--project-ai-chat-height");
     }
@@ -3475,7 +3496,7 @@
     }
     projectAiColumnPreferredWidth = normalizeProjectAiColumnPreference(column);
     projectAiInstructionPreferredHeight = Number.isFinite(instructionHeight)
-      ? instructionHeight
+      ? Math.max(PROJECT_AI_STACK_MIN_HEIGHT, instructionHeight)
       : 0;
     applyProjectAiWidths(column, instructionHeight, { persist: false });
   }
@@ -3506,8 +3527,6 @@
       if (event.button !== 0) return;
       event.preventDefault();
       const instructionPanel = layout.querySelector(".project-instruction-panel");
-      projectAiStackCollapsedPanel = "";
-      layout.classList.remove("is-instruction-collapsed", "is-chat-collapsed");
       projectAiStackResizeState = {
         pointerId: event.pointerId,
         startY: event.clientY,
@@ -3527,25 +3546,6 @@
         event.clientY -
         projectAiStackResizeState.startY;
       const maximum = getProjectAiInstructionMaxHeight();
-      const threshold = PROJECT_AI_STACK_COLLAPSED_HEIGHT + 20;
-      if (nextHeight <= threshold) {
-        projectAiStackCollapsedPanel = "instruction";
-        projectAiInstructionHeight = PROJECT_AI_STACK_COLLAPSED_HEIGHT;
-        layout.classList.add("is-instruction-collapsed");
-        layout.classList.remove("is-chat-collapsed");
-        syncProjectAiResizerAria();
-        return;
-      }
-      if (nextHeight >= maximum - threshold) {
-        projectAiStackCollapsedPanel = "chat";
-        projectAiInstructionHeight = maximum;
-        layout.classList.add("is-chat-collapsed");
-        layout.classList.remove("is-instruction-collapsed");
-        syncProjectAiResizerAria();
-        return;
-      }
-      projectAiStackCollapsedPanel = "";
-      layout.classList.remove("is-instruction-collapsed", "is-chat-collapsed");
       projectAiInstructionHeight = Math.max(
         PROJECT_AI_STACK_MIN_HEIGHT,
         Math.min(maximum, nextHeight)
@@ -3563,24 +3563,15 @@
         projectAiInstructionHeight || getProjectAiInstructionMaxHeight() / 2;
       if (event.key === "ArrowUp") nextHeight -= step;
       else if (event.key === "ArrowDown") nextHeight += step;
-      else if (event.key === "Home") {
-        projectAiStackCollapsedPanel = "instruction";
-        layout.classList.add("is-instruction-collapsed");
-        layout.classList.remove("is-chat-collapsed");
-        nextHeight = PROJECT_AI_STACK_COLLAPSED_HEIGHT;
-      } else if (event.key === "End") {
-        projectAiStackCollapsedPanel = "chat";
-        layout.classList.add("is-chat-collapsed");
-        layout.classList.remove("is-instruction-collapsed");
-        nextHeight = getProjectAiInstructionMaxHeight();
-      } else return;
+      else if (event.key === "Home") nextHeight = PROJECT_AI_STACK_MIN_HEIGHT;
+      else if (event.key === "End") nextHeight = getProjectAiInstructionMaxHeight();
+      else return;
       event.preventDefault();
-      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-        projectAiStackCollapsedPanel = "";
-        layout.classList.remove("is-instruction-collapsed", "is-chat-collapsed");
-      }
-      projectAiInstructionHeight = nextHeight;
-      applyProjectAiWidths(projectAiColumnWidth, nextHeight, {
+      projectAiInstructionHeight = Math.max(
+        PROJECT_AI_STACK_MIN_HEIGHT,
+        Math.min(getProjectAiInstructionMaxHeight(), nextHeight)
+      );
+      applyProjectAiWidths(projectAiColumnWidth, projectAiInstructionHeight, {
         persist: true,
         remember: true,
       });
@@ -3655,6 +3646,7 @@
       ) {
         return;
       }
+      if (projectAiColumnResizeState || projectAiStackResizeState) return;
       if (workspaceResizeFrame !== null) return;
       workspaceResizeFrame = window.requestAnimationFrame(() => {
         workspaceResizeFrame = null;

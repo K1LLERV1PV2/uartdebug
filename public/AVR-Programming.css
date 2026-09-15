@@ -824,7 +824,7 @@ main,
   --outliner-width: 305px;
   --outliner-resizer-width: 14px;
   --project-ai-width: 318px;
-  --project-ai-min-width: 238px;
+  --project-ai-compact-width: 62px;
   --project-ai-resizer-width: 14px;
   --editor-workspace-min-width: 500px;
   --documentation-width: 360px;
@@ -835,7 +835,7 @@ main,
   grid-template-columns:
     minmax(62px, var(--outliner-width))
     var(--outliner-resizer-width)
-    minmax(var(--project-ai-min-width), var(--project-ai-width))
+    minmax(var(--project-ai-compact-width), var(--project-ai-width))
     var(--project-ai-resizer-width)
     minmax(var(--editor-workspace-min-width), 1fr)
     var(--documentation-resizer-width)
@@ -853,6 +853,10 @@ main,
 
 .canvas-split-container.is-documentation-compact {
   --documentation-width: var(--documentation-compact-width);
+}
+
+.canvas-split-container.is-project-ai-compact {
+  --project-ai-width: var(--project-ai-compact-width);
 }
 
 .split-resizer {
@@ -2222,23 +2226,26 @@ body.is-device-panel-resizing * {
   cursor: col-resize;
 }
 
-.project-ai-layout.is-instruction-collapsed {
-  grid-template-rows: 62px 14px minmax(190px, 1fr);
-}
-
-.project-ai-layout.is-chat-collapsed {
-  grid-template-rows: minmax(190px, 1fr) 14px 62px;
-}
-
-.project-ai-layout.is-instruction-collapsed
+.canvas-split-container.is-project-ai-compact
   .project-instruction-panel > *,
-.project-ai-layout.is-chat-collapsed
+.canvas-split-container.is-project-ai-compact
   .project-ai-chat-panel > * {
   display: none !important;
 }
 
-.project-ai-layout.is-instruction-collapsed .project-instruction-panel::before,
-.project-ai-layout.is-chat-collapsed .project-ai-chat-panel::before {
+.canvas-split-container.is-project-ai-compact
+  .project-instruction-panel,
+.canvas-split-container.is-project-ai-compact
+  .project-ai-chat-panel {
+  align-items: center;
+  justify-content: center;
+  padding: 10px 8px;
+}
+
+.canvas-split-container.is-project-ai-compact
+  .project-instruction-panel::before,
+.canvas-split-container.is-project-ai-compact
+  .project-ai-chat-panel::before {
   display: block;
   align-self: center;
   color: rgba(200, 255, 221, 0.72);
@@ -2248,11 +2255,13 @@ body.is-device-panel-resizing * {
   white-space: pre;
 }
 
-.project-ai-layout.is-instruction-collapsed .project-instruction-panel::before {
+.canvas-split-container.is-project-ai-compact
+  .project-instruction-panel::before {
   content: "I\A N\A S\A T\A R\A U\A C\A T\A I\A O\A N";
 }
 
-.project-ai-layout.is-chat-collapsed .project-ai-chat-panel::before {
+.canvas-split-container.is-project-ai-compact
+  .project-ai-chat-panel::before {
   content: "C\A H\A A\A T";
 }
 
