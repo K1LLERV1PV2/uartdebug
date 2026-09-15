@@ -659,7 +659,7 @@ test("uses the MP badge for mini-projects in the AVR outliner", () => {
   );
 });
 
-test("keeps documentation separate and uses a full-height AI workspace rail", () => {
+test("keeps every workspace on one canvas and stacks instruction above chat", () => {
   const html = fs.readFileSync(
     path.join(__dirname, "../public/avr.html"),
     "utf8"
@@ -672,49 +672,29 @@ test("keeps documentation separate and uses a full-height AI workspace rail", ()
     path.join(__dirname, "../public/AVR-Programming.js"),
     "utf8"
   );
-  const stageStart = html.indexOf('id="projectWorkspaceStage"');
-  const documentationStart = html.indexOf('id="projectDocumentationPane"');
-  const documentationEnd = html.indexOf("</aside>", documentationStart);
-  const aiSceneStart = html.indexOf('id="projectAiScene"');
-  const aiViewStart = html.indexOf('id="projectAiView"');
-  const aiToggleIndex = html.indexOf('id="projectAiToggle"');
+  const fileListIndex = html.indexOf('id="fileList"');
+  const instructionIndex = html.indexOf("project-instruction-panel");
+  const chatResizerIndex = html.indexOf('id="projectAiChatResizer"');
+  const chatIndex = html.indexOf("project-ai-chat-panel");
+  const documentationIndex = html.indexOf('id="projectDocumentationPane"');
 
-  assert.ok(stageStart >= 0);
-  assert.ok(documentationStart > stageStart);
-  assert.ok(documentationEnd > documentationStart);
-  assert.ok(aiSceneStart > documentationEnd);
-  assert.ok(aiViewStart > aiSceneStart);
-  assert.ok(aiToggleIndex > aiViewStart);
-  assert.doesNotMatch(
-    html.slice(documentationStart, documentationEnd),
-    /projectAiView|projectAiHeader|projectAiToggle/
-  );
-  assert.match(html.slice(aiToggleIndex), /icons\/logo-512\.png/);
+  assert.ok(fileListIndex >= 0);
+  assert.ok(instructionIndex > fileListIndex);
+  assert.ok(chatResizerIndex > instructionIndex);
+  assert.ok(chatIndex > chatResizerIndex);
+  assert.ok(documentationIndex > chatIndex);
+  assert.match(html, /id="projectWorkspaceStage"[\s\S]*data-mode="avr"/);
+  assert.doesNotMatch(html, /projectAiScene|projectAiToggle|project-skills-panel|projectAiSkillsResizer/);
   assert.match(
-    css,
-    /\.project-ai-toggle\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?left:\s*calc\(100% - var\(--project-workspace-rail-width\)\);/
+    html,
+    /id="projectAiChatResizer"[\s\S]*role="separator"[\s\S]*aria-orientation="horizontal"/
   );
-  assert.match(
-    css,
-    /\.project-workspace-stage\[data-mode="ai"\] \.project-ai-toggle\s*\{[\s\S]*?left:\s*0;/
-  );
-  assert.match(
-    html.slice(aiToggleIndex),
-    /project-ai-toggle-label-word[\s\S]*?<span>A<\/span><span>I<\/span>[\s\S]*?project-ai-toggle-label-word[\s\S]*?<span>A<\/span><span>S<\/span><span>S<\/span>/
-  );
-  assert.match(
-    css,
-    /\.project-ai-toggle\s*\{[\s\S]*?background:\s*var\(--avr-window-bg\);/
-  );
-  assert.match(
-    css,
-    /\.project-ai-toggle::before\s*\{[\s\S]*?linear-gradient\(90deg, transparent, var\(--avr-bg\)\)/
-  );
-  assert.match(
-    css,
-    /\.project-ai-toggle-arrow::before,[\s\S]*?\.project-ai-toggle-arrow::after\s*\{[\s\S]*?height:\s*50%;/
-  );
-  assert.doesNotMatch(css, /project-workspace-rail-breathe/);
+  assert.match(html, /id="projectAiColumnResizer"[\s\S]*aria-orientation="vertical"/);
+  assert.match(css, /\.canvas-split-container\s*\{[\s\S]*?--project-ai-width:/);
+  assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?grid-template-rows:/);
+  assert.match(css, /\.project-ai-layout\.is-instruction-collapsed[\s\S]*content: "I\\A N/);
+  assert.match(css, /\.project-ai-layout\.is-chat-collapsed[\s\S]*content: "C\\A H/);
+  assert.doesNotMatch(source, /setProjectWorkspaceMode|fetchProjectAiSkills|AI_SKILL_DRAG_MIME/);
 });
 
 test("wires the project AI pane to the AVR AI API contract", () => {
@@ -729,7 +709,7 @@ test("wires the project AI pane to the AVR AI API contract", () => {
 
   assert.match(html, /id="projectWorkspaceStage"[\s\S]*data-mode="avr"/);
   assert.match(html, /id="avrWorkspaceScene"/);
-  assert.match(html, /id="projectAiScene"[\s\S]*aria-hidden="true"[\s\S]*inert/);
+  assert.doesNotMatch(html, /projectAiScene|projectAiToggle/);
   assert.match(html, /id="projectAiHeader"/);
   assert.match(
     html,
@@ -767,7 +747,7 @@ test("wires the project AI pane to the AVR AI API contract", () => {
     html,
     /vendor\/codemirror\/5\.65\.16\/mode\/markdown\/markdown\.js/
   );
-  assert.match(html, /id="projectSkillsList"[\s\S]*role="list"/);
+  assert.doesNotMatch(html, /projectSkillsList|project-skills-panel|projectAiSkillsResizer/);
   assert.doesNotMatch(html, /accounts\.google\.com\/gsi|gsi\/client/);
   assert.doesNotMatch(html, /id="projectAiAccessToken"/);
   assert.doesNotMatch(html, /id="projectAiClearBtn"/);
@@ -776,7 +756,7 @@ test("wires the project AI pane to the AVR AI API contract", () => {
   assert.doesNotMatch(html, /Describe the mini-project you need/);
   assert.doesNotMatch(source, /fetch\("\/api\/avr\/ai\/status"/);
   assert.match(source, /fetch\("\/api\/avr\/ai\/respond"/);
-  assert.match(source, /PROJECT_AI_SKILLS_URL\s*=\s*"\/api\/avr\/ai\/skills"/);
+  assert.doesNotMatch(source, /PROJECT_AI_SKILLS_URL|fetchProjectAiSkills|AI_SKILL_DRAG_MIME/);
   assert.doesNotMatch(source, /AI_BROWSER_INSTALLATION_STORAGE_KEY/);
   assert.doesNotMatch(source, /X-UartDebug-Installation/);
   assert.doesNotMatch(source, /getAiBrowserInstallationHeader/);
@@ -1540,7 +1520,7 @@ test("wires safe prompt quotes, external chat actions, and hidden provenance", (
   assert.match(source, /renderProjectAiThinkingProgress/);
 });
 
-test("uses three sibling AI panels with live Markdown and a framed composer", () => {
+test("uses stacked AI instruction and chat panels with a framed composer", () => {
   const html = fs.readFileSync(
     path.join(__dirname, "../public/avr.html"),
     "utf8"
@@ -1554,8 +1534,7 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
     "utf8"
   );
   const viewStart = html.indexOf('id="projectAiView"');
-  const viewEnd = html.indexOf("</aside>", viewStart);
-  const view = html.slice(viewStart, viewEnd);
+  const view = html.slice(viewStart);
   const workspace = view.indexOf('id="projectAiWorkspace"');
   const formStart = html.indexOf('id="projectAiForm"');
   const formEnd = html.indexOf("</form>", formStart);
@@ -1564,25 +1543,18 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   const prompt = form.indexOf('id="projectAiPrompt"');
   const submit = form.indexOf('id="projectAiSubmitBtn"');
   const aiLayoutStart = html.indexOf("project-ai-layout");
-  const chatPanel = html.indexOf("project-ai-chat-panel", aiLayoutStart);
   const instructionPanel = html.indexOf(
     "project-instruction-panel",
     aiLayoutStart
   );
-  const skillsPanel = html.indexOf("project-skills-panel", aiLayoutStart);
   const chatResizer = html.indexOf('id="projectAiChatResizer"', aiLayoutStart);
-  const skillsResizer = html.indexOf(
-    'id="projectAiSkillsResizer"',
-    aiLayoutStart
-  );
+  const chatPanel = html.indexOf("project-ai-chat-panel", aiLayoutStart);
 
   assert.ok(viewStart >= 0);
   assert.ok(aiLayoutStart >= 0);
-  assert.ok(chatPanel > aiLayoutStart);
-  assert.ok(chatResizer > chatPanel);
-  assert.ok(instructionPanel > chatResizer);
-  assert.ok(skillsResizer > instructionPanel);
-  assert.ok(skillsPanel > skillsResizer);
+  assert.ok(instructionPanel > aiLayoutStart);
+  assert.ok(chatResizer > instructionPanel);
+  assert.ok(chatPanel > chatResizer);
   assert.ok(workspace >= 0);
   assert.ok(view.indexOf('id="projectAiForm"') > workspace);
   assert.ok(composer < prompt);
@@ -1604,28 +1576,18 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   assert.match(css, /\.project-ai-composer:focus-within\s*\{/);
   assert.match(css, /#projectAiPrompt\s*\{[\s\S]*?border:\s*0;/);
   assert.match(css, /#projectAiPrompt\s*\{[\s\S]*?background:\s*transparent;/);
-  assert.match(
-    css,
-    /\.project-ai-layout\s*\{[\s\S]*?grid-template-columns:[\s\S]*?minmax\(270px,[\s\S]*?var\(--project-ai-resizer-width\)[\s\S]*?minmax\(350px,[\s\S]*?var\(--project-ai-resizer-width\)[\s\S]*?minmax\(240px,/
-  );
+  assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?grid-template-rows:/);
   assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?gap:\s*0;/);
   assert.match(
     html,
-    /id="projectAiChatResizer"[\s\S]*?role="separator"[\s\S]*?aria-orientation="vertical"/
+    /id="projectAiChatResizer"[\s\S]*?role="separator"[\s\S]*?aria-orientation="horizontal"/
   );
-  assert.match(
-    html,
-    /id="projectAiSkillsResizer"[\s\S]*?role="separator"[\s\S]*?aria-orientation="vertical"/
-  );
-  assert.match(
-    source,
-    /projectAiChatPreferredWidth\s*=\s*resolved\.chat;[\s\S]*?projectAiSkillsPreferredWidth\s*=\s*resolved\.skills;/
-  );
+  assert.match(source, /projectAiColumnPreferredWidth/);
   assert.match(
     css,
     /\.project-instruction-workspace\s*\{[\s\S]*?display:\s*flex;/
   );
-  assert.match(source, /AI_SKILL_DRAG_MIME/);
+  assert.doesNotMatch(source, /AI_SKILL_DRAG_MIME|projectAiSkills|projectSkillsList/);
   assert.match(source, /CodeMirror\.fromTextArea\(editorElement/);
   assert.match(source, /name:\s*"markdown"/);
   assert.match(source, /inputField\.setAttribute\("role", "textbox"\)/);
@@ -1641,21 +1603,15 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   assert.match(source, /"cursorActivity"/);
   assert.match(source, /projectInstructionEditor\.replaceRange\(/);
   assert.doesNotMatch(source, /setRangeText\(/);
-  assert.match(source, /insertProjectAiSkill\(skillId, \{ append: true \}\)/);
   assert.match(source, /function bindProjectAiResizers\(\)/);
-  assert.match(source, /STORAGE_PROJECT_AI_CHAT_WIDTH/);
-  assert.match(source, /STORAGE_PROJECT_AI_SKILLS_WIDTH/);
+  assert.match(source, /STORAGE_PROJECT_AI_COLUMN_WIDTH/);
   assert.match(
     html,
     /project-instruction-live-editor scroll-frame[\s\S]*?id="projectInstructionDropZone"/
   );
   assert.doesNotMatch(html, /project-skills-help|Saved locally/);
   assert.doesNotMatch(source, /Saved locally/);
-  assert.match(source, /getCompatibleInstructionSkillRefs/);
-  assert.match(
-    source,
-    /skillRefs:\s*projectAiSkillsLoaded\s*\?\s*responseInstruction\.skillRefs\s*:\s*undefined/
-  );
+  assert.match(source, /normalizeInstructionSkillRefs[\s\S]*projectInstructionDocument\.skillRefs/);
   assert.match(source, /projectInstructionStorageReadFailed && !recover/);
   assert.match(source, /Stored instruction is unreadable/);
   assert.match(source, /const DEFAULT_PROJECT_INSTRUCTION = "";/);
@@ -1709,29 +1665,8 @@ test("uses three sibling AI panels with live Markdown and a framed composer", ()
   assert.match(source, /url\.searchParams\.delete\("ai_auth"\)/);
   assert.match(source, /window\.history\.replaceState\(/);
   assert.match(source, /google_sign_in_denied:\s*"Google sign-in was cancelled\."/);
-  assert.match(
-    source,
-    /setProjectWorkspaceMode\(projectAiAuthReturn \? "ai" : "avr"/
-  );
-  assert.match(
-    css,
-    /animation:\s*project-workspace-card-switch 980ms/
-  );
-  assert.match(
-    css,
-    /\.project-workspace-stage\.is-switching \.project-workspace-track\s*\{[\s\S]*?transition-delay:\s*250ms;/
-  );
-  assert.match(css, /\.is-toggle-departing[\s\S]*?\.project-ai-toggle/);
-  assert.match(css, /\.is-toggle-hidden[\s\S]*?\.project-ai-toggle/);
-  assert.match(source, /PROJECT_WORKSPACE_TOGGLE_EXIT_MS\s*=\s*180/);
-  assert.match(source, /PROJECT_WORKSPACE_SWITCH_MS\s*=\s*1000/);
-  assert.match(source, /PROJECT_WORKSPACE_TOGGLE_ENTER_MS\s*=\s*200/);
-  assert.match(
-    css,
-    /\.project-workspace-track\s*\{[\s\S]*?transition:\s*transform 440ms/
-  );
   assert.match(css, /@media \(max-width: 1040px\)/);
-  assert.match(css, /height:\s*clamp\(560px, 78vh, 700px\)/);
+  assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?height:\s*clamp\(680px, 90vh, 900px\)/);
 });
 
 test("uses a full-width three-stage draggable device-panel separator", () => {

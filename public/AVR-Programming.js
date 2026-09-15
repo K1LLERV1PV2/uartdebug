@@ -12,10 +12,10 @@
     "ud_avr_ai_project_instruction_v2";
   const STORAGE_PROJECT_INSTRUCTION_LEGACY =
     "ud_avr_ai_project_instruction_v1";
-  const STORAGE_PROJECT_AI_CHAT_WIDTH =
-    "ud_avr_ai_chat_width_v1";
-  const STORAGE_PROJECT_AI_SKILLS_WIDTH =
-    "ud_avr_ai_skills_width_v1";
+  const STORAGE_PROJECT_AI_COLUMN_WIDTH =
+    "ud_avr_ai_column_width_v1";
+  const STORAGE_PROJECT_AI_STACK_SPLIT =
+    "ud_avr_ai_stack_split_v1";
   const STORAGE_PROJECT_AI_CHATS = "ud_avr_ai_chats_v1";
   const STORAGE_PROJECT_AI_CHATS_RECOVERY =
     "ud_avr_ai_chats_recovery_v1";
@@ -28,8 +28,6 @@
     "ud_avr_ai_instruction_recovery_v1";
   const STORAGE_DEVICE_PANEL_STATE =
     "ud_avr_programming_device_panel_state_v2";
-  const AI_SKILL_DRAG_MIME = "application/x-uartdebug-ai-skill+json";
-  const PROJECT_AI_SKILLS_URL = "/api/avr/ai/skills";
   const PROJECT_AI_AUTH_SESSION_URL = "/api/avr/ai/auth/session";
   const PROJECT_AI_GOOGLE_START_URL = "/api/avr/ai/auth/google/start";
   const PROJECT_AI_LOGOUT_URL = "/api/avr/ai/auth/logout";
@@ -64,15 +62,11 @@
   const DOCUMENTATION_COMPACT_THRESHOLD = 112;
   const DOCUMENTATION_MIN_WIDTH = 240;
   const SPLIT_RESIZER_TOTAL_WIDTH = 28;
-  const PROJECT_AI_CHAT_DEFAULT_WIDTH = 320;
-  const PROJECT_AI_CHAT_MIN_WIDTH = 270;
-  const PROJECT_AI_SKILLS_DEFAULT_WIDTH = 280;
-  const PROJECT_AI_SKILLS_MIN_WIDTH = 240;
-  const PROJECT_AI_INSTRUCTION_MIN_WIDTH = 350;
-  const PROJECT_AI_RESIZER_TOTAL_WIDTH = 28;
-  const PROJECT_WORKSPACE_TOGGLE_EXIT_MS = 180;
-  const PROJECT_WORKSPACE_SWITCH_MS = 1000;
-  const PROJECT_WORKSPACE_TOGGLE_ENTER_MS = 200;
+  const PROJECT_AI_COLUMN_DEFAULT_WIDTH = 318;
+  const PROJECT_AI_COLUMN_MIN_WIDTH = 238;
+  const PROJECT_AI_STACK_MIN_HEIGHT = 190;
+  const PROJECT_AI_STACK_COLLAPSED_HEIGHT = 62;
+  const PROJECT_AI_STACK_RESIZER_HEIGHT = 14;
   const DEVICE_PANEL_EXPANDED_HEIGHT = 112;
   const DEVICE_PANEL_COMPACT_HEIGHT = 54;
   const DEVICE_PANEL_COLLAPSED_HEIGHT = 0;
@@ -150,16 +144,13 @@
   let documentationEditor = null;
   let documentationEditorSyncing = false;
   let documentationEditSaveTimer = null;
-  let projectWorkspaceMode = "avr";
-  let projectWorkspaceTransitionTimer = null;
-  let projectWorkspaceToggleExitTimer = null;
-  let projectWorkspaceToggleEnterTimer = null;
-  let projectAiChatWidth = PROJECT_AI_CHAT_DEFAULT_WIDTH;
-  let projectAiChatPreferredWidth = PROJECT_AI_CHAT_DEFAULT_WIDTH;
-  let projectAiChatResizeState = null;
-  let projectAiSkillsWidth = PROJECT_AI_SKILLS_DEFAULT_WIDTH;
-  let projectAiSkillsPreferredWidth = PROJECT_AI_SKILLS_DEFAULT_WIDTH;
-  let projectAiSkillsResizeState = null;
+  let projectAiColumnWidth = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
+  let projectAiColumnPreferredWidth = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
+  let projectAiColumnResizeState = null;
+  let projectAiInstructionHeight = 0;
+  let projectAiInstructionPreferredHeight = 0;
+  let projectAiStackResizeState = null;
+  let projectAiStackCollapsedPanel = "";
   let projectInstructionDocument = {
     schemaVersion: 1,
     revision: 0,
@@ -181,8 +172,6 @@
   const markdownLiveEditors = new Map();
   let projectAiSelectionQuote = null;
   let projectAiPromptQuotes = [];
-  const projectAiSkills = new Map();
-  let projectAiSkillsLoaded = false;
   let devicePanelState = "expanded";
   let devicePanelHeight = DEVICE_PANEL_EXPANDED_HEIGHT;
   let devicePanelResizeState = null;
@@ -2838,7 +2827,9 @@
       OUTLINER_COMPACT_WIDTH + DOCUMENTATION_COMPACT_WIDTH,
       Math.round(container.getBoundingClientRect().width) -
         OUTLINER_EDITOR_MIN_WIDTH -
-        SPLIT_RESIZER_TOTAL_WIDTH
+        SPLIT_RESIZER_TOTAL_WIDTH -
+        projectAiColumnWidth -
+        PROJECT_AI_STACK_RESIZER_HEIGHT
     );
   }
 
@@ -3343,140 +3334,128 @@
     return document.querySelector(".project-ai-layout");
   }
 
-  function normalizeProjectAiChatPreference(width) {
+  function normalizeProjectAiColumnPreference(width) {
     const numeric = Number(width);
-    if (!Number.isFinite(numeric)) return PROJECT_AI_CHAT_DEFAULT_WIDTH;
-    return Math.max(PROJECT_AI_CHAT_MIN_WIDTH, numeric);
+    if (!Number.isFinite(numeric)) return PROJECT_AI_COLUMN_DEFAULT_WIDTH;
+    return Math.max(PROJECT_AI_COLUMN_MIN_WIDTH, numeric);
   }
 
-  function normalizeProjectAiSkillsPreference(width) {
-    const numeric = Number(width);
-    if (!Number.isFinite(numeric)) return PROJECT_AI_SKILLS_DEFAULT_WIDTH;
-    return Math.max(PROJECT_AI_SKILLS_MIN_WIDTH, numeric);
-  }
-
-  function getProjectAiSideBudget() {
-    const layout = getProjectAiLayout();
-    if (!layout) {
-      return PROJECT_AI_CHAT_DEFAULT_WIDTH + PROJECT_AI_SKILLS_DEFAULT_WIDTH;
-    }
-    if (isStackedCanvasLayout()) {
-      return Math.max(
-        PROJECT_AI_CHAT_MIN_WIDTH + PROJECT_AI_SKILLS_MIN_WIDTH,
-        Math.round(layout.getBoundingClientRect().width)
-      );
-    }
+  function getProjectAiColumnMaxWidth() {
+    const container = getCanvasSplitContainer();
+    if (!container || isStackedCanvasLayout()) return 1200;
+    const width = Math.round(container.getBoundingClientRect().width);
     return Math.max(
-      PROJECT_AI_CHAT_MIN_WIDTH + PROJECT_AI_SKILLS_MIN_WIDTH,
-      layout.getBoundingClientRect().width -
-        PROJECT_AI_INSTRUCTION_MIN_WIDTH -
-        PROJECT_AI_RESIZER_TOTAL_WIDTH
+      PROJECT_AI_COLUMN_MIN_WIDTH,
+      width -
+        outlinerWidth -
+        documentationWidth -
+        OUTLINER_EDITOR_MIN_WIDTH -
+        SPLIT_RESIZER_TOTAL_WIDTH -
+        PROJECT_AI_STACK_RESIZER_HEIGHT
     );
   }
 
-  function resolveProjectAiWidths(chatWidth, skillsWidth, priority = "balanced") {
-    let chat = normalizeProjectAiChatPreference(chatWidth);
-    let skills = normalizeProjectAiSkillsPreference(skillsWidth);
-    const budget = getProjectAiSideBudget();
-    if (chat + skills <= budget) return { chat, skills };
-
-    if (priority === "chat") {
-      chat = Math.min(chat, budget - PROJECT_AI_SKILLS_MIN_WIDTH);
-      skills = Math.min(skills, budget - chat);
-    } else if (priority === "skills") {
-      skills = Math.min(skills, budget - PROJECT_AI_CHAT_MIN_WIDTH);
-      chat = Math.min(chat, budget - skills);
-    } else {
-      const reducibleChat = chat - PROJECT_AI_CHAT_MIN_WIDTH;
-      const reducibleSkills = skills - PROJECT_AI_SKILLS_MIN_WIDTH;
-      const overflow = chat + skills - budget;
-      const reducibleTotal = reducibleChat + reducibleSkills;
-      if (reducibleTotal > 0) {
-        chat -= overflow * (reducibleChat / reducibleTotal);
-        skills = budget - chat;
-      }
-    }
-
-    return {
-      chat: Math.max(PROJECT_AI_CHAT_MIN_WIDTH, Math.round(chat)),
-      skills: Math.max(PROJECT_AI_SKILLS_MIN_WIDTH, Math.round(skills)),
-    };
-  }
-
-  function getProjectAiChatMaxWidth() {
-    return Math.max(
-      PROJECT_AI_CHAT_MIN_WIDTH,
-      getProjectAiSideBudget() - projectAiSkillsWidth
+  function resolveProjectAiColumnWidth(width) {
+    return Math.min(
+      getProjectAiColumnMaxWidth(),
+      Math.max(PROJECT_AI_COLUMN_MIN_WIDTH, normalizeProjectAiColumnPreference(width))
     );
   }
 
-  function getProjectAiSkillsMaxWidth() {
+  function getProjectAiStackHeight() {
+    return Math.round(getProjectAiLayout()?.getBoundingClientRect().height || 0);
+  }
+
+  function getProjectAiInstructionMaxHeight() {
     return Math.max(
-      PROJECT_AI_SKILLS_MIN_WIDTH,
-      getProjectAiSideBudget() - projectAiChatWidth
+      PROJECT_AI_STACK_MIN_HEIGHT,
+      getProjectAiStackHeight() -
+        PROJECT_AI_STACK_MIN_HEIGHT -
+        PROJECT_AI_STACK_RESIZER_HEIGHT
     );
   }
 
   function syncProjectAiResizerAria() {
     const chatResizer = $("projectAiChatResizer");
     if (chatResizer) {
-      chatResizer.setAttribute("aria-valuemin", String(PROJECT_AI_CHAT_MIN_WIDTH));
-      chatResizer.setAttribute("aria-valuemax", String(getProjectAiChatMaxWidth()));
-      chatResizer.setAttribute("aria-valuenow", String(projectAiChatWidth));
+      chatResizer.setAttribute("aria-valuemin", String(PROJECT_AI_STACK_COLLAPSED_HEIGHT));
+      chatResizer.setAttribute("aria-valuemax", String(getProjectAiInstructionMaxHeight()));
+      chatResizer.setAttribute(
+        "aria-valuenow",
+        String(projectAiInstructionHeight || getProjectAiInstructionMaxHeight())
+      );
+      chatResizer.setAttribute(
+        "aria-valuetext",
+        projectAiStackCollapsedPanel
+          ? `${projectAiStackCollapsedPanel} collapsed`
+          : "Instruction and chat split"
+      );
     }
-
-    const skillsResizer = $("projectAiSkillsResizer");
-    if (skillsResizer) {
-      skillsResizer.setAttribute(
-        "aria-valuemin",
-        String(PROJECT_AI_SKILLS_MIN_WIDTH)
-      );
-      skillsResizer.setAttribute(
-        "aria-valuemax",
-        String(getProjectAiSkillsMaxWidth())
-      );
-      skillsResizer.setAttribute("aria-valuenow", String(projectAiSkillsWidth));
+    const columnResizer = $("projectAiColumnResizer");
+    if (columnResizer) {
+      columnResizer.setAttribute("aria-valuemin", String(PROJECT_AI_COLUMN_MIN_WIDTH));
+      columnResizer.setAttribute("aria-valuemax", String(getProjectAiColumnMaxWidth()));
+      columnResizer.setAttribute("aria-valuenow", String(Math.round(projectAiColumnWidth)));
+      columnResizer.setAttribute("aria-valuetext", `${Math.round(projectAiColumnWidth)} pixels`);
     }
   }
 
   function persistProjectAiWidths() {
     try {
       localStorage.setItem(
-        STORAGE_PROJECT_AI_CHAT_WIDTH,
-        String(projectAiChatPreferredWidth)
+        STORAGE_PROJECT_AI_COLUMN_WIDTH,
+        String(projectAiColumnPreferredWidth)
       );
-      localStorage.setItem(
-        STORAGE_PROJECT_AI_SKILLS_WIDTH,
-        String(projectAiSkillsPreferredWidth)
-      );
+      if (projectAiInstructionPreferredHeight > 0) {
+        localStorage.setItem(
+          STORAGE_PROJECT_AI_STACK_SPLIT,
+          String(projectAiInstructionPreferredHeight)
+        );
+      }
     } catch (error) {
-      console.warn("Failed to persist AI workspace widths:", error);
+      console.warn("Failed to persist AI workspace layout:", error);
     }
   }
 
   function applyProjectAiWidths(
-    chatWidth,
-    skillsWidth,
-    { persist = true, remember = true, priority = "balanced" } = {}
+    columnWidth = projectAiColumnPreferredWidth,
+    instructionHeight = projectAiInstructionPreferredHeight,
+    { persist = true, remember = true } = {}
   ) {
-    const resolved = resolveProjectAiWidths(chatWidth, skillsWidth, priority);
-    projectAiChatWidth = resolved.chat;
-    projectAiSkillsWidth = resolved.skills;
-    if (remember) {
-      projectAiChatPreferredWidth = resolved.chat;
-      projectAiSkillsPreferredWidth = resolved.skills;
-    }
+    const resolved = Math.round(resolveProjectAiColumnWidth(columnWidth));
+    projectAiColumnWidth = resolved;
+    if (remember) projectAiColumnPreferredWidth = resolved;
 
     const layout = getProjectAiLayout();
-    if (layout && !isStackedCanvasLayout()) {
-      layout.style.setProperty("--project-ai-chat-width", `${resolved.chat}px`);
-      layout.style.setProperty(
-        "--project-ai-skills-width",
-        `${resolved.skills}px`
+    const container = getCanvasSplitContainer();
+    if (container && !isStackedCanvasLayout()) {
+      container.style.setProperty("--project-ai-width", `${resolved}px`);
+    }
+    const stackHeight = getProjectAiStackHeight();
+    if (
+      layout &&
+      Number.isFinite(Number(instructionHeight)) &&
+      Number(instructionHeight) > 0 &&
+      stackHeight > 0 &&
+      !projectAiStackCollapsedPanel
+    ) {
+      const maximum = getProjectAiInstructionMaxHeight();
+      projectAiInstructionHeight = Math.max(
+        PROJECT_AI_STACK_MIN_HEIGHT,
+        Math.min(maximum, Number(instructionHeight))
       );
-    } else if (layout) {
-      layout.style.removeProperty("--project-ai-chat-width");
-      layout.style.removeProperty("--project-ai-skills-width");
+      if (remember) projectAiInstructionPreferredHeight = projectAiInstructionHeight;
+      layout.style.setProperty(
+        "--project-ai-instruction-height",
+        `${projectAiInstructionHeight}px`
+      );
+      layout.style.setProperty(
+        "--project-ai-chat-height",
+        `max(${PROJECT_AI_STACK_MIN_HEIGHT}px, calc(100% - ${projectAiInstructionHeight + PROJECT_AI_STACK_RESIZER_HEIGHT}px))`
+      );
+    } else if (layout && !projectAiStackCollapsedPanel) {
+      layout.style.removeProperty("--project-ai-instruction-height");
+      layout.style.removeProperty("--project-ai-chat-height");
     }
     syncProjectAiResizerAria();
     if (persist) persistProjectAiWidths();
@@ -3484,133 +3463,182 @@
   }
 
   function restoreProjectAiWidths() {
-    let chat = PROJECT_AI_CHAT_DEFAULT_WIDTH;
-    let skills = PROJECT_AI_SKILLS_DEFAULT_WIDTH;
+    let column = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
+    let instructionHeight = 0;
     try {
-      const storedChat = localStorage.getItem(STORAGE_PROJECT_AI_CHAT_WIDTH);
-      const storedSkills = localStorage.getItem(STORAGE_PROJECT_AI_SKILLS_WIDTH);
-      if (storedChat !== null) chat = Number(storedChat);
-      if (storedSkills !== null) skills = Number(storedSkills);
+      const storedColumn = localStorage.getItem(STORAGE_PROJECT_AI_COLUMN_WIDTH);
+      const storedSplit = localStorage.getItem(STORAGE_PROJECT_AI_STACK_SPLIT);
+      if (storedColumn !== null) column = Number(storedColumn);
+      if (storedSplit !== null) instructionHeight = Number(storedSplit);
     } catch (error) {
-      console.warn("Failed to restore AI workspace widths:", error);
+      console.warn("Failed to restore AI workspace layout:", error);
     }
-    applyProjectAiWidths(chat, skills, { persist: false });
+    projectAiColumnPreferredWidth = normalizeProjectAiColumnPreference(column);
+    projectAiInstructionPreferredHeight = Number.isFinite(instructionHeight)
+      ? instructionHeight
+      : 0;
+    applyProjectAiWidths(column, instructionHeight, { persist: false });
   }
 
   function bindProjectAiResizers() {
     const layout = getProjectAiLayout();
     const chatResizer = $("projectAiChatResizer");
-    const skillsResizer = $("projectAiSkillsResizer");
-    if (!layout || !chatResizer || !skillsResizer) return;
+    const columnResizer = $("projectAiColumnResizer");
+    const container = getCanvasSplitContainer();
+    if (!layout || !chatResizer || !container) return;
 
-    const finishChatResize = (event) => {
-      if (!projectAiChatResizeState) return;
-      chatResizer.releasePointerCapture?.(projectAiChatResizeState.pointerId);
-      projectAiChatResizeState = null;
+    const finishStackResize = (event) => {
+      if (!projectAiStackResizeState) return;
+      chatResizer.releasePointerCapture?.(projectAiStackResizeState.pointerId);
+      projectAiStackResizeState = null;
       layout.classList.remove("is-chat-resizing");
       document.body.classList.remove("is-project-ai-resizing");
-      applyProjectAiWidths(
-        projectAiChatPreferredWidth,
-        projectAiSkillsPreferredWidth,
-        { persist: true, remember: false, priority: "chat" }
-      );
+      document.body.classList.remove("is-project-ai-stack-resizing");
+      projectAiInstructionPreferredHeight = projectAiInstructionHeight;
+      applyProjectAiWidths(projectAiColumnPreferredWidth, projectAiInstructionHeight, {
+        persist: true,
+        remember: false,
+      });
       event?.preventDefault?.();
     };
 
     chatResizer.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || isStackedCanvasLayout()) return;
+      if (event.button !== 0) return;
       event.preventDefault();
-      projectAiChatResizeState = {
+      const instructionPanel = layout.querySelector(".project-instruction-panel");
+      projectAiStackCollapsedPanel = "";
+      layout.classList.remove("is-instruction-collapsed", "is-chat-collapsed");
+      projectAiStackResizeState = {
         pointerId: event.pointerId,
-        startX: event.clientX,
-        startWidth: projectAiChatWidth,
+        startY: event.clientY,
+        startHeight:
+          instructionPanel?.getBoundingClientRect().height ||
+          PROJECT_AI_STACK_MIN_HEIGHT,
       };
       chatResizer.setPointerCapture?.(event.pointerId);
       layout.classList.add("is-chat-resizing");
-      document.body.classList.add("is-project-ai-resizing");
+      document.body.classList.add("is-project-ai-stack-resizing");
     });
     chatResizer.addEventListener("pointermove", (event) => {
-      if (!projectAiChatResizeState) return;
+      if (!projectAiStackResizeState) return;
       event.preventDefault();
-      applyProjectAiWidths(
-        projectAiChatResizeState.startWidth +
-          event.clientX -
-          projectAiChatResizeState.startX,
-        projectAiSkillsPreferredWidth,
-        { persist: false, priority: "chat" }
+      const nextHeight =
+        projectAiStackResizeState.startHeight +
+        event.clientY -
+        projectAiStackResizeState.startY;
+      const maximum = getProjectAiInstructionMaxHeight();
+      const threshold = PROJECT_AI_STACK_COLLAPSED_HEIGHT + 20;
+      if (nextHeight <= threshold) {
+        projectAiStackCollapsedPanel = "instruction";
+        projectAiInstructionHeight = PROJECT_AI_STACK_COLLAPSED_HEIGHT;
+        layout.classList.add("is-instruction-collapsed");
+        layout.classList.remove("is-chat-collapsed");
+        syncProjectAiResizerAria();
+        return;
+      }
+      if (nextHeight >= maximum - threshold) {
+        projectAiStackCollapsedPanel = "chat";
+        projectAiInstructionHeight = maximum;
+        layout.classList.add("is-chat-collapsed");
+        layout.classList.remove("is-instruction-collapsed");
+        syncProjectAiResizerAria();
+        return;
+      }
+      projectAiStackCollapsedPanel = "";
+      layout.classList.remove("is-instruction-collapsed", "is-chat-collapsed");
+      projectAiInstructionHeight = Math.max(
+        PROJECT_AI_STACK_MIN_HEIGHT,
+        Math.min(maximum, nextHeight)
       );
+      applyProjectAiWidths(projectAiColumnWidth, projectAiInstructionHeight, {
+        persist: false,
+        remember: false,
+      });
     });
-    chatResizer.addEventListener("pointerup", finishChatResize);
-    chatResizer.addEventListener("pointercancel", finishChatResize);
+    chatResizer.addEventListener("pointerup", finishStackResize);
+    chatResizer.addEventListener("pointercancel", finishStackResize);
     chatResizer.addEventListener("keydown", (event) => {
       const step = event.shiftKey ? 48 : 24;
-      let nextWidth = projectAiChatWidth;
-      if (event.key === "ArrowLeft") nextWidth -= step;
-      else if (event.key === "ArrowRight") nextWidth += step;
-      else if (event.key === "Home") nextWidth = PROJECT_AI_CHAT_MIN_WIDTH;
-      else if (event.key === "End") nextWidth = getProjectAiChatMaxWidth();
-      else return;
+      let nextHeight =
+        projectAiInstructionHeight || getProjectAiInstructionMaxHeight() / 2;
+      if (event.key === "ArrowUp") nextHeight -= step;
+      else if (event.key === "ArrowDown") nextHeight += step;
+      else if (event.key === "Home") {
+        projectAiStackCollapsedPanel = "instruction";
+        layout.classList.add("is-instruction-collapsed");
+        layout.classList.remove("is-chat-collapsed");
+        nextHeight = PROJECT_AI_STACK_COLLAPSED_HEIGHT;
+      } else if (event.key === "End") {
+        projectAiStackCollapsedPanel = "chat";
+        layout.classList.add("is-chat-collapsed");
+        layout.classList.remove("is-instruction-collapsed");
+        nextHeight = getProjectAiInstructionMaxHeight();
+      } else return;
       event.preventDefault();
-      applyProjectAiWidths(nextWidth, projectAiSkillsPreferredWidth, {
-        priority: "chat",
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        projectAiStackCollapsedPanel = "";
+        layout.classList.remove("is-instruction-collapsed", "is-chat-collapsed");
+      }
+      projectAiInstructionHeight = nextHeight;
+      applyProjectAiWidths(projectAiColumnWidth, nextHeight, {
+        persist: true,
+        remember: true,
       });
     });
 
-    const finishSkillsResize = (event) => {
-      if (!projectAiSkillsResizeState) return;
-      skillsResizer.releasePointerCapture?.(projectAiSkillsResizeState.pointerId);
-      projectAiSkillsResizeState = null;
-      layout.classList.remove("is-skills-resizing");
-      document.body.classList.remove("is-project-ai-resizing");
-      applyProjectAiWidths(
-        projectAiChatPreferredWidth,
-        projectAiSkillsPreferredWidth,
-        { persist: true, remember: false, priority: "skills" }
-      );
-      event?.preventDefault?.();
-    };
-
-    skillsResizer.addEventListener("pointerdown", (event) => {
+    columnResizer?.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || isStackedCanvasLayout()) return;
       event.preventDefault();
-      projectAiSkillsResizeState = {
+      projectAiColumnResizeState = {
         pointerId: event.pointerId,
         startX: event.clientX,
-        startWidth: projectAiSkillsWidth,
+        startWidth: projectAiColumnWidth,
       };
-      skillsResizer.setPointerCapture?.(event.pointerId);
-      layout.classList.add("is-skills-resizing");
+      columnResizer.setPointerCapture?.(event.pointerId);
+      container.classList.add("is-project-ai-column-resizing");
       document.body.classList.add("is-project-ai-resizing");
     });
-    skillsResizer.addEventListener("pointermove", (event) => {
-      if (!projectAiSkillsResizeState) return;
+    columnResizer?.addEventListener("pointermove", (event) => {
+      if (!projectAiColumnResizeState) return;
       event.preventDefault();
       applyProjectAiWidths(
-        projectAiChatPreferredWidth,
-        projectAiSkillsResizeState.startWidth -
-          (event.clientX - projectAiSkillsResizeState.startX),
-        { persist: false, priority: "skills" }
+        projectAiColumnResizeState.startWidth +
+          event.clientX -
+          projectAiColumnResizeState.startX,
+        projectAiInstructionHeight,
+        { persist: false, remember: false }
       );
     });
-    skillsResizer.addEventListener("pointerup", finishSkillsResize);
-    skillsResizer.addEventListener("pointercancel", finishSkillsResize);
-    skillsResizer.addEventListener("keydown", (event) => {
+    const finishColumnResize = (event) => {
+      if (!projectAiColumnResizeState) return;
+      columnResizer?.releasePointerCapture?.(projectAiColumnResizeState.pointerId);
+      projectAiColumnResizeState = null;
+      container.classList.remove("is-project-ai-column-resizing");
+      document.body.classList.remove("is-project-ai-resizing");
+      projectAiColumnPreferredWidth = projectAiColumnWidth;
+      applyProjectAiWidths(projectAiColumnWidth, projectAiInstructionHeight, {
+        persist: true,
+        remember: false,
+      });
+      event?.preventDefault?.();
+    };
+    columnResizer?.addEventListener("pointerup", finishColumnResize);
+    columnResizer?.addEventListener("pointercancel", finishColumnResize);
+    columnResizer?.addEventListener("keydown", (event) => {
       const step = event.shiftKey ? 48 : 24;
-      let nextWidth = projectAiSkillsWidth;
-      if (event.key === "ArrowLeft") nextWidth += step;
-      else if (event.key === "ArrowRight") nextWidth -= step;
-      else if (event.key === "Home") nextWidth = PROJECT_AI_SKILLS_MIN_WIDTH;
-      else if (event.key === "End") nextWidth = getProjectAiSkillsMaxWidth();
+      let nextWidth = projectAiColumnWidth;
+      if (event.key === "ArrowLeft") nextWidth -= step;
+      else if (event.key === "ArrowRight") nextWidth += step;
+      else if (event.key === "Home") nextWidth = PROJECT_AI_COLUMN_MIN_WIDTH;
+      else if (event.key === "End") nextWidth = getProjectAiColumnMaxWidth();
       else return;
       event.preventDefault();
-      applyProjectAiWidths(projectAiChatPreferredWidth, nextWidth, {
-        priority: "skills",
-      });
+      applyProjectAiWidths(nextWidth, projectAiInstructionHeight);
     });
 
     applyProjectAiWidths(
-      projectAiChatPreferredWidth,
-      projectAiSkillsPreferredWidth,
+      projectAiColumnPreferredWidth,
+      projectAiInstructionPreferredHeight,
       { persist: false, remember: false }
     );
   }
@@ -3639,8 +3667,8 @@
           { persist: false, remember: false }
         );
         applyProjectAiWidths(
-          projectAiChatPreferredWidth,
-          projectAiSkillsPreferredWidth,
+          projectAiColumnPreferredWidth,
+          projectAiInstructionPreferredHeight,
           { persist: false, remember: false }
         );
         syncSplitResizerAria();
@@ -5356,10 +5384,8 @@
   }
 
   function getProjectInstructionSnapshot({ forRequest = false } = {}) {
-    const skillRefs = getCompatibleInstructionSkillRefs(
-      projectInstructionDocument.markdown,
-      projectInstructionDocument.skillRefs,
-      { requireCatalog: forRequest }
+    const skillRefs = normalizeInstructionSkillRefs(
+      projectInstructionDocument.skillRefs
     );
     return {
       schemaVersion: 1,
@@ -6344,191 +6370,15 @@
     }
   }
 
-  function normalizeProjectAiSkill(rawSkill) {
-    const id = String(rawSkill?.id || "").trim();
-    const markdown = String(rawSkill?.markdown || "").trim();
-    if (!id || !/^[a-z0-9][a-z0-9._-]{0,95}$/i.test(id) || !markdown) {
-      return null;
-    }
-    return {
-      id,
-      version: String(rawSkill?.version || "1").trim(),
-      title: String(rawSkill?.title || id).trim(),
-      summary: String(rawSkill?.summary || "").trim(),
-      category: String(rawSkill?.category || "").trim(),
-      markdown,
-    };
-  }
-
   function getCompatibleInstructionSkillRefs(
     markdown,
-    refs = projectInstructionDocument.skillRefs,
-    { requireCatalog = false } = {}
+    refs = projectInstructionDocument.skillRefs
   ) {
-    const normalizedRefs = normalizeInstructionSkillRefs(refs);
-    if (!projectAiSkillsLoaded) {
-      return requireCatalog ? [] : normalizedRefs;
-    }
-    const source = String(markdown || "");
-    return normalizeInstructionSkillRefs(
-      normalizedRefs.flatMap((skillRef) => {
-        const skill = projectAiSkills.get(skillRef.id);
-        if (!skill || !source.includes(skill.markdown)) return [];
-        return [{ id: skill.id, version: skill.version }];
-      })
-    );
-  }
-
-  function reconcileProjectInstructionSkillRefs() {
-    const nextRefs = getCompatibleInstructionSkillRefs(
-      projectInstructionDocument.markdown
-    );
-    if (
-      JSON.stringify(nextRefs) ===
-      JSON.stringify(projectInstructionDocument.skillRefs)
-    ) {
-      return;
-    }
-    projectInstructionDocument = {
-      ...projectInstructionDocument,
-      revision: projectInstructionDocument.revision + 1,
-      skillRefs: nextRefs,
-    };
-    persistProjectInstruction();
-  }
-
-  function setProjectAiSkills(rawSkills, { catalogLoaded = true } = {}) {
-    projectAiSkills.clear();
-    for (const rawSkill of Array.isArray(rawSkills) ? rawSkills : []) {
-      const skill = normalizeProjectAiSkill(rawSkill);
-      if (skill) projectAiSkills.set(skill.id, skill);
-    }
-    projectAiSkillsLoaded = catalogLoaded;
-    if (catalogLoaded) reconcileProjectInstructionSkillRefs();
-    renderProjectAiSkills();
-  }
-
-  function renderProjectAiSkills(message = "") {
-    const list = $("projectSkillsList");
-    if (!list) return;
-    list.replaceChildren();
-
-    if (!projectAiSkills.size) {
-      const empty = document.createElement("p");
-      empty.className = "project-skills-empty";
-      empty.textContent =
-        message ||
-        "No instruction blocks are published yet. You can write the Markdown instruction manually.";
-      list.appendChild(empty);
-      return;
-    }
-
-    for (const skill of projectAiSkills.values()) {
-      const card = document.createElement("article");
-      card.className = "project-skill-card";
-      card.dataset.skillId = skill.id;
-      card.draggable = true;
-      card.setAttribute("role", "listitem");
-
-      const copy = document.createElement("div");
-      copy.className = "project-skill-card-copy";
-      const title = document.createElement("strong");
-      title.className = "project-skill-card-title";
-      title.textContent = skill.title;
-      const summary = document.createElement("span");
-      summary.className = "project-skill-card-summary";
-      summary.textContent = skill.summary || "Reusable instruction block";
-      copy.append(title, summary);
-
-      const insert = document.createElement("button");
-      insert.className = "project-skill-insert";
-      insert.type = "button";
-      insert.dataset.insertSkillId = skill.id;
-      insert.textContent = "Insert";
-      insert.setAttribute("aria-label", `Insert ${skill.title}`);
-      card.append(copy, insert);
-      list.appendChild(card);
-    }
-  }
-
-  function insertProjectAiSkill(
-    skillId,
-    { focus = true, append = false } = {}
-  ) {
-    const skill = projectAiSkills.get(String(skillId || ""));
-    if (!skill || !projectInstructionEditor) return false;
-
-    const source = projectInstructionEditor.getValue();
-    const start = append
-      ? source.length
-      : projectInstructionEditor.indexFromPos(
-          projectInstructionEditor.getCursor("from")
-        );
-    const end = append
-      ? start
-      : projectInstructionEditor.indexFromPos(
-          projectInstructionEditor.getCursor("to")
-        );
-    const before = source.slice(0, start);
-    const after = source.slice(end);
-    const prefix = before
-      ? before.endsWith("\n\n")
-        ? ""
-        : before.endsWith("\n")
-          ? "\n"
-          : "\n\n"
-      : "";
-    const suffix = after
-      ? after.startsWith("\n\n")
-        ? ""
-        : after.startsWith("\n")
-          ? "\n"
-          : "\n\n"
-      : "\n";
-    const insertion = `${prefix}${skill.markdown}${suffix}`;
-    projectInstructionDocument.skillRefs = normalizeInstructionSkillRefs([
-      ...projectInstructionDocument.skillRefs,
-      { id: skill.id, version: skill.version },
-    ]);
-    projectInstructionEditor.replaceRange(
-      insertion,
-      projectInstructionEditor.posFromIndex(start),
-      projectInstructionEditor.posFromIndex(end),
-      "+insertSkill"
-    );
-    projectInstructionEditor.setCursor(
-      projectInstructionEditor.posFromIndex(start + insertion.length)
-    );
-    if (focus) projectInstructionEditor.focus();
-    return true;
-  }
-
-  async function fetchProjectAiSkills() {
-    renderProjectAiSkills("Loading instruction blocks...");
-    try {
-      const response = await fetch(PROJECT_AI_SKILLS_URL, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || data?.ok !== true || !Array.isArray(data.skills)) {
-        throw new Error("Instruction blocks are not available yet.");
-      }
-      setProjectAiSkills(data.skills, { catalogLoaded: true });
-    } catch (error) {
-      setProjectAiSkills([], { catalogLoaded: false });
-      renderProjectAiSkills(
-        error?.message ||
-          "Instruction blocks are not available yet. Write the Markdown manually."
-      );
-    }
+    return normalizeInstructionSkillRefs(refs);
   }
 
   function bindProjectInstructionWorkspace() {
     const editorElement = $("projectInstructionEditor");
-    const dropZone = $("projectInstructionDropZone");
-    const list = $("projectSkillsList");
     if (
       editorElement &&
       typeof window.CodeMirror?.fromTextArea === "function"
@@ -6604,8 +6454,7 @@
             change,
             "human"
           ),
-          skillRefs: getCompatibleInstructionSkillRefs(
-            markdown,
+          skillRefs: normalizeInstructionSkillRefs(
             projectInstructionDocument.skillRefs
           ),
         };
@@ -6639,8 +6488,7 @@
             editorElement.value,
             previousMarkdown === editorElement.value ? "original" : "human"
           ),
-          skillRefs: getCompatibleInstructionSkillRefs(
-            editorElement.value,
+          skillRefs: normalizeInstructionSkillRefs(
             projectInstructionDocument.skillRefs
           ),
         };
@@ -6648,75 +6496,12 @@
       });
     }
 
-    list?.addEventListener("click", (event) => {
-      const insert = event.target.closest("[data-insert-skill-id]");
-      if (insert) insertProjectAiSkill(insert.dataset.insertSkillId || "");
-    });
-    list?.addEventListener("dragstart", (event) => {
-      const card = event.target.closest("[data-skill-id]");
-      const skill = projectAiSkills.get(card?.dataset.skillId || "");
-      if (!card || !skill || !event.dataTransfer) return;
-      card.classList.add("is-dragging");
-      event.dataTransfer.effectAllowed = "copy";
-      event.dataTransfer.setData(
-        AI_SKILL_DRAG_MIME,
-        JSON.stringify({ id: skill.id })
-      );
-      event.dataTransfer.setData("text/plain", skill.id);
-    });
-    list?.addEventListener("dragend", (event) => {
-      event.target.closest("[data-skill-id]")?.classList.remove("is-dragging");
-      dropZone?.classList.remove("is-drag-over");
-    });
-
-    dropZone?.addEventListener("dragover", (event) => {
-      const types = Array.from(event.dataTransfer?.types || []);
-      if (!types.includes(AI_SKILL_DRAG_MIME)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.dataTransfer.dropEffect = "copy";
-      dropZone.classList.add("is-drag-over");
-    }, true);
-    dropZone?.addEventListener("dragleave", (event) => {
-      if (!dropZone.contains(event.relatedTarget)) {
-        dropZone.classList.remove("is-drag-over");
-      }
-    });
-    dropZone?.addEventListener("drop", (event) => {
-      const types = Array.from(event.dataTransfer?.types || []);
-      if (!types.includes(AI_SKILL_DRAG_MIME)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      dropZone.classList.remove("is-drag-over");
-      let skillId = "";
-      try {
-        const payload = JSON.parse(
-          event.dataTransfer?.getData(AI_SKILL_DRAG_MIME) || "{}"
-        );
-        skillId = String(payload.id || "");
-      } catch {}
-      if (!skillId) {
-        const plainSkillId = String(
-          event.dataTransfer?.getData("text/plain") || ""
-        ).trim();
-        if (projectAiSkills.has(plainSkillId)) skillId = plainSkillId;
-      }
-      if (skillId) {
-        insertProjectAiSkill(skillId, { append: true });
-      }
-    }, true);
-
     renderProjectInstructionPreview();
-    renderProjectAiSkills();
     window.UartDebugAvrAiWorkspace = Object.freeze({
       getInstruction: getProjectInstructionSnapshot,
       setInstruction(markdown, options = {}) {
         applyProjectInstructionMarkdown(markdown, options);
         return getProjectInstructionSnapshot();
-      },
-      setSkills(skills) {
-        setProjectAiSkills(skills, { catalogLoaded: true });
-        return projectAiSkills.size;
       },
     });
   }
@@ -7444,13 +7229,10 @@
     }
     setProjectAiPromptValue(prompt.value, { quotes: nextQuotes });
     hideProjectAiSelectionQuote();
-    if (projectWorkspaceMode !== "ai") {
-      setProjectWorkspaceMode("ai", { focusPrompt: true });
-    }
     window.setTimeout(() => {
       prompt.focus({ preventScroll: true });
       prompt.setSelectionRange(prompt.value.length, prompt.value.length);
-    }, projectWorkspaceMode === "ai" ? 0 : PROJECT_WORKSPACE_SWITCH_MS);
+    }, 0);
   }
 
   function showCodeMirrorSelectionQuote(codeMirror, label) {
@@ -9854,9 +9636,7 @@
           );
         }
         applyProjectInstructionMarkdown(revisedMarkdown, {
-          skillRefs: projectAiSkillsLoaded
-            ? responseInstruction.skillRefs
-            : undefined,
+          skillRefs: responseInstruction.skillRefs,
           expectedRevision,
         });
         const instructionMessage =
@@ -9949,126 +9729,6 @@
     });
   }
 
-  function renderProjectWorkspaceToggleLabel(label, words) {
-    if (!label) return;
-    const fragment = document.createDocumentFragment();
-    for (const word of words) {
-      const wordElement = document.createElement("span");
-      wordElement.className = "project-ai-toggle-label-word";
-      for (const character of word) {
-        const characterElement = document.createElement("span");
-        characterElement.textContent = character;
-        wordElement.appendChild(characterElement);
-      }
-      fragment.appendChild(wordElement);
-    }
-    label.replaceChildren(fragment);
-  }
-
-  function setProjectWorkspaceMode(mode, { focusPrompt = false } = {}) {
-    const aiMode = mode === "ai";
-    const nextMode = aiMode ? "ai" : "avr";
-    if (!aiMode) {
-      closeProjectAiAccountModal({ restoreFocus: false });
-    }
-    const stage = $("projectWorkspaceStage");
-    const avrScene = $("avrWorkspaceScene");
-    const aiScene = $("projectAiScene");
-    const toggle = $("projectAiToggle");
-    const toggleLabel = toggle?.querySelector(".project-ai-toggle-label");
-    if (!stage || !avrScene || !aiScene || !toggle) return;
-    if (
-      stage.classList.contains("is-switching") ||
-      stage.classList.contains("is-toggle-departing") ||
-      stage.classList.contains("is-toggle-hidden")
-    ) {
-      return;
-    }
-
-    const shouldAnimate = projectWorkspaceMode !== nextMode;
-    const reducedMotion = window.matchMedia?.(
-      "(prefers-reduced-motion: reduce)"
-    )?.matches;
-    const compactWorkspace = window.matchMedia?.("(max-width: 1040px)")
-      ?.matches;
-    const animateTransition =
-      shouldAnimate && !reducedMotion && !compactWorkspace;
-
-    const outgoingScene = aiMode ? avrScene : aiScene;
-    if (outgoingScene.contains(document.activeElement)) {
-      toggle.focus({ preventScroll: true });
-    }
-
-    const applyMode = () => {
-      projectWorkspaceMode = nextMode;
-      stage.dataset.mode = nextMode;
-      avrScene.setAttribute("aria-hidden", String(aiMode));
-      aiScene.setAttribute("aria-hidden", String(!aiMode));
-      if (aiMode) {
-        avrScene.setAttribute("inert", "");
-        aiScene.removeAttribute("inert");
-      } else {
-        aiScene.setAttribute("inert", "");
-        avrScene.removeAttribute("inert");
-      }
-      toggle.setAttribute("aria-pressed", String(aiMode));
-      toggle.setAttribute(
-        "aria-label",
-        aiMode ? "Return to AVR workspace" : "Open AI assistant workspace"
-      );
-      renderProjectWorkspaceToggleLabel(
-        toggleLabel,
-        aiMode ? ["AVR", "WORKSPACE"] : ["AI", "ASSISTANT"]
-      );
-    };
-
-    const finishTransition = () => {
-      toggle.disabled = false;
-      editor?.refresh();
-      projectInstructionEditor?.refresh();
-      scheduleProjectInstructionPreview();
-      fitEditorFileWatermark();
-      if (aiMode && focusPrompt) {
-        $("projectAiPrompt")?.focus({ preventScroll: true });
-      }
-    };
-
-    if (animateTransition) {
-      toggle.disabled = true;
-      stage.classList.add("is-toggle-departing");
-      void stage.offsetWidth;
-      projectWorkspaceToggleExitTimer = window.setTimeout(() => {
-        projectWorkspaceToggleExitTimer = null;
-        stage.classList.add("is-toggle-hidden");
-        stage.classList.remove("is-toggle-departing");
-        applyMode();
-        stage.classList.add("is-switching");
-        void stage.offsetWidth;
-
-        projectWorkspaceTransitionTimer = window.setTimeout(() => {
-          projectWorkspaceTransitionTimer = null;
-          stage.classList.remove("is-switching");
-          void stage.offsetWidth;
-          stage.classList.remove("is-toggle-hidden");
-          projectWorkspaceToggleEnterTimer = window.setTimeout(() => {
-            projectWorkspaceToggleEnterTimer = null;
-            finishTransition();
-          }, PROJECT_WORKSPACE_TOGGLE_ENTER_MS);
-        }, PROJECT_WORKSPACE_SWITCH_MS);
-      }, PROJECT_WORKSPACE_TOGGLE_EXIT_MS);
-    } else {
-      applyMode();
-      window.setTimeout(finishTransition, 0);
-    }
-
-    if (aiMode) {
-      void fetchProjectAiAuthSession().catch(() => {
-        projectAiAuthSession = null;
-        renderProjectAiAuthSession(null);
-      });
-    }
-  }
-
   function getDevicePanelHeightForState(state) {
     if (state === "collapsed") return DEVICE_PANEL_COLLAPSED_HEIGHT;
     if (state === "compact") return DEVICE_PANEL_COMPACT_HEIGHT;
@@ -10102,8 +9762,8 @@
       remember: false,
     });
     applyProjectAiWidths(
-      projectAiChatPreferredWidth,
-      projectAiSkillsPreferredWidth,
+      projectAiColumnPreferredWidth,
+      projectAiInstructionPreferredHeight,
       { persist: false, remember: false }
     );
     syncSplitResizerAria();
@@ -10682,9 +10342,6 @@
   }
 
   function navigateToDocumentationHeading(marker) {
-    if (projectWorkspaceMode === "ai") {
-      setProjectWorkspaceMode("avr");
-    }
     expandDocumentationForNavigation();
     const context = getDocumentationContext(current);
     if (!context.guideFile || !hasFile(context.guideFile)) {
@@ -11455,7 +11112,6 @@
       const mcuSelect = $("mcuSelect");
       const documentationLocaleSelect = $("documentationLocaleSelect");
       const documentationEditToggle = $("documentationEditToggle");
-      const projectAiToggle = $("projectAiToggle");
       const projectAiForm = $("projectAiForm");
       const projectAiPrompt = $("projectAiPrompt");
       const projectAiHistory = $("projectAiHistory");
@@ -11556,13 +11212,6 @@
     documentationEditToggle &&
       documentationEditToggle.addEventListener("click", () => {
         setDocumentationEditMode(!documentationEditMode);
-      });
-    projectAiToggle &&
-      projectAiToggle.addEventListener("click", () => {
-        setProjectWorkspaceMode(
-          projectWorkspaceMode === "ai" ? "avr" : "ai",
-          { focusPrompt: projectWorkspaceMode !== "ai" }
-        );
       });
     projectAiForm &&
       projectAiForm.addEventListener("submit", handleProjectAiSubmit);
@@ -12343,10 +11992,9 @@
     renderProjectAiHistory();
     renderProjectAiChatList();
     void renderBuiltInMiniProjectCards();
-    void fetchProjectAiSkills();
-    setProjectWorkspaceMode(projectAiAuthReturn ? "ai" : "avr", {
-      focusPrompt: !!projectAiAuthReturn,
-    });
+    if (projectAiAuthReturn) {
+      window.setTimeout(() => $("projectAiPrompt")?.focus({ preventScroll: true }), 0);
+    }
     initEditor();
     renderProjectAiAuthReturn(projectAiAuthReturn);
 
