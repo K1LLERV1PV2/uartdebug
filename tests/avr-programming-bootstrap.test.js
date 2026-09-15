@@ -691,10 +691,20 @@ test("keeps every workspace on one canvas and stacks instruction above chat", ()
   );
   assert.match(html, /id="projectAiColumnResizer"[\s\S]*aria-orientation="vertical"/);
   assert.match(css, /\.canvas-split-container\s*\{[\s\S]*?--project-ai-width:/);
+  assert.match(css, /--project-ai-compact-width:\s*62px/);
   assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?grid-template-rows:/);
-  assert.match(css, /\.project-ai-layout\.is-instruction-collapsed[\s\S]*content: "I\\A N/);
-  assert.match(css, /\.project-ai-layout\.is-chat-collapsed[\s\S]*content: "C\\A H/);
-  assert.doesNotMatch(source, /setProjectWorkspaceMode|fetchProjectAiSkills|AI_SKILL_DRAG_MIME/);
+  assert.match(
+    css,
+    /\.canvas-split-container\.is-project-ai-compact[\s\S]*content: "I\\A N/
+  );
+  assert.match(
+    css,
+    /\.canvas-split-container\.is-project-ai-compact[\s\S]*content: "C\\A H/
+  );
+  assert.doesNotMatch(
+    source,
+    /setProjectWorkspaceMode|fetchProjectAiSkills|AI_SKILL_DRAG_MIME|projectAiStackCollapsedPanel|is-instruction-collapsed|is-chat-collapsed/
+  );
 });
 
 test("wires the project AI pane to the AVR AI API contract", () => {
@@ -1605,6 +1615,9 @@ test("uses stacked AI instruction and chat panels with a framed composer", () =>
   assert.doesNotMatch(source, /setRangeText\(/);
   assert.match(source, /function bindProjectAiResizers\(\)/);
   assert.match(source, /STORAGE_PROJECT_AI_COLUMN_WIDTH/);
+  assert.match(source, /PROJECT_AI_COLUMN_COMPACT_THRESHOLD/);
+  assert.match(source, /is-project-ai-compact/);
+  assert.match(source, /projectAiColumnResizeState \|\| projectAiStackResizeState/);
   assert.match(
     html,
     /project-instruction-live-editor scroll-frame[\s\S]*?id="projectInstructionDropZone"/
