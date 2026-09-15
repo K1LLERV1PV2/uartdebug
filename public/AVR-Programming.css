@@ -823,6 +823,9 @@ main,
 .canvas-split-container {
   --outliner-width: 305px;
   --outliner-resizer-width: 14px;
+  --project-ai-width: 318px;
+  --project-ai-min-width: 238px;
+  --project-ai-resizer-width: 14px;
   --editor-workspace-min-width: 500px;
   --documentation-width: 360px;
   --documentation-compact-width: 62px;
@@ -832,6 +835,8 @@ main,
   grid-template-columns:
     minmax(62px, var(--outliner-width))
     var(--outliner-resizer-width)
+    minmax(var(--project-ai-min-width), var(--project-ai-width))
+    var(--project-ai-resizer-width)
     minmax(var(--editor-workspace-min-width), 1fr)
     var(--documentation-resizer-width)
     minmax(var(--documentation-compact-width), var(--documentation-width));
@@ -887,7 +892,6 @@ main,
 .canvas-split-container.is-documentation-resizing
   .documentation-resizer::before,
 .project-ai-layout.is-chat-resizing .project-ai-chat-resizer::before,
-.project-ai-layout.is-skills-resizing .project-ai-skills-resizer::before,
 .avr-device-section.is-device-panel-resizing
   .device-panel-resizer::before {
   background: rgba(200, 255, 221, 0.64);
@@ -918,7 +922,7 @@ main,
 
 .avr-device-section.is-device-panel-resizing .device-panel-resizer,
 .project-ai-layout.is-chat-resizing .project-ai-chat-resizer,
-.project-ai-layout.is-skills-resizing .project-ai-skills-resizer {
+.canvas-split-container.is-project-ai-column-resizing .project-ai-column-resizer {
   opacity: 1;
 }
 
@@ -929,6 +933,12 @@ body.is-documentation-resizing *,
 body.is-project-ai-resizing,
 body.is-project-ai-resizing * {
   cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.is-project-ai-stack-resizing,
+body.is-project-ai-stack-resizing * {
+  cursor: row-resize !important;
   user-select: none !important;
 }
 
@@ -2164,25 +2174,90 @@ body.is-device-panel-resizing * {
 }
 
 .project-ai-layout {
-  --project-ai-chat-width: 320px;
-  --project-ai-skills-width: 280px;
-  --project-ai-resizer-width: 14px;
-
   display: grid;
-  grid-template-columns:
-    minmax(270px, var(--project-ai-chat-width))
-    var(--project-ai-resizer-width)
-    minmax(350px, 1fr)
-    var(--project-ai-resizer-width)
-    minmax(240px, var(--project-ai-skills-width));
+  grid-template-rows:
+    var(--project-ai-instruction-height, minmax(190px, 1fr))
+    var(--project-ai-resizer-height, 14px)
+    var(--project-ai-chat-height, minmax(190px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 0;
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
 }
 
 .project-ai-chat-panel,
-.project-instruction-panel,
-.project-skills-panel {
+.project-instruction-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.project-instruction-panel {
+  grid-row: 1;
+}
+
+.project-ai-chat-panel {
+  grid-row: 3;
+}
+
+.project-ai-resizer.project-ai-chat-resizer {
+  z-index: 2;
+  grid-row: 2;
+  width: 100%;
+  height: 14px;
+  cursor: row-resize;
+}
+
+.project-ai-resizer.project-ai-chat-resizer::before {
+  inset: 0;
+  width: 58px;
+  height: 2px;
+}
+
+.project-ai-column-resizer {
+  z-index: 2;
+  cursor: col-resize;
+}
+
+.project-ai-layout.is-instruction-collapsed {
+  grid-template-rows: 62px 14px minmax(190px, 1fr);
+}
+
+.project-ai-layout.is-chat-collapsed {
+  grid-template-rows: minmax(190px, 1fr) 14px 62px;
+}
+
+.project-ai-layout.is-instruction-collapsed
+  .project-instruction-panel > *,
+.project-ai-layout.is-chat-collapsed
+  .project-ai-chat-panel > * {
+  display: none !important;
+}
+
+.project-ai-layout.is-instruction-collapsed .project-instruction-panel::before,
+.project-ai-layout.is-chat-collapsed .project-ai-chat-panel::before {
+  display: block;
+  align-self: center;
+  color: rgba(200, 255, 221, 0.72);
+  font: 800 12px/1.22 Inter, Arial, sans-serif;
+  letter-spacing: 0.08em;
+  text-align: center;
+  white-space: pre;
+}
+
+.project-ai-layout.is-instruction-collapsed .project-instruction-panel::before {
+  content: "I\A N\A S\A T\A R\A U\A C\A T\A I\A O\A N";
+}
+
+.project-ai-layout.is-chat-collapsed .project-ai-chat-panel::before {
+  content: "C\A H\A A\A T";
+}
+
+.project-ai-chat-panel,
+.project-instruction-panel {
   min-width: 0;
   min-height: 0;
 }
@@ -2194,8 +2269,7 @@ body.is-device-panel-resizing * {
 }
 
 .project-ai-action-strip,
-.project-instruction-action-strip,
-.project-skills-action-strip {
+.project-instruction-action-strip {
   justify-content: space-between;
   gap: 10px;
 }
@@ -2526,97 +2600,6 @@ body.is-device-panel-resizing * {
 .project-instruction-live-editor .project-instruction-task-marker.is-checked {
   border-color: rgba(112, 205, 145, 0.72);
   background: rgba(112, 205, 145, 0.72);
-}
-
-.project-skills-list {
-  --scroll-frame-bg: var(--avr-window-bg);
-  --scroll-frame-border: rgba(129, 159, 141, 0.24);
-
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 9px;
-  overflow: auto;
-  flex-direction: column;
-  gap: 8px;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-}
-
-.project-skill-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 11px;
-  border: 1px solid rgba(129, 159, 141, 0.2);
-  border-radius: 11px;
-  background: rgba(23, 35, 46, 0.52);
-  color: var(--avr-text-soft);
-  cursor: grab;
-  transition:
-    border-color 150ms ease,
-    background 150ms ease,
-    transform 150ms ease;
-}
-
-.project-skill-card:hover,
-.project-skill-card:focus-within {
-  border-color: rgba(129, 159, 141, 0.42);
-  background: rgba(30, 45, 57, 0.66);
-  transform: translateY(-1px);
-}
-
-.project-skill-card.is-dragging {
-  opacity: 0.58;
-  cursor: grabbing;
-}
-
-.project-skill-card-copy {
-  min-width: 0;
-}
-
-.project-skill-card-title {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--avr-text);
-  font-size: 11px;
-  line-height: 1.25;
-}
-
-.project-skill-card-summary {
-  display: block;
-  color: var(--avr-text-muted);
-  font-size: 9px;
-  line-height: 1.38;
-  overflow-wrap: anywhere;
-}
-
-.project-skill-insert {
-  align-self: center;
-  height: 30px;
-  padding: 0 9px;
-  border: 1px solid rgba(129, 159, 141, 0.3);
-  border-radius: 9px;
-  background: transparent;
-  color: var(--avr-text-soft);
-  font: 700 9px/1 Inter, Arial, sans-serif;
-  cursor: pointer;
-}
-
-.project-skill-insert:hover,
-.project-skill-insert:focus-visible {
-  border-color: var(--avr-border-hover);
-  outline: none;
-  color: var(--avr-text);
-}
-
-.project-skills-empty {
-  margin: auto;
-  padding: 24px 12px;
-  color: var(--avr-text-muted);
-  font-size: 11px;
-  line-height: 1.5;
-  text-align: center;
 }
 
 .project-ai-view {
@@ -4900,11 +4883,6 @@ body.is-device-panel-resizing * {
     min-height: 560px;
   }
 
-  .project-skills-panel {
-    height: clamp(400px, 60vh, 560px);
-    min-height: 400px;
-  }
-
   .file-list-resizer,
   .documentation-resizer,
   .project-ai-resizer {
@@ -5192,6 +5170,66 @@ body.is-device-panel-resizing * {
   .project-ai-budget-track > span,
   .project-skill-card {
     transition: none !important;
+  }
+}
+
+/* The editor, instruction, chat, and guide are one workspace.  The old
+   two-scene switch is intentionally kept out of the layout so every panel is
+   available without a mode toggle. */
+.project-workspace-stage {
+  overflow: hidden;
+}
+
+.project-workspace-track {
+  width: 100%;
+  transform: none !important;
+}
+
+.project-workspace-scene.workspace-scene--avr {
+  display: flex !important;
+  flex: 1 1 auto;
+  width: 100%;
+  padding-right: 0;
+}
+
+.project-workspace-scene.workspace-scene--avr > .canvas-split-container {
+  width: 100%;
+  height: 100%;
+  opacity: 1 !important;
+  filter: none !important;
+}
+
+.project-workspace-scene.workspace-scene--ai,
+.project-ai-toggle {
+  display: none !important;
+}
+
+@media (max-width: 1040px) {
+  .project-workspace-stage {
+    overflow: visible;
+  }
+
+  .project-workspace-track {
+    height: auto;
+  }
+
+  .project-workspace-scene.workspace-scene--avr {
+    display: flex !important;
+    padding: 0;
+  }
+
+  .project-ai-layout {
+    width: 100%;
+    height: clamp(680px, 90vh, 900px);
+    min-height: 680px;
+  }
+
+  .project-ai-column-resizer {
+    display: none;
+  }
+
+  .project-ai-resizer.project-ai-chat-resizer {
+    display: block;
   }
 }
 

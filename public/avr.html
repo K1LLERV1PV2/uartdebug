@@ -113,180 +113,79 @@
                 aria-label="AVR editor workspace"
               >
                 <div class="canvas-split-container">
-            <aside class="outliner">
-              <div class="scroll-frame outliner-frame">
-                <div class="outliner-list" id="fileList"></div>
-              </div>
-            </aside>
+                  <aside class="outliner">
+                    <div class="scroll-frame outliner-frame">
+                      <div class="outliner-list" id="fileList"></div>
+                    </div>
+                  </aside>
 
-            <div
-              class="split-resizer file-list-resizer"
-              id="fileListResizer"
-              role="separator"
-              tabindex="0"
-              aria-label="Resize file list"
-              aria-orientation="vertical"
-              data-tooltip-disabled
-            ></div>
-
-            <section
-              class="editor-workspace avr-session-panel"
-              aria-label="Code editor"
-            >
-              <div
-                class="avr-action-strip avr-session-header"
-                aria-label="Build and flash controls"
-              >
-                <div
-                  class="connection-control canvas-updi-target compile-updi-target"
-                >
-                  <label class="sr-only" for="mcuSelect">Target MCU</label>
-                  <select id="mcuSelect">
-                    <option value="auto" selected>Auto detect</option>
-                  </select>
-                </div>
-
-                <button class="connect-btn" id="compileBtn" type="button">
-                  Compile
-                </button>
-
-                <button
-                  class="connect-btn warning-btn"
-                  id="programHexBtn"
-                  data-external-handler="true"
-                  type="button"
-                  aria-label="Flash MCU"
-                >
-                  Flash MCU
-                </button>
-
-                <button
-                  class="connect-btn secondary-btn"
-                  id="moreOptionsBtn"
-                  type="button"
-                  aria-expanded="false"
-                  aria-controls="canvasUpdiSection"
-                  aria-label="More"
-                >
-                  More
-                </button>
-              </div>
-
-              <div class="editor-wrap">
-                <div class="editor-container">
                   <div
-                    class="editor-file-watermark"
-                    id="editorFileWatermark"
-                    aria-hidden="true"
+                    class="split-resizer file-list-resizer"
+                    id="fileListResizer"
+                    role="separator"
+                    tabindex="0"
+                    aria-label="Resize file list"
+                    aria-orientation="vertical"
+                    data-tooltip-disabled
                   ></div>
-                  <p class="sr-only" id="editorDocumentationHint">
-                    In C files, line comments with slash slash and a Markdown
-                    heading marker open the matching project guide section.
-                    Press Alt and Enter while the cursor is on such a line.
-                  </p>
-                  <div class="editor-surface markdown-live-editor editor-markdown-live-editor">
-                    <div id="editorHost"></div>
-                  </div>
-                </div>
 
-                <div class="compile-log-section">
-                  <div class="scroll-frame compile-log-frame">
-                    <pre class="compile-log" id="compileLog"></pre>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <div
-              class="split-resizer documentation-resizer"
-              id="documentationResizer"
-              role="separator"
-              tabindex="0"
-              aria-label="Resize project guide"
-              aria-orientation="vertical"
-              aria-controls="projectDocumentationPane"
-              data-tooltip-disabled
-            ></div>
-
-            <aside
-              class="documentation-workspace project-documentation-panel avr-session-panel"
-              id="projectDocumentationPane"
-              aria-label="Project documentation"
-              data-tooltip-disabled
-            >
-              <div
-                class="avr-action-strip documentation-action-strip avr-session-header"
-                aria-label="Project guide controls"
-              >
-                <div class="connection-control documentation-locale-control">
-                  <label class="sr-only" for="documentationLocaleSelect">
-                    Guide language
-                  </label>
-                  <select id="documentationLocaleSelect" disabled>
-                    <option value="en">English</option>
-                  </select>
-                </div>
-
-                <button
-                  class="connect-btn secondary-btn documentation-edit-toggle"
-                  id="documentationEditToggle"
-                  type="button"
-                  aria-pressed="false"
-                  disabled
-                >
-                  Edit
-                </button>
-              </div>
-
-              <div
-                class="project-documentation-view"
-                id="projectDocumentationView"
-              >
-                <div
-                  class="project-documentation-notice"
-                  id="projectDocumentationNotice"
-                  role="status"
-                  aria-live="polite"
-                  hidden
-                ></div>
-                <div
-                  class="project-documentation-scroll project-documentation-live-editor markdown-live-editor"
-                  id="projectDocumentationScroll"
-                  role="region"
-                  aria-label="Project documentation content"
-                  tabindex="0"
-                >
-                  <article
-                    class="project-documentation-content"
-                    id="projectDocumentationContent"
-                    hidden
-                  ></article>
-                  <textarea
-                    class="project-documentation-editor"
-                    id="projectDocumentationEditor"
-                    aria-label="Project guide Markdown"
-                    aria-readonly="true"
-                    readonly
-                    spellcheck="true"
-                  ></textarea>
-                </div>
-              </div>
-            </aside>
-                </div>
-              </section>
-
-              <section
-                class="project-workspace-scene workspace-scene--ai"
-                id="projectAiScene"
-                aria-label="AI project workspace"
-                aria-hidden="true"
-                inert
-              >
-                <div class="project-ai-layout">
-                  <section
-                    class="project-ai-chat-panel avr-session-panel"
-                    aria-labelledby="projectAiTitle"
+                  <div
+                    class="project-ai-layout"
+                    aria-label="AI project workspace"
                   >
+                    <section
+                      class="project-instruction-panel avr-session-panel"
+                      aria-labelledby="projectInstructionTitle"
+                    >
+                      <div
+                        class="avr-action-strip project-instruction-action-strip avr-session-header"
+                      >
+                        <div class="project-ai-heading-copy">
+                          <span class="project-ai-eyebrow">Reviewed Markdown</span>
+                          <h2 id="projectInstructionTitle">
+                            Project instruction
+                          </h2>
+                        </div>
+                        <span
+                          class="project-instruction-save-state"
+                          id="projectInstructionSaveState"
+                          role="status"
+                          aria-live="polite"
+                          hidden
+                        ></span>
+                      </div>
+
+                      <div class="project-instruction-workspace">
+                        <div
+                          class="project-instruction-live-editor scroll-frame"
+                          id="projectInstructionDropZone"
+                        >
+                          <label class="sr-only" for="projectInstructionEditor">
+                            Project instruction Markdown
+                          </label>
+                          <textarea
+                            id="projectInstructionEditor"
+                            spellcheck="true"
+                          ></textarea>
+                        </div>
+                      </div>
+                    </section>
+
+                    <div
+                      class="split-resizer project-ai-resizer project-ai-chat-resizer"
+                      id="projectAiChatResizer"
+                      role="separator"
+                      tabindex="0"
+                      aria-label="Resize project instruction and AI chat"
+                      aria-orientation="horizontal"
+                      aria-controls="projectInstructionDropZone projectAiView"
+                      data-tooltip-disabled
+                    ></div>
+
+                    <section
+                      class="project-ai-chat-panel avr-session-panel"
+                      aria-labelledby="projectAiTitle"
+                    >
                     <div
                       class="avr-action-strip project-ai-action-strip avr-session-header"
                     >
@@ -444,118 +343,166 @@
                         </div>
                       </form>
                     </div>
-                  </section>
+                    </section>
+                  </div>
 
                   <div
-                    class="split-resizer project-ai-resizer project-ai-chat-resizer"
-                    id="projectAiChatResizer"
+                    class="split-resizer project-ai-column-resizer"
+                    id="projectAiColumnResizer"
                     role="separator"
                     tabindex="0"
-                    aria-label="Resize AI conversation"
+                    aria-label="Resize AI workspace"
                     aria-orientation="vertical"
-                    aria-controls="projectAiView projectInstructionDropZone"
+                    aria-controls="projectInstructionTitle projectAiView"
                     data-tooltip-disabled
                   ></div>
 
                   <section
-                    class="project-instruction-panel avr-session-panel"
-                    aria-labelledby="projectInstructionTitle"
+                    class="editor-workspace avr-session-panel"
+                    aria-label="Code editor"
                   >
                     <div
-                      class="avr-action-strip project-instruction-action-strip avr-session-header"
+                      class="avr-action-strip avr-session-header"
+                      aria-label="Build and flash controls"
                     >
-                      <div class="project-ai-heading-copy">
-                        <span class="project-ai-eyebrow">Reviewed Markdown</span>
-                        <h2 id="projectInstructionTitle">
-                          Project instruction
-                        </h2>
+                      <div
+                        class="connection-control canvas-updi-target compile-updi-target"
+                      >
+                        <label class="sr-only" for="mcuSelect">Target MCU</label>
+                        <select id="mcuSelect">
+                          <option value="auto" selected>Auto detect</option>
+                        </select>
                       </div>
-                      <span
-                        class="project-instruction-save-state"
-                        id="projectInstructionSaveState"
-                        role="status"
-                        aria-live="polite"
-                        hidden
-                      ></span>
+
+                      <button class="connect-btn" id="compileBtn" type="button">
+                        Compile
+                      </button>
+
+                      <button
+                        class="connect-btn warning-btn"
+                        id="programHexBtn"
+                        data-external-handler="true"
+                        type="button"
+                        aria-label="Flash MCU"
+                      >
+                        Flash MCU
+                      </button>
+
+                      <button
+                        class="connect-btn secondary-btn"
+                        id="moreOptionsBtn"
+                        type="button"
+                        aria-expanded="false"
+                        aria-controls="canvasUpdiSection"
+                        aria-label="More"
+                      >
+                        More
+                      </button>
                     </div>
 
-                    <div class="project-instruction-workspace">
-                      <div
-                        class="project-instruction-live-editor scroll-frame"
-                        id="projectInstructionDropZone"
-                      >
-                        <label class="sr-only" for="projectInstructionEditor">
-                          Project instruction Markdown
-                        </label>
-                        <textarea
-                          id="projectInstructionEditor"
-                          spellcheck="true"
-                        ></textarea>
+                    <div class="editor-wrap">
+                      <div class="editor-container">
+                        <div
+                          class="editor-file-watermark"
+                          id="editorFileWatermark"
+                          aria-hidden="true"
+                        ></div>
+                        <p class="sr-only" id="editorDocumentationHint">
+                          In C files, line comments with slash slash and a Markdown
+                          heading marker open the matching project guide section.
+                          Press Alt and Enter while the cursor is on such a line.
+                        </p>
+                        <div class="editor-surface markdown-live-editor editor-markdown-live-editor">
+                          <div id="editorHost"></div>
+                        </div>
+                      </div>
+
+                      <div class="compile-log-section">
+                        <div class="scroll-frame compile-log-frame">
+                          <pre class="compile-log" id="compileLog"></pre>
+                        </div>
                       </div>
                     </div>
                   </section>
 
                   <div
-                    class="split-resizer project-ai-resizer project-ai-skills-resizer"
-                    id="projectAiSkillsResizer"
+                    class="split-resizer documentation-resizer"
+                    id="documentationResizer"
                     role="separator"
                     tabindex="0"
-                    aria-label="Resize instruction blocks"
+                    aria-label="Resize project guide"
                     aria-orientation="vertical"
-                    aria-controls="projectInstructionDropZone projectSkillsList"
+                    aria-controls="projectDocumentationPane"
                     data-tooltip-disabled
                   ></div>
 
                   <aside
-                    class="project-skills-panel avr-session-panel"
-                    aria-labelledby="projectSkillsTitle"
+                    class="documentation-workspace project-documentation-panel avr-session-panel"
+                    id="projectDocumentationPane"
+                    aria-label="Project documentation"
+                    data-tooltip-disabled
                   >
                     <div
-                      class="avr-action-strip project-skills-action-strip avr-session-header"
+                      class="avr-action-strip documentation-action-strip avr-session-header"
+                      aria-label="Project guide controls"
                     >
-                      <div class="project-ai-heading-copy">
-                        <span class="project-ai-eyebrow">Drag into Markdown</span>
-                        <h2 id="projectSkillsTitle">Instruction blocks</h2>
+                      <div class="connection-control documentation-locale-control">
+                        <label class="sr-only" for="documentationLocaleSelect">
+                          Guide language
+                        </label>
+                        <select id="documentationLocaleSelect" disabled>
+                          <option value="en">English</option>
+                        </select>
+                      </div>
+
+                      <button
+                        class="connect-btn secondary-btn documentation-edit-toggle"
+                        id="documentationEditToggle"
+                        type="button"
+                        aria-pressed="false"
+                        disabled
+                      >
+                        Edit
+                      </button>
+                    </div>
+
+                    <div
+                      class="project-documentation-view"
+                      id="projectDocumentationView"
+                    >
+                      <div
+                        class="project-documentation-notice"
+                        id="projectDocumentationNotice"
+                        role="status"
+                        aria-live="polite"
+                        hidden
+                      ></div>
+                      <div
+                        class="project-documentation-scroll project-documentation-live-editor markdown-live-editor"
+                        id="projectDocumentationScroll"
+                        role="region"
+                        aria-label="Project documentation content"
+                        tabindex="0"
+                      >
+                        <article
+                          class="project-documentation-content"
+                          id="projectDocumentationContent"
+                          hidden
+                        ></article>
+                        <textarea
+                          class="project-documentation-editor"
+                          id="projectDocumentationEditor"
+                          aria-label="Project guide Markdown"
+                          aria-readonly="true"
+                          readonly
+                          spellcheck="true"
+                        ></textarea>
                       </div>
                     </div>
-                    <div
-                      class="project-skills-list scroll-frame"
-                      id="projectSkillsList"
-                      role="list"
-                      aria-live="polite"
-                    ></div>
                   </aside>
                 </div>
               </section>
             </div>
-
-            <button
-              class="project-ai-toggle"
-              id="projectAiToggle"
-              type="button"
-              aria-label="Open AI assistant workspace"
-              aria-pressed="false"
-              aria-controls="avrWorkspaceScene projectAiScene"
-            >
-              <span class="project-ai-toggle-arrow" aria-hidden="true"></span>
-              <span class="project-ai-toggle-label" aria-hidden="true">
-                <span class="project-ai-toggle-label-word">
-                  <span>A</span><span>I</span>
-                </span>
-                <span class="project-ai-toggle-label-word">
-                  <span>A</span><span>S</span><span>S</span><span>I</span
-                  ><span>S</span><span>T</span><span>A</span><span>N</span
-                  ><span>T</span>
-                </span>
-              </span>
-              <img
-                src="icons/logo-512.png"
-                alt=""
-                width="22"
-                height="22"
-                aria-hidden="true"
-              />
-            </button>
           </div>
 
           <div id="fileContextMenu" class="file-context-menu">
