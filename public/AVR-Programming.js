@@ -2808,7 +2808,7 @@
     return window.matchMedia?.("(max-width: 1040px)")?.matches || false;
   }
 
-  // Every column uses the same width budget, snap rule and neighbor-first transfer.
+  // Each divider only redistributes space between its two adjacent panels.
   function getWorkspacePanelSpecs() {
     return [
       { min: OUTLINER_MIN_EXPANDED_WIDTH, compact: WORKSPACE_PANEL_COMPACT_WIDTH },
@@ -2846,13 +2846,13 @@
     ];
   }
 
-  function getWorkspaceNeighbors(index) {
-    return index === 3 ? [2, 1, 0] : index === 1 ? [2, 3, 0] : [1, 2, 3];
+  function getWorkspaceNeighbor(index) {
+    return index === 0 ? 1 : 2;
   }
 
   function getWorkspacePanelMaxWidth(index, widths = getWorkspaceWidths(), specs = getWorkspacePanelSpecs()) {
-    return widths.reduce((sum, width) => sum + width, 0) -
-      specs.reduce((sum, spec, i) => sum + (i === index ? 0 : spec.compact || spec.min), 0);
+    const neighbor = getWorkspaceNeighbor(index);
+    return widths[index] + widths[neighbor] - workspacePanelFloor(widths[neighbor], specs[neighbor]);
   }
 
   function fitWorkspaceWidths(requested, available, specs) {
@@ -2876,42 +2876,21 @@
 
   function resizeWorkspacePanels(start, specs, index, requested) {
     const widths = [...start];
-    const neighbors = getWorkspaceNeighbors(index);
-    const target = Math.min(
+    const neighbor = getWorkspaceNeighbor(index);
+    const total = start[index] + start[neighbor];
+    let target = Math.min(
       getWorkspacePanelMaxWidth(index, start, specs),
       snapWorkspacePanelSize(requested, specs[index])
     );
-    let remaining = target - start[index];
-    if (remaining <= 0) {
-      widths[index] = target;
-      // Keep intentionally collapsed neighbors closed; the next open panel takes the space.
-      const recipient = neighbors.find(i => widths[i] !== specs[i].compact);
-      widths[recipient] -= remaining;
-      return widths;
+    let adjacent = total - target;
+    if (adjacent !== specs[neighbor].compact && adjacent < specs[neighbor].min) {
+      adjacent = snapWorkspacePanelSize(adjacent, specs[neighbor]);
+      target = total - adjacent;
     }
-
-    for (const i of neighbors) {
-      const take = Math.min(remaining, widths[i] - workspacePanelFloor(widths[i], specs[i]));
-      widths[i] -= take;
-      remaining -= take;
-    }
-    for (const i of neighbors) {
-      if (remaining <= 0) break;
-      const spec = specs[i];
-      if (!spec.compact || widths[i] === spec.compact) continue;
-      // Push the later panels first. Crossing the same snap threshold then folds a donor.
-      const expanding = start[index] === specs[index].compact && target >= specs[index].min;
-      if (!expanding && widths[i] - remaining > WORKSPACE_PANEL_COMPACT_THRESHOLD) continue;
-      const released = widths[i] - spec.compact;
-      widths[i] = spec.compact;
-      remaining -= released;
-    }
-    widths[index] = target - Math.max(0, remaining);
-    if (widths[index] > specs[index].compact && widths[index] < specs[index].min) {
-      return [...start];
-    }
-    // A snap releases a whole compact-to-expanded interval; keep the surplus in the editor.
-    if (remaining < 0) widths[2] -= remaining;
+    // A compact panel can reopen only if this pair has enough room for both minima.
+    if (target !== specs[index].compact && target < specs[index].min) return widths;
+    widths[index] = target;
+    widths[neighbor] = adjacent;
     return widths;
   }
 
