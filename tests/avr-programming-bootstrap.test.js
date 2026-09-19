@@ -706,16 +706,6 @@ test("keeps every workspace on one canvas and stacks instruction above chat", ()
     /setProjectWorkspaceMode|fetchProjectAiSkills|AI_SKILL_DRAG_MIME|projectAiStackCollapsedPanel|is-instruction-collapsed|is-chat-collapsed/
   );
   assert.doesNotMatch(html, /project-ai-eyebrow[^>]*>\s*Reviewed Markdown/);
-  assert.match(source, /function applyFileListResizerWidths\(/);
-  assert.match(source, /startCombinedWidth/);
-  assert.match(
-    source,
-    /outlinerResizeState\s*\|\|[\s\S]*projectAiColumnResizeState/
-  );
-  assert.match(
-    css,
-    /\.project-ai-workspace[\s\S]*?scrollbar-width:\s*thin;[\s\S]*?scrollbar-color:/
-  );
   assert.match(css, /\.feature-panel\s*\{[\s\S]*?scrollbar-gutter:\s*auto;/);
 });
 
@@ -1242,35 +1232,11 @@ test("snaps the guide pane and resolves one shared AVR side-panel budget", () =>
 
   assert.match(
     source,
-    /const DOCUMENTATION_COMPACT_WIDTH\s*=\s*62;/
+    /const WORKSPACE_PANEL_COMPACT_WIDTH\s*=\s*62;/
   );
   assert.match(
     source,
-    /const DOCUMENTATION_COMPACT_THRESHOLD\s*=\s*112;/
-  );
-  assert.match(
-    source,
-    /function getAvrSidePanelBudget\(\)[\s\S]*?OUTLINER_EDITOR_MIN_WIDTH\s*-\s*SPLIT_RESIZER_TOTAL_WIDTH/
-  );
-  assert.match(
-    source,
-    /function resolveAvrWorkspaceWidths\([\s\S]*?priority === "outliner"[\s\S]*?budget - outliner[\s\S]*?priority === "documentation"[\s\S]*?budget - documentation/
-  );
-  assert.match(
-    source,
-    /function applyOutlinerWidth\([\s\S]*?resolveAvrWorkspaceWidths\(\s*requested,\s*documentationPreferredWidth,\s*"outliner"\s*\)/
-  );
-  assert.match(
-    source,
-    /function applyDocumentationWidth\([\s\S]*?resolveAvrWorkspaceWidths\(\s*outlinerPreferredWidth,\s*requested,\s*"documentation"\s*\)/
-  );
-  assert.match(
-    source,
-    /outlinerPreferredWidth\s*=\s*resolved\.outliner;[\s\S]*?documentationPreferredWidth\s*=\s*resolved\.documentation;/
-  );
-  assert.match(
-    source,
-    /normalizeDocumentationPreference\(width\)[\s\S]*?numeric <= DOCUMENTATION_COMPACT_THRESHOLD[\s\S]*?return DOCUMENTATION_COMPACT_WIDTH;/
+    /const WORKSPACE_PANEL_COMPACT_THRESHOLD\s*=\s*112;/
   );
   assert.match(
     source,
@@ -1317,6 +1283,98 @@ test("snaps the guide pane and resolves one shared AVR side-panel budget", () =>
     source,
     /function getDocumentationMinWidth\(\)[\s\S]{0,900}?strip\.scrollWidth/
   );
+});
+
+const workspacePanelSpecs = [
+  { min: 180, compact: 62 },
+  { min: 238, compact: 62 },
+  { min: 500 },
+  { min: 267, compact: 62 },
+];
+
+test("resizes adjacent columns first and pushes later panels past editor minimum", () => {
+  const { resizeWorkspacePanels } = loadAvrFrontendFunctionHooks(["resizeWorkspacePanels"]);
+  const start = [305, 318, 539, 360];
+  const resize = (index, width) => Array.from(resizeWorkspacePanels(start, workspacePanelSpecs, index, width));
+  assert.deepEqual(resize(0, 285), [285, 338, 539, 360]);
+  assert.deepEqual(resize(0, 405), [405, 238, 519, 360]);
+  assert.deepEqual(resize(0, 455), [455, 238, 500, 329]);
+  assert.deepEqual(resize(1, 418), [305, 418, 500, 299]);
+  assert.deepEqual(resize(3, 460), [305, 257, 500, 460]);
+  assert.deepEqual(start, [305, 318, 539, 360], "drag snapshots must remain immutable");
+});
+
+test("all side columns snap without intermediate invalid widths and reopen", () => {
+  const { resizeWorkspacePanels } = loadAvrFrontendFunctionHooks(["resizeWorkspacePanels"]);
+  const start = [305, 318, 539, 360];
+  for (const index of [0, 1, 3]) {
+    assert.equal(resizeWorkspacePanels(start, workspacePanelSpecs, index, 113)[index], workspacePanelSpecs[index].min);
+    const collapsed = resizeWorkspacePanels(start, workspacePanelSpecs, index, 112);
+    assert.equal(collapsed[index], 62);
+    const restored = resizeWorkspacePanels(collapsed, workspacePanelSpecs, index, workspacePanelSpecs[index].min);
+    assert.equal(restored[index], workspacePanelSpecs[index].min);
+  }
+});
+
+test("workspace resizing conserves space and minima across viewport and drag extremes", () => {
+  const { resizeWorkspacePanels, fitWorkspaceWidths } = loadAvrFrontendFunctionHooks([
+    "resizeWorkspacePanels", "fitWorkspaceWidths",
+  ]);
+  const valid = (widths, budget) => {
+    assert.equal(widths.reduce((sum, width) => sum + width, 0), budget);
+    widths.forEach((width, i) => assert.ok(
+      Number.isFinite(width) && (width === workspacePanelSpecs[i].compact || width >= workspacePanelSpecs[i].min),
+      `panel ${i}: invalid ${width} in ${widths}`
+    ));
+  };
+  for (const budget of [686, 964, 1000, 1202, 1522, 2200]) {
+    for (const preferred of [[305, 318, 500, 360], [62, 62, 500, 62], [1600, 900, 500, 1500]]) {
+      const start = fitWorkspaceWidths(preferred, budget, workspacePanelSpecs);
+      valid(start, budget);
+      for (const index of [0, 1, 3]) {
+        let previous = 0;
+        for (let requested = -100; requested <= budget + 400; requested += 7) {
+          const widths = resizeWorkspacePanels(start, workspacePanelSpecs, index, requested);
+          valid(widths, budget);
+          assert.ok(widths[index] >= previous, "one-way dragging must never reverse the resized panel");
+          previous = widths[index];
+        }
+      }
+    }
+  }
+});
+
+test("shared pointer handling ignores other pointers and completes once on capture loss", () => {
+  const listeners = new Map(), classes = new Set(), bodyClasses = new Set(), moves = [];
+  const classList = set => ({ add: value => set.add(value), remove: value => set.delete(value) });
+  let captured = null, finishes = 0;
+  const handle = {
+    classList: classList(classes),
+    addEventListener: (name, callback) => listeners.set(name, callback),
+    focus() {},
+    setPointerCapture: id => { captured = id; },
+    hasPointerCapture: id => captured === id,
+    releasePointerCapture: () => { captured = null; },
+  };
+  const document = { addEventListener() {}, body: { classList: classList(bodyClasses) } };
+  const { bindSplitResizer } = loadAvrFrontendFunctionHooks(["bindSplitResizer"], { document });
+  bindSplitResizer(handle, {
+    axis: "x", start: () => 300, move: (delta, width) => moves.push(width + delta),
+    finish: () => finishes++,
+  });
+  const event = (pointerId, clientX) => ({ pointerId, clientX, button: 0, preventDefault() {} });
+  listeners.get("pointerdown")(event(1, 100));
+  listeners.get("pointermove")(event(2, 150));
+  listeners.get("pointerup")(event(2, 150));
+  assert.equal(finishes, 0);
+  listeners.get("pointermove")(event(1, 140));
+  assert.deepEqual(moves, [340]);
+  assert.ok(bodyClasses.has("is-column-resizing"));
+  listeners.get("lostpointercapture")(event(1, 140));
+  listeners.get("pointerup")(event(1, 140));
+  assert.equal(finishes, 1);
+  assert.equal(classes.size, 0);
+  assert.equal(bodyClasses.size, 0);
 });
 
 test("uses one CommonMark GFM runtime across every Markdown surface", () => {
@@ -1627,9 +1685,7 @@ test("uses stacked AI instruction and chat panels with a framed composer", () =>
   assert.doesNotMatch(source, /setRangeText\(/);
   assert.match(source, /function bindProjectAiResizers\(\)/);
   assert.match(source, /STORAGE_PROJECT_AI_COLUMN_WIDTH/);
-  assert.match(source, /PROJECT_AI_COLUMN_COMPACT_THRESHOLD/);
   assert.match(source, /is-project-ai-compact/);
-  assert.match(source, /projectAiColumnResizeState \|\| projectAiStackResizeState/);
   assert.match(
     html,
     /project-instruction-live-editor scroll-frame[\s\S]*?id="projectInstructionDropZone"/
@@ -1733,7 +1789,7 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   );
   assert.match(
     css,
-    /\.split-resizer\.device-panel-resizer::before\s*\{[\s\S]*?width:\s*58px;[\s\S]*?height:\s*2px;/
+    /\.split-resizer\[aria-orientation="horizontal"\]::before\s*\{[\s\S]*?width:\s*58px;[\s\S]*?height:\s*2px;/
   );
   assert.doesNotMatch(css, /device-panel-toggle-arrow::after/);
   assert.match(
@@ -1762,46 +1818,6 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   assert.match(source, /DEVICE_PANEL_COLLAPSED_HEIGHT\s*=\s*0/);
   assert.match(source, /DEVICE_PANEL_DRAG_THRESHOLD\s*=\s*48/);
   assert.match(source, /function getAdjacentDevicePanelState\(state, direction\)/);
-  assert.match(source, /anchorY:\s*event\.clientY/);
-  assert.doesNotMatch(source, /getNearestDevicePanelState|getLiveDevicePanelState/);
-  const pointerMoveStart = source.indexOf(
-    'handle.addEventListener("pointermove"'
-  );
-  const pointerMoveEnd = source.indexOf(
-    'handle.addEventListener("pointerup"',
-    pointerMoveStart
-  );
-  assert.ok(pointerMoveStart >= 0 && pointerMoveEnd > pointerMoveStart);
-  const pointerMoveSource = source.slice(pointerMoveStart, pointerMoveEnd);
-  assert.match(
-    pointerMoveSource,
-    /const delta = event\.clientY - devicePanelResizeState\.anchorY/
-  );
-  assert.match(
-    pointerMoveSource,
-    /Math\.floor\(\s*Math\.abs\(delta\) \/ DEVICE_PANEL_DRAG_THRESHOLD\s*\)/
-  );
-  assert.match(pointerMoveSource, /const direction = delta < 0 \? -1 : 1/);
-  assert.match(
-    pointerMoveSource,
-    /while \(appliedSteps < requestedSteps\)[\s\S]*?getAdjacentDevicePanelState\(\s*nextState,\s*direction\s*\)/
-  );
-  assert.match(
-    pointerMoveSource,
-    /devicePanelResizeState\.anchorY \+=[\s\S]*?DEVICE_PANEL_DRAG_THRESHOLD \* appliedSteps/
-  );
-  assert.match(
-    pointerMoveSource,
-    /setDevicePanelState\(nextState, \{ persist: false, animate: false \}\)/
-  );
-  assert.match(
-    source,
-    /event\.key === "ArrowUp"[\s\S]*?Math\.max\(0, index - 1\)[\s\S]*?event\.key === "ArrowDown"[\s\S]*?Math\.min\(states\.length - 1, index \+ 1\)/
-  );
-  assert.match(
-    source,
-    /handle\.addEventListener\("pointercancel", finishResize\)/
-  );
   assert.match(source, /lostpointercapture/);
   assert.match(source, /if \(collapsed\) viewport\.setAttribute\("inert", ""\)/);
   assert.match(source, /restoreDevicePanelState\(\)/);
