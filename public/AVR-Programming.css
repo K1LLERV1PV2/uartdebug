@@ -75,7 +75,6 @@ body,
 .CodeMirror-hints,
 .compile-log,
 .project-documentation-scroll,
-.project-ai-workspace,
 .project-ai-history,
 .updi-pane-body,
 .probe-log,
@@ -90,7 +89,6 @@ body,
 .CodeMirror-hints,
 .compile-log,
 .project-documentation-scroll,
-.project-ai-workspace,
 .project-ai-history,
 .updi-pane-body,
 .probe-log,
@@ -237,7 +235,7 @@ main,
   background: var(--avr-window-bg);
 }
 
-.avr-device-section.is-device-panel-resizing .avr-device-panel-viewport {
+.avr-device-section:has(.device-panel-resizer.is-resizing) .avr-device-panel-viewport {
   transition: none;
 }
 
@@ -896,20 +894,14 @@ main,
 
 .split-resizer:hover::before,
 .split-resizer:focus-visible::before,
-.canvas-split-container.is-outliner-resizing .file-list-resizer::before,
-.canvas-split-container.is-documentation-resizing
-  .documentation-resizer::before,
-.project-ai-layout.is-chat-resizing .project-ai-chat-resizer::before,
-.avr-device-section.is-device-panel-resizing
-  .device-panel-resizer::before {
+.split-resizer.is-resizing::before {
   background: rgba(200, 255, 221, 0.64);
   box-shadow: 0 0 0 5px rgba(129, 159, 141, 0.14);
 }
 
 .split-resizer:hover,
 .split-resizer:focus-visible,
-.canvas-split-container.is-outliner-resizing .file-list-resizer,
-.canvas-split-container.is-documentation-resizing .documentation-resizer {
+.split-resizer.is-resizing {
   opacity: 1;
 }
 
@@ -922,36 +914,20 @@ main,
   cursor: row-resize;
 }
 
-.split-resizer.device-panel-resizer::before {
+.split-resizer[aria-orientation="horizontal"]::before {
   inset: 0;
   width: 58px;
   height: 2px;
 }
 
-.avr-device-section.is-device-panel-resizing .device-panel-resizer,
-.project-ai-layout.is-chat-resizing .project-ai-chat-resizer,
-.canvas-split-container.is-project-ai-column-resizing .project-ai-column-resizer {
-  opacity: 1;
-}
-
-body.is-outliner-resizing,
-body.is-outliner-resizing *,
-body.is-documentation-resizing,
-body.is-documentation-resizing *,
-body.is-project-ai-resizing,
-body.is-project-ai-resizing * {
+body.is-column-resizing,
+body.is-column-resizing * {
   cursor: col-resize !important;
   user-select: none !important;
 }
 
-body.is-project-ai-stack-resizing,
-body.is-project-ai-stack-resizing * {
-  cursor: row-resize !important;
-  user-select: none !important;
-}
-
-body.is-device-panel-resizing,
-body.is-device-panel-resizing * {
+body.is-row-resizing,
+body.is-row-resizing * {
   cursor: row-resize !important;
   user-select: none !important;
 }
@@ -2219,12 +2195,6 @@ body.is-device-panel-resizing * {
   cursor: row-resize;
 }
 
-.project-ai-resizer.project-ai-chat-resizer::before {
-  inset: 0;
-  width: 58px;
-  height: 2px;
-}
-
 .project-ai-column-resizer {
   z-index: 2;
   cursor: col-resize;
@@ -2269,20 +2239,13 @@ body.is-device-panel-resizing * {
   content: "C\A H\A A\A T";
 }
 
-.project-ai-chat-panel,
-.project-instruction-panel {
-  min-width: 0;
-  min-height: 0;
-}
-
 .project-ai-chat-panel {
   container-name: project-ai-chat-panel;
   container-type: inline-size;
   overflow: visible;
 }
 
-.project-ai-action-strip,
-.project-instruction-action-strip {
+.project-ai-action-strip {
   justify-content: space-between;
   gap: 10px;
 }
@@ -2623,34 +2586,22 @@ body.is-device-panel-resizing * {
 }
 
 .project-ai-workspace {
-  --scroll-frame-bg: var(--avr-window-bg);
-  --scroll-frame-border: rgba(129, 159, 141, 0.24);
-
   display: flex;
-  flex: 1 1 auto;
-  min-height: 96px;
-  padding: 14px;
-  overflow: hidden;
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0;
   flex-direction: column;
-  gap: 12px;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--avr-scrollbar-thumb) var(--avr-scrollbar-track);
 }
 
 .project-ai-history {
   display: flex;
   flex: 1 1 auto;
-  min-height: 96px;
-  padding: 2px;
+  min-height: 0;
+  padding: 12px;
   overflow: auto;
   flex-direction: column;
   gap: 9px;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--avr-scrollbar-thumb) var(--avr-scrollbar-track);
 }
 
 .project-ai-message {
@@ -4714,6 +4665,8 @@ body.is-device-panel-resizing * {
 @media (max-width: 1040px) {
   html,
   body {
+    height: auto;
+    max-height: none;
     overflow-y: auto;
   }
 
@@ -4726,6 +4679,7 @@ body.is-device-panel-resizing * {
   .feature-panel {
     height: auto;
     min-height: 100vh;
+    max-height: none;
     overflow: visible;
   }
 
@@ -4888,17 +4842,6 @@ body.is-device-panel-resizing * {
 
   .project-ai-layout {
     grid-template-columns: 1fr;
-    height: auto !important;
-  }
-
-  .project-ai-chat-panel {
-    height: clamp(560px, 78vh, 700px);
-    min-height: 560px;
-  }
-
-  .project-instruction-panel {
-    height: clamp(560px, 78vh, 700px);
-    min-height: 560px;
   }
 
   .file-list-resizer,
@@ -5120,16 +5063,6 @@ body.is-device-panel-resizing * {
 }
 
 @media (max-height: 520px) and (min-width: 990px) {
-  .project-ai-workspace {
-    min-height: 0;
-    padding: 8px;
-    gap: 6px;
-  }
-
-  .project-ai-history {
-    min-height: 0;
-  }
-
   .project-ai-form {
     min-height: 0;
     margin-top: 6px;
@@ -5185,8 +5118,7 @@ body.is-device-panel-resizing * {
   .project-workspace-scene > *,
   .project-ai-toggle,
   .project-ai-toggle img,
-  .project-ai-budget-track > span,
-  .project-skill-card {
+  .project-ai-budget-track > span {
     transition: none !important;
   }
 }

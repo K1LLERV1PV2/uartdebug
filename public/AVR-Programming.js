@@ -53,19 +53,15 @@
   const AVR_SERIAL_STATE_EVENT = "ud-avr-programming-serial-state";
   const LEGACY_SERIAL_STATE_EVENT = "ud-canvas-serial-state";
   const OUTLINER_DEFAULT_WIDTH = 305;
-  const OUTLINER_COMPACT_WIDTH = 62;
-  const OUTLINER_COMPACT_THRESHOLD = 112;
+  const WORKSPACE_PANEL_COMPACT_WIDTH = 62;
+  const WORKSPACE_PANEL_COMPACT_THRESHOLD = 112;
   const OUTLINER_MIN_EXPANDED_WIDTH = 180;
   const OUTLINER_EDITOR_MIN_WIDTH = 500;
   const DOCUMENTATION_DEFAULT_WIDTH = 360;
-  const DOCUMENTATION_COMPACT_WIDTH = 62;
-  const DOCUMENTATION_COMPACT_THRESHOLD = 112;
   const DOCUMENTATION_MIN_WIDTH = 240;
-  const SPLIT_RESIZER_TOTAL_WIDTH = 28;
+  const WORKSPACE_RESIZER_TOTAL_WIDTH = 42;
   const PROJECT_AI_COLUMN_DEFAULT_WIDTH = 318;
   const PROJECT_AI_COLUMN_MIN_WIDTH = 238;
-  const PROJECT_AI_COLUMN_COMPACT_WIDTH = 62;
-  const PROJECT_AI_COLUMN_COMPACT_THRESHOLD = 112;
   const PROJECT_AI_STACK_MIN_HEIGHT = 190;
   const PROJECT_AI_STACK_RESIZER_HEIGHT = 14;
   const DEVICE_PANEL_EXPANDED_HEIGHT = 112;
@@ -130,11 +126,11 @@
   let inlineFileEdit = null;
   let outlinerWidth = OUTLINER_DEFAULT_WIDTH;
   let outlinerPreferredWidth = OUTLINER_DEFAULT_WIDTH;
-  let outlinerResizeState = null;
+  let activeSplitResize = null;
+  let workspaceEditorRefreshFrame = null;
   let documentationWidth = DOCUMENTATION_DEFAULT_WIDTH;
   let documentationPreferredWidth = DOCUMENTATION_DEFAULT_WIDTH;
   let documentationExpandedMinWidth = DOCUMENTATION_MIN_WIDTH;
-  let documentationResizeState = null;
   let documentationHeadingIndex = new Map();
   let documentationRenderedHeadingIndex = new Map();
   let documentationMarkerHandles = [];
@@ -147,10 +143,8 @@
   let documentationEditSaveTimer = null;
   let projectAiColumnWidth = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
   let projectAiColumnPreferredWidth = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
-  let projectAiColumnResizeState = null;
   let projectAiInstructionHeight = 0;
   let projectAiInstructionPreferredHeight = 0;
-  let projectAiStackResizeState = null;
   let projectInstructionDocument = {
     schemaVersion: 1,
     revision: 0,
@@ -174,7 +168,6 @@
   let projectAiPromptQuotes = [];
   let devicePanelState = "expanded";
   let devicePanelHeight = DEVICE_PANEL_EXPANDED_HEIGHT;
-  let devicePanelResizeState = null;
   let devicePanelTransitionTimer = null;
   let projectAiChats = {
     schemaVersion: 1,
@@ -2815,432 +2808,111 @@
     return window.matchMedia?.("(max-width: 1040px)")?.matches || false;
   }
 
-  function getAvrSidePanelBudget() {
+  // Every column uses the same width budget, snap rule and neighbor-first transfer.
+  function getWorkspacePanelSpecs() {
+    return [
+      { min: OUTLINER_MIN_EXPANDED_WIDTH, compact: WORKSPACE_PANEL_COMPACT_WIDTH },
+      { min: PROJECT_AI_COLUMN_MIN_WIDTH, compact: WORKSPACE_PANEL_COMPACT_WIDTH },
+      { min: OUTLINER_EDITOR_MIN_WIDTH },
+      { min: getDocumentationMinWidth(), compact: WORKSPACE_PANEL_COMPACT_WIDTH },
+    ];
+  }
+
+  function snapWorkspacePanelSize(value, spec) {
+    return spec.compact && value <= WORKSPACE_PANEL_COMPACT_THRESHOLD
+      ? spec.compact
+      : Math.max(spec.min, value);
+  }
+
+  function workspacePanelFloor(value, spec) {
+    return spec.compact && value === spec.compact ? spec.compact : spec.min;
+  }
+
+  function getWorkspaceContentWidth() {
     const container = getCanvasSplitContainer();
-    if (!container || isStackedCanvasLayout()) {
-      return Math.max(
-        OUTLINER_MIN_EXPANDED_WIDTH + DOCUMENTATION_MIN_WIDTH,
-        outlinerWidth + documentationWidth
-      );
-    }
     return Math.max(
-      OUTLINER_COMPACT_WIDTH + DOCUMENTATION_COMPACT_WIDTH,
-      Math.round(container.getBoundingClientRect().width) -
-        OUTLINER_EDITOR_MIN_WIDTH -
-        SPLIT_RESIZER_TOTAL_WIDTH -
-        projectAiColumnWidth -
-        PROJECT_AI_STACK_RESIZER_HEIGHT
+      OUTLINER_EDITOR_MIN_WIDTH + 3 * WORKSPACE_PANEL_COMPACT_WIDTH,
+      Math.round(container?.getBoundingClientRect().width || 0) -
+        WORKSPACE_RESIZER_TOTAL_WIDTH
     );
   }
 
-  function getOutlinerMaxWidth() {
-    return Math.max(
-      OUTLINER_MIN_EXPANDED_WIDTH,
-      getAvrSidePanelBudget() - DOCUMENTATION_COMPACT_WIDTH
+  function getWorkspaceWidths() {
+    return [
+      outlinerWidth,
+      projectAiColumnWidth,
+      getWorkspaceContentWidth() - outlinerWidth - projectAiColumnWidth - documentationWidth,
+      documentationWidth,
+    ];
+  }
+
+  function getWorkspaceNeighbors(index) {
+    return index === 3 ? [2, 1, 0] : index === 1 ? [2, 3, 0] : [1, 2, 3];
+  }
+
+  function getWorkspacePanelMaxWidth(index, widths = getWorkspaceWidths(), specs = getWorkspacePanelSpecs()) {
+    return widths.reduce((sum, width) => sum + width, 0) -
+      specs.reduce((sum, spec, i) => sum + (i === index ? 0 : spec.compact || spec.min), 0);
+  }
+
+  function fitWorkspaceWidths(requested, available, specs) {
+    const widths = requested.map((value, i) => snapWorkspacePanelSize(value, specs[i]));
+    let excess = widths.reduce((sum, width) => sum + width, 0) - available;
+    // A viewport change first consumes the flexible editor, then side-panel slack.
+    for (const i of [2, 0, 3, 1]) {
+      const take = Math.min(Math.max(0, excess), widths[i] - workspacePanelFloor(widths[i], specs[i]));
+      widths[i] -= take;
+      excess -= take;
+    }
+    for (const i of [0, 3, 1]) {
+      if (excess <= 0) break;
+      const released = widths[i] - specs[i].compact;
+      widths[i] = specs[i].compact;
+      excess -= released;
+    }
+    widths[2] -= excess;
+    return widths;
+  }
+
+  function resizeWorkspacePanels(start, specs, index, requested) {
+    const widths = [...start];
+    const neighbors = getWorkspaceNeighbors(index);
+    const target = Math.min(
+      getWorkspacePanelMaxWidth(index, start, specs),
+      snapWorkspacePanelSize(requested, specs[index])
     );
-  }
-
-  function normalizeOutlinerWidth(width) {
-    const numeric = Number(width);
-    if (!Number.isFinite(numeric)) return OUTLINER_DEFAULT_WIDTH;
-    if (numeric <= OUTLINER_COMPACT_THRESHOLD) return OUTLINER_COMPACT_WIDTH;
-    return Math.max(
-      OUTLINER_MIN_EXPANDED_WIDTH,
-      Math.min(getOutlinerMaxWidth(), numeric)
-    );
-  }
-
-  function fitAvrSidePanelWidth(width, available, expandedMinimum, compactWidth) {
-    if (width <= compactWidth) return compactWidth;
-    if (available < expandedMinimum) return compactWidth;
-    return Math.max(expandedMinimum, Math.min(width, available));
-  }
-
-  function resolveAvrWorkspaceWidths(
-    requestedOutlinerWidth,
-    requestedDocumentationWidth,
-    priority = "balanced"
-  ) {
-    const budget = getAvrSidePanelBudget();
-    const documentationMinimum = getDocumentationMinWidth();
-    let outliner = normalizeOutlinerPreference(requestedOutlinerWidth);
-    let documentation = normalizeDocumentationPreference(
-      requestedDocumentationWidth
-    );
-
-    outliner = Math.min(getOutlinerMaxWidth(), outliner);
-    documentation = Math.min(getDocumentationMaxWidth(), documentation);
-    if (outliner + documentation <= budget) {
-      return { outliner: Math.round(outliner), documentation: Math.round(documentation) };
+    let remaining = target - start[index];
+    if (remaining <= 0) {
+      widths[index] = target;
+      // Keep intentionally collapsed neighbors closed; the next open panel takes the space.
+      const recipient = neighbors.find(i => widths[i] !== specs[i].compact);
+      widths[recipient] -= remaining;
+      return widths;
     }
 
-    if (priority === "outliner") {
-      documentation = fitAvrSidePanelWidth(
-        documentation,
-        budget - outliner,
-        documentationMinimum,
-        DOCUMENTATION_COMPACT_WIDTH
-      );
-      outliner = fitAvrSidePanelWidth(
-        outliner,
-        budget - documentation,
-        OUTLINER_MIN_EXPANDED_WIDTH,
-        OUTLINER_COMPACT_WIDTH
-      );
-    } else if (priority === "documentation") {
-      outliner = fitAvrSidePanelWidth(
-        outliner,
-        budget - documentation,
-        OUTLINER_MIN_EXPANDED_WIDTH,
-        OUTLINER_COMPACT_WIDTH
-      );
-      documentation = fitAvrSidePanelWidth(
-        documentation,
-        budget - outliner,
-        documentationMinimum,
-        DOCUMENTATION_COMPACT_WIDTH
-      );
-    } else {
-      const reducibleOutliner = Math.max(
-        0,
-        outliner - OUTLINER_MIN_EXPANDED_WIDTH
-      );
-      const reducibleDocumentation = Math.max(
-        0,
-        documentation - documentationMinimum
-      );
-      const reducibleTotal = reducibleOutliner + reducibleDocumentation;
-      const overflow = outliner + documentation - budget;
-      if (reducibleTotal > 0) {
-        const appliedOverflow = Math.min(overflow, reducibleTotal);
-        outliner -=
-          appliedOverflow * (reducibleOutliner / reducibleTotal);
-        documentation -=
-          appliedOverflow * (reducibleDocumentation / reducibleTotal);
-      }
-      if (outliner + documentation > budget) {
-        outliner = OUTLINER_COMPACT_WIDTH;
-        documentation = fitAvrSidePanelWidth(
-          documentation,
-          budget - outliner,
-          documentationMinimum,
-          DOCUMENTATION_COMPACT_WIDTH
-        );
-      }
+    for (const i of neighbors) {
+      const take = Math.min(remaining, widths[i] - workspacePanelFloor(widths[i], specs[i]));
+      widths[i] -= take;
+      remaining -= take;
     }
-
-    return {
-      outliner: Math.round(outliner),
-      documentation: Math.round(documentation),
-    };
-  }
-
-  function renderAvrWorkspaceWidths(
-    resolved,
-    { persist = true, remember = true } = {}
-  ) {
-    const container = getCanvasSplitContainer();
-    outlinerWidth = resolved.outliner;
-    documentationWidth = resolved.documentation;
-    if (remember) {
-      outlinerPreferredWidth = resolved.outliner;
-      documentationPreferredWidth = resolved.documentation;
+    for (const i of neighbors) {
+      if (remaining <= 0) break;
+      const spec = specs[i];
+      if (!spec.compact || widths[i] === spec.compact) continue;
+      // Push the later panels first. Crossing the same snap threshold then folds a donor.
+      const expanding = start[index] === specs[index].compact && target >= specs[index].min;
+      if (!expanding && widths[i] - remaining > WORKSPACE_PANEL_COMPACT_THRESHOLD) continue;
+      const released = widths[i] - spec.compact;
+      widths[i] = spec.compact;
+      remaining -= released;
     }
-
-    if (container) {
-      const outlinerCompact = outlinerWidth <= OUTLINER_COMPACT_THRESHOLD;
-      const documentationCompact =
-        !isStackedCanvasLayout() &&
-        documentationWidth <= DOCUMENTATION_COMPACT_THRESHOLD;
-      container.style.setProperty("--outliner-width", `${outlinerWidth}px`);
-      container.style.setProperty(
-        "--documentation-width",
-        `${documentationWidth}px`
-      );
-      container.classList.toggle("is-outliner-compact", outlinerCompact);
-      container.classList.toggle(
-        "is-documentation-compact",
-        documentationCompact
-      );
+    widths[index] = target - Math.max(0, remaining);
+    if (widths[index] > specs[index].compact && widths[index] < specs[index].min) {
+      return [...start];
     }
-
-    syncSplitResizerAria();
-    if (persist) {
-      persistOutlinerWidth(outlinerPreferredWidth);
-      persistDocumentationWidth(documentationPreferredWidth);
-    }
-    refreshEditorAfterOutlinerResize();
-    window.requestAnimationFrame(() => documentationEditor?.refresh());
-  }
-
-  function persistOutlinerWidth(width) {
-    try {
-      localStorage.setItem(STORAGE_OUTLINER_WIDTH, String(width));
-    } catch (error) {
-      console.warn("Failed to persist file list width:", error);
-    }
-  }
-
-  function refreshEditorAfterOutlinerResize() {
-    window.requestAnimationFrame(() => {
-      editor?.refresh();
-      fitEditorFileWatermark();
-    });
-  }
-
-  function applyOutlinerWidth(
-    width,
-    { persist = true, remember = true } = {}
-  ) {
-    const requested = normalizeOutlinerPreference(width);
-    const resolved = resolveAvrWorkspaceWidths(
-      requested,
-      documentationPreferredWidth,
-      "outliner"
-    );
-    renderAvrWorkspaceWidths(resolved, { persist, remember });
-  }
-
-  function restoreOutlinerWidth() {
-    let stored = OUTLINER_DEFAULT_WIDTH;
-    try {
-      const raw = localStorage.getItem(STORAGE_OUTLINER_WIDTH);
-      stored = raw === null ? OUTLINER_DEFAULT_WIDTH : Number(raw);
-    } catch (error) {
-      console.warn("Failed to restore file list width:", error);
-    }
-    outlinerPreferredWidth = normalizeOutlinerPreference(
-      Number.isFinite(stored) ? stored : OUTLINER_DEFAULT_WIDTH
-    );
-    renderAvrWorkspaceWidths(
-      resolveAvrWorkspaceWidths(
-        outlinerPreferredWidth,
-        documentationPreferredWidth,
-        "balanced"
-      ),
-      { persist: false, remember: false }
-    );
-  }
-
-  function expandOutlinerForEditing() {
-    if (outlinerWidth <= OUTLINER_COMPACT_THRESHOLD) {
-      applyOutlinerWidth(OUTLINER_DEFAULT_WIDTH);
-    }
-  }
-
-  function expandDocumentationForNavigation() {
-    if (documentationWidth <= DOCUMENTATION_COMPACT_THRESHOLD) {
-      applyDocumentationWidth(DOCUMENTATION_DEFAULT_WIDTH);
-      documentationEditor?.refresh();
-    }
-  }
-
-  /*
-   * The file-list divider is the boundary between the outliner and the
-   * instruction/chat column. Move the neighboring AI track first and only
-   * consume editor slack when an expanded minimum requires more room, rather
-   * than letting the editor absorb every movement by itself.
-   */
-  function getFileListAiAvailableWidth(documentation = documentationWidth) {
-    const container = getCanvasSplitContainer();
-    if (!container || isStackedCanvasLayout()) {
-      return Math.max(
-        OUTLINER_COMPACT_WIDTH + PROJECT_AI_COLUMN_COMPACT_WIDTH,
-        outlinerWidth + projectAiColumnWidth
-      );
-    }
-    return Math.max(
-      OUTLINER_COMPACT_WIDTH + PROJECT_AI_COLUMN_COMPACT_WIDTH,
-      Math.round(container.getBoundingClientRect().width) -
-        Number(documentation || 0) -
-        OUTLINER_EDITOR_MIN_WIDTH -
-        SPLIT_RESIZER_TOTAL_WIDTH -
-        PROJECT_AI_STACK_RESIZER_HEIGHT
-    );
-  }
-
-  function getFileListResizerMaxWidth() {
-    return Math.max(
-      OUTLINER_MIN_EXPANDED_WIDTH,
-      Math.round(outlinerWidth + projectAiColumnWidth) -
-        PROJECT_AI_COLUMN_COMPACT_WIDTH
-    );
-  }
-
-  function resolveFileListResizerWidths(
-    requestedOutlinerWidth,
-    combinedWidth = outlinerWidth + projectAiColumnWidth,
-    startOutlinerWidth = outlinerWidth,
-    startProjectAiWidth = projectAiColumnWidth
-  ) {
-    const available = getFileListAiAvailableWidth(documentationWidth);
-    const numeric = Number(requestedOutlinerWidth);
-    const startOutliner = Number.isFinite(Number(startOutlinerWidth))
-      ? Number(startOutlinerWidth)
-      : outlinerWidth;
-    const fallbackProjectAi = Number(combinedWidth) - startOutliner;
-    const startProjectAi = Number.isFinite(Number(startProjectAiWidth))
-      ? Number(startProjectAiWidth)
-      : Number.isFinite(fallbackProjectAi)
-        ? fallbackProjectAi
-        : projectAiColumnWidth;
-    const rawOutliner = Number.isFinite(numeric) ? numeric : startOutliner;
-    let outliner = rawOutliner;
-
-    if (outliner <= OUTLINER_COMPACT_THRESHOLD) {
-      outliner = OUTLINER_COMPACT_WIDTH;
-    } else {
-      outliner = Math.max(OUTLINER_MIN_EXPANDED_WIDTH, outliner);
-    }
-
-    const delta = rawOutliner - startOutliner;
-    let projectAi = startProjectAi - delta;
-    if (projectAi <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD) {
-      projectAi = PROJECT_AI_COLUMN_COMPACT_WIDTH;
-    } else if (projectAi < PROJECT_AI_COLUMN_MIN_WIDTH) {
-      projectAi = PROJECT_AI_COLUMN_MIN_WIDTH;
-    }
-
-    /* If the viewport cannot fit two expanded columns, use the same compact
-       snap as the standalone AI resizer instead of producing a sub-minimum
-       expanded outliner. */
-    if (
-      available < OUTLINER_MIN_EXPANDED_WIDTH + PROJECT_AI_COLUMN_MIN_WIDTH &&
-      outliner > OUTLINER_COMPACT_WIDTH &&
-      projectAi > PROJECT_AI_COLUMN_COMPACT_THRESHOLD
-    ) {
-      projectAi = PROJECT_AI_COLUMN_COMPACT_WIDTH;
-    }
-
-    let overflow = Math.max(0, outliner + projectAi - available);
-    if (overflow > 0) {
-      const aiFloor =
-        projectAi > PROJECT_AI_COLUMN_COMPACT_THRESHOLD
-          ? PROJECT_AI_COLUMN_MIN_WIDTH
-          : PROJECT_AI_COLUMN_COMPACT_WIDTH;
-      const reduceAi = Math.min(overflow, Math.max(0, projectAi - aiFloor));
-      projectAi -= reduceAi;
-      overflow -= reduceAi;
-    }
-    if (overflow > 0) {
-      outliner = Math.max(OUTLINER_COMPACT_WIDTH, outliner - overflow);
-    }
-
-    return {
-      outliner: Math.round(
-        Math.max(OUTLINER_COMPACT_WIDTH, outliner)
-      ),
-      projectAi: Math.round(
-        Math.max(PROJECT_AI_COLUMN_COMPACT_WIDTH, projectAi)
-      ),
-    };
-  }
-
-  function applyFileListResizerWidths(
-    requestedOutlinerWidth,
-    combinedWidth = outlinerWidth + projectAiColumnWidth,
-    startOutlinerWidth = outlinerWidth,
-    startProjectAiWidth = projectAiColumnWidth
-  ) {
-    const resolved = resolveFileListResizerWidths(
-      requestedOutlinerWidth,
-      combinedWidth,
-      startOutlinerWidth,
-      startProjectAiWidth
-    );
-    renderAvrWorkspaceWidths(
-      {
-        outliner: resolved.outliner,
-        documentation: documentationWidth,
-      },
-      { persist: false, remember: false }
-    );
-    applyProjectAiWidths(resolved.projectAi, projectAiInstructionHeight, {
-      persist: false,
-      remember: false,
-    });
-  }
-
-  function bindFileListResizer() {
-    const resizer = $("fileListResizer");
-    const container = getCanvasSplitContainer();
-    if (!resizer || !container) return;
-
-    const finishResize = (event) => {
-      if (!outlinerResizeState) return;
-      resizer.releasePointerCapture?.(outlinerResizeState.pointerId);
-      outlinerResizeState = null;
-      container.classList.remove("is-outliner-resizing");
-      document.body.classList.remove("is-outliner-resizing");
-      outlinerPreferredWidth = outlinerWidth;
-      projectAiColumnPreferredWidth = projectAiColumnWidth;
-      persistOutlinerWidth(outlinerPreferredWidth);
-      persistProjectAiWidths();
-      event?.preventDefault?.();
-    };
-
-    resizer.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      outlinerResizeState = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startWidth: outlinerWidth,
-        startCombinedWidth: outlinerWidth + projectAiColumnWidth,
-        startProjectAiWidth: projectAiColumnWidth,
-      };
-      resizer.setPointerCapture?.(event.pointerId);
-      container.classList.add("is-outliner-resizing");
-      document.body.classList.add("is-outliner-resizing");
-    });
-
-    resizer.addEventListener("pointermove", (event) => {
-      if (!outlinerResizeState) return;
-      event.preventDefault();
-      const nextWidth =
-        outlinerResizeState.startWidth + event.clientX - outlinerResizeState.startX;
-      applyFileListResizerWidths(
-        nextWidth,
-        outlinerResizeState.startCombinedWidth,
-        outlinerResizeState.startWidth,
-        outlinerResizeState.startProjectAiWidth
-      );
-    });
-
-    resizer.addEventListener("pointerup", finishResize);
-    resizer.addEventListener("pointercancel", finishResize);
-
-    resizer.addEventListener("keydown", (event) => {
-      const step = event.shiftKey ? 48 : 24;
-      let nextWidth = outlinerWidth;
-
-      if (event.key === "ArrowLeft") {
-        nextWidth -= step;
-      } else if (event.key === "ArrowRight") {
-        nextWidth =
-          outlinerWidth <= OUTLINER_COMPACT_THRESHOLD
-            ? OUTLINER_MIN_EXPANDED_WIDTH
-            : outlinerWidth + step;
-      } else if (event.key === "Home") {
-        nextWidth = OUTLINER_COMPACT_WIDTH;
-      } else if (event.key === "End") {
-        nextWidth = OUTLINER_DEFAULT_WIDTH;
-      } else {
-        return;
-      }
-
-      event.preventDefault();
-      applyFileListResizerWidths(nextWidth);
-      outlinerPreferredWidth = outlinerWidth;
-      projectAiColumnPreferredWidth = projectAiColumnWidth;
-      persistOutlinerWidth(outlinerPreferredWidth);
-      persistProjectAiWidths();
-    });
-
-    applyOutlinerWidth(outlinerPreferredWidth, {
-      persist: false,
-      remember: false,
-    });
+    // A snap releases a whole compact-to-expanded interval; keep the surplus in the editor.
+    if (remaining < 0) widths[2] -= remaining;
+    return widths;
   }
 
   function getDocumentationMinWidth() {
@@ -3271,7 +2943,7 @@
       DOCUMENTATION_MIN_WIDTH,
       Math.ceil(
         panelChrome +
-        horizontalPadding +
+          horizontalPadding +
           controlsWidth +
           Math.max(0, controls.length - 1) * gap +
           2
@@ -3280,566 +2952,298 @@
     return documentationExpandedMinWidth;
   }
 
-  function getDocumentationMaxWidth() {
-    const minimum = getDocumentationMinWidth();
-    return Math.max(
-      minimum,
-      getAvrSidePanelBudget() - OUTLINER_COMPACT_WIDTH
+  function persistWorkspaceLayout() {
+    outlinerPreferredWidth = outlinerWidth;
+    projectAiColumnPreferredWidth = projectAiColumnWidth;
+    documentationPreferredWidth = documentationWidth;
+    try {
+      localStorage.setItem(STORAGE_OUTLINER_WIDTH, String(outlinerPreferredWidth));
+      localStorage.setItem(STORAGE_DOCUMENTATION_WIDTH, String(documentationPreferredWidth));
+      localStorage.setItem(STORAGE_PROJECT_AI_COLUMN_WIDTH, String(projectAiColumnPreferredWidth));
+      if (projectAiInstructionPreferredHeight > 0) {
+        localStorage.setItem(STORAGE_PROJECT_AI_STACK_SPLIT, String(projectAiInstructionPreferredHeight));
+      }
+    } catch (error) {
+      console.warn("Failed to persist workspace layout:", error);
+    }
+  }
+
+  function refreshWorkspaceEditors() {
+    if (workspaceEditorRefreshFrame !== null) return;
+    workspaceEditorRefreshFrame = window.requestAnimationFrame(() => {
+      workspaceEditorRefreshFrame = null;
+      editor?.refresh();
+      documentationEditor?.refresh();
+      projectInstructionEditor?.refresh();
+      constrainProjectAiComposer();
+      fitEditorFileWatermark();
+    });
+  }
+
+  function renderWorkspaceWidths(widths, { persist = false } = {}) {
+    [outlinerWidth, projectAiColumnWidth, , documentationWidth] = widths;
+    const container = getCanvasSplitContainer();
+    const stacked = isStackedCanvasLayout();
+    if (container) {
+      for (const [property, value] of [
+        ["--outliner-width", outlinerWidth],
+        ["--project-ai-width", projectAiColumnWidth],
+        ["--documentation-width", documentationWidth],
+      ]) container.style.setProperty(property, `${value}px`);
+      for (const [name, value] of [
+        ["is-outliner-compact", outlinerWidth],
+        ["is-project-ai-compact", projectAiColumnWidth],
+        ["is-documentation-compact", documentationWidth],
+      ]) container.classList.toggle(name, !stacked && value <= WORKSPACE_PANEL_COMPACT_THRESHOLD);
+    }
+    syncSplitResizerAria();
+    if (persist) persistWorkspaceLayout();
+    refreshWorkspaceEditors();
+  }
+
+  function fitWorkspaceToViewport() {
+    if (!isStackedCanvasLayout()) {
+      renderWorkspaceWidths(fitWorkspaceWidths(
+        [outlinerPreferredWidth, projectAiColumnPreferredWidth, OUTLINER_EDITOR_MIN_WIDTH, documentationPreferredWidth],
+        getWorkspaceContentWidth(),
+        getWorkspacePanelSpecs()
+      ));
+    } else {
+      const container = getCanvasSplitContainer();
+      container?.classList.remove("is-outliner-compact", "is-project-ai-compact", "is-documentation-compact");
+    }
+    applyProjectAiStackHeight(projectAiInstructionPreferredHeight);
+    refreshWorkspaceEditors();
+  }
+
+  function resizeWorkspacePanel(index, requested, { persist = true } = {}) {
+    if (isStackedCanvasLayout()) return;
+    renderWorkspaceWidths(
+      resizeWorkspacePanels(getWorkspaceWidths(), getWorkspacePanelSpecs(), index, requested),
+      { persist }
     );
   }
 
-  function normalizeOutlinerPreference(width) {
-    const numeric = Number(width);
-    if (!Number.isFinite(numeric)) return OUTLINER_DEFAULT_WIDTH;
-    if (numeric <= OUTLINER_COMPACT_THRESHOLD) return OUTLINER_COMPACT_WIDTH;
-    return Math.max(OUTLINER_MIN_EXPANDED_WIDTH, numeric);
+  function expandOutlinerForEditing() {
+    if (outlinerWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD) {
+      resizeWorkspacePanel(0, OUTLINER_DEFAULT_WIDTH);
+    }
   }
 
-  function normalizeDocumentationWidth(width) {
-    const numeric = Number(width);
-    if (!Number.isFinite(numeric)) return DOCUMENTATION_DEFAULT_WIDTH;
-    if (numeric <= DOCUMENTATION_COMPACT_THRESHOLD) {
-      return DOCUMENTATION_COMPACT_WIDTH;
+  function expandDocumentationForNavigation() {
+    if (documentationWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD) {
+      resizeWorkspacePanel(3, DOCUMENTATION_DEFAULT_WIDTH);
     }
-    const minimum = getDocumentationMinWidth();
-    return Math.max(
-      minimum,
-      Math.min(getDocumentationMaxWidth(), numeric)
-    );
   }
 
-  function normalizeDocumentationPreference(width) {
-    const numeric = Number(width);
-    if (!Number.isFinite(numeric)) return DOCUMENTATION_DEFAULT_WIDTH;
-    if (numeric <= DOCUMENTATION_COMPACT_THRESHOLD) {
-      return DOCUMENTATION_COMPACT_WIDTH;
-    }
-    return Math.max(getDocumentationMinWidth(), numeric);
+  function restoreWorkspaceLayout() {
+    const read = (key, fallback) => {
+      try {
+        const stored = localStorage.getItem(key);
+        const value = stored === null ? fallback : Number(stored);
+        return Number.isFinite(value) && value >= 0 ? value : fallback;
+      } catch { return fallback; }
+    };
+    const specs = getWorkspacePanelSpecs();
+    outlinerPreferredWidth = snapWorkspacePanelSize(read(STORAGE_OUTLINER_WIDTH, OUTLINER_DEFAULT_WIDTH), specs[0]);
+    projectAiColumnPreferredWidth = snapWorkspacePanelSize(read(STORAGE_PROJECT_AI_COLUMN_WIDTH, PROJECT_AI_COLUMN_DEFAULT_WIDTH), specs[1]);
+    documentationPreferredWidth = snapWorkspacePanelSize(read(STORAGE_DOCUMENTATION_WIDTH, DOCUMENTATION_DEFAULT_WIDTH), specs[3]);
+    projectAiInstructionPreferredHeight = read(STORAGE_PROJECT_AI_STACK_SPLIT, 0);
+    fitWorkspaceToViewport();
   }
 
   function syncSplitResizerAria() {
-    const outlinerResizer = $("fileListResizer");
-    if (outlinerResizer) {
-      outlinerResizer.setAttribute(
-        "aria-valuemin",
-        String(OUTLINER_COMPACT_WIDTH)
-      );
-      outlinerResizer.setAttribute(
-        "aria-valuemax",
-        String(getFileListResizerMaxWidth())
-      );
-      outlinerResizer.setAttribute("aria-valuenow", String(outlinerWidth));
-    }
-
-    const documentationResizer = $("documentationResizer");
-    if (documentationResizer) {
-      documentationResizer.setAttribute(
-        "aria-valuemin",
-        String(DOCUMENTATION_COMPACT_WIDTH)
-      );
-      documentationResizer.setAttribute(
-        "aria-valuemax",
-        String(getDocumentationMaxWidth())
-      );
-      documentationResizer.setAttribute(
-        "aria-valuenow",
-        String(documentationWidth)
-      );
-      const compact =
-        documentationWidth <= DOCUMENTATION_COMPACT_THRESHOLD;
-      documentationResizer.setAttribute(
-        "aria-valuetext",
-        compact ? "Collapsed" : `${documentationWidth} pixels`
-      );
-      documentationResizer.setAttribute("aria-expanded", String(!compact));
+    const widths = getWorkspaceWidths();
+    const specs = getWorkspacePanelSpecs();
+    for (const [id, index] of [
+      ["fileListResizer", 0], ["projectAiColumnResizer", 1], ["documentationResizer", 3],
+    ]) {
+      const handle = $(id);
+      if (!handle) continue;
+      const compact = widths[index] === specs[index].compact;
+      handle.setAttribute("aria-valuemin", String(specs[index].compact));
+      handle.setAttribute("aria-valuemax", String(Math.round(getWorkspacePanelMaxWidth(index, widths, specs))));
+      handle.setAttribute("aria-valuenow", String(Math.round(widths[index])));
+      handle.setAttribute("aria-valuetext", compact ? "Collapsed" : `${Math.round(widths[index])} pixels`);
+      handle.setAttribute("aria-expanded", String(!compact));
     }
   }
 
-  function persistDocumentationWidth(width) {
-    try {
-      localStorage.setItem(STORAGE_DOCUMENTATION_WIDTH, String(width));
-    } catch (error) {
-      console.warn("Failed to persist project guide width:", error);
+  // Pointer capture, cancellation and cursor feedback are shared by all five handles.
+  function bindSplitResizer(handle, { axis, enabled = () => true, start, move, finish, key }) {
+    if (!handle) return;
+    const coordinate = event => axis === "x" ? event.clientX : event.clientY;
+    const cursorClass = axis === "x" ? "is-column-resizing" : "is-row-resizing";
+    const end = event => {
+      const session = activeSplitResize;
+      if (!session || session.handle !== handle ||
+          (event?.pointerId !== undefined && event.pointerId !== session.pointerId)) return;
+      activeSplitResize = null;
+      handle.classList.remove("is-resizing");
+      document.body.classList.remove(cursorClass);
+      if (handle.hasPointerCapture?.(session.pointerId)) handle.releasePointerCapture(session.pointerId);
+      finish?.(session.data);
+      event?.preventDefault?.();
+    };
+    handle.addEventListener("pointerdown", event => {
+      if (event.button !== 0 || event.isPrimary === false || activeSplitResize || !enabled()) return;
+      event.preventDefault();
+      handle.focus({ preventScroll: true });
+      activeSplitResize = {
+        handle, pointerId: event.pointerId, origin: coordinate(event), data: start(event),
+      };
+      handle.setPointerCapture?.(event.pointerId);
+      handle.classList.add("is-resizing");
+      document.body.classList.add(cursorClass);
+    });
+    handle.addEventListener("pointermove", event => {
+      const session = activeSplitResize;
+      if (!session || session.handle !== handle || session.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      move(coordinate(event) - session.origin, session.data, event);
+    });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+      handle.addEventListener(type, end);
     }
+    window.addEventListener("blur", () => end());
+    handle.addEventListener("keydown", event => {
+      if (!activeSplitResize && enabled()) key?.(event);
+    });
   }
 
-  function applyDocumentationWidth(
-    width,
-    { persist = true, remember = true } = {}
-  ) {
-    const requested = normalizeDocumentationPreference(width);
-    const resolved = resolveAvrWorkspaceWidths(
-      outlinerPreferredWidth,
-      requested,
-      "documentation"
-    );
-    renderAvrWorkspaceWidths(resolved, { persist, remember });
+  function bindWorkspaceColumnResizer(id, index, direction = 1) {
+    bindSplitResizer($(id), {
+      axis: "x",
+      enabled: () => !isStackedCanvasLayout(),
+      start: () => ({ widths: getWorkspaceWidths(), specs: getWorkspacePanelSpecs() }),
+      move: (delta, state) => renderWorkspaceWidths(resizeWorkspacePanels(
+        state.widths, state.specs, index, state.widths[index] + direction * delta
+      )),
+      finish: persistWorkspaceLayout,
+      key: event => {
+        const widths = getWorkspaceWidths(), specs = getWorkspacePanelSpecs(), spec = specs[index];
+        let requested = widths[index];
+        if (event.key === "Home") requested = spec.compact;
+        else if (event.key === "End") requested = getWorkspacePanelMaxWidth(index, widths, specs);
+        else if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
+          const step = (event.shiftKey ? 48 : 24) * direction * (event.key === "ArrowRight" ? 1 : -1);
+          requested = step > 0 && widths[index] === spec.compact
+            ? spec.min
+            : step < 0 && widths[index] <= spec.min
+              ? spec.compact
+              : widths[index] + step;
+        } else return;
+        event.preventDefault();
+        renderWorkspaceWidths(resizeWorkspacePanels(widths, specs, index, requested), { persist: true });
+      },
+    });
   }
 
-  function restoreDocumentationWidth() {
-    let stored = DOCUMENTATION_DEFAULT_WIDTH;
-    try {
-      const raw = localStorage.getItem(STORAGE_DOCUMENTATION_WIDTH);
-      stored = raw === null ? DOCUMENTATION_DEFAULT_WIDTH : Number(raw);
-    } catch (error) {
-      console.warn("Failed to restore project guide width:", error);
-    }
-
-    documentationPreferredWidth = normalizeDocumentationPreference(
-      Number.isFinite(stored) ? stored : DOCUMENTATION_DEFAULT_WIDTH
-    );
-    renderAvrWorkspaceWidths(
-      resolveAvrWorkspaceWidths(
-        outlinerPreferredWidth,
-        documentationPreferredWidth,
-        "balanced"
-      ),
-      { persist: false, remember: false }
-    );
+  function bindFileListResizer() {
+    bindWorkspaceColumnResizer("fileListResizer", 0);
   }
 
   function bindDocumentationResizer() {
-    const resizer = $("documentationResizer");
-    const container = getCanvasSplitContainer();
-    if (!resizer || !container) return;
-
-    const finishResize = (event) => {
-      if (!documentationResizeState) return;
-      resizer.releasePointerCapture?.(documentationResizeState.pointerId);
-      documentationResizeState = null;
-      container.classList.remove("is-documentation-resizing");
-      document.body.classList.remove("is-documentation-resizing");
-      applyDocumentationWidth(documentationPreferredWidth, {
-        persist: true,
-        remember: false,
-      });
-      event?.preventDefault?.();
-    };
-
-    resizer.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      documentationResizeState = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startWidth: documentationWidth,
-      };
-      resizer.setPointerCapture?.(event.pointerId);
-      container.classList.add("is-documentation-resizing");
-      document.body.classList.add("is-documentation-resizing");
-    });
-
-    resizer.addEventListener("pointermove", (event) => {
-      if (!documentationResizeState) return;
-      event.preventDefault();
-      const nextWidth =
-        documentationResizeState.startWidth -
-        (event.clientX - documentationResizeState.startX);
-      applyDocumentationWidth(nextWidth, { persist: false });
-    });
-
-    resizer.addEventListener("pointerup", finishResize);
-    resizer.addEventListener("pointercancel", finishResize);
-
-    resizer.addEventListener("keydown", (event) => {
-      const step = event.shiftKey ? 48 : 24;
-      let nextWidth = documentationWidth;
-
-      if (event.key === "ArrowLeft") {
-        nextWidth =
-          documentationWidth <= DOCUMENTATION_COMPACT_THRESHOLD
-            ? getDocumentationMinWidth()
-            : documentationWidth + step;
-      } else if (event.key === "ArrowRight") {
-        nextWidth -= step;
-      } else if (event.key === "Home") {
-        nextWidth = DOCUMENTATION_COMPACT_WIDTH;
-      } else if (event.key === "End") {
-        nextWidth = getDocumentationMaxWidth();
-      } else {
-        return;
-      }
-
-      event.preventDefault();
-      applyDocumentationWidth(nextWidth);
-    });
-
-    applyDocumentationWidth(documentationPreferredWidth, {
-      persist: false,
-      remember: false,
-    });
+    bindWorkspaceColumnResizer("documentationResizer", 3, -1);
   }
 
   function getProjectAiLayout() {
     return document.querySelector(".project-ai-layout");
   }
 
-  function normalizeProjectAiColumnPreference(width) {
-    const numeric = Number(width);
-    if (!Number.isFinite(numeric)) return PROJECT_AI_COLUMN_DEFAULT_WIDTH;
-    if (numeric <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD) {
-      return PROJECT_AI_COLUMN_COMPACT_WIDTH;
-    }
-    return Math.max(PROJECT_AI_COLUMN_MIN_WIDTH, numeric);
+  function getProjectAiStackLimits() {
+    const available = Math.max(0, Math.round(getProjectAiLayout()?.getBoundingClientRect().height || 0) - PROJECT_AI_STACK_RESIZER_HEIGHT);
+    const panel = document.querySelector(".project-ai-chat-panel");
+    const style = panel && window.getComputedStyle(panel);
+    const outerHeight = element => {
+      if (!element) return 0;
+      const css = window.getComputedStyle(element);
+      return element.getBoundingClientRect().height +
+        (parseFloat(css.marginTop) || 0) + (parseFloat(css.marginBottom) || 0);
+    };
+    const chrome = ["paddingTop", "paddingBottom", "borderTopWidth", "borderBottomWidth"]
+      .reduce((sum, key) => sum + (parseFloat(style?.[key]) || 0), 0);
+    const chatMinimum = Math.max(PROJECT_AI_STACK_MIN_HEIGHT, Math.ceil(
+      chrome + outerHeight(panel?.querySelector(".avr-action-strip")) +
+        outerHeight($("projectAiForm")) + 48
+    ));
+    const minimum = Math.min(PROJECT_AI_STACK_MIN_HEIGHT, Math.floor(available / 3));
+    const maximum = Math.max(minimum, available - chatMinimum);
+    return { available, minimum, maximum };
   }
 
-  function getProjectAiColumnMaxWidth() {
-    const container = getCanvasSplitContainer();
-    if (!container || isStackedCanvasLayout()) return 1200;
-    const width = Math.round(container.getBoundingClientRect().width);
-    return Math.max(
-      PROJECT_AI_COLUMN_MIN_WIDTH,
-      width -
-        outlinerWidth -
-        documentationWidth -
-        OUTLINER_EDITOR_MIN_WIDTH -
-        SPLIT_RESIZER_TOTAL_WIDTH -
-        PROJECT_AI_STACK_RESIZER_HEIGHT
-    );
-  }
-
-  function resolveProjectAiColumnWidth(width) {
-    const normalized = normalizeProjectAiColumnPreference(width);
-    if (normalized <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD) {
-      return PROJECT_AI_COLUMN_COMPACT_WIDTH;
-    }
-    return Math.min(
-      getProjectAiColumnMaxWidth(),
-      Math.max(PROJECT_AI_COLUMN_MIN_WIDTH, normalized)
-    );
-  }
-
-  function getProjectAiStackHeight() {
-    return Math.round(getProjectAiLayout()?.getBoundingClientRect().height || 0);
-  }
-
-  function getProjectAiInstructionMaxHeight() {
-    return Math.max(
-      PROJECT_AI_STACK_MIN_HEIGHT,
-      getProjectAiStackHeight() -
-        PROJECT_AI_STACK_MIN_HEIGHT -
-        PROJECT_AI_STACK_RESIZER_HEIGHT
-    );
-  }
-
-  function syncProjectAiResizerAria() {
-    const chatResizer = $("projectAiChatResizer");
-    if (chatResizer) {
-      chatResizer.setAttribute("aria-valuemin", String(PROJECT_AI_STACK_MIN_HEIGHT));
-      chatResizer.setAttribute("aria-valuemax", String(getProjectAiInstructionMaxHeight()));
-      chatResizer.setAttribute(
-        "aria-valuenow",
-        String(
-          projectAiInstructionHeight ||
-            Math.round(
-              (PROJECT_AI_STACK_MIN_HEIGHT + getProjectAiInstructionMaxHeight()) / 2
-            )
-        )
-      );
-      chatResizer.setAttribute("aria-valuetext", "Instruction and chat split");
-    }
-    const columnResizer = $("projectAiColumnResizer");
-    if (columnResizer) {
-      columnResizer.setAttribute(
-        "aria-valuemin",
-        String(PROJECT_AI_COLUMN_COMPACT_WIDTH)
-      );
-      columnResizer.setAttribute("aria-valuemax", String(getProjectAiColumnMaxWidth()));
-      columnResizer.setAttribute("aria-valuenow", String(Math.round(projectAiColumnWidth)));
-      columnResizer.setAttribute(
-        "aria-valuetext",
-        projectAiColumnWidth <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD
-          ? "Collapsed"
-          : `${Math.round(projectAiColumnWidth)} pixels`
-      );
-    }
-  }
-
-  function persistProjectAiWidths() {
-    try {
-      localStorage.setItem(
-        STORAGE_PROJECT_AI_COLUMN_WIDTH,
-        String(projectAiColumnPreferredWidth)
-      );
-      if (projectAiInstructionPreferredHeight > 0) {
-        localStorage.setItem(
-          STORAGE_PROJECT_AI_STACK_SPLIT,
-          String(projectAiInstructionPreferredHeight)
-        );
-      }
-    } catch (error) {
-      console.warn("Failed to persist AI workspace layout:", error);
-    }
-  }
-
-  function applyProjectAiWidths(
-    columnWidth = projectAiColumnPreferredWidth,
-    instructionHeight = projectAiInstructionPreferredHeight,
-    { persist = true, remember = true } = {}
-  ) {
-    const resolved = Math.round(resolveProjectAiColumnWidth(columnWidth));
-    projectAiColumnWidth = resolved;
-    if (remember) projectAiColumnPreferredWidth = resolved;
-
+  function applyProjectAiStackHeight(requested = projectAiInstructionPreferredHeight) {
     const layout = getProjectAiLayout();
-    const container = getCanvasSplitContainer();
-    if (container) {
-      if (!isStackedCanvasLayout()) {
-        container.style.setProperty("--project-ai-width", `${resolved}px`);
-      }
-      container.classList.toggle(
-        "is-project-ai-compact",
-        !isStackedCanvasLayout() &&
-          resolved <= PROJECT_AI_COLUMN_COMPACT_THRESHOLD
-      );
-    }
-    const stackHeight = getProjectAiStackHeight();
-    if (
-      layout &&
-      Number.isFinite(Number(instructionHeight)) &&
-      Number(instructionHeight) > 0 &&
-      stackHeight > 0
-    ) {
-      const maximum = getProjectAiInstructionMaxHeight();
-      projectAiInstructionHeight = Math.max(
-        PROJECT_AI_STACK_MIN_HEIGHT,
-        Math.min(maximum, Number(instructionHeight))
-      );
-      if (remember) projectAiInstructionPreferredHeight = projectAiInstructionHeight;
-      layout.style.setProperty(
-        "--project-ai-instruction-height",
-        `${projectAiInstructionHeight}px`
-      );
-      layout.style.setProperty(
-        "--project-ai-chat-height",
-        `max(${PROJECT_AI_STACK_MIN_HEIGHT}px, calc(100% - ${projectAiInstructionHeight + PROJECT_AI_STACK_RESIZER_HEIGHT}px))`
-      );
-    } else if (layout) {
-      layout.style.removeProperty("--project-ai-instruction-height");
-      layout.style.removeProperty("--project-ai-chat-height");
-    }
-    syncProjectAiResizerAria();
-    if (persist) persistProjectAiWidths();
-    window.requestAnimationFrame(() => projectInstructionEditor?.refresh());
-  }
-
-  function restoreProjectAiWidths() {
-    let column = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
-    let instructionHeight = 0;
-    try {
-      const storedColumn = localStorage.getItem(STORAGE_PROJECT_AI_COLUMN_WIDTH);
-      const storedSplit = localStorage.getItem(STORAGE_PROJECT_AI_STACK_SPLIT);
-      if (storedColumn !== null) column = Number(storedColumn);
-      if (storedSplit !== null) instructionHeight = Number(storedSplit);
-    } catch (error) {
-      console.warn("Failed to restore AI workspace layout:", error);
-    }
-    projectAiColumnPreferredWidth = normalizeProjectAiColumnPreference(column);
-    projectAiInstructionPreferredHeight = Number.isFinite(instructionHeight)
-      ? Math.max(PROJECT_AI_STACK_MIN_HEIGHT, instructionHeight)
-      : 0;
-    applyProjectAiWidths(column, instructionHeight, { persist: false });
+    if (!layout) return;
+    const { available, minimum, maximum } = getProjectAiStackLimits();
+    const value = Number(requested) > 0 ? Number(requested) : available / 2;
+    projectAiInstructionHeight = Math.round(Math.max(minimum, Math.min(maximum, value)));
+    layout.style.setProperty("--project-ai-instruction-height", `${projectAiInstructionHeight}px`);
+    layout.style.setProperty("--project-ai-chat-height", `${available - projectAiInstructionHeight}px`);
+    const handle = $("projectAiChatResizer");
+    handle?.setAttribute("aria-valuemin", String(minimum));
+    handle?.setAttribute("aria-valuemax", String(maximum));
+    handle?.setAttribute("aria-valuenow", String(projectAiInstructionHeight));
+    handle?.setAttribute("aria-valuetext", "Instruction and chat split");
+    refreshWorkspaceEditors();
   }
 
   function bindProjectAiResizers() {
-    const layout = getProjectAiLayout();
-    const chatResizer = $("projectAiChatResizer");
-    const columnResizer = $("projectAiColumnResizer");
-    const container = getCanvasSplitContainer();
-    if (!layout || !chatResizer || !container) return;
-
-    const finishStackResize = (event) => {
-      if (!projectAiStackResizeState) return;
-      chatResizer.releasePointerCapture?.(projectAiStackResizeState.pointerId);
-      projectAiStackResizeState = null;
-      layout.classList.remove("is-chat-resizing");
-      document.body.classList.remove("is-project-ai-resizing");
-      document.body.classList.remove("is-project-ai-stack-resizing");
+    bindWorkspaceColumnResizer("projectAiColumnResizer", 1);
+    const remember = () => {
       projectAiInstructionPreferredHeight = projectAiInstructionHeight;
-      applyProjectAiWidths(projectAiColumnPreferredWidth, projectAiInstructionHeight, {
-        persist: true,
-        remember: false,
-      });
-      event?.preventDefault?.();
+      persistWorkspaceLayout();
     };
-
-    chatResizer.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      const instructionPanel = layout.querySelector(".project-instruction-panel");
-      projectAiStackResizeState = {
-        pointerId: event.pointerId,
-        startY: event.clientY,
-        startHeight:
-          instructionPanel?.getBoundingClientRect().height ||
-          PROJECT_AI_STACK_MIN_HEIGHT,
-      };
-      chatResizer.setPointerCapture?.(event.pointerId);
-      layout.classList.add("is-chat-resizing");
-      document.body.classList.add("is-project-ai-stack-resizing");
+    bindSplitResizer($("projectAiChatResizer"), {
+      axis: "y",
+      start: () => projectAiInstructionHeight,
+      move: (delta, height) => applyProjectAiStackHeight(height + delta),
+      finish: remember,
+      key: event => {
+        const { minimum, maximum } = getProjectAiStackLimits();
+        let requested = projectAiInstructionHeight;
+        if (event.key === "ArrowUp") requested -= event.shiftKey ? 48 : 24;
+        else if (event.key === "ArrowDown") requested += event.shiftKey ? 48 : 24;
+        else if (event.key === "Home") requested = minimum;
+        else if (event.key === "End") requested = maximum;
+        else return;
+        event.preventDefault();
+        applyProjectAiStackHeight(requested);
+        remember();
+      },
     });
-    chatResizer.addEventListener("pointermove", (event) => {
-      if (!projectAiStackResizeState) return;
-      event.preventDefault();
-      const nextHeight =
-        projectAiStackResizeState.startHeight +
-        event.clientY -
-        projectAiStackResizeState.startY;
-      const maximum = getProjectAiInstructionMaxHeight();
-      projectAiInstructionHeight = Math.max(
-        PROJECT_AI_STACK_MIN_HEIGHT,
-        Math.min(maximum, nextHeight)
-      );
-      applyProjectAiWidths(projectAiColumnWidth, projectAiInstructionHeight, {
-        persist: false,
-        remember: false,
-      });
-    });
-    chatResizer.addEventListener("pointerup", finishStackResize);
-    chatResizer.addEventListener("pointercancel", finishStackResize);
-    chatResizer.addEventListener("keydown", (event) => {
-      const step = event.shiftKey ? 48 : 24;
-      let nextHeight =
-        projectAiInstructionHeight || getProjectAiInstructionMaxHeight() / 2;
-      if (event.key === "ArrowUp") nextHeight -= step;
-      else if (event.key === "ArrowDown") nextHeight += step;
-      else if (event.key === "Home") nextHeight = PROJECT_AI_STACK_MIN_HEIGHT;
-      else if (event.key === "End") nextHeight = getProjectAiInstructionMaxHeight();
-      else return;
-      event.preventDefault();
-      projectAiInstructionHeight = Math.max(
-        PROJECT_AI_STACK_MIN_HEIGHT,
-        Math.min(getProjectAiInstructionMaxHeight(), nextHeight)
-      );
-      applyProjectAiWidths(projectAiColumnWidth, projectAiInstructionHeight, {
-        persist: true,
-        remember: true,
-      });
-    });
-
-    columnResizer?.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || isStackedCanvasLayout()) return;
-      event.preventDefault();
-      projectAiColumnResizeState = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startWidth: projectAiColumnWidth,
-      };
-      columnResizer.setPointerCapture?.(event.pointerId);
-      container.classList.add("is-project-ai-column-resizing");
-      document.body.classList.add("is-project-ai-resizing");
-    });
-    columnResizer?.addEventListener("pointermove", (event) => {
-      if (!projectAiColumnResizeState) return;
-      event.preventDefault();
-      applyProjectAiWidths(
-        projectAiColumnResizeState.startWidth +
-          event.clientX -
-          projectAiColumnResizeState.startX,
-        projectAiInstructionHeight,
-        { persist: false, remember: false }
-      );
-    });
-    const finishColumnResize = (event) => {
-      if (!projectAiColumnResizeState) return;
-      columnResizer?.releasePointerCapture?.(projectAiColumnResizeState.pointerId);
-      projectAiColumnResizeState = null;
-      container.classList.remove("is-project-ai-column-resizing");
-      document.body.classList.remove("is-project-ai-resizing");
-      projectAiColumnPreferredWidth = projectAiColumnWidth;
-      applyProjectAiWidths(projectAiColumnWidth, projectAiInstructionHeight, {
-        persist: true,
-        remember: false,
-      });
-      event?.preventDefault?.();
-    };
-    columnResizer?.addEventListener("pointerup", finishColumnResize);
-    columnResizer?.addEventListener("pointercancel", finishColumnResize);
-    columnResizer?.addEventListener("keydown", (event) => {
-      const step = event.shiftKey ? 48 : 24;
-      let nextWidth = projectAiColumnWidth;
-      if (event.key === "ArrowLeft") nextWidth -= step;
-      else if (event.key === "ArrowRight") nextWidth += step;
-      else if (event.key === "Home") nextWidth = PROJECT_AI_COLUMN_MIN_WIDTH;
-      else if (event.key === "End") nextWidth = getProjectAiColumnMaxWidth();
-      else return;
-      event.preventDefault();
-      applyProjectAiWidths(nextWidth, projectAiInstructionHeight);
-    });
-
-    applyProjectAiWidths(
-      projectAiColumnPreferredWidth,
-      projectAiInstructionPreferredHeight,
-      { persist: false, remember: false }
-    );
   }
 
   function bindWorkspaceResizeObserver() {
     const container = getCanvasSplitContainer();
     if (!container) return;
-
+    const busy = () => activeSplitResize ||
+      $("avrDeviceSection")?.classList.contains("is-device-panel-transitioning");
     const scheduleResize = () => {
-      if (
-        $("avrDeviceSection")?.classList.contains(
-          "is-device-panel-transitioning"
-        )
-      ) {
-        return;
-      }
-      if (
-        outlinerResizeState ||
-        (projectAiColumnResizeState || projectAiStackResizeState)
-      ) {
-        return;
-      }
-      if (workspaceResizeFrame !== null) return;
+      if (busy() || workspaceResizeFrame !== null) return;
       workspaceResizeFrame = window.requestAnimationFrame(() => {
         workspaceResizeFrame = null;
-        if (
-          outlinerResizeState ||
-          (projectAiColumnResizeState || projectAiStackResizeState)
-        ) {
-          return;
-        }
-        renderAvrWorkspaceWidths(
-          resolveAvrWorkspaceWidths(
-            outlinerPreferredWidth,
-            documentationPreferredWidth,
-            "balanced"
-          ),
-          { persist: false, remember: false }
-        );
-        applyProjectAiWidths(
-          projectAiColumnPreferredWidth,
-          projectAiInstructionPreferredHeight,
-          { persist: false, remember: false }
-        );
-        syncSplitResizerAria();
-        fitEditorFileWatermark();
+        if (!busy()) fitWorkspaceToViewport();
       });
     };
-
     if (typeof ResizeObserver === "function") {
       workspaceResizeObserver = new ResizeObserver(scheduleResize);
+      // Observe the available area, never the columns changed by a drag.
       workspaceResizeObserver.observe(container);
-      const projectAiLayout = getProjectAiLayout();
-      if (projectAiLayout) workspaceResizeObserver.observe(projectAiLayout);
       const editorContainer = document.querySelector(".editor-container");
       if (editorContainer) {
-        watermarkResizeObserver = new ResizeObserver(
-          scheduleEditorFileWatermarkFit
-        );
+        watermarkResizeObserver = new ResizeObserver(scheduleEditorFileWatermarkFit);
         watermarkResizeObserver.observe(editorContainer);
       }
-    } else {
-      window.addEventListener("resize", scheduleResize);
-    }
-
-    document.fonts?.ready.then(refreshFontDependentMeasurements);
-    document.fonts?.addEventListener?.(
-      "loadingdone",
-      refreshFontDependentMeasurements
-    );
+    } else window.addEventListener("resize", scheduleResize);
+    document.fonts?.ready.then(() => {
+      refreshFontDependentMeasurements();
+      scheduleResize();
+    });
+    document.fonts?.addEventListener?.("loadingdone", () => {
+      refreshFontDependentMeasurements();
+      scheduleResize();
+    });
   }
 
   function getOutlinerFileKind(fileName) {
@@ -7212,7 +6616,32 @@
   function resizeProjectAiPrompt() {
     const prompt = $("projectAiPrompt");
     if (!prompt) return;
+    prompt.style.minHeight = "";
+    prompt.style.maxHeight = "";
     autoSizeTextarea(prompt, getProjectAiPromptHeightLimits());
+    // Keep the composer and some history visible when the prompt grows.
+    applyProjectAiStackHeight(projectAiInstructionPreferredHeight);
+    constrainProjectAiComposer();
+  }
+
+  function constrainProjectAiComposer() {
+    const prompt = $("projectAiPrompt");
+    const view = $("projectAiView");
+    const form = $("projectAiForm");
+    if (!prompt || !view || !form || !view.clientHeight) return;
+    const footer = form.querySelector(".project-ai-form-footer");
+    const gap = parseFloat(window.getComputedStyle(form).marginTop) || 0;
+    const budget = Math.max(28, view.clientHeight - gap -
+      (footer?.getBoundingClientRect().height || 0) - 50);
+    const limits = getProjectAiPromptHeightLimits();
+    const minimum = Math.min(limits.minHeight, budget);
+    const quotes = $("projectAiPromptQuotes");
+    if (quotes) quotes.style.maxHeight = `${Math.max(0, Math.min(164, budget - minimum))}px`;
+    const quoteHeight = quotes?.getBoundingClientRect().height || 0;
+    const maximum = Math.max(minimum, Math.min(limits.maxHeight, budget - quoteHeight));
+    prompt.style.minHeight = `${minimum}px`;
+    prompt.style.maxHeight = `${maximum}px`;
+    autoSizeTextarea(prompt, { minHeight: minimum, maxHeight: maximum });
   }
 
   function getProjectAiQuoteDisplayText(value) {
@@ -9896,23 +9325,8 @@
   }
 
   function refreshWorkspaceAfterDevicePanelResize() {
-    applyOutlinerWidth(outlinerPreferredWidth, {
-      persist: false,
-      remember: false,
-    });
-    applyDocumentationWidth(documentationPreferredWidth, {
-      persist: false,
-      remember: false,
-    });
-    applyProjectAiWidths(
-      projectAiColumnPreferredWidth,
-      projectAiInstructionPreferredHeight,
-      { persist: false, remember: false }
-    );
-    syncSplitResizerAria();
-    editor?.refresh();
-    projectInstructionEditor?.refresh();
-    fitEditorFileWatermark();
+    applyProjectAiStackHeight(projectAiInstructionPreferredHeight);
+    refreshWorkspaceEditors();
   }
 
   function applyDevicePanelState(
@@ -9988,101 +9402,44 @@
   }
 
   function bindDevicePanelResizer() {
-    const section = $("avrDeviceSection");
-    const handle = $("devicePanelToggle");
-    if (!section || !handle) return;
-
-    const finishResize = (event) => {
-      if (!devicePanelResizeState) return;
-      const resizeState = devicePanelResizeState;
-      devicePanelResizeState = null;
-      try {
-        if (handle.hasPointerCapture?.(resizeState.pointerId)) {
-          handle.releasePointerCapture(resizeState.pointerId);
+    bindSplitResizer($("devicePanelToggle"), {
+      axis: "y",
+      start: () => ({ anchor: 0 }),
+      move: (position, drag) => {
+        const delta = position - drag.anchor;
+        const requestedSteps = Math.floor(Math.abs(delta) / DEVICE_PANEL_DRAG_THRESHOLD);
+        if (requestedSteps < 1) return;
+        const direction = delta < 0 ? -1 : 1;
+        let nextState = devicePanelState;
+        let appliedSteps = 0;
+        while (appliedSteps < requestedSteps) {
+          const adjacent = getAdjacentDevicePanelState(nextState, direction);
+          if (adjacent === nextState) break;
+          nextState = adjacent;
+          appliedSteps += 1;
         }
-      } catch {}
-      section.classList.remove("is-device-panel-resizing");
-      document.body.classList.remove("is-device-panel-resizing");
-      setDevicePanelState(devicePanelState, {
-        persist: true,
-        animate: false,
-      });
-      refreshWorkspaceAfterDevicePanelResize();
-      event?.preventDefault?.();
-    };
-
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      devicePanelResizeState = {
-        pointerId: event.pointerId,
-        anchorY: event.clientY,
-      };
-      handle.setPointerCapture?.(event.pointerId);
-      section.classList.add("is-device-panel-resizing");
-      document.body.classList.add("is-device-panel-resizing");
-    });
-
-    handle.addEventListener("pointermove", (event) => {
-      if (
-        !devicePanelResizeState ||
-        devicePanelResizeState.pointerId !== event.pointerId
-      ) {
-        return;
-      }
-      event.preventDefault();
-      const delta = event.clientY - devicePanelResizeState.anchorY;
-      const requestedSteps = Math.floor(
-        Math.abs(delta) / DEVICE_PANEL_DRAG_THRESHOLD
-      );
-      if (requestedSteps < 1) return;
-
-      const direction = delta < 0 ? -1 : 1;
-      let nextState = devicePanelState;
-      let appliedSteps = 0;
-      while (appliedSteps < requestedSteps) {
-        const adjacentState = getAdjacentDevicePanelState(
-          nextState,
-          direction
-        );
-        if (adjacentState === nextState) break;
-        nextState = adjacentState;
-        appliedSteps += 1;
-      }
-
-      if (appliedSteps === 0) {
-        devicePanelResizeState.anchorY = event.clientY;
-        return;
-      }
-
-      if (appliedSteps < requestedSteps) {
-        devicePanelResizeState.anchorY = event.clientY;
-      } else {
-        devicePanelResizeState.anchorY +=
-          direction * DEVICE_PANEL_DRAG_THRESHOLD * appliedSteps;
-      }
-      setDevicePanelState(nextState, { persist: false, animate: false });
-      refreshWorkspaceAfterDevicePanelResize();
-    });
-
-    handle.addEventListener("pointerup", finishResize);
-    handle.addEventListener("pointercancel", finishResize);
-    handle.addEventListener("lostpointercapture", (event) => {
-      if (devicePanelResizeState?.pointerId === event.pointerId) {
-        finishResize(event);
-      }
-    });
-    handle.addEventListener("keydown", (event) => {
-      const states = ["collapsed", "compact", "expanded"];
-      let index = states.indexOf(devicePanelState);
-      if (event.key === "ArrowUp") index = Math.max(0, index - 1);
-      else if (event.key === "ArrowDown") {
-        index = Math.min(states.length - 1, index + 1);
-      } else if (event.key === "Home") index = 0;
-      else if (event.key === "End") index = states.length - 1;
-      else return;
-      event.preventDefault();
-      setDevicePanelState(states[index]);
+        drag.anchor = appliedSteps < requestedSteps
+          ? position
+          : drag.anchor + direction * DEVICE_PANEL_DRAG_THRESHOLD * appliedSteps;
+        if (nextState === devicePanelState) return;
+        setDevicePanelState(nextState, { persist: false, animate: false });
+        refreshWorkspaceAfterDevicePanelResize();
+      },
+      finish: () => {
+        setDevicePanelState(devicePanelState, { persist: true, animate: false });
+        refreshWorkspaceAfterDevicePanelResize();
+      },
+      key: event => {
+        const states = ["collapsed", "compact", "expanded"];
+        let index = states.indexOf(devicePanelState);
+        if (event.key === "ArrowUp") index = Math.max(0, index - 1);
+        else if (event.key === "ArrowDown") index = Math.min(states.length - 1, index + 1);
+        else if (event.key === "Home") index = 0;
+        else if (event.key === "End") index = states.length - 1;
+        else return;
+        event.preventDefault();
+        setDevicePanelState(states[index]);
+      },
     });
   }
 
@@ -10163,10 +9520,7 @@
     }
 
     window.requestAnimationFrame(() => {
-      applyDocumentationWidth(documentationPreferredWidth, {
-        persist: false,
-        remember: false,
-      });
+      if (!activeSplitResize) fitWorkspaceToViewport();
     });
   }
 
@@ -10954,7 +10308,7 @@
       indentWithTabs: false,
       matchBrackets: true,
       autoCloseBrackets: true,
-      autofocus: true,
+      autofocus: !isStackedCanvasLayout(),
       extraKeys: {
         "Ctrl-Space": "autocomplete",
         "Alt-Space": "autocomplete",
@@ -12122,9 +11476,7 @@
     restoreProjectInstruction();
     const projectAiAuthReturn = consumeProjectAiAuthReturn();
     ensureAtLeastOneFile();
-    restoreDocumentationWidth();
-    restoreOutlinerWidth();
-    restoreProjectAiWidths();
+    restoreWorkspaceLayout();
     renderOutliner();
     if (!current) current = Object.keys(files)[0];
     initUpdiBridge();
