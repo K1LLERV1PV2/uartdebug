@@ -1292,15 +1292,15 @@ const workspacePanelSpecs = [
   { min: 267, compact: 62 },
 ];
 
-test("resizes adjacent columns first and pushes later panels past editor minimum", () => {
+test("resizes only the adjacent pair and stops at its minimum widths", () => {
   const { resizeWorkspacePanels } = loadAvrFrontendFunctionHooks(["resizeWorkspacePanels"]);
   const start = [305, 318, 539, 360];
   const resize = (index, width) => Array.from(resizeWorkspacePanels(start, workspacePanelSpecs, index, width));
   assert.deepEqual(resize(0, 285), [285, 338, 539, 360]);
-  assert.deepEqual(resize(0, 405), [405, 238, 519, 360]);
-  assert.deepEqual(resize(0, 455), [455, 238, 500, 329]);
-  assert.deepEqual(resize(1, 418), [305, 418, 500, 299]);
-  assert.deepEqual(resize(3, 460), [305, 257, 500, 460]);
+  assert.deepEqual(resize(0, 405), [385, 238, 539, 360]);
+  assert.deepEqual(resize(0, 455), [385, 238, 539, 360]);
+  assert.deepEqual(resize(1, 418), [305, 357, 500, 360]);
+  assert.deepEqual(resize(3, 460), [305, 318, 500, 399]);
   assert.deepEqual(start, [305, 318, 539, 360], "drag snapshots must remain immutable");
 });
 
@@ -1336,6 +1336,11 @@ test("workspace resizing conserves space and minima across viewport and drag ext
         for (let requested = -100; requested <= budget + 400; requested += 7) {
           const widths = resizeWorkspacePanels(start, workspacePanelSpecs, index, requested);
           valid(widths, budget);
+          for (let i = 0; i < widths.length; i++) {
+            if (i !== index && i !== (index === 0 ? 1 : 2)) {
+              assert.equal(widths[i], start[i], "a divider must not resize unrelated panels");
+            }
+          }
           assert.ok(widths[index] >= previous, "one-way dragging must never reverse the resized panel");
           previous = widths[index];
         }
