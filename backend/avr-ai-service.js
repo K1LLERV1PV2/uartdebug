@@ -37,6 +37,7 @@ const {
   resolveKnowledge,
   validateProjectSpec,
   calculateTimerPeriod,
+  calculateRtcPitPeriod,
   calculateUsartBaud,
 } = require("./avr-knowledge");
 const {
@@ -55,7 +56,7 @@ const {
 
 const CONTRACT = "uartdebug-canvas/v1";
 const RULES_PATH = path.join(__dirname, "ai", "canvas-rules.md");
-const MAX_DOCUMENTATION_LOOKUPS = 10;
+const { MAX_DOCUMENTATION_LOOKUPS } = require("./avr-ai-limits");
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
 function fail(status, code, message) {
@@ -232,18 +233,24 @@ function assertProjectText(project, input) {
       "Include xc.h exactly once and list all source headers in the specification.",
     );
   }
-  if (/\.INTFLAGS\s*\|=/.test(source))
+  // These guards catch accidental scope expansion, not arbitrary C semantics.
+  // Strip literals and comments together so quoted example code cannot match.
+  const registerSource = project.source.content.replace(/\\\r?\n/g, "").replace(
+    /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g,
+    " ",
+  );
+  if (/\.\s*(?:PIT)?INTFLAGS\s*\|=/.test(registerSource))
     fail(
       502,
       "unsafe_interrupt_flag_write",
       "Clear W1C INTFLAGS using assignment, not read-modify-write.",
     );
   const clock = /^\s*#\s*define\s+F_CPU\s+(\d+)(?:[uUlL]*)\s*$/m.exec(source);
-  if (!clock || Number(clock[1]) !== project.spec.clock.hz)
+  if (project.spec.clock.hz === null ? /\b(?:F_CPU|CLKCTRL|_delay_ms|_delay_us|_delay_loop_1|_delay_loop_2)\b/.test(registerSource) : !clock || Number(clock[1]) !== project.spec.clock.hz)
     fail(
       502,
       "project_clock_mismatch",
-      "Define literal F_CPU matching the structured clock frequency.",
+      "For a known CPU clock, define matching literal F_CPU; for an unchanged unspecified CPU clock, omit F_CPU, CPU clock writes and delay helpers.",
     );
   const declared = new Set(
     project.spec.resources.filter((r) => r.instance).map((r) => r.instance),
@@ -256,15 +263,20 @@ function assertProjectText(project, input) {
         `Declare allocated peripheral ${match[1]} in the specification.`,
       );
   }
-  // A narrow guard for accidental scope expansion, not a C semantic proof.
-  // Strip literals and comments together so quoted example code cannot match.
-  const registerSource = project.source.content.replace(/\\\r?\n/g, "").replace(
-    /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g,
-    " ",
-  );
-  const unsupportedPeripheral = /\b(ADC\d*|AC\d*|SPI\d*|TWI\d*|RTC|WDT|CCL|EVSYS|NVMCTRL|FUSE|BOD|SLPCTRL|VREF)\s*\./.exec(registerSource);
+  const unsupportedPeripheral = /\b(ADC\d*|AC\d*|SPI\d*|TWI\d*|WDT|CCL|EVSYS|NVMCTRL|FUSE|BOD|SLPCTRL|VREF)\s*\./.exec(registerSource);
   if (unsupportedPeripheral)
     fail(502, "unsupported_peripheral_access", `Direct ${unsupportedPeripheral[1]} register access requires a reviewed generation recipe and validator support.`);
+  const pit = project.spec.resources.find((r) => r.kind === "rtc-pit");
+  const rtcRegisters = [...registerSource.matchAll(/\bRTC\s*\.\s*(\w+)/g)].map((m) => m[1]);
+  if (rtcRegisters.some((name) => !["CLKSEL", "PITCTRLA", "PITSTATUS", "PITINTCTRL", "PITINTFLAGS"].includes(name)) || /\bRTC_CNT_vect\b/.test(registerSource))
+    fail(502, "unsupported_peripheral_access", "Only reviewed RTC/PIT initialization and periodic interrupts are supported; RTC counter modes are not supported.");
+  if (!pit && (rtcRegisters.length || /\bRTC_PIT_vect\b/.test(registerSource)))
+    fail(502, "project_resource_mismatch", "Declare the RTC/PIT resource in the specification.");
+  if (pit) {
+    const period = calculateRtcPitPeriod({ periodCycles: pit.periodCycles });
+    if (!registerSource.includes(period.periodSymbol) || !/\bRTC_CLKSEL_INT32K_gc\b/.test(registerSource) || !/\bRTC_PIT_vect\b/.test(registerSource))
+      fail(502, "project_rtc_pit_mismatch", "Use the declared RTC/PIT period, explicit INT32K clock selection and RTC_PIT_vect.");
+  }
 }
 function publicProject(
   project,
@@ -337,7 +349,7 @@ function createAvrAiService(options = {}) {
       "utf8",
     );
     return {
-      packageId: "uartdebug-canvas-2026-09-24.2",
+      packageId: "uartdebug-canvas-2026-09-24.3",
       digest: hash(prompt),
       prompt,
     };
@@ -503,10 +515,13 @@ function createAvrAiService(options = {}) {
       compileAttempts = 0,
       repairAttempts = 0,
       lookups = 0,
-      mustGenerateAfterRepair = false;
+      mustGenerateAfterRepair = false,
+      nextStep = "generation",
+      previousErrorCode = null;
     const stages = [],
       references = [];
     async function callModel(body, stageId) {
+      body.max_output_tokens = cfg.maxOutputTokens;
       const metered = typeof context.reserveBudget === "function";
       if (metered) {
         const tokens = await requestOpenAiInputTokenCount({
@@ -527,6 +542,7 @@ function createAvrAiService(options = {}) {
               additionalInputTokens: tokens,
               additionalMaxOutputTokens: body.max_output_tokens,
               minAdditionalOutputTokens: cfg.minMeteredOutputTokens,
+              completedMetering: metering,
             })
           : await context.reserveBudget({
               model: cfg.model,
@@ -649,6 +665,8 @@ function createAvrAiService(options = {}) {
             tools: lookups < MAX_DOCUMENTATION_LOOKUPS ? [LOOKUP_TOOL] : [],
             tool_choice: lookups < MAX_DOCUMENTATION_LOOKUPS ? "auto" : "none",
           };
+          nextStep = "documentation-continuation";
+          previousErrorCode = result.ok ? null : result.code;
           continue;
         }
         let output, validation;
@@ -697,6 +715,8 @@ function createAvrAiService(options = {}) {
           )
             throw error;
           repairAttempts++;
+          nextStep = "validation-repair";
+          previousErrorCode = error.code || "invalid_ai_response";
           request = {
             ...request,
             input: [
@@ -721,6 +741,8 @@ function createAvrAiService(options = {}) {
         let compilation = { ok: true };
         if (cfg.compileVerificationEnabled) {
           compileAttempts++;
+          nextStep = "compilation";
+          previousErrorCode = null;
           const stage = await beginProgressStage(context, stages, {
             id: "compilation",
             attempt: compileAttempts,
@@ -757,6 +779,8 @@ function createAvrAiService(options = {}) {
               "The project did not compile after automatic repair.",
             );
           repairAttempts++;
+          nextStep = "compiler-repair";
+          previousErrorCode = "generated_project_does_not_compile";
           mustGenerateAfterRepair = true;
           request = {
             ...request,
@@ -809,6 +833,8 @@ function createAvrAiService(options = {}) {
             repairAttempts,
             hardware: "not-tested",
             calculations: output.project.spec.resources.flatMap((resource) => {
+              if (resource.kind === "rtc-pit")
+                return [{ id: resource.id, ...calculateRtcPitPeriod({ periodCycles: resource.periodCycles }) }];
               if (resource.kind === "timer") {
                 const timer = calculateTimerPeriod({
                   clockHz: output.project.spec.clock.hz,
@@ -851,6 +877,10 @@ function createAvrAiService(options = {}) {
       )
         error = new AiServiceError(e.status, e.code, e.message);
       if (e._usageUncertain) attachUncertainProviderUsage(error);
+      Object.defineProperty(error, "diagnostic", { value: {
+        stage: nextStep, causeCode: previousErrorCode, providerCalls: calls,
+        documentationLookups: lookups, repairAttempts, compileAttempts,
+      }, enumerable: false });
       throw attachMeteringToError(
         attachProgressToError(error, stages),
         metering,

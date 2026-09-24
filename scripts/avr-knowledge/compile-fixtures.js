@@ -1,13 +1,14 @@
 "use strict";
 
 // Run explicitly against the configured XC8 service, never during unit tests.
-// node scripts/avr-knowledge/compile-fixtures.js [fixture-directory] [compile-url]
+// node scripts/avr-knowledge/compile-fixtures.js [fixture-directory] [compile-url] [fixture-name]
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const directory = process.argv[2] || path.join(__dirname, "fixtures");
 const url = process.argv[3] || "http://127.0.0.1:8082/api/avr/compile";
-const filename = "composed-uart-timer.c";
+const filename = process.argv[4] || "composed-uart-timer.c";
+if (!/^[a-z0-9-]+\.c$/.test(filename)) throw new Error("Invalid fixture name");
 const code = fs.readFileSync(path.join(directory, filename), "utf8");
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 

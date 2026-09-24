@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "id": "uartdebug-attiny162x",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "reviewedAt": "2026-09-24",
   "coverage": [
     "Full original DS40002234B (575 pages), DS80000902F (16 pages) and ATtiny DFP 3.4.278 retained with SHA256",
     "Complete PDF page text and bookmark index, machine-extracted table grids and formula/figure/constraint candidates with page provenance",
     "Complete ATDF register, bitfield and value-group attributes for ATtiny1624/1626/1627; selected compiler-compatible symbols and package routes",
-    "Reviewed silicon errata and recipe-critical PDF facts; seven recipes derived from the ten tutorials",
-    "Approved generation: OSC20M/prescaler, GPIO, TCA0 SINGLE normal overflow, UART normal 8N1 polling, stdio redirection, bounded DRE TX"
+    "Reviewed silicon errata and recipe-critical PDF facts; eight recipes derived from ten tutorials and the reviewed colleague update",
+    "Approved generation: OSC20M/prescaler, GPIO, TCA0 SINGLE normal overflow, boot-only INT32K RTC/PIT, UART normal 8N1 polling, stdio redirection, bounded DRE TX"
   ],
   "excluded": [
     "other AVR models/families",
@@ -72,9 +72,10 @@
     "corpus": "reference/corpus.json",
     "registers": "reference/dfp-registers.json",
     "reviewedFacts": "reference/reviewed-facts.json",
+    "colleagueReview": "reference/colleague-review.json",
     "pageCount": 591,
     "sectionCount": 914,
-    "reviewedFactCount": 33
+    "reviewedFactCount": 39
   },
   "recipes": [
     {
@@ -185,6 +186,27 @@
       ],
       "verification": "reviewed-recipe-with-bounded-composition-compile-evidence",
       "compilerEvidence": "compiler-evidence.json"
+    },
+    {
+      "id": "avr-rtc-pit",
+      "description": "Configure RTC.PIT periodic interrupts from INT32K during one-time startup on ATtiny1624/1626/1627.",
+      "file": "recipes/avr-rtc-pit/SKILL.md",
+      "sourceIds": [
+        "datasheet-ds40002234b",
+        "errata-ds80000902f",
+        "microchip-attiny-dfp-3.4.278"
+      ],
+      "reviewedFactIds": [
+        "rtc-pit-clock",
+        "rtc-pit-period",
+        "rtc-pit-first-phase",
+        "rtc-pit-sync",
+        "rtc-pit-interrupt",
+        "rtc-pit-shared-correction-debug"
+      ],
+      "lineage": [],
+      "verification": "reviewed-recipe-with-bounded-composition-compile-evidence",
+      "compilerEvidence": "compiler-evidence-rtc-pit.json"
     },
     {
       "id": "avr-uart-polling",
@@ -368,22 +390,26 @@
     }
   ],
   "files": {
-    "compiler-evidence.json": "62646bb918bc0376b004896b7855677b29a8e3687ad9a64f6afa82adf42cce2b",
-    "devices.json": "ab6c41ed5cf8c6543de96f33d6b3cb859b82f3503f92f44e48ceabc62254a95c",
+    "compiler-evidence-rtc-pit.json": "fa9c74f82d629b7567d602fabd67b8cdcd25a00ec6f7fabb2ebd6914a3492789",
+    "compiler-evidence.json": "f6e82a4566723acf465ffdf079aa2f3e1e877f2b45843f4e71719101698bc417",
+    "devices.json": "d957a336e3dfaff55c7abd5be21ffc8d8175c0dad90456ee97cf41bcc6fd5b1d",
     "MICROCHIP-LICENSE.txt": "3bf0a101f2b2e44eda3b477f866bd24204c35fa1f841c865933028adf155336a",
-    "recipes/avr-clock/SKILL.md": "6bffbd922f2d197be27065fae4e790befc0466c428ba79f6bbb8e0a53646947e",
-    "recipes/avr-gpio/SKILL.md": "0c6d088021afe82bcca13d89223512213171ca3dfc40d0145988aa62228df20d",
+    "recipes/avr-clock/SKILL.md": "475c82db2b3a9873206379ca9157cd59238c5e99b4786742ef770a300a85ea70",
+    "recipes/avr-gpio/SKILL.md": "9b991040f44273915cbadf4184ca5c1459ca50c888e30939fd14f1134093561d",
     "recipes/avr-printf/SKILL.md": "7d8d3e2a759a7243241c0162620d569fc6df3e9ca25f09039fb8ab119f64c04a",
-    "recipes/avr-project/SKILL.md": "17d5042aba34ee504d185e2cdc16d3416f1cd1b1ba326f3203c51d6ea735ee53",
-    "recipes/avr-timer/SKILL.md": "50b91e9c39c5302fe68144bdcca472dadc756b33f299d917feb0a4a3888573df",
+    "recipes/avr-project/SKILL.md": "bed5a01a2f0cf577dfba0325915c519e4934dc3fa2e4874f3444659eea4784f4",
+    "recipes/avr-rtc-pit/SKILL.md": "2f0744a6b10c11ed39e0caa07665fe724f56ac768329c3907b67b67159646fc9",
+    "recipes/avr-timer/SKILL.md": "97e0cbb14d0416e24d183b7ef8c500a5c15eb8e18dab00fe25513438c4d4db96",
     "recipes/avr-uart-polling/SKILL.md": "535354084cdf77bdfba6727c0d8eeab4798d7c4192c36b3055d6eb6bc052a240",
     "recipes/avr-uart-tx-interrupt/SKILL.md": "20da7d16a7745721e6c4fc54597bd5397c39c17278c9d36bb6ba2758b702f4f7",
+    "reference/colleague/Project_One.c": "b77cd95bd4fedd233b7d146f06bc31d4124d6126d22dedb1bb2170f3a1f19c7b",
+    "reference/colleague-review.json": "31d36e8236bb7f77862a602b9d6a6e7ed422c414e016d2b2dfdc0c2fabb99091",
     "reference/corpus.json": "954706656f3c349cf381a4919f14c86bb95b66b02de75a1f623599155ece37a6",
     "reference/dfp-registers.json": "59a428d4002ef1918fe89d35d52ee0320be31aafbd9f7ae15b93a55b3fb6e78b",
     "reference/raw/DS40002234B.pdf": "b3e94e9fef6425405905f5241f9535c9b274c1247b4b7a8ea631921fcf458782",
     "reference/raw/DS80000902F.pdf": "36dfcc2a15e9dcb1103f58f0857c21e5f17292f5276803bed2524ebc0f7733db",
     "reference/raw/Microchip.ATtiny_DFP.3.4.278.atpack": "41f09d5825abaa764c9000f4488f8ba3fab152afe6229b359de4a5efe9a21eda",
-    "reference/reviewed-facts.json": "8c4d0aad7a2c23d308c45c000c3c9f63a26d0e4ae5ed11d860b1ad5fa59566ed",
+    "reference/reviewed-facts.json": "d8e4c702ea8ef907013a1634925a3665d080e05b5f87f923b62d6597c68a05d4",
     "reference/sources.json": "c1c34b5873c79e106a0a384cdb87416f5deb8c8cf02a7466ff88307cd9211df6"
   }
 }

@@ -8304,25 +8304,6 @@
 
   function bindDocumentationWorkspace() {
     const editorElement = $("projectDocumentationEditor");
-    const renderedContent = $("projectDocumentationContent");
-    if (
-      renderedContent &&
-      renderedContent.dataset.aiQuoteBound !== "true"
-    ) {
-      renderedContent.dataset.aiQuoteBound = "true";
-      renderedContent.addEventListener("mouseup", () => {
-        window.setTimeout(
-          () =>
-            showDomSelectionQuote(renderedContent, () => {
-              const guideFile =
-                $("projectDocumentationPane")?.dataset.guideFile ||
-                "Project guide";
-              return `Project guide — ${guideFile}`;
-            }),
-          0
-        );
-      });
-    }
     if (
       !editorElement ||
       typeof window.CodeMirror?.fromTextArea !== "function"

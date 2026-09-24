@@ -6,6 +6,9 @@ const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { OAuth2Client } = require("google-auth-library");
 const { normalizeCanvas } = require("./avr-canvas-contract");
+const { MAX_PROVIDER_RESPONSES } = require("./avr-ai-limits");
+
+const COMPLETED_PROVIDER_USAGE = Symbol("completedProviderUsage");
 
 const SCHEMA_VERSION = 3;
 const DEVICE_COOKIE = "__Host-ud_device";
@@ -1161,6 +1164,7 @@ class AiAccessService {
       additionalInputTokens,
       additionalMaxOutputTokens,
       minAdditionalOutputTokens = 1024,
+      completedMetering,
     } = {}
   ) {
     if (!context || context.mode === "public") {
@@ -1214,6 +1218,10 @@ class AiAccessService {
       );
     }
 
+    const completed = completedMetering === undefined
+      ? null
+      : normalizeCompletedProviderMetering(completedMetering);
+    let completedPrefix;
     let result;
     this._transaction(() => {
       const inflight = this.database
@@ -1260,12 +1268,58 @@ class AiAccessService {
         );
       }
 
+      const previousReservedNanoUsd = Number(inflight.reserved_nano_usd);
+      let previousInputTokens = Number(inflight.reservation_input_tokens);
+      let previousMaxOutputTokens = Number(inflight.reservation_max_output_tokens);
+      let retainedNanoUsd = previousReservedNanoUsd;
+      if (completed) {
+        if (completed.model !== catalogModel) {
+          throw new AiAccessError(
+            409,
+            "reserved_model_mismatch",
+            "Completed provider usage uses a different AI model."
+          );
+        }
+        const segments = completed.segments || [{
+          provider: completed.provider,
+          responseId: completed.providerResponseId,
+          model: completed.model,
+          usage: completed.usage,
+        }];
+        completedPrefix = segments.map((segment) => JSON.stringify(segment));
+        const previousPrefix = context[COMPLETED_PROVIDER_USAGE] || [];
+        if (
+          completedPrefix.length <= previousPrefix.length ||
+          previousPrefix.some((entry, index) => entry !== completedPrefix[index])
+        ) {
+          throw new AiAccessError(
+            409,
+            "completed_usage_checkpoint_conflict",
+            "Completed AI usage must extend the previously confirmed response history."
+          );
+        }
+        const calculated = completed.segments
+          ? calculateCompositeUsageCost(completed.segments, price)
+          : calculateUsageCostNanoUsd(completed.usage, price);
+        if (
+          calculated.costNanoUsd > previousReservedNanoUsd ||
+          completed.usage.inputTokens > previousInputTokens ||
+          completed.usage.outputTokens > previousMaxOutputTokens
+        ) {
+          throw new AiAccessError(
+            503,
+            "completed_usage_exceeds_reservation",
+            "Completed AI usage exceeds its reservation and must be reconciled before another step."
+          );
+        }
+        retainedNanoUsd = calculated.costNanoUsd;
+        previousInputTokens = completed.usage.inputTokens;
+        previousMaxOutputTokens = completed.usage.outputTokens;
+      }
+
       const cumulativeInputTokens = addUsageCounts(
-        Number(inflight.reservation_input_tokens),
+        previousInputTokens,
         normalizedAdditionalInputTokens
-      );
-      const previousMaxOutputTokens = Number(
-        inflight.reservation_max_output_tokens
       );
       const longContext = cumulativeInputTokens > price.longContextThreshold;
       const tier = longContext ? "long_context" : "standard";
@@ -1285,18 +1339,33 @@ class AiAccessService {
         context.deviceId,
         context.accountHash
       );
-      const availableAdditionalNanoUsd = Number(
-        currentBudget?.remaining_nano_usd || 0
-      );
+      // Remove only this request's hold from each independent budget. Adding
+      // it to a clamped remaining balance would hide another request's deficit.
+      const availableExcludingOwnHold = currentBudget
+        ? Math.max(0, Math.min(...["device", "source", "account"].map((scope) =>
+          Number(
+            BigInt(currentBudget[`${scope}_grant_nano_usd`]) -
+            BigInt(currentBudget[`${scope}_spent_nano_usd`]) -
+            BigInt(currentBudget[`${scope}_reserved_nano_usd`]) +
+            BigInt(previousReservedNanoUsd)
+          )
+        )))
+        : 0;
+      const availableAdditionalNanoUsd = completed
+        ? Math.max(0, availableExcludingOwnHold - retainedNanoUsd)
+        : Number(currentBudget?.remaining_nano_usd || 0);
       const minimumRequiredNanoUsd = addCosts(
         inputCostNanoUsd,
         multiplyCost(normalizedMinAdditionalOutputTokens, outputRate)
       );
-      if (availableAdditionalNanoUsd < minimumRequiredNanoUsd) {
+      if (
+        (completed && retainedNanoUsd > availableExcludingOwnHold) ||
+        availableAdditionalNanoUsd < minimumRequiredNanoUsd
+      ) {
         throw new AiAccessError(
           429,
           "free_quota_insufficient",
-          "The remaining free AI credits cannot cover an automatic compiler repair."
+          "The remaining free AI credits cannot cover the next AI step."
         );
       }
       const affordableAdditionalOutputTokens = Math.floor(
@@ -1313,7 +1382,7 @@ class AiAccessService {
         throw new AiAccessError(
           429,
           "free_quota_insufficient",
-          "The remaining free AI credits cannot cover an automatic compiler repair."
+          "The remaining free AI credits cannot cover the next AI step."
         );
       }
       const cumulativeMaxOutputTokens = addUsageCounts(
@@ -1321,7 +1390,7 @@ class AiAccessService {
         allowedAdditionalMaxOutputTokens
       );
       const reservedNanoUsd = addCosts(
-        Number(inflight.reserved_nano_usd),
+        retainedNanoUsd,
         addCosts(
           inputCostNanoUsd,
           multiplyCost(allowedAdditionalMaxOutputTokens, outputRate)
@@ -1370,6 +1439,9 @@ class AiAccessService {
 
     context.reservedNanoUsd = result.reservedNanoUsd;
     context.maxOutputTokens = result.cumulativeMaxOutputTokens;
+    if (completedPrefix) {
+      context[COMPLETED_PROVIDER_USAGE] = Object.freeze(completedPrefix);
+    }
     return result;
   }
 
@@ -1667,9 +1739,13 @@ class AiAccessService {
         }
       }
       const reservedNanoUsd = Number(inflight.reserved_nano_usd);
+      const actualTierIsAuthorized =
+        calculated.tier === inflight.reservation_tier ||
+        (calculated.tier === "standard" &&
+          inflight.reservation_tier === "long_context");
       if (
         calculated.costNanoUsd > reservedNanoUsd ||
-        calculated.tier !== inflight.reservation_tier ||
+        !actualTierIsAuthorized ||
         normalizedUsage.inputTokens > Number(inflight.reservation_input_tokens) ||
         normalizedUsage.outputTokens >
           Number(inflight.reservation_max_output_tokens)
@@ -3046,8 +3122,49 @@ function readCatalogPrice(database, model, version) {
   };
 }
 
+function normalizeCompletedProviderMetering(metering) {
+  const hasUsageCounts = (usage) => usage && typeof usage === "object" &&
+    firstDefined(usage.inputTokens, usage.input_tokens, usage.input) !== undefined &&
+    firstDefined(usage.outputTokens, usage.output_tokens, usage.output) !== undefined;
+  if (
+    !metering || typeof metering !== "object" || Array.isArray(metering) ||
+    !normalizeIdentifier(metering.provider, 48) ||
+    !normalizeIdentifier(firstDefined(metering.providerResponseId, metering.responseId), 160) ||
+    !normalizeIdentifier(metering.model, 160) ||
+    !hasUsageCounts(metering.usage) ||
+    (metering.responses !== undefined && (
+      !Array.isArray(metering.responses) || !metering.responses.length ||
+      metering.responses.some((response) => !hasUsageCounts(response?.usage))
+    ))
+  ) {
+    throw new AiAccessError(
+      500,
+      "completed_usage_invalid",
+      "Completed AI usage requires provider identifiers and confirmed token counts."
+    );
+  }
+  const composite = normalizeCompositeProviderUsage(metering.responses, {
+    ...metering,
+    responseId: firstDefined(metering.providerResponseId, metering.responseId),
+  });
+  if (
+    composite.provider !== normalizeIdentifier(metering.provider, 48).toLowerCase() ||
+    composite.model !== resolveCatalogModel(metering.model) ||
+    JSON.stringify(composite.usage) !== JSON.stringify(normalizeUsage(metering.usage)) ||
+    (composite.segments && composite.segments.at(-1).responseId !==
+      normalizeIdentifier(firstDefined(metering.providerResponseId, metering.responseId), 160))
+  ) {
+    throw new AiAccessError(
+      500,
+      "completed_usage_invalid",
+      "Completed AI usage does not match its provider response history."
+    );
+  }
+  return composite;
+}
+
 function normalizeCompositeProviderUsage(responses, fallback) {
-  if (!Array.isArray(responses) || responses.length <= 1) {
+  if (!Array.isArray(responses) || responses.length === 0) {
     return {
       provider: normalizeIdentifier(fallback.provider || "openai", 48)
         .toLowerCase(),
@@ -3057,7 +3174,7 @@ function normalizeCompositeProviderUsage(responses, fallback) {
       segments: null,
     };
   }
-  if (responses.length > 3) {
+  if (responses.length > MAX_PROVIDER_RESPONSES) {
     throw new AiAccessError(
       500,
       "usage_counts_invalid",
@@ -3114,15 +3231,14 @@ function normalizeCompositeProviderUsage(responses, fallback) {
     }
   }
   const provider = segments[0].provider;
-  const providerResponseId = `bundle:${segments
+  const orderedResponseIds = segments
     .map((segment) => `${segment.responseId.length}:${segment.responseId}`)
-    .join("")}`;
-  if (providerResponseId.length > 160) {
-    throw new AiAccessError(
-      500,
-      "provider_usage_id_too_long",
-      "Composite AI usage contains provider response identifiers that are too long."
-    );
+    .join("");
+  let providerResponseId = segments.length === 1
+    ? segments[0].responseId : `bundle:${orderedResponseIds}`;
+  if (Buffer.byteLength(providerResponseId, "utf8") > 160) {
+    providerResponseId = `bundle:sha256:${crypto.createHash("sha256")
+      .update(orderedResponseIds).digest("hex")}`;
   }
   return {
     provider,

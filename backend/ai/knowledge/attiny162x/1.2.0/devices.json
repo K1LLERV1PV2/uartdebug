@@ -188,6 +188,41 @@
         "PORT_ISC_RISING_gc": "(PORT_ISC_RISING_gv << PORT_ISC_gp)",
         "PORT_ISC_RISING_gv": "0x02",
         "PORT_PULLUPEN_bm": "0x08",
+        "RTC_CLKSEL_INT32K_gc": "(RTC_CLKSEL_INT32K_gv << RTC_CLKSEL_gp)",
+        "RTC_CLKSEL_INT32K_gv": "0x00",
+        "RTC_CTRLBUSY_bm": "0x01",
+        "RTC_PERIOD_CYC1024_gc": "(RTC_PERIOD_CYC1024_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC1024_gv": "0x09",
+        "RTC_PERIOD_CYC128_gc": "(RTC_PERIOD_CYC128_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC128_gv": "0x06",
+        "RTC_PERIOD_CYC16384_gc": "(RTC_PERIOD_CYC16384_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC16384_gv": "0x0D",
+        "RTC_PERIOD_CYC16_gc": "(RTC_PERIOD_CYC16_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC16_gv": "0x03",
+        "RTC_PERIOD_CYC2048_gc": "(RTC_PERIOD_CYC2048_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC2048_gv": "0x0A",
+        "RTC_PERIOD_CYC256_gc": "(RTC_PERIOD_CYC256_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC256_gv": "0x07",
+        "RTC_PERIOD_CYC32768_gc": "(RTC_PERIOD_CYC32768_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC32768_gv": "0x0E",
+        "RTC_PERIOD_CYC32_gc": "(RTC_PERIOD_CYC32_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC32_gv": "0x04",
+        "RTC_PERIOD_CYC4096_gc": "(RTC_PERIOD_CYC4096_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC4096_gv": "0x0B",
+        "RTC_PERIOD_CYC4_gc": "(RTC_PERIOD_CYC4_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC4_gv": "0x01",
+        "RTC_PERIOD_CYC512_gc": "(RTC_PERIOD_CYC512_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC512_gv": "0x08",
+        "RTC_PERIOD_CYC64_gc": "(RTC_PERIOD_CYC64_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC64_gv": "0x05",
+        "RTC_PERIOD_CYC8192_gc": "(RTC_PERIOD_CYC8192_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC8192_gv": "0x0C",
+        "RTC_PERIOD_CYC8_gc": "(RTC_PERIOD_CYC8_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC8_gv": "0x02",
+        "RTC_PITEN_bm": "0x01",
+        "RTC_PIT_vect": "_VECTOR(4)",
+        "RTC_PIT_vect_num": "4",
+        "RTC_PI_bm": "0x01",
         "TCA0_OVF_vect": "_VECTOR(8)",
         "TCA0_OVF_vect_num": "8",
         "TCA_SINGLE_CLKSEL_0_bm": "(1<<1)",
@@ -448,6 +483,52 @@
           "fields": {
             "USART0": "0x03",
             "USART1": "0x0C"
+          }
+        },
+        "RTC.CLKSEL": {
+          "offset": 7,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "CLKSEL": "0x03"
+          }
+        },
+        "RTC.PITCTRLA": {
+          "offset": 16,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "PITEN": "0x01",
+            "PERIOD": "0x78"
+          }
+        },
+        "RTC.PITSTATUS": {
+          "offset": 17,
+          "bytes": 1,
+          "access": "R",
+          "reset": "0x00",
+          "fields": {
+            "CTRLBUSY": "0x01"
+          }
+        },
+        "RTC.PITINTCTRL": {
+          "offset": 18,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "PI": "0x01"
+          }
+        },
+        "RTC.PITINTFLAGS": {
+          "offset": 19,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "PI": "0x01"
           }
         }
       },
@@ -699,6 +780,41 @@
         "PORT_ISC_RISING_gc": "(PORT_ISC_RISING_gv << PORT_ISC_gp)",
         "PORT_ISC_RISING_gv": "0x02",
         "PORT_PULLUPEN_bm": "0x08",
+        "RTC_CLKSEL_INT32K_gc": "(RTC_CLKSEL_INT32K_gv << RTC_CLKSEL_gp)",
+        "RTC_CLKSEL_INT32K_gv": "0x00",
+        "RTC_CTRLBUSY_bm": "0x01",
+        "RTC_PERIOD_CYC1024_gc": "(RTC_PERIOD_CYC1024_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC1024_gv": "0x09",
+        "RTC_PERIOD_CYC128_gc": "(RTC_PERIOD_CYC128_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC128_gv": "0x06",
+        "RTC_PERIOD_CYC16384_gc": "(RTC_PERIOD_CYC16384_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC16384_gv": "0x0D",
+        "RTC_PERIOD_CYC16_gc": "(RTC_PERIOD_CYC16_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC16_gv": "0x03",
+        "RTC_PERIOD_CYC2048_gc": "(RTC_PERIOD_CYC2048_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC2048_gv": "0x0A",
+        "RTC_PERIOD_CYC256_gc": "(RTC_PERIOD_CYC256_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC256_gv": "0x07",
+        "RTC_PERIOD_CYC32768_gc": "(RTC_PERIOD_CYC32768_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC32768_gv": "0x0E",
+        "RTC_PERIOD_CYC32_gc": "(RTC_PERIOD_CYC32_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC32_gv": "0x04",
+        "RTC_PERIOD_CYC4096_gc": "(RTC_PERIOD_CYC4096_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC4096_gv": "0x0B",
+        "RTC_PERIOD_CYC4_gc": "(RTC_PERIOD_CYC4_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC4_gv": "0x01",
+        "RTC_PERIOD_CYC512_gc": "(RTC_PERIOD_CYC512_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC512_gv": "0x08",
+        "RTC_PERIOD_CYC64_gc": "(RTC_PERIOD_CYC64_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC64_gv": "0x05",
+        "RTC_PERIOD_CYC8192_gc": "(RTC_PERIOD_CYC8192_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC8192_gv": "0x0C",
+        "RTC_PERIOD_CYC8_gc": "(RTC_PERIOD_CYC8_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC8_gv": "0x02",
+        "RTC_PITEN_bm": "0x01",
+        "RTC_PIT_vect": "_VECTOR(4)",
+        "RTC_PIT_vect_num": "4",
+        "RTC_PI_bm": "0x01",
         "TCA0_OVF_vect": "_VECTOR(8)",
         "TCA0_OVF_vect_num": "8",
         "TCA_SINGLE_CLKSEL_0_bm": "(1<<1)",
@@ -959,6 +1075,52 @@
           "fields": {
             "USART0": "0x03",
             "USART1": "0x0C"
+          }
+        },
+        "RTC.CLKSEL": {
+          "offset": 7,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "CLKSEL": "0x03"
+          }
+        },
+        "RTC.PITCTRLA": {
+          "offset": 16,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "PITEN": "0x01",
+            "PERIOD": "0x78"
+          }
+        },
+        "RTC.PITSTATUS": {
+          "offset": 17,
+          "bytes": 1,
+          "access": "R",
+          "reset": "0x00",
+          "fields": {
+            "CTRLBUSY": "0x01"
+          }
+        },
+        "RTC.PITINTCTRL": {
+          "offset": 18,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "PI": "0x01"
+          }
+        },
+        "RTC.PITINTFLAGS": {
+          "offset": 19,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "PI": "0x01"
           }
         }
       },
@@ -1162,6 +1324,41 @@
         "PORT_ISC_RISING_gc": "(PORT_ISC_RISING_gv << PORT_ISC_gp)",
         "PORT_ISC_RISING_gv": "0x02",
         "PORT_PULLUPEN_bm": "0x08",
+        "RTC_CLKSEL_INT32K_gc": "(RTC_CLKSEL_INT32K_gv << RTC_CLKSEL_gp)",
+        "RTC_CLKSEL_INT32K_gv": "0x00",
+        "RTC_CTRLBUSY_bm": "0x01",
+        "RTC_PERIOD_CYC1024_gc": "(RTC_PERIOD_CYC1024_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC1024_gv": "0x09",
+        "RTC_PERIOD_CYC128_gc": "(RTC_PERIOD_CYC128_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC128_gv": "0x06",
+        "RTC_PERIOD_CYC16384_gc": "(RTC_PERIOD_CYC16384_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC16384_gv": "0x0D",
+        "RTC_PERIOD_CYC16_gc": "(RTC_PERIOD_CYC16_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC16_gv": "0x03",
+        "RTC_PERIOD_CYC2048_gc": "(RTC_PERIOD_CYC2048_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC2048_gv": "0x0A",
+        "RTC_PERIOD_CYC256_gc": "(RTC_PERIOD_CYC256_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC256_gv": "0x07",
+        "RTC_PERIOD_CYC32768_gc": "(RTC_PERIOD_CYC32768_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC32768_gv": "0x0E",
+        "RTC_PERIOD_CYC32_gc": "(RTC_PERIOD_CYC32_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC32_gv": "0x04",
+        "RTC_PERIOD_CYC4096_gc": "(RTC_PERIOD_CYC4096_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC4096_gv": "0x0B",
+        "RTC_PERIOD_CYC4_gc": "(RTC_PERIOD_CYC4_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC4_gv": "0x01",
+        "RTC_PERIOD_CYC512_gc": "(RTC_PERIOD_CYC512_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC512_gv": "0x08",
+        "RTC_PERIOD_CYC64_gc": "(RTC_PERIOD_CYC64_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC64_gv": "0x05",
+        "RTC_PERIOD_CYC8192_gc": "(RTC_PERIOD_CYC8192_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC8192_gv": "0x0C",
+        "RTC_PERIOD_CYC8_gc": "(RTC_PERIOD_CYC8_gv << RTC_PERIOD_gp)",
+        "RTC_PERIOD_CYC8_gv": "0x02",
+        "RTC_PITEN_bm": "0x01",
+        "RTC_PIT_vect": "_VECTOR(4)",
+        "RTC_PIT_vect_num": "4",
+        "RTC_PI_bm": "0x01",
         "TCA0_OVF_vect": "_VECTOR(8)",
         "TCA0_OVF_vect_num": "8",
         "TCA_SINGLE_CLKSEL_0_bm": "(1<<1)",
@@ -1422,6 +1619,52 @@
           "fields": {
             "USART0": "0x03",
             "USART1": "0x0C"
+          }
+        },
+        "RTC.CLKSEL": {
+          "offset": 7,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "CLKSEL": "0x03"
+          }
+        },
+        "RTC.PITCTRLA": {
+          "offset": 16,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "PITEN": "0x01",
+            "PERIOD": "0x78"
+          }
+        },
+        "RTC.PITSTATUS": {
+          "offset": 17,
+          "bytes": 1,
+          "access": "R",
+          "reset": "0x00",
+          "fields": {
+            "CTRLBUSY": "0x01"
+          }
+        },
+        "RTC.PITINTCTRL": {
+          "offset": 18,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "PI": "0x01"
+          }
+        },
+        "RTC.PITINTFLAGS": {
+          "offset": 19,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "PI": "0x01"
           }
         }
       },

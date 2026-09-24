@@ -5,7 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { loadKnowledge, resolveKnowledge, validateProjectSpec, calculateTimerPeriod, calculateUsartBaud } = require("../backend/avr-knowledge");
+const { loadKnowledge, resolveKnowledge, validateProjectSpec, calculateTimerPeriod, calculateUsartBaud, calculateRtcPitPeriod, RTC_PIT_PERIOD_CYCLES } = require("../backend/avr-knowledge");
 
 const knowledge = loadKnowledge();
 const baseSpec = () => ({ schemaVersion: 1, language: "es", description: "Indicador y puerto serie",
@@ -13,10 +13,13 @@ const baseSpec = () => ({ schemaVersion: 1, language: "es", description: "Indica
   includes: ["xc.h", "stdint.h", "avr/interrupt.h"], resources: [] });
 const uart = (changes = {}) => ({ id: "serial", kind: "uart", instance: "USART0", route: "DEFAULT",
   txPin: "PB2", rxPin: "PB3", baud: 115200, pin: null, direction: null,
-  periodUs: null, prescaler: null, description: "Puerto serie", ...changes });
+  periodUs: null, prescaler: null, clockSource: null, periodCycles: null, description: "Puerto serie", ...changes });
 const timer = (changes = {}) => ({ id: "blink", kind: "timer", instance: "TCA0", pin: "PB0",
   periodUs: 500000, prescaler: 1024, direction: null, route: null, txPin: null,
-  rxPin: null, baud: null, description: "Indicador", ...changes });
+  rxPin: null, baud: null, clockSource: null, periodCycles: null, description: "Indicador", ...changes });
+const pit = (changes = {}) => ({ id: "tick", kind: "rtc-pit", instance: "RTC", clockSource: "INT32K",
+  periodCycles: 4096, periodUs: 125000, pin: null, direction: null, route: null, txPin: null,
+  rxPin: null, baud: null, prescaler: null, description: "Indicador", ...changes });
 const errors = (spec) => validateProjectSpec(spec).errors.map((error) => error.code);
 
 test("the pinned bundle contains only explicit device/package coverage and exact DFP routing", () => {
@@ -43,7 +46,7 @@ test("complete local PDF references retain every page and raw source provenance 
   assert.deepEqual(knowledge.localDocuments, []);
   assert.equal(knowledge.corpus.documents.length, 2);
   for (const document of knowledge.corpus.documents) {
-    const file = fs.readFileSync(path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.1.0", document.sourceFile));
+    const file = fs.readFileSync(path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.2.0", document.sourceFile));
     assert.equal(document.sha256, crypto.createHash("sha256").update(file).digest("hex"));
     assert.equal(document.pages.length, document.pageCount);
     assert.deepEqual(document.pages.map((page) => page.page), Array.from({ length: document.pageCount }, (_, i) => i + 1));
@@ -60,7 +63,7 @@ test("all pilot recipes are available independent of the user's language", () =>
   for (const requirements of ["Envía datos de temperatura por el puerto serie", "共有キャンバスから生成", "Передавать значения", ""]) {
     const result = resolveKnowledge({ mcu: "attiny1624", packageName: "soic14", requirements });
     assert.equal(result.supported, true);
-    assert.equal(result.manifest.recipeIds.length, 7);
+    assert.equal(result.manifest.recipeIds.length, 8);
     assert.ok(result.manifest.recipeIds.includes("avr-uart-tx-interrupt"));
     assert.ok(result.context.length < 65000, "context contains recipes, catalog and reviewed errata, not every PDF page");
     assert.match(result.context, /Local reference catalog/);
@@ -147,6 +150,84 @@ test("fractional USART baud calculation checks sample rate and register limits",
   assert.throws(() => calculateUsartBaud({ clockHz: 20000000, baud: 0 }), RangeError);
 });
 
+test("RTC PIT derives every approved fixed interval from INT32K without a CPU clock", () => {
+  assert.deepEqual(RTC_PIT_PERIOD_CYCLES, Array.from({ length: 14 }, (_, index) => 2 ** (index + 2)));
+  for (const periodCycles of RTC_PIT_PERIOD_CYCLES) {
+    const value = calculateRtcPitPeriod({ periodCycles });
+    assert.equal(value.sourceHz, 32768);
+    assert.equal(value.periodSymbol, `RTC_PERIOD_CYC${periodCycles}_gc`);
+    assert.equal(value.nominalPeriodUs, periodCycles * 1000000 / 32768);
+    const specification = baseSpec();
+    specification.clock.hz = null;
+    specification.resources = [pit({ periodCycles, periodUs: Math.round(value.nominalPeriodUs) })];
+    assert.equal(validateProjectSpec(specification).valid, true, String(periodCycles));
+  }
+  assert.equal(calculateRtcPitPeriod({ periodCycles: 4096 }).nominalPeriodUs, 125000);
+  assert.equal(calculateRtcPitPeriod({ periodCycles: 4 }).nominalPeriodUs, 122.0703125);
+  assert.equal(calculateRtcPitPeriod({ periodCycles: 32768 }).nominalPeriodUs, 1000000);
+  for (const periodCycles of [0, 2, 3, 4096.5, 65536, "4096", null, undefined])
+    assert.throws(() => calculateRtcPitPeriod({ periodCycles }), RangeError);
+  assert.throws(() => calculateRtcPitPeriod({ periodCycles: 4096, clockSource: "INT1K" }), RangeError);
+});
+
+test("RTC PIT owns its shared peripheral and rejects unsupported sources and ambiguous intervals", () => {
+  const specification = baseSpec();
+  specification.clock.hz = null;
+  for (const [change, expected] of [
+    [{ instance: "RTC0" }, "unsupported_rtc_instance"],
+    [{ clockSource: "EXTCLK" }, "unsupported_rtc_clock"],
+    [{ periodCycles: 65536 }, "invalid_rtc_pit_period"],
+    [{ periodUs: 124999 }, "rtc_period_mismatch"],
+    [{ periodUs: 0 }, "rtc_period_mismatch"],
+    [{ prescaler: 128 }, "unsupported_resource_field"],
+    [{ pin: "PB1" }, "unsupported_resource_field"],
+  ]) {
+    specification.resources = [pit(change)];
+    assert.ok(errors(specification).includes(expected), JSON.stringify(change));
+  }
+  specification.resources = [pit({ periodUs: null })];
+  assert.equal(validateProjectSpec(specification).valid, true);
+  specification.resources.push(pit({ id: "second" }));
+  assert.ok(errors(specification).includes("peripheral_conflict"));
+  specification.resources = [pit({ instance: "rtc", clockSource: "int32k" })];
+  const normalized = validateProjectSpec(specification);
+  assert.equal(normalized.valid, true);
+  assert.equal(normalized.normalized.resources[0].clockSource, "INT32K");
+});
+
+test("unchanged CPU clock is valid for GPIO/PIT but cannot back UART, TCA or software delays", () => {
+  const specification = baseSpec();
+  specification.clock.hz = null;
+  const led = { id: "led", kind: "gpio", direction: "output", pin: "PB1" };
+  for (const device of knowledge.devices) {
+    specification.microcontroller = { model: device.mcu, package: device.packages[0] };
+    specification.resources = [led, pit()];
+    assert.equal(validateProjectSpec(specification).valid, true, device.mcu);
+    const resolved = resolveKnowledge({ requirements: specification });
+    assert.equal(resolved.supported, true);
+    assert.deepEqual(resolved.manifest.recipeIds, ["avr-project", "avr-gpio", "avr-rtc-pit"]);
+    assert.match(resolved.context, /"periodSymbol":"RTC_PERIOD_CYC4096_gc","nominalPeriodUs":125000/);
+  }
+  specification.resources = [led];
+  assert.equal(validateProjectSpec(specification).valid, true);
+  for (const resource of [uart(), timer()]) {
+    specification.resources = [resource];
+    assert.ok(errors(specification).includes("cpu_clock_required"));
+  }
+  specification.resources = [led, pit()];
+  for (const header of ["util/delay.h", "util/delay_basic.h"]) {
+    specification.includes = ["xc.h", header];
+    assert.ok(errors(specification).includes("cpu_clock_required"));
+  }
+  specification.includes = "xc.h";
+  assert.ok(errors(specification).includes("invalid_includes"));
+  specification.includes = ["xc.h", "avr/interrupt.h"];
+  for (const hz of [undefined, 0]) {
+    specification.clock.hz = hz;
+    assert.ok(errors(specification).includes("invalid_clock"));
+  }
+});
+
 test("unsupported clocks/peripherals are gaps, not silently accepted recipes", () => {
   const spec = baseSpec();
   spec.clock.hz = 16000000;
@@ -163,7 +244,7 @@ test("unsupported clocks/peripherals are gaps, not silently accepted recipes", (
 });
 
 test("recorded compiler evidence is tied to exact fixture bytes, targets and service version", () => {
-  const evidencePath = path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.1.0/compiler-evidence.json");
+  const evidencePath = path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.2.0/compiler-evidence.json");
   const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
   const fixture = fs.readFileSync(path.join(__dirname, "../scripts/avr-knowledge/fixtures", evidence.fixture));
   assert.equal(crypto.createHash("sha256").update(fixture).digest("hex"), evidence.sourceSha256);

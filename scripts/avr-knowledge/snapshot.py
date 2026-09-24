@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "backend/ai/knowledge/attiny162x/1.1.0"
+OUT = ROOT / "backend/ai/knowledge/attiny162x/1.2.0"
 PACK_URL = "https://packs.download.microchip.com/Microchip.ATtiny_DFP.3.4.278.atpack"
 PACK_SHA256 = "41f09d5825abaa764c9000f4488f8ba3fab152afe6229b359de4a5efe9a21eda"
 PACKAGES = {
@@ -26,7 +26,7 @@ PACKAGES = {
 }
 # Semantic symbols used by the deliberately limited recipes. Keep enum dependencies
 # as well: newer DFPs express _gc in terms of _gv and _gp.
-SYMBOL = re.compile(r"^(?:PIN[0-7]_bm|CLKCTRL_(?:CLKSEL_OSC20M|PDIV_\w+|PEN|CLKOUT)_(?:gc|gv|gm|gp|bm)|PORT_(?:PULLUPEN|INVEN|ISC_\w+)_(?:gc|gv|gm|gp|bm)|PORTMUX_USART[01]_(?:DEFAULT|ALT1|NONE|g[mvp])(?:_g[cv])?|TCA_SINGLE_(?:CLKSEL_\w+|WGMODE_NORMAL|ENABLE|OVF)_(?:gc|gv|gm|gp|bm)|USART_(?:CMODE_ASYNCHRONOUS|PMODE_DISABLED|CHSIZE_8BIT|SBMODE_1BIT|RXMODE_NORMAL|RXMODE_CLK2X|RXEN|TXEN|DREIE|DREIF|RXCIF|TXCIF|FERR|PERR|BUFOVF)_(?:gc|gv|gm|gp|bm)|(?:USART[01]_(?:DRE|RXC|TXC)|TCA0_OVF|PORT[ABC]_PORT)_vect(?:_num)?)$")
+SYMBOL = re.compile(r"^(?:PIN[0-7]_bm|CLKCTRL_(?:CLKSEL_OSC20M|PDIV_\w+|PEN|CLKOUT)_(?:gc|gv|gm|gp|bm)|PORT_(?:PULLUPEN|INVEN|ISC_\w+)_(?:gc|gv|gm|gp|bm)|PORTMUX_USART[01]_(?:DEFAULT|ALT1|NONE|g[mvp])(?:_g[cv])?|RTC_(?:CLKSEL_INT32K|PERIOD_CYC\d+|PITEN|PI|CTRLBUSY)_(?:gc|gv|gm|gp|bm)|TCA_SINGLE_(?:CLKSEL_\w+|WGMODE_NORMAL|ENABLE|OVF)_(?:gc|gv|gm|gp|bm)|USART_(?:CMODE_ASYNCHRONOUS|PMODE_DISABLED|CHSIZE_8BIT|SBMODE_1BIT|RXMODE_NORMAL|RXMODE_CLK2X|RXEN|TXEN|DREIE|DREIF|RXCIF|TXCIF|FERR|PERR|BUFOVF)_(?:gc|gv|gm|gp|bm)|(?:USART[01]_(?:DRE|RXC|TXC)|TCA0_OVF|RTC_PIT|PORT[ABC]_PORT)_vect(?:_num)?)$")
 
 
 def digest(data):
@@ -77,6 +77,7 @@ def extract(pack):
                 routes[instance] = {"register": "PORTMUX.USARTROUTEA", "maskSymbol": f"PORTMUX_{instance}_gm", "mask": int(field.get("mask"), 0), "routes": route_entries}
             registers = {}
             selected = {"CLKCTRL": {"MCLKCTRLA", "MCLKCTRLB"}, "PORT": {"DIR", "DIRSET", "DIRCLR", "OUT", "OUTSET", "OUTCLR", "OUTTGL", "IN", "INTFLAGS", "PIN0CTRL"}, "USART": {"RXDATAL", "RXDATAH", "TXDATAL", "STATUS", "CTRLA", "CTRLB", "CTRLC", "BAUD"}, "PORTMUX": {"USARTROUTEA"}}
+            selected["RTC"] = {"CLKSEL", "PITCTRLA", "PITSTATUS", "PITINTCTRL", "PITINTFLAGS"}
             for module, register_names in selected.items():
                 for reg in root.findall(f'./modules/module[@name="{module}"]/register-group/register'):
                     if reg.get("name") in register_names:

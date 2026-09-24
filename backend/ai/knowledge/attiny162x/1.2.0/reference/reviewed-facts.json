@@ -3,7 +3,7 @@
   "family": "attiny162x",
   "reviewedOn": "2026-09-24",
   "reviewMethod": "Text extraction for navigation, followed by rendered PDF inspection of referenced tables, formulas, diagrams and errata pages.",
-  "validationScope": "Source interpretation only. No new peripheral modes approved and no hardware operation or electrical design verified by this review.",
+  "validationScope": "Source interpretation only. Approved generation scope is defined by reviewed recipes and validators; this review does not verify hardware operation or electrical design.",
   "sourceDocuments": [
     {
       "sourceId": "datasheet-ds40002234b",
@@ -23,6 +23,14 @@
         209,
         210,
         219,
+        268,
+        270,
+        272,
+        281,
+        285,
+        286,
+        287,
+        288,
         293,
         294,
         308,
@@ -1078,6 +1086,157 @@
         "avr-uart-polling"
       ],
       "generationImpact": "Compute the approved asynchronous baud from the configured post-prescaler CLK_PER. Do not substitute the raw OSC20M frequency or an external XCK frequency."
+    },
+    {
+      "id": "rtc-pit-clock",
+      "kind": "register-table",
+      "title": "PIT uses the shared RTC clock independently of CLK_PER",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        268,
+        272,
+        281
+      ],
+      "section": "23.5.1, 23.10, 23.13.8",
+      "verification": "reviewed-against-pdf",
+      "text": "RTC and PIT share CLK_RTC. Both operate asynchronously and independently of CLK_PER. RTC.CLKSEL resets to 0x00 (INT32K), selecting the internal nominal 32768 Hz source. INT1K, TOSC32K and EXTCLK are distinct alternatives.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-rtc-pit"
+      ],
+      "generationImpact": "The approved boot-only recipe explicitly selects RTC_CLKSEL_INT32K_gc while RTC/PIT are still disabled. Keep exclusive ownership of RTC clock configuration. A GPIO/PIT-only project can leave the CPU clock unchanged with spec.clock.hz=null; do not invent F_CPU or a 20 MHz setup.",
+      "sourceHz": 32768,
+      "approvedClockSource": "INT32K"
+    },
+    {
+      "id": "rtc-pit-period",
+      "kind": "formula",
+      "title": "PIT period uses a fixed number of RTC clocks",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        285
+      ],
+      "section": "23.13.12",
+      "verification": "reviewed-against-pdf",
+      "text": "PITCTRLA.PERIOD selects 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384 or 32768 RTC clock cycles. Value 0 selects OFF; value 15 is reserved. CYC4096 has field value 0xB. The nominal interval is cycles divided by nominal CLK_RTC; with INT32K, 4096/32768 s is 125 ms.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-rtc-pit"
+      ],
+      "generationImpact": "Use a pinned RTC_PERIOD_CYC<n>_gc symbol plus RTC_PITEN_bm. Derive nominal periodUs from periodCycles*1000000/32768, never CPU Hz or the RTC counter prescaler. Preserve fractional microseconds in calculations and distinguish configuration from oscillator/ISR accuracy.",
+      "formula": "nominalPeriodUs = periodCycles * 1000000 / 32768",
+      "approvedPeriodCycles": [
+        4,
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384,
+        32768
+      ]
+    },
+    {
+      "id": "rtc-pit-first-phase",
+      "kind": "diagram",
+      "title": "First PIT condition depends on shared prescaler phase",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        268,
+        270
+      ],
+      "section": "23.5.2.2, Figure 23-2",
+      "verification": "reviewed-against-pdf",
+      "text": "The RTC and PIT functions use the same internal prescaler counter, which runs when either function is enabled. The CYC16 timing diagram shows that the first condition can occur virtually immediately or one full selected period after PIT enable, depending on counter phase.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-rtc-pit"
+      ],
+      "generationImpact": "Do not promise a full off interval before the first transition. For CYC4096/INT32K the first hardware condition is nominally within about 0..125 ms; subsequent uninterrupted conditions have the nominal 125 ms interval. Actual GPIO transitions additionally include synchronization and ISR latency."
+    },
+    {
+      "id": "rtc-pit-sync",
+      "kind": "constraint",
+      "title": "PITCTRLA synchronization is reported by PITSTATUS",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        272,
+        286
+      ],
+      "section": "23.10, 23.13.13",
+      "verification": "reviewed-against-pdf",
+      "text": "RTC.PITSTATUS.CTRLBUSY is set while PITCTRLA synchronizes into the RTC clock domain. The datasheet requires checking the busy flags before writing the associated asynchronous registers. RTC.STATUS contains the separate RTC counter busy flags.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-rtc-pit"
+      ],
+      "generationImpact": "Before writing PITCTRLA, wait for RTC.PITSTATUS & RTC_CTRLBUSY_bm to clear; after writing, wait again before relying on completion. Do not poll RTC.STATUS for PITCTRLA or replace the busy check with a delay."
+    },
+    {
+      "id": "rtc-pit-interrupt",
+      "kind": "register-table",
+      "title": "PIT interrupt enable and PI acknowledgement",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        287,
+        288
+      ],
+      "section": "23.13.14, 23.13.15",
+      "verification": "reviewed-against-pdf",
+      "text": "PITINTCTRL.PI enables periodic interrupt delivery. PITINTFLAGS.PI records a periodic condition, resets to zero and is cleared by writing one. The register represents one pending condition, not an event counter.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-rtc-pit"
+      ],
+      "generationImpact": "Use RTC.PITINTFLAGS = RTC_PI_bm before delivery is enabled and at ISR entry; never use read-modify-write to acknowledge it. Install one RTC_PIT_vect handler and call sei only after all initialization. Multiple unserviced conditions may coalesce, so any lossless accounting needs a separately designed service/latency policy."
+    },
+    {
+      "id": "rtc-pit-shared-correction-debug",
+      "kind": "constraint",
+      "title": "Correction and debug behavior affect PIT observations",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        270,
+        272
+      ],
+      "section": "23.6, 23.11",
+      "verification": "reviewed-against-pdf",
+      "text": "RTC.CTRLA.CORREN and RTC.CALIB correct the shared prescaler and therefore PIT intervals. With PIT debug run disabled, CPU halt forces PIT output low; resuming while the underlying output is high can produce an extra periodic interrupt.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-rtc-pit"
+      ],
+      "generationImpact": "Leave calibration/correction/debug configuration at reset in the boot-only PIT recipe. Do not share or change them implicitly. Debugger stepping is not evidence for normal timing, and runtime calibration, sleep or reinitialization require separate reviewed support."
     }
   ]
 }

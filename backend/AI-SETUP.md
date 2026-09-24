@@ -239,13 +239,14 @@ The pilot knowledge release is stored under:
 
 ```text
 backend/ai/canvas-rules.md
-backend/ai/knowledge/attiny162x/1.1.0/
+backend/ai/knowledge/attiny162x/1.2.0/
 ```
 
 The manifest records source provenance, versioned device facts, recipe paths and
 SHA-256 digests. `loadKnowledge()` verifies each declared file before using the
-bundle. All seven compact pilot recipes are supplied regardless of the user's
-language, without attaching the complete tutorials. The pilot covers ATtiny1624/1626/1627 with the
+bundle. The initial canvas receives eight compact recipes; a structured project
+selects its resource recipes and dependencies, regardless of the user's language.
+The complete tutorials are not attached to each request. The pilot covers ATtiny1624/1626/1627 with the
 packages listed in status metadata; unsupported hardware yields a canvas issue.
 Do not interpret the pilot as support for every AVR or every peripheral.
 
@@ -263,6 +264,13 @@ ten documentation steps and two external HTML requests per generation. External
 URLs are restricted to registered Microchip datasheet/errata roots; redirects,
 timeouts and oversized responses are rejected. No general web search is offered.
 Reference extraction is not automatically promoted into approved recipes.
+
+Between provider responses, confirmed usage replaces the previous maximum
+reservation before the next response is authorized. Unknown provider usage keeps
+its hold for reconciliation. A request permits up to thirteen provider responses
+(initial response, ten documentation continuations and two repairs), with one
+final ledger record. Error responses return the settled quota when available and
+diagnostic stage/cause codes without user requirements or source code.
 
 Production reference cache:
 

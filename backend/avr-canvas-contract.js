@@ -4,6 +4,7 @@ const {
   extractDocumentationMarkers,
   extractMarkdownHeadings,
 } = require("./avr-documentation-markers");
+const { RTC_PIT_PERIOD_CYCLES } = require("./avr-knowledge");
 
 const MAX_CANVAS_BYTES = 128 * 1024;
 const MAX_ANNOTATIONS = 100;
@@ -60,6 +61,8 @@ function resourceVariant(kind, fields, description) {
       baud: unused,
       periodUs: unused,
       prescaler: unused,
+      clockSource: unused,
+      periodCycles: unused,
       ...fields,
       description: described(
         text(4000),
@@ -124,13 +127,29 @@ const resourceSchema = {
       },
       "TCA0 SINGLE normal overflow timer. Use instance, periodUs and prescaler, with an optional owned pin. route MUST be null: SINGLE is a timer mode, not a routing value. direction, txPin, rxPin and baud must also be null.",
     ),
+    resourceVariant(
+      "rtc-pit",
+      {
+        instance: enumeration("RTC"),
+        clockSource: enumeration("INT32K"),
+        periodCycles: described(
+          { type: "integer", enum: RTC_PIT_PERIOD_CYCLES },
+          "PIT interval in nominal 32768 Hz RTC clocks; selects RTC_PERIOD_CYC<n>_gc. No CPU clock or RTC counter prescaler is involved.",
+        ),
+        periodUs: described(
+          nullable(integer()),
+          "Nominal PIT interval rounded to the nearest microsecond, or null. When supplied it must match periodCycles * 1000000 / 32768 rounded to the nearest integer.",
+        ),
+      },
+      "Boot-only RTC PIT periodic interrupts using INT32K. Reserves RTC clock configuration and RTC_PIT_vect. Use a separate GPIO resource for the output pin; pin, direction, route, txPin, rxPin, baud and prescaler must be null. RTC counter, calibration, sleep and runtime reconfiguration are not supported.",
+    ),
   ],
 };
 const specSchema = object({
   schemaVersion: { type: "integer", enum: [1] },
   language: text(35, 2),
   microcontroller: object({ model: text(40, 1), package: text(48, 1) }),
-  clock: object({ hz: integer() }),
+  clock: object({ hz: described(nullable(integer()), "Actual configured CPU/peripheral clock in Hz, or null to leave the CPU clock unchanged without claiming its frequency. Null is allowed only for GPIO and RTC PIT projects without CPU-dependent delays.") }),
   resources: array(resourceSchema, 100),
   includes: array(text(128, 1), 64),
   description: text(16000, 1),
@@ -523,6 +542,9 @@ function validateProject(
       (!resource.instance || !resource.periodUs || !resource.prescaler)
     )
       fail("Timer resources require an instance, period and prescaler.", true);
+    if (resource.kind === "rtc-pit" &&
+        (resource.instance !== "RTC" || resource.clockSource !== "INT32K" || !resource.periodCycles))
+      fail("RTC PIT requires RTC, INT32K and a supported fixed cycle period.", true);
   }
   const headings = new Set(
     extractMarkdownHeadings(project.guide.content).map(
@@ -639,7 +661,7 @@ function validateCanvasOutput(raw, options = {}) {
 // JSON quoted strings are valid YAML 1.2 scalars and cannot inject tags, keys or comments.
 function serializeProjectSpec(spec) {
   assertSchema(spec, specSchema, "spec");
-  function lines(value, indent) {
+  function lines(value, indent, parentKey = "") {
     const prefix = " ".repeat(indent);
     if (Array.isArray(value)) {
       return value.flatMap((entry) =>
@@ -651,11 +673,11 @@ function serializeProjectSpec(spec) {
     return Object.entries(value).flatMap(([key, entry]) => {
       // The strict model schema uses explicit nulls; human-facing YAML omits
       // fields that do not apply to this resource.
-      if (entry === null) return [];
+      if (entry === null) return parentKey === "clock" && key === "hz" ? [`${prefix}${key}: null`] : [];
       if (Array.isArray(entry) && entry.length === 0)
         return [`${prefix}${key}: []`];
       return isObject(entry) || Array.isArray(entry)
-        ? [`${prefix}${key}:`, ...lines(entry, indent + 2)]
+        ? [`${prefix}${key}:`, ...lines(entry, indent + 2, key)]
         : [`${prefix}${key}: ${JSON.stringify(entry)}`];
     });
   }

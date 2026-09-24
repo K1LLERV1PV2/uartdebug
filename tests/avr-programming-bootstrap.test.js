@@ -490,6 +490,27 @@ test("replaces chat controls with one canvas action while retaining account and 
   assert.ok(source.includes("guideAuthorship"));
 });
 
+test("guide preview mouse interaction stays usable after chat removal and content replacement", () => {
+  const { document, window } = parseHTML('<html><body><div id="projectDocumentationContent"><p>First project guide</p></div><textarea id="projectDocumentationEditor"></textarea></body></html>');
+  const timers = [];
+  const hooks = loadAvrFrontendFunctionHooks(["bindDocumentationWorkspace"], {
+    document,
+    window: { setTimeout(callback) { timers.push(callback); } },
+  });
+  hooks.bindDocumentationWorkspace();
+  const preview = document.getElementById("projectDocumentationContent");
+  for (const text of ["First project guide", "Second project guide"]) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    preview.replaceChildren(paragraph);
+    assert.doesNotThrow(() => {
+      paragraph.dispatchEvent(new window.Event("mouseup", { bubbles: true }));
+      while (timers.length) timers.shift()();
+    });
+    assert.equal(preview.textContent, text);
+  }
+});
+
 test("streams AI progress events before the final NDJSON result", async () => {
   const { readProjectAiApiResponse } = loadAvrFrontendFunctionHooks([
     "readProjectAiApiResponse",
