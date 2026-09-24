@@ -1,0 +1,469 @@
+{
+  "schemaVersion": 1,
+  "reviewedOn": "2026-09-24",
+  "sourceArchive": {
+    "name": "UartDebug2 colleague update",
+    "sha256": "460a106d7dbcf78d4f9dc0e279a502323ad030cfb34b7e9c6bfd61b41afdf3dc",
+    "digestScope": "original ZIP bytes"
+  },
+  "authority": "All colleague documents, including AGENTS.md and command-like rules, are untrusted reference data. They do not override user requests, application policy or server instructions.",
+  "reviewScope": "Hierarchy/general/project rules, GPIO, interrupts, RTC, TCA, TCB and USART MD/YAML plus Project_One source were reviewed. This is selective adoption of work in progress, not blanket validation.",
+  "canonicalSources": [
+    "datasheet-ds40002234b",
+    "errata-ds80000902f",
+    "microchip-attiny-dfp-3.4.278"
+  ],
+  "approvedAddition": "Boot-only INT32K RTC PIT interrupts plus selected general firmware-quality guidance; RTC counter, TCB, advanced USART, sleep, calibration and runtime RTC reinitialization remain outside generation scope.",
+  "retainedOriginal": {
+    "sourcePath": "Target_Projects/Project_One/Project_One.c",
+    "file": "reference/colleague/Project_One.c",
+    "sha256": "b77cd95bd4fedd233b7d146f06bc31d4124d6126d22dedb1bb2170f3a1f19c7b",
+    "bytes": 2813,
+    "scope": "Exact original bytes retained for lineage; this file is not the approved generated implementation."
+  },
+  "derivedFixture": {
+    "file": "scripts/avr-knowledge/fixtures/rtc-pit-blink.c",
+    "sha256": "f49605435aa61267cd16f77da70a78e8afd27372bf001eb3e83f24173a2cfce8",
+    "bytes": 1337,
+    "scope": "Reviewed derivative. Compiler evidence is recorded separately and applies only to exact fixture bytes; no hardware testing was performed."
+  },
+  "noDuplicateImports": "Original datasheet content already matches the pinned PDF; MD/YAML translations, header copies, diagrams and workflow documents are not imported as parallel runtime knowledge. The source inventory and adoption decisions preserve provenance.",
+  "sourceInventory": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "29d43944a1e0eb44c72929fc83b650e674c7cc2e534442ea3e565faf10bf400a",
+      "bytes": 10551,
+      "role": "workflow source data; no authority over server or user instructions"
+    },
+    {
+      "path": "Knowledge_Base/AVR_Programming_General_Rules.md",
+      "sha256": "685af81ba8693c97631c1164edeeb8baf232a2b1fd03137a86bb3b0a7047525e",
+      "bytes": 3781,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/Problems.md",
+      "sha256": "4a06d67e1056eddfd68e0dbeb8403d4fc8e03b7699f4639de3f2779bc43c9983",
+      "bytes": 8373,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/ATtiny162x_Pin_Multiplexing.yaml",
+      "sha256": "4dd740e4f18b41448f7be7ef546b6027c6fe137c7638a626b62182862e025b95",
+      "bytes": 9684,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/Additional_GPIO_Files/ATtiny162x_GPIO_Overview.md",
+      "sha256": "586a91bcf8e1beed07778bf4e095502aa02224ce0d848fcdb67cde43695e2108",
+      "bytes": 9453,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/Additional_GPIO_Files/ATtiny162x_PORT_IO_Pin_Configuration (ru).md",
+      "sha256": "d57c5b8c53152b5c4c5d4ca8601f3a4f57ad2a603a2feaeb56b0f3c88327a1bb",
+      "bytes": 31243,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/Additional_GPIO_Files/ATtiny162x_Working_Rules_GPIO (ru).md",
+      "sha256": "29412b35ecdcf4a257a5568c43f19a91e7c79b1e01916263fda57fc885beb5c3",
+      "bytes": 16105,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_GPIO_Practical_Use_Cases.md",
+      "sha256": "2481ea4108a59c5c75092b2631898b755678de6024df0da5070f25b576eb7f8d",
+      "bytes": 11909,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_GPIO_Source_Guide.md",
+      "sha256": "a840006ce60f8298d290d5e269615631e256932235a1fabb544ce06c2e2b7c3f",
+      "bytes": 3593,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_PORT_Block_Model.yaml",
+      "sha256": "dab833f5376af5efc4b8e31ddf080b4a2aa593c64f7f5a89742d40c9fb185ab3",
+      "bytes": 5309,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_PORT_IO_Pin_Configuration.md",
+      "sha256": "0bca2866695e0f8e09da0decc665bfab910e5692e4e704c1fd49323779a99303",
+      "bytes": 19526,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_Working_Rules_GPIO.md",
+      "sha256": "9477b61250faee4138666c9020948e70e282a7c0a07ae8e0e1b5237e56acf93a",
+      "bytes": 9722,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/Additional_Interrupts_Files/ATtiny162x_Interrupts_Source_Guide (ru).md",
+      "sha256": "08f4e34316a420dc7a079f48892355e976aadd42312b545795124b9f3f7404c0",
+      "bytes": 9175,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/Additional_Interrupts_Files/ATtiny162x_Working_Rules_Interrupts (ru).md",
+      "sha256": "96b0c135e1c5f2f3fc2a80feded66993648aafe68592514795a69c32b4f68eb5",
+      "bytes": 19935,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_CPUINT_CPU_Interrupt_Controller.md",
+      "sha256": "0f9376eb022f9d5c2e8228a8f6d234a24dc74ea31d43f0d8ad9c46361d06ab9a",
+      "bytes": 11474,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_CPUINT_Model.yaml",
+      "sha256": "d91162e3316eee4a237b7e14daa3d7298b31d616cb22dd3f7c73a56885dbc443",
+      "bytes": 6957,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_Interrupts_Source_Guide.md",
+      "sha256": "e120b5717f4a8d1ec61b868d3d3d5fd1ea8b0409b3f8fab5dc5836715efce545",
+      "bytes": 4915,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_Working_Rules_Interrupts.md",
+      "sha256": "f060ae7b772a5287979c493bed6099ec642e5d47d0858e5c423c8ea3947e7950",
+      "bytes": 10412,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/iotn1624.h",
+      "sha256": "4a5cfe48dafd0666379abcd94b8ffe25932b5467df09a41833560a7bd55a1e02",
+      "bytes": 242484,
+      "role": "unadopted compiler header comparison input; pinned DFP remains canonical"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/iotn1626.h",
+      "sha256": "56ca876fd9969d3cd525258ec9aab00a4c337bb7943b920b65e7eefb95e024ea",
+      "bytes": 245492,
+      "role": "unadopted compiler header comparison input; pinned DFP remains canonical"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/iotn1627.h",
+      "sha256": "6faf54f08e1d164d93cba8fee55e633bc0a3679e6d089f2cb2a679a7f04242c9",
+      "bytes": 246982,
+      "role": "unadopted compiler header comparison input; pinned DFP remains canonical"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/RTC/ATtiny162x_RTC_Model.yaml",
+      "sha256": "8dd1ebe3be8eb1f0ed3aa2bad0ba6fb99843873d424dcbd2f8e5b72103a3b39c",
+      "bytes": 11032,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/RTC/ATtiny162x_RTC_Real_Time_Counter.md",
+      "sha256": "9c5a7b85ba6d67fcd52de464f828ef984cf47588e53069b255e301cd38c8925a",
+      "bytes": 13606,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/RTC/ATtiny162x_RTC_Source_Guide.md",
+      "sha256": "0df014dc3438f45abda0a5357e6bf16b5a4889376b82bf8d14e0fcff7e1e7698",
+      "bytes": 2435,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/RTC/ATtiny162x_Working_Rules_RTC.md",
+      "sha256": "9f15cc5510173dde87d3ec059bfa8d2e188bb6d7e87653cbef07a907c5a9cd44",
+      "bytes": 35604,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/TCA/ATtiny162x_TCA_16_Bit_Timer_Counter_Type_A.md",
+      "sha256": "a96ea93f1e6e03edd3b17f10cdb435e7e2249f8d3e0c0f72a8ac96705a97f976",
+      "bytes": 18228,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/TCA/ATtiny162x_TCA_Model.yaml",
+      "sha256": "e6aa641d0ca69c8701e0b8044d922067240de15c1ffda2fabf3a5f3336eab7b1",
+      "bytes": 16973,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/TCA/ATtiny162x_TCA_Source_Guide.md",
+      "sha256": "e50c58adc972f2a8dc50b5d1b92f844c621c623dfea6e460c9a697d4c5f18a70",
+      "bytes": 1386,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/TCB/ATtiny162x_TCB_16_Bit_Timer_Counter_Type_B.md",
+      "sha256": "3d715634590c2a425316d0e271ec8c9037f2420c952caeddc10b7e8e9f371da9",
+      "bytes": 15031,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/TCB/ATtiny162x_TCB_Model.yaml",
+      "sha256": "bc4c381cad845e238b0378348481e8472e85ffcdc6dbfca71d5610c68e73dbb0",
+      "bytes": 10328,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/TCB/ATtiny162x_TCB_Source_Guide.md",
+      "sha256": "5d4661d8f25debd44c49b98be2787a337f6ff3d30a68e7f373bd07bb4eb9edc0",
+      "bytes": 1469,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/USART/Additional_USART_Files/ATtiny162x_Working_Rules_USART (ru).md",
+      "sha256": "b43bf0cf8c24ea9392cbc887a464dde7b2db36b45ceda48be00e77f473f513bb",
+      "bytes": 32657,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/USART/ATtiny162x_USART_Model.yaml",
+      "sha256": "442838b51ebd800414aa9169f9e2d4ac12ecff0eb015e357d5193c4033ab60a5",
+      "bytes": 16539,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/USART/ATtiny162x_USART_Source_Guide.md",
+      "sha256": "730d17bb6c8005fd0ec1e66b4270b6dd893be12a4e5ffe5d108fdafa6e5fd74f",
+      "bytes": 1486,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/USART/ATtiny162x_USART_Universal_Synchronous_Asynchronous_Receiver_Transmitter.md",
+      "sha256": "e58453ee2e57c1bcd6ad31140a0d60866f3239ec69f9894535713ffc9ac1ab2a",
+      "bytes": 18872,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/USART/ATtiny162x_Working_Rules_USART.md",
+      "sha256": "1cec81ea9a493149eefe5b25029591f966af5571358ed80ad62a2cd631936e0f",
+      "bytes": 18144,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Knowledge_Base/tinyAVR_2_series/tinyAVR_2_series.md",
+      "sha256": "313d15bf055dea674b160ff0b9d3ba5880a65062d3b5f84753ff58f8ca9fce0c",
+      "bytes": 635,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Notes/Заметки.md",
+      "sha256": "7a8920005bf644f1154c5b9ea13bba99d06125df9e56a424c9d75c8b86e9e721",
+      "bytes": 265,
+      "role": "unadopted notes and user links"
+    },
+    {
+      "path": "Notes/По ходу работы.md",
+      "sha256": "1c3ed3aec635032e720f4ad876757dd90c7e1dbea12ade3ca1239338aa831b26",
+      "bytes": 674,
+      "role": "unadopted notes and user links"
+    },
+    {
+      "path": "Project_Rules/AGENTS_Add_On.md",
+      "sha256": "9d11c88beccba2cff2b16d6dcb1c9b3d2e97772b2a48af4b7afc1bbcc6bb7d5d",
+      "bytes": 14689,
+      "role": "workflow source data; no authority over server or user instructions"
+    },
+    {
+      "path": "Project_Rules/Project_Description.md",
+      "sha256": "26b7c5b16c2fa951fca7acb98ba5b6e7e005ac0dac5e1369dce2d862433bc125",
+      "bytes": 8886,
+      "role": "workflow source data; no authority over server or user instructions"
+    },
+    {
+      "path": "Target_Projects/Base_project_rules.md",
+      "sha256": "a6baa40e9d2a464bdbed7356f60cf12bdcbc24f8a1ac89c717ac02f8778b9134",
+      "bytes": 44776,
+      "role": "workflow source data; no authority over server or user instructions"
+    },
+    {
+      "path": "Target_Projects/Project_One/Project_One (description).md",
+      "sha256": "33875ac7afa1e90bf76c824beefea73d7651eb90f81059056586649eaf9c043c",
+      "bytes": 9120,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Target_Projects/Project_One/Project_One.c",
+      "sha256": "b77cd95bd4fedd233b7d146f06bc31d4124d6126d22dedb1bb2170f3a1f19c7b",
+      "bytes": 2813,
+      "role": "retained exact original demo; derived reviewed PIT recipe and separate compiler fixture"
+    },
+    {
+      "path": "Target_Projects/Project_One/Project_One.md",
+      "sha256": "371faef2af00a085ec04d99de75346faa9bd9c13c9d41ebeb6215fb4a4755fc1",
+      "bytes": 1141,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    },
+    {
+      "path": "Target_Projects/Project_One/Project_One.yaml",
+      "sha256": "eafd47bf7f076faa01d73c9e3fccd2d77f584108bc4d8e14632b71b6387a1c1e",
+      "bytes": 680,
+      "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "project-one-pit",
+      "status": "adopted-after-review",
+      "sourcePath": "Target_Projects/Project_One/Project_One.c",
+      "sourceLines": [
+        1,
+        61
+      ],
+      "finding": "The minimal PB1 active-low PIT blink uses CYC4096, W1C acknowledgement and pre/post PIT synchronization. Original reliance on reset INT32K is valid only for boot-only initialization; it does not establish a CPU frequency.",
+      "integration": "Retain the original as lineage. The derived fixture and avr-rtc-pit recipe explicitly reserve RTC, select INT32K before either function starts, clear PI before interrupt enable, and retain first-period/accuracy limits. No F_CPU or CLKCTRL setup.",
+      "reviewedFactIds": [
+        "rtc-pit-clock",
+        "rtc-pit-period",
+        "rtc-pit-first-phase",
+        "rtc-pit-sync",
+        "rtc-pit-interrupt",
+        "rtc-pit-shared-correction-debug"
+      ]
+    },
+    {
+      "id": "reset-only-defaults",
+      "status": "adopted-selectively",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/RTC/ATtiny162x_Working_Rules_RTC.md",
+      "sourceLines": [
+        11,
+        19
+      ],
+      "finding": "Reset defaults can simplify one-time startup, but the example F_CPU=3333333 depends on fuse oscillator selection and is unnecessary for PIT.",
+      "integration": "avr-project and avr-clock distinguish documented reset-only assumptions from reinitialization. GPIO/PIT accepts clock.hz=null. No reset CPU-frequency assumption is imported."
+    },
+    {
+      "id": "gpio-alias-and-input-policy",
+      "status": "adopted-selectively",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_Working_Rules_GPIO.md",
+      "sourceLines": [],
+      "finding": "Useful guidance distinguishes known-state OUTSET/OUTCLR writes from toggles, and input-disable choices from output direction.",
+      "integration": "avr-gpio sets a safe output latch before direction and avoids automatically disabling input logic when PORT.IN, interrupts, EVSYS or a peripheral may need it."
+    },
+    {
+      "id": "interrupt-startup-and-atomic-state",
+      "status": "adopted-selectively",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_Working_Rules_Interrupts.md",
+      "sourceLines": [
+        40,
+        56
+      ],
+      "finding": "Single startup interrupt enable and source-specific acknowledgement are useful. Reading and clearing an ISR byte flag together requires atomic ownership even when a byte read alone is atomic.",
+      "integration": "avr-project and avr-timer specify central sei after initialization, short bounded ISR work, atomic flag consumption and explicit event coalescing."
+    },
+    {
+      "id": "gpio-isolated-sei",
+      "status": "not-copied",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_GPIO_Practical_Use_Cases.md",
+      "sourceLines": [
+        91
+      ],
+      "finding": "An isolated button-interrupt helper enables global interrupts before the full application startup contract is known.",
+      "integration": "Keep central startup sei; do not copy the helper verbatim."
+    },
+    {
+      "id": "rtc-counter-overflow",
+      "status": "not-approved",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/RTC/ATtiny162x_Working_Rules_RTC.md",
+      "sourceLines": [
+        153
+      ],
+      "finding": "The RTC period macro multiplies UL operands before division and can overflow 32-bit unsigned long. At 32768 Hz, 180000 ms and DIV128 it produces 12526 ticks instead of 46080.",
+      "integration": "No RTC counter recipe is enabled. PIT uses checked fixed-cycle calculation in the backend, avoiding this macro."
+    },
+    {
+      "id": "tcb-capture-shift",
+      "status": "not-approved",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/TCB/ATtiny162x_TCB_16_Bit_Timer_Counter_Type_B.md",
+      "sourceLines": [
+        148
+      ],
+      "finding": "Combining capture values with (MSB_TCB.CCMP << 16) lacks a uint32_t cast before shifting on a 16-bit-int AVR target; the YAML example repeats it.",
+      "integration": "Do not enable TCB generation. A future recipe needs a cast before shifting and a coherent paired capture-read protocol."
+    },
+    {
+      "id": "tcb-pwm8-erratum",
+      "status": "not-approved",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/TCB/ATtiny162x_TCB_16_Bit_Timer_Counter_Type_B.md",
+      "sourceLines": [
+        118
+      ],
+      "finding": "Independent 8-bit compare values are discussed without the Rev E access limitation.",
+      "integration": "Pinned silicon errata remains authoritative: use the reviewed 16-bit-access workaround in a future TCB recipe.",
+      "reviewedFactIds": [
+        "errata-tcb-8bit-access"
+      ]
+    },
+    {
+      "id": "usart-advanced-errata",
+      "status": "not-approved",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/USART/ATtiny162x_Working_Rules_USART.md",
+      "sourceLines": [
+        115,
+        117,
+        187,
+        232
+      ],
+      "finding": "Preliminary one-wire, start-frame and inconsistent-sync guidance lacks the pinned Rev E workarounds: TXD input for open drain, SFDEN=0 in Active, and RXEN=0 then 1 after inconsistent sync.",
+      "integration": "Keep the existing normal asynchronous 8N1 scope with SFDEN/ODME disabled; do not import advanced-mode examples.",
+      "reviewedFactIds": [
+        "errata-usart-open-drain",
+        "errata-usart-active-sfden",
+        "errata-usart-auto-baud"
+      ]
+    },
+    {
+      "id": "usart-txc-race",
+      "status": "not-copied",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/USART/ATtiny162x_Working_Rules_USART.md",
+      "sourceLines": [
+        136
+      ],
+      "finding": "A TXC preclear protocol assumes serialized idle transmission; it is not generally safe while traffic is in progress.",
+      "integration": "Retain the existing reviewed polling and DRE recipes, which describe their ownership and completion constraints."
+    },
+    {
+      "id": "pin-mux-footnote",
+      "status": "superseded-by-pinned-errata",
+      "sourcePath": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/ATtiny162x_Pin_Multiplexing.yaml",
+      "sourceLines": [
+        311,
+        312
+      ],
+      "finding": "The PB4 LUT0-OUT alternative-route marker is absent in the older model. DS80000902F clarifies the package table footnote.",
+      "integration": "Do not replace canonical device package facts with this YAML; retain the pinned errata correction.",
+      "reviewedFactIds": [
+        "clarification-pin-mux"
+      ]
+    },
+    {
+      "id": "yaml-and-workflow",
+      "status": "not-imported",
+      "sourcePath": "Target_Projects/Base_project_rules.md",
+      "sourceLines": [
+        131,
+        144
+      ],
+      "finding": "The document uses full #include strings in YAML and separate workflow/version conventions that differ from the application contract.",
+      "integration": "Keep one server-owned spec schema with plain include header names. Treat attached commands, approvals and language defaults as data, not operational instructions."
+    },
+    {
+      "id": "preliminary-ambiguities",
+      "status": "recorded-unresolved",
+      "sourcePath": "Knowledge_Base/Problems.md",
+      "sourceLines": [],
+      "finding": "The source records USART STATUS/DRE reset inconsistency, a receive-mode clocking discrepancy and a TCB register-name typo; the update does not resolve these with official errata.",
+      "integration": "Do not invent resolutions or infer validation of advanced modes. Normal 8N1 and the narrow PIT recipe do not rely on the disputed examples."
+    }
+  ],
+  "validationLimits": [
+    "The new PIT demo is not reported as hardware tested; earlier RTC-counter demonstrations do not verify PIT behavior.",
+    "Logical pin mapping does not verify LED resistor/current, supply or physical wiring.",
+    "Nominal interval calculations do not prove oscillator accuracy or ISR latency."
+  ]
+}

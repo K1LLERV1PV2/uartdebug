@@ -1,6 +1,6 @@
 # Local AVR knowledge
 
-The active bundle is `attiny162x/1.1.0`, for **ATtiny1624, ATtiny1626 and ATtiny1627**. It is prepared during maintenance and loaded locally by the server. A request never downloads or reprocesses the full documentation. Prepared context and retrieved excerpts still consume API input tokens.
+The active bundle is `attiny162x/1.2.0`, for **ATtiny1624, ATtiny1626 and ATtiny1627**. It is prepared during maintenance and loaded locally by the server. A request never downloads or reprocesses the full documentation. Prepared context and retrieved excerpts still consume API input tokens.
 
 ## Sources and evidence
 
@@ -9,11 +9,13 @@ The active bundle is `attiny162x/1.1.0`, for **ATtiny1624, ATtiny1626 and ATtiny
 - `reference/dfp-registers.json` preserves all ATDF register, bitfield and value-group attributes for the three pilot MCUs. It includes archive/member hashes. DFP reset values and fields do not override silicon errata. The full pack also retains the original XC8 headers.
 - `reference/reviewed-facts.json` separately records reviewed errata and recipe-critical tables, formulas, constraints and diagrams, with exact source pages and applicability. These entries are used in recipes and returned alongside matching local pages.
 - `devices.json` is the smaller deterministic generation subset: physical package maps, memory, UART routing and selected C symbols. Internal DFP names `DIP14/DIP20/QFP20/QFP24` are preserved alongside marketed package names.
-- Seven `recipes/*/SKILL.md` files adapt the original ten tutorials. The tutorials remain the canonical examples; their C/integration-guidance hashes are recorded as lineage. The old partial HTML digests have been removed from this bundle.
+- Eight `recipes/*/SKILL.md` files adapt the original ten tutorials and the reviewed colleague update. `reference/colleague-review.json` records adoption decisions and hashes; the original `Project_One.c` remains reference data. Unreviewed helper code and conflicting pin metadata are not promoted into generation instructions.
 
-Approved generation remains OSC20M/prescaler, GPIO, TCA0 SINGLE normal overflow, UART normal 8N1 polling, stdio redirection and bounded DRE TX. Complete reference access does not approve ADC/SPI/TWI/PWM, sleep, fuse changes or advanced USART generation. Other AVR families require additional bundles and validation.
+Approved generation includes OSC20M/prescaler, GPIO, TCA0 SINGLE normal overflow, boot-only INT32K RTC/PIT, UART normal 8N1 polling, stdio redirection and bounded DRE TX. Complete reference access does not approve RTC counter modes, ADC/SPI/TWI/PWM, sleep, fuse changes or advanced USART generation. Other AVR families require additional bundles and validation.
 
 `compiler-evidence.json` records a real XC8 service build of the exact composed fixture for all three MCUs. It exercises the seven recipes together, but does not certify arbitrary generated firmware or hardware behavior. Each generated project still goes through its own compile. Legacy hardware claims remain scoped to the original ATtiny1624/SOIC-14 demonstrations. Board supply, temperature, wiring and oscillator/fuse configuration must be established before claiming electrical correctness.
+
+`compiler-evidence-rtc-pit.json` records the separate 125 ms PIT fixture on all three targets. It preserves the CPU clock, initializes an active-low PB1 LED off, and uses explicit INT32K selection, PIT synchronization and W1C flag handling. Its first interval is phase-dependent; nominal timing and successful compilation are not hardware timing evidence. The reviewed PDF facts record these limits.
 
 ## Runtime
 
@@ -54,8 +56,9 @@ Run the compiler regression explicitly against the private XC8 service:
 
 ```powershell
 node scripts/avr-knowledge/compile-fixtures.js
+node scripts/avr-knowledge/compile-fixtures.js scripts/avr-knowledge/fixtures http://127.0.0.1:8082/api/avr/compile rtc-pit-blink.c
 ```
 
-Review target identity, diagnostics and source hash before replacing compiler evidence. The production compiler is **XC8 3.10 with DFP 3.3.272**, while reference sources use **DFP 3.4.278**. The selected shared symbols were compared and match (95 on ATtiny1624, 96 on 1626/1627); newer `_gv` aliases are excluded from generation context. This is not full-header or ABI equivalence. Repeat `compare-installed.py` after any compiler/pack change, using copied installed headers and the pinned source archive.
+Review target identity, diagnostics and source hash before replacing compiler evidence. The production compiler is **XC8 3.10 with DFP 3.3.272**, while reference sources use **DFP 3.4.278**. The selected shared symbols were compared and match (115 on ATtiny1624, 116 on 1626/1627); newer `_gv` aliases are excluded from generation context. This is not full-header or ABI equivalence. Repeat `compare-installed.py` after any compiler/pack change, using copied installed headers and the pinned source archive.
 
 The manifest builder pins originals, generated data, reviewed facts, recipes and tutorial lineage; it also checks that compiler evidence still matches the exact fixture. CI checks integrity and reproduces the selected DFP subset. Full PDF regeneration is a separate maintenance check and requires no website access.

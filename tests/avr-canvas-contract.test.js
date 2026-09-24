@@ -48,6 +48,8 @@ function resource(overrides = {}) {
     baud: null,
     periodUs: null,
     prescaler: null,
+    clockSource: null,
+    periodCycles: null,
     description: "Светодиод",
     ...overrides,
   };
@@ -382,7 +384,7 @@ test("YAML serialization is canonical and quotes multiline, tag and key-like use
   assert.ok(yaml.includes('resources:\n  -\n    id: "led"\n'));
   assert.doesNotMatch(
     yaml,
-    /\b(?:baud|instance|route|txPin|rxPin|periodUs|prescaler): null/,
+    /\b(?:baud|instance|route|txPin|rxPin|periodUs|prescaler|clockSource|periodCycles): null/,
   );
   assert.ok(yaml.endsWith("\n"));
   const reverse = Object.fromEntries(Object.entries(specification).reverse());
@@ -393,7 +395,8 @@ test("resource schema constrains each peripheral to its applicable fields", () =
   const gpio = resource();
   const uart = resource({ id: "serial", kind: "uart", pin: null, direction: null, instance: "USART0", route: "ALT1", txPin: "PA1", baud: 9600 });
   const timer = resource({ id: "tick", kind: "timer", pin: null, direction: null, instance: "TCA0", periodUs: 1000000, prescaler: 256 });
-  for (const entry of [gpio, uart, timer, { ...timer, pin: "PB1" }]) {
+  const pit = resource({ id: "tick", kind: "rtc-pit", pin: null, direction: null, instance: "RTC", clockSource: "INT32K", periodCycles: 4096, periodUs: 125000 });
+  for (const entry of [gpio, uart, timer, { ...timer, pin: "PB1" }, pit, { ...pit, periodUs: null }]) {
     const output = generation();
     output.project.spec.resources = [entry];
     assert.equal(validateCanvasOutput(output, { canvas: canvas() }).project.spec.resources[0].kind, entry.kind);
@@ -407,12 +410,31 @@ test("resource schema constrains each peripheral to its applicable fields", () =
     { ...uart, pin: "PA1" },
     { ...uart, route: "ALTERNATE" },
     { ...uart, periodUs: 1000 },
+    { ...pit, pin: "PB1" },
+    { ...pit, prescaler: 128 },
+    { ...pit, instance: "RTC0" },
+    { ...pit, clockSource: "INT1K" },
+    { ...pit, periodCycles: 3 },
+    { ...gpio, periodCycles: 4096 },
   ]) {
     const output = generation();
     output.project.spec.resources = [entry];
     assert.throws(() => validateCanvasOutput(output, { canvas: canvas() }), (error) => error instanceof CanvasContractError && error.status === 502);
     assert.throws(() => serializeProjectSpec(output.project.spec), CanvasContractError);
   }
+});
+
+test("RTC PIT YAML preserves an explicit unchanged CPU clock and fixed-cycle timing", () => {
+  const output = generation();
+  output.project.spec.clock.hz = null;
+  output.project.spec.resources = [resource({ pin: "PB1" }), resource({ id: "tick", kind: "rtc-pit", pin: null, direction: null, instance: "RTC", clockSource: "INT32K", periodCycles: 4096, periodUs: 125000 })];
+  const result = validateCanvasOutput(output, { canvas: canvas() });
+  const yaml = serializeProjectSpec(result.project.spec);
+  assert.match(yaml, /clock:\n  hz: null\n/);
+  assert.match(yaml, /kind: "rtc-pit"\n    instance: "RTC"\n    periodUs: 125000\n    clockSource: "INT32K"\n    periodCycles: 4096\n/);
+  assert.doesNotMatch(yaml, /(?:prescaler|route|baud|txPin|rxPin):/);
+  delete output.project.spec.clock.hz;
+  assert.throws(() => validateCanvasOutput(output, { canvas: canvas() }), CanvasContractError);
 });
 
 test("YAML serialization selects the peripheral variant before canonical ordering", () => {

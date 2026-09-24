@@ -28,6 +28,7 @@ required=(
   "${stage}/ai-server.js"
   "${stage}/ai-access-service.js"
   "${stage}/avr-ai-service.js"
+  "${stage}/avr-ai-limits.js"
   "${stage}/avr-ai-runtime.js"
   "${stage}/avr-canvas-contract.js"
   "${stage}/avr-documentation-lookup.js"
@@ -170,6 +171,7 @@ if [ "${stage}" != "${backend_dir}" ]; then
     "${backend_dir}/ai-access-service.js"
   install -o deploy -g deploy -m 0644 \
     "${stage}/avr-ai-service.js" \
+    "${stage}/avr-ai-limits.js" \
     "${stage}/avr-ai-runtime.js" \
     "${stage}/avr-canvas-contract.js" \
     "${stage}/avr-documentation-lookup.js" \

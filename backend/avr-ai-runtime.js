@@ -3,6 +3,7 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { MAX_COMPILE_REPAIR_ATTEMPTS } = require("./avr-ai-limits");
 const {
   AVR_COMPILE_FAILURE_STAGES,
   AVR_COMPILE_HEALTH_SERVICE,
@@ -19,7 +20,7 @@ const DEFAULT_MIN_METERED_OUTPUT_TOKENS = 8000;
 const DEFAULT_COMPILE_URL = "http://127.0.0.1:8082/api/avr/compile";
 const DEFAULT_COMPILE_TIMEOUT_MS = 65000;
 const DEFAULT_COMPILE_HEALTH_TIMEOUT_MS = 5000;
-const DEFAULT_COMPILE_REPAIR_ATTEMPTS = 2;
+const DEFAULT_COMPILE_REPAIR_ATTEMPTS = MAX_COMPILE_REPAIR_ATTEMPTS;
 const MAX_COMPILE_DIAGNOSTIC_LENGTH = 24 * 1024;
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const OPENAI_INPUT_TOKENS_URL =
@@ -125,7 +126,7 @@ function getRuntimeConfig(environment = process.env) {
     compileRepairAttempts: readInteger(
       environment.AI_COMPILE_MAX_REPAIR_ATTEMPTS,
       0,
-      2,
+      MAX_COMPILE_REPAIR_ATTEMPTS,
       DEFAULT_COMPILE_REPAIR_ATTEMPTS,
     ),
   };

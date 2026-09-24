@@ -4,9 +4,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-const KNOWLEDGE_DIR = path.join(__dirname, "ai/knowledge/attiny162x/1.1.0");
+const KNOWLEDGE_DIR = path.join(__dirname, "ai/knowledge/attiny162x/1.2.0");
 const TIMER_DIVISORS = Object.freeze([1, 2, 4, 8, 16, 64, 256, 1024]);
 const CLOCK_DIVISORS = Object.freeze([1, 2, 4, 6, 8, 10, 12, 16, 24, 32, 48, 64]);
+const RTC_PIT_PERIOD_CYCLES = Object.freeze([4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]);
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const object = (value) => !!value && typeof value === "object" && !Array.isArray(value);
 const integer = (value) => Number.isSafeInteger(value) && value > 0;
@@ -118,6 +119,17 @@ function calculateUsartBaud({ clockHz, baud, samples = 16 } = {}) {
   return { value: Number(value), samples, modeSymbol: samples === 16 ? "USART_RXMODE_NORMAL_gc" : "USART_RXMODE_CLK2X_gc", actualBaud, errorPercent: (actualBaud - baud) / baud * 100 };
 }
 
+function calculateRtcPitPeriod({ periodCycles, clockSource = "INT32K" } = {}) {
+  if (clockSource !== "INT32K" || !RTC_PIT_PERIOD_CYCLES.includes(periodCycles)) {
+    throw new RangeError("RTC PIT requires INT32K and a power-of-two cycle period from 4 through 32768");
+  }
+  return {
+    clockSource, sourceHz: 32768, periodCycles,
+    periodSymbol: `RTC_PERIOD_CYC${periodCycles}_gc`,
+    nominalPeriodUs: periodCycles * 1000000 / 32768,
+  };
+}
+
 function validateProjectSpec(spec) {
   const errors = [], warnings = [];
   const add = (code, field, message) => errors.push({ code, path: field, message });
@@ -135,7 +147,10 @@ function validateProjectSpec(spec) {
   else if (device && !device.packages.includes(packageName)) add("unsupported_package", "microcontroller.package", `Package ${packageName} is not supported for ${mcu}`);
   const pinout = device?.pinouts[packageName]?.pins;
   const hz = normalized.clock.hz;
-  if (!integer(hz)) add("invalid_clock", "clock.hz", "Specify a positive integer actual peripheral/CPU frequency in Hz");
+  if (hz === null) {
+    // Explicit null means the code leaves CPU clock configuration alone. It is
+    // not a guessed reset frequency and cannot support CPU-dependent timing.
+  } else if (!integer(hz)) add("invalid_clock", "clock.hz", "Specify a positive integer actual CPU/peripheral frequency, or null for a clock-independent GPIO/RTC PIT project");
   else if (hz > 20000000) add("clock_out_of_range", "clock.hz", "ATtiny162x clock exceeds 20 MHz");
   else {
     const divider = CLOCK_DIVISORS.find((div) => Math.round(20000000 / div) === hz);
@@ -159,13 +174,13 @@ function validateProjectSpec(spec) {
     const field = `resources[${index}]`;
     if (!object(input)) { add("invalid_resource", field, "Resource must be an object"); continue; }
     const r = { ...input };
-    for (const key of ["pin", "instance", "route", "txPin", "rxPin"]) if (present(r[key])) r[key] = upper(r[key]);
+    for (const key of ["pin", "instance", "route", "txPin", "rxPin", "clockSource"]) if (present(r[key])) r[key] = upper(r[key]);
     normalized.resources.push(r);
     if (typeof r.id !== "string" || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(r.id)) add("invalid_resource_id", `${field}.id`, "Resource id must be a stable ASCII identifier of up to 64 characters");
     else if (ids.has(r.id)) add("duplicate_resource_id", `${field}.id`, `Duplicate resource id ${r.id}`);
     ids.add(r.id);
-    const allowedFields = { gpio: ["pin", "direction"], uart: ["instance", "route", "txPin", "rxPin", "baud"], timer: ["pin", "instance", "periodUs", "prescaler"] }[r.kind];
-    if (allowedFields) for (const key of ["pin", "direction", "instance", "route", "txPin", "rxPin", "baud", "periodUs", "prescaler"]) {
+    const allowedFields = { gpio: ["pin", "direction"], uart: ["instance", "route", "txPin", "rxPin", "baud"], timer: ["pin", "instance", "periodUs", "prescaler"], "rtc-pit": ["instance", "clockSource", "periodCycles", "periodUs"] }[r.kind];
+    if (allowedFields) for (const key of ["pin", "direction", "instance", "route", "txPin", "rxPin", "baud", "periodUs", "prescaler", "clockSource", "periodCycles"]) {
       if (present(r[key]) && !allowedFields.includes(key)) add("unsupported_resource_field", `${field}.${key}`, `${key} does not apply to the covered ${r.kind} mode`);
     }
     if (r.kind === "gpio") {
@@ -196,12 +211,24 @@ function validateProjectSpec(spec) {
       if (present(r.pin)) claimPin(r.pin, `${field}.pin`, r.id);
       try { calculateTimerPeriod({ clockHz: hz, periodUs: r.periodUs, prescaler: r.prescaler }); }
       catch (error) { add("invalid_timer_period", field, error.message); }
-    } else add("unsupported_resource_kind", `${field}.kind`, "Only gpio, uart and timer resources are covered by this bundle");
+    } else if (r.kind === "rtc-pit") {
+      if (r.instance !== "RTC") add("unsupported_rtc_instance", `${field}.instance`, "RTC PIT uses the shared RTC peripheral");
+      else claimInstance(r.instance, `${field}.instance`, r.id);
+      if (r.clockSource !== "INT32K") add("unsupported_rtc_clock", `${field}.clockSource`, "Only the internal nominal 32768 Hz RTC source is covered");
+      try {
+        const result = calculateRtcPitPeriod({ periodCycles: r.periodCycles, clockSource: r.clockSource });
+        if (present(r.periodUs) && (!integer(r.periodUs) || r.periodUs !== Math.round(result.nominalPeriodUs)))
+          add("rtc_period_mismatch", `${field}.periodUs`, "PIT periodUs must be null or the nominal fixed-cycle interval rounded to the nearest microsecond");
+      } catch (error) { add("invalid_rtc_pit_period", `${field}.periodCycles`, error.message); }
+    } else add("unsupported_resource_kind", `${field}.kind`, "Only gpio, uart, timer and boot-only rtc-pit resources are covered by this bundle");
   }
   if (present(spec.includes)) {
     if (!Array.isArray(spec.includes) || spec.includes.some((item) => !normalizeInclude(item))) add("invalid_includes", "includes", "Includes must be plain header names, for example xc.h or avr/interrupt.h");
     else normalized.includes = [...new Set(spec.includes.map(normalizeInclude))];
   }
+  if (hz === null && (normalized.resources.some((r) => !["gpio", "rtc-pit"].includes(r.kind)) ||
+      (Array.isArray(normalized.includes) && normalized.includes.some((header) => ["util/delay.h", "util/delay_basic.h"].includes(header)))))
+    add("cpu_clock_required", "clock.hz", "UART, TCA and CPU-dependent delays require an explicit supported CPU/peripheral clock; null only supports GPIO and RTC PIT");
   warn("electrical_limits_not_validated", "microcontroller", "Logical resource checks do not verify supply voltage, current, board wiring or oscillator accuracy");
   warn("verification_not_hardware", "", "Resource validation is not compilation or hardware testing; preserve actual compiler evidence separately");
   return { valid: errors.length === 0, errors, warnings, normalized };
@@ -221,18 +248,22 @@ function resolveKnowledge({ mcu, packageName, requirements, recipeIds } = {}) {
   if (spec && present(mcu) && present(spec.microcontroller?.model) && normalizeMcu(spec.microcontroller.model) !== normalizedMcu) unsupported.push("Selected MCU conflicts with the structured specification");
   if (spec && present(packageName) && present(spec.microcontroller?.package) && normalizePackage(spec.microcontroller.package) !== normalizedPackage) unsupported.push("Selected package conflicts with the structured specification");
   const selected = new Set(["avr-project", "avr-clock"]);
-  // The pilot is small enough to load every recipe. Selection must not depend on
-  // guessing the language of the user's canvas or matching locale-specific words.
-  if (recipeIds === undefined || (Array.isArray(recipeIds) && recipeIds.length === 0)) for (const recipe of knowledge.recipes) selected.add(recipe.id);
+  // Free-text planning gets the small approved catalog without guessing the user's
+  // language. Once a spec exists, its resources determine the implementation scope.
+  if (recipeIds === undefined || (Array.isArray(recipeIds) && recipeIds.length === 0)) {
+    if (!spec) for (const recipe of knowledge.recipes) selected.add(recipe.id);
+  }
   else if (Array.isArray(recipeIds)) for (const id of recipeIds) selected.add(id);
   else unsupported.push("recipeIds must be an array of local recipe identifiers");
   if (spec && Array.isArray(spec.resources)) for (const r of spec.resources) {
     if (r?.kind === "gpio") selected.add("avr-gpio");
     if (r?.kind === "uart") selected.add("avr-uart-polling");
     if (r?.kind === "timer") { selected.add("avr-timer"); selected.add("avr-gpio"); }
+    if (r?.kind === "rtc-pit") selected.add("avr-rtc-pit");
   }
   if (selected.has("avr-printf") || selected.has("avr-uart-tx-interrupt")) selected.add("avr-uart-polling");
   if (selected.has("avr-timer")) selected.add("avr-gpio");
+  if (spec?.clock?.hz === null) selected.delete("avr-clock");
   for (const id of selected) if (!knowledge.recipes.some((recipe) => recipe.id === id)) unsupported.push(`Unknown local recipe: ${String(id).slice(0, 80)}`);
   const recipes = knowledge.recipes.filter((recipe) => selected.has(recipe.id));
   const sourceIds = new Set(["microchip-attiny-dfp-3.4.278", "datasheet-ds40002234b", "errata-ds80000902f"]);
@@ -264,13 +295,13 @@ function resolveKnowledge({ mcu, packageName, requirements, recipeIds } = {}) {
     `Local reference catalog (one-based PDF pages; use read_avr_documentation catalog/search/read): ${JSON.stringify(knowledge.referenceCatalog)}`,
     `Reviewed errata from the pinned PDF revision: ${JSON.stringify(knowledge.reviewedFacts.facts.filter((fact) => fact.kind === "erratum"))}`,
     `Local DFP register modules for the selected MCU (read_avr_documentation registers; query exact register/field names): ${JSON.stringify(knowledge.dfpRegisters.devices.find((entry) => entry.mcu === normalizedMcu)?.modules.map((module) => ({ name: module.name, caption: module.caption })) || [])}`,
-    "All PDF pages are available locally as machine-extracted reference text. A search hit does not prove the required fact is covered; inspect relevant pages, tables and separately reviewed facts. Read the applicable errata before using a peripheral. Full reference availability does not expand generation beyond the reviewed gpio, uart and timer modes. Other modes require reviewed recipes and validator support, not merely a register definition or internet lookup.",
+    "All PDF pages are available locally as machine-extracted reference text. A search hit does not prove the required fact is covered; inspect relevant pages, tables and separately reviewed facts. Read the applicable errata before using a peripheral. Full reference availability does not expand generation beyond the reviewed gpio, uart, timer and boot-only INT32K RTC PIT modes. Other modes require reviewed recipes and validator support, not merely a register definition or internet lookup. A null spec.clock.hz means leave the CPU clock unchanged without a frequency claim; use it for GPIO/RTC PIT without CPU-dependent timing, and do not add F_CPU or CLKCTRL writes.",
   ];
   if (spec && validation?.valid) {
-    const calculations = validation.normalized.resources.flatMap((r) => r.kind === "timer" ? [{ id: r.id, timer: calculateTimerPeriod({ clockHz: spec.clock.hz, periodUs: r.periodUs, prescaler: r.prescaler }) }] : r.kind === "uart" ? [{ id: r.id, uart: calculateUsartBaud({ clockHz: spec.clock.hz, baud: r.baud }) }] : []);
+    const calculations = validation.normalized.resources.flatMap((r) => r.kind === "timer" ? [{ id: r.id, timer: calculateTimerPeriod({ clockHz: spec.clock.hz, periodUs: r.periodUs, prescaler: r.prescaler }) }] : r.kind === "uart" ? [{ id: r.id, uart: calculateUsartBaud({ clockHz: spec.clock.hz, baud: r.baud }) }] : r.kind === "rtc-pit" ? [{ id: r.id, rtcPit: calculateRtcPitPeriod(r) }] : []);
     parts.push(`Deterministic calculated constants: ${JSON.stringify(calculations)}`);
   }
   return { supported: !!device && !!pinout && missing.length === 0 && unsupported.length === 0, context: parts.join("\n\n"), manifest, missing, unsupported, validation };
 }
 
-module.exports = { loadKnowledge, resolveKnowledge, validateProjectSpec, calculateTimerPeriod, calculateUsartBaud, normalizeMcu, normalizePackage, TIMER_DIVISORS };
+module.exports = { loadKnowledge, resolveKnowledge, validateProjectSpec, calculateTimerPeriod, calculateUsartBaud, calculateRtcPitPeriod, normalizeMcu, normalizePackage, TIMER_DIVISORS, RTC_PIT_PERIOD_CYCLES };

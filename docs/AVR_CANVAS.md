@@ -37,18 +37,25 @@ C/Markdown/YAML project. There is no active chat or selectable `skillRefs` catal
 ## Prepared local knowledge
 
 `backend/ai/canvas-rules.md` describes the workflow and code quality contract.
-`backend/ai/knowledge/attiny162x/1.1.0` retains the complete datasheet PDF,
+`backend/ai/knowledge/attiny162x/1.2.0` retains the complete datasheet PDF,
 silicon errata PDF and DFP archive. It combines a searchable page/section corpus,
 exact DFP register/pin facts, separately reviewed PDF facts and compact recipes
 derived from educational mini-projects 01–10. The runtime verifies SHA-256 hashes
 of all originals and generated files and loads the bundle locally.
 
-The pilot includes all seven short recipes in its context regardless of the
-visitor's language: project structure, clock, GPIO, TCA overflow, UART polling,
-stdio redirection and interrupt transmission. Larger future bundles can use
-explicit recipe selection and declared dependencies. Preparing the bundle is an
+The initial canvas includes eight short recipes regardless of the visitor's
+language: project structure, clock, GPIO, TCA overflow, RTC/PIT, UART polling,
+stdio redirection and interrupt transmission. A structured project selects only
+its resource recipes and dependencies. Preparing the bundle is an
 offline maintenance operation; ordinary requests do not rebuild it or retrain a
 model. Relevant prepared context still consumes API input tokens.
+
+RTC/PIT supports one-time initialization after reset with nominal INT32K and
+power-of-two periods. A GPIO/PIT-only project can declare `clock.hz: null` and
+leave the CPU clock and `F_CPU` unspecified. For example, 4096 RTC cycles give
+125 ms nominal between interrupts; the first interval and oscillator accuracy
+remain documented limitations. Other clock-dependent resources still require
+an explicit supported CPU frequency.
 
 Coverage is ATtiny1624 (SOIC-14/TSSOP-14), ATtiny1626
 (SOIC-20/SSOP-20/VQFN-20) and ATtiny1627 (VQFN-24), with the supported modes

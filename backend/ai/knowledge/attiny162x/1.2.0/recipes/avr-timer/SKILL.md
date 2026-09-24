@@ -11,4 +11,6 @@ Do not apply a smaller PER directly to a running counter: if CNT already exceeds
 
 ISR/main shared flags need volatile; multi-byte state needs a critical section or an ownership protocol. Volatile alone is not atomicity. Preserve the prior interrupt state when leaving a critical section.
 
+A one-byte read and a subsequent clear are separate operations: protect the complete consume-and-clear exchange when an ISR can set the flag between them. A Boolean flag coalesces events; use an explicitly bounded counter or queue only when the application must preserve each occurrence. Do not enable global interrupts inside an isolated peripheral initialization helper before the whole program's ISR state is ready.
+
 Sources: DS40002234B sections 21.3.3.1/3 and 21.5.1/2/11 (pages 197-198, 209-210, 219); DS80000902F section 2.6.1 (page 4). Reviewed facts: tca-normal-period, tca-clock-and-mode, tca-w1c, tca-live-period, errata-tca-restart-direction. Lineage: mini-project 04, whose original default configuration is narrower than this checked recipe. Scope excludes TCA split/PWM/restart commands and TCB; consult the pinned errata for additional modes. The new composed firmware still needs its own XC8 compile evidence.

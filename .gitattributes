@@ -29,5 +29,6 @@
 
 public/vendor/** linguist-vendored
 backend/ai/knowledge/**/reference/raw/** linguist-vendored
+backend/ai/knowledge/**/reference/colleague/** -text linguist-vendored
 backend/ai/knowledge/**/reference/corpus.json linguist-generated
 backend/ai/knowledge/**/reference/dfp-registers.json linguist-generated

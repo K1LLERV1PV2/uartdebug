@@ -574,16 +574,18 @@ function createAiHttpServer(options = {}) {
         return sendJson(res, 200, successPayload);
       } catch (error) {
         const errorMetering = error?._metering || null;
+        let quota = null;
         providerRejected =
           error?._providerRejected === true && !errorMetering;
         const usageUncertain = error?._usageUncertain === true;
         if (errorMetering && !usageUncertain) {
           try {
-            await accessService.recordAiUsage(accessContext, {
+            const recorded = await accessService.recordAiUsage(accessContext, {
               requestId,
               ...errorMetering,
             });
             usageRecorded = true;
+            quota = recorded?.quota || null;
           } catch (meteringError) {
             log.error?.(
               `[avr-ai] request=${requestId} usage_record_failed code=${
@@ -599,13 +601,15 @@ function createAiHttpServer(options = {}) {
         log.warn?.(
           `[avr-ai] request=${requestId} status=${normalized.status} code=${
             normalized.code
-          } duration_ms=${Math.max(0, now() - startedAt)}`
+          } duration_ms=${Math.max(0, now() - startedAt)}${error?.diagnostic ? ` diagnostic=${JSON.stringify(error.diagnostic)}` : ""}`
         );
         const errorPayload = {
           ok: false,
           code: normalized.code,
           message: normalized.message,
           ...(error?.progress ? { progress: error.progress } : {}),
+          ...(error?.diagnostic ? { diagnostic: error.diagnostic } : {}),
+          ...(quota ? { quota } : {}),
           requestId,
         };
         if (ndjsonStarted) {

@@ -1,6 +1,8 @@
 "use strict";
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   createAvrAiService,
   AiServiceError,
@@ -45,6 +47,8 @@ const resource = () => ({
   baud: null,
   periodUs: null,
   prescaler: null,
+  clockSource: null,
+  periodCycles: null,
   description: "LED output",
 });
 const generated = () => ({
@@ -150,13 +154,43 @@ const compile = (ok = true, extra = {}) =>
     ok ? 200 : 400,
   );
 
+test("RTC/PIT generates CPU-independent 125 ms timing and rejects scope drift", async () => {
+  const data = generated();
+  data.project.source.content = fs.readFileSync(path.join(__dirname, "../scripts/avr-knowledge/fixtures/rtc-pit-blink.c"), "utf8");
+  data.project.source.content += '\nstatic const char *note = "F_CPU is intentionally unspecified";\n';
+  data.project.spec.clock.hz = null;
+  data.project.spec.includes.push("avr/interrupt.h");
+  data.project.spec.resources[0].pin = "PB1";
+  data.project.spec.resources.push({
+    ...resource(), id: "blink", kind: "rtc-pit", pin: null, direction: null,
+    instance: "RTC", clockSource: "INT32K", periodCycles: 4096, periodUs: 125000,
+  });
+  const result = await service({ fetch: async () => response(envelope(data)) }).processCanvas(input());
+  assert.equal(result.kind, "project");
+  assert.equal(result.verification.calculations[0].nominalPeriodUs, 125000);
+  assert.equal(result.verification.calculations[0].sourceHz, 32768);
+  assert.match(result.project.files.find((file) => file.role === "specification").content, /hz: null/);
+  for (const [oldText, newText, code] of [
+    ["RTC_PERIOD_CYC4096_gc", "RTC_PERIOD_CYC8192_gc", "project_rtc_pit_mismatch"],
+    ["RTC.PITINTFLAGS =", "RTC.PITINTFLAGS |=", "unsafe_interrupt_flag_write"],
+    ["RTC.PITINTFLAGS =", "RTC . PITINTFLAGS |=", "unsafe_interrupt_flag_write"],
+    ["RTC.PITINTFLAGS =", "RTC.CTRLA =", "unsupported_peripheral_access"],
+    ["#include <xc.h>", "#define F_CPU 20000000UL\n#include <xc.h>", "project_clock_mismatch"],
+    ["#include <xc.h>", "#include <xc.h>\nvoid clock_init(void) { CLKCTRL.MCLKCTRLB = 0; }", "project_clock_mismatch"],
+  ]) {
+    const invalid = structuredClone(data);
+    invalid.project.source.content = invalid.project.source.content.replace(oldText, newText);
+    await assert.rejects(service({ fetch: async () => response(envelope(invalid)) }).processCanvas(input()), (error) => error.code === code);
+  }
+});
+
 test("status advertises local target/packages and no legacy skill catalog", async () => {
   const s = service();
   const status = await s.getStatus();
   assert.equal(status.ready, true);
   assert.equal(status.contract, "uartdebug-canvas/v1");
   assert.equal(status.knowledge.devices.length, 3);
-  assert.equal(status.rules.packageId, "uartdebug-canvas-2026-09-24.2");
+  assert.equal(status.rules.packageId, "uartdebug-canvas-2026-09-24.3");
   assert.equal(status.knowledge.referenceDocuments.length, 2);
   assert.ok(status.knowledge.reviewedErrataCount > 0);
   assert.equal(s.getSkills, undefined);
@@ -436,14 +470,43 @@ test("repair extends the reservation and retains earlier usage when the next cal
   await assert.rejects(
     s.processCanvas(input(), {
       reserveBudget: async () => ({ maxOutputTokens: 9000 }),
-      extendBudget: async () => {
+      extendBudget: async (quote) => {
         extension++;
+        assert.equal(quote.completedMetering.responseId, "resp_test");
+        assert.equal(quote.completedMetering.usage.totalTokens, 150);
         return { additionalMaxOutputTokens: 9000 };
       },
     }),
     (e) => e._usageUncertain && e._metering.usage.totalTokens === 150,
   );
   assert.equal(extension, 1);
+});
+
+test("budget denial preserves the actual continuation stage and paid usage", async () => {
+  for (const documentation of [true, false]) {
+    const bad = generated();
+    bad.project.spec.resources[0].pin = "PA0";
+    const first = documentation ? {
+      ...envelope(null),
+      output: [{ type: "function_call", name: "read_avr_documentation", call_id: "catalog", arguments: JSON.stringify({ operation: "catalog", query: "", documentId: "", sectionId: "", page: 0, url: "", gap: "" }) }],
+    } : envelope(bad);
+    const s = service({
+      environment: { ...environment, AI_COMPILE_MAX_REPAIR_ATTEMPTS: "1" },
+      fetch: async (url) => response(url.endsWith("/input_tokens") ? { input_tokens: 1000 } : first),
+    });
+    await assert.rejects(s.processCanvas(input(), {
+      reserveBudget: async () => ({ maxOutputTokens: 9000 }),
+      extendBudget: async () => { throw Object.assign(new Error("Insufficient credits for the next AI step."), { status: 429, code: "free_quota_insufficient" }); },
+    }), (error) => {
+      assert.equal(error.code, "free_quota_insufficient");
+      assert.equal(error.diagnostic.stage, documentation ? "documentation-continuation" : "validation-repair");
+      assert.equal(error.diagnostic.causeCode, documentation ? null : "project_resource_validation_failed");
+      assert.equal(error.diagnostic.providerCalls, 1);
+      assert.equal(error._metering.usage.totalTokens, 150);
+      assert.equal(error._usageUncertain, undefined);
+      return true;
+    });
+  }
 });
 test("local corpus search/read/register steps continue Responses with provenance and budget accounting without internet", async () => {
   let calls = 0,

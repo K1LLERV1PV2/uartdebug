@@ -9,4 +9,6 @@ For input use DIRCLR, then a deliberate PINnCTRL configuration. PORT_PULLUPEN_bm
 
 W1C interrupt flags are cleared by direct writes of the selected mask, not |=. An output toggled every 500 ms has a complete on/off period of 1 s. Use blocking delays only when accepted by the project; choose TCA for independent periodic work.
 
+Use OUTSET/OUTCLR when the required resulting state must be known; OUTTGL is appropriate for a deliberate toggle. Do not automatically add INPUT_DISABLE to a minimal output example: it is optional and can break PORT.IN reads, pin interrupts, EVSYS consumers or assigned peripherals that need the input buffer. Firmware establishes the safe output only after initialization; a requirement to keep a load inactive during reset must be handled by the circuit. Do not configure other supposedly unused pins without checking their ownership and wiring.
+
 Sources: DS40002234B sections 17.5.10 and 17.5.12 (pages 163, 165); DS80000902F section 3.3.1 (page 10). Reviewed facts: gpio-w1c, gpio-input-control, clarification-pullup-resistance. Lineage: mini-projects 03/04 and their AI/help, checked against DFP register names. Detailed electrical limits, GPIO wake-up modes and interrupt sense edge cases are not covered by this short recipe.

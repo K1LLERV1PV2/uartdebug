@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -18,7 +19,19 @@ const {
   SESSION_COOKIE,
   calculateUsageCostNanoUsd,
   createAiAccessService,
+  normalizeUsage,
 } = require("../backend/ai-access-service");
+const { MAX_PROVIDER_RESPONSES } = require("../backend/avr-ai-limits");
+
+function providerMetering(responses) {
+  const normalized = responses.map((response) => ({
+    provider: "openai", model: "gpt-5.6-terra", ...response,
+    usage: normalizeUsage(response.usage),
+  }));
+  const usage = Object.fromEntries(Object.keys(normalized[0].usage).map((key) =>
+    [key, normalized.reduce((total, response) => total + response.usage[key], 0)]));
+  return { ...normalized.at(-1), usage, ...(normalized.length > 1 ? {responses: normalized} : {}) };
+}
 
 class MockResponse {
   constructor() {
@@ -943,6 +956,261 @@ test("charges compiler-repair provider responses at their individual context tie
   assert.equal(ledger.tier, "long_context");
   assert.equal(ledger.input_tokens, 300_000);
   assert.equal(ledger.cost_nano_usd, 600_000_000);
+});
+
+test("confirmed cached usage replaces the maximum hold before the next AI step at 380 credits", async (t) => {
+  const { service, oauthClient } = makeService({ freeDeviceGrantCredits: "380" });
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {
+    code: "confirmed-cache", sub: "confirmed-cache", email: "cache@example.com",
+  });
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse(), {requestId: "confirmed-cache"});
+  const reserved = await service.reserveAiBudget(context, {
+    model: "gpt-5.6-terra", inputTokens: 40_000, maxOutputTokens: 24_000,
+  });
+  assert.equal(reserved.reservedNanoUsd, 379_996_000);
+  await service.markAiProviderStarted(context);
+  const first = { responseId: "resp-confirmed-cache-1", usage: {
+    inputTokens: 36_024, cachedInputTokens: 36_023, cacheWriteTokens: 1, outputTokens: 305,
+  }};
+  assert.equal(calculateUsageCostNanoUsd(first.usage).costNanoUsd, 10_867_100);
+  const next = await service.extendAiBudgetReservation(context, {
+    model: "gpt-5.6-terra", additionalInputTokens: 42_000,
+    additionalMaxOutputTokens: 24_000, completedMetering: providerMetering([first]),
+  });
+  assert.equal(next.additionalMaxOutputTokens, 22_011);
+  assert.equal(next.reservedNanoUsd, 10_867_100 + 105_000_000 + 22_011 * 12_000);
+  assert.equal(next.cumulativeInputTokens, 78_024);
+  assert.equal(next.cumulativeMaxOutputTokens, 22_316);
+  assert.equal(next.quota.spent, 0, "Known usage remains reserved until final settlement");
+  const settled = await service.recordAiUsage(context, {
+    requestId: "confirmed-cache", ...providerMetering([first, {
+      responseId: "resp-confirmed-cache-2",
+      usage: {inputTokens: 42_000, cachedInputTokens: 40_000, outputTokens: 100},
+    }]),
+  });
+  assert.equal(settled.costNanoUsd, 24_067_100);
+  assert.equal(settled.quota.reserved, 0);
+  assert.equal(settled.quota.remaining, 355.9329);
+});
+
+test("known standard usage settles after an explicitly rejected reserved long-context next call", async (t) => {
+  const { service, oauthClient } = makeService({freeDeviceGrantCredits: "2000"});
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {
+    code: "rejected-long-next", sub: "rejected-long-next", email: "rejected@example.com",
+  });
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse(), {requestId: "rejected-long-next"});
+  await service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: 100, maxOutputTokens: 100, minOutputTokens: 0});
+  await service.markAiProviderStarted(context);
+  const completed = providerMetering([{responseId: "resp-standard-before-rejection", usage: {inputTokens: 100, outputTokens: 10}}]);
+  const next = await service.extendAiBudgetReservation(context, {
+    model: "gpt-5.6-terra", additionalInputTokens: 300_000,
+    additionalMaxOutputTokens: 100, minAdditionalOutputTokens: 0,
+    completedMetering: completed,
+  });
+  assert.equal(next.tier, "long_context");
+  assert.equal(next.reservedCredits, 1502.12);
+  // An explicit non-billable rejection contributes no new usage. The server
+  // settles the already confirmed first response, then releases the request.
+  const recorded = await service.recordAiUsage(context, {requestId: "rejected-long-next", ...completed});
+  assert.equal(recorded.tier, "standard");
+  assert.equal(recorded.costNanoUsd, 320_000);
+  assert.equal(recorded.quota.spent, 0.32);
+  assert.equal(recorded.quota.reserved, 0);
+  assert.equal(recorded.quota.remaining, 1999.68);
+  await service.releaseAiRequest(context, {providerCalled: true, usageRecorded: true});
+  assert.equal(service.database.prepare("SELECT COUNT(*) AS count FROM inflight_requests").get().count, 0);
+  const duplicate = await service.recordAiUsage(context, {requestId: "rejected-long-next", ...completed});
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(duplicate.costNanoUsd, 320_000);
+});
+
+test("failed budget extension keeps the hold and does not consume its completed-usage checkpoint", async (t) => {
+  const { service, oauthClient } = makeService({ freeDeviceGrantCredits: "1" });
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {code: "checkpoint-low", sub: "checkpoint-low", email: "low@example.com"});
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse());
+  await service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: 100, maxOutputTokens: 100, minOutputTokens: 10});
+  await service.markAiProviderStarted(context);
+  const completedMetering = providerMetering([{responseId: "resp-checkpoint-low-1", usage: {inputTokens: 100, outputTokens: 10}}]);
+  const stored = () => service.database.prepare("SELECT * FROM inflight_requests WHERE reservation_id = ?").get(context.reservationId);
+  const original = stored();
+  await assert.rejects(service.extendAiBudgetReservation(context, {
+    model: "gpt-5.6-terra", additionalInputTokens: 300, additionalMaxOutputTokens: 100,
+    minAdditionalOutputTokens: 10, completedMetering,
+  }), error => error.code === "free_quota_insufficient" && /next AI step/.test(error.message));
+  assert.deepEqual(stored(), original);
+  assert.equal(context.reservedNanoUsd, 994_000);
+  const next = await service.extendAiBudgetReservation(context, {
+    model: "gpt-5.6-terra", additionalInputTokens: 50, additionalMaxOutputTokens: 100,
+    minAdditionalOutputTokens: 10, completedMetering,
+  });
+  assert.equal(next.reservedNanoUsd, 997_000);
+  assert.equal(next.cumulativeMaxOutputTokens, 56);
+});
+
+test("completed-usage checkpoints require a strictly growing unchanged response prefix", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {code: "checkpoint-prefix", sub: "checkpoint-prefix", email: "prefix@example.com"});
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse());
+  await service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: 100, maxOutputTokens: 100, minOutputTokens: 0});
+  await service.markAiProviderStarted(context);
+  const first = {responseId: "resp-prefix-1", usage: {inputTokens: 80, cachedInputTokens: 20, outputTokens: 10}};
+  const second = {responseId: "resp-prefix-2", usage: {inputTokens: 50, outputTokens: 10}};
+  const extension = completedMetering => service.extendAiBudgetReservation(context, {
+    model: "gpt-5.6-terra", additionalInputTokens: 100, additionalMaxOutputTokens: 100,
+    minAdditionalOutputTokens: 0, completedMetering,
+  });
+  await extension(providerMetering([first]));
+  const beforeReplay = service.database.prepare("SELECT * FROM inflight_requests").get();
+  for (const responses of [
+    [first],
+    [second],
+    [{...first, usage: {...first.usage, outputTokens: 9}}, second],
+    [second, first],
+  ]) {
+    await assert.rejects(extension(providerMetering(responses)), error => error.code === "completed_usage_checkpoint_conflict");
+    assert.deepEqual(service.database.prepare("SELECT * FROM inflight_requests").get(), beforeReplay);
+  }
+  const next = await extension(providerMetering([first, second]));
+  assert.equal(next.cumulativeInputTokens, 230);
+  assert.equal(next.cumulativeMaxOutputTokens, 120);
+  await assert.rejects(extension(providerMetering([first])), error => error.code === "completed_usage_checkpoint_conflict");
+});
+
+test("unconfirmed, inconsistent or over-reservation completed usage cannot release a hold", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {code: "checkpoint-invalid", sub: "checkpoint-invalid", email: "invalid@example.com"});
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse());
+  await service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: 100, maxOutputTokens: 100, minOutputTokens: 0});
+  await service.markAiProviderStarted(context);
+  const first = {responseId: "resp-invalid-1", usage: {inputTokens: 50, outputTokens: 10}};
+  const second = {responseId: "resp-invalid-2", usage: {inputTokens: 50, outputTokens: 10}};
+  const valid = providerMetering([first]);
+  const aggregate = providerMetering([first, second]);
+  const original = service.database.prepare("SELECT * FROM inflight_requests").get();
+  for (const [completedMetering, code] of [
+    [null, "completed_usage_invalid"],
+    [{...valid, usage: {}}, "completed_usage_invalid"],
+    [{...valid, responseId: ""}, "completed_usage_invalid"],
+    [{...valid, model: "other-model"}, "reserved_model_mismatch"],
+    [providerMetering([{...first, usage: {inputTokens: 101, outputTokens: 1}}]), "completed_usage_exceeds_reservation"],
+    [providerMetering([{...first, usage: {inputTokens: 1, outputTokens: 101}}]), "completed_usage_exceeds_reservation"],
+    [{...aggregate, usage: valid.usage}, "completed_usage_invalid"],
+    [{...aggregate, provider: "other-provider"}, "completed_usage_invalid"],
+    [{...aggregate, responseId: first.responseId}, "completed_usage_invalid"],
+    [providerMetering([first, first]), "usage_counts_invalid"],
+    [providerMetering([first, {...second, provider: "other-provider"}]), "usage_counts_invalid"],
+  ]) {
+    await assert.rejects(service.extendAiBudgetReservation(context, {
+      model: "gpt-5.6-terra", additionalInputTokens: 100, additionalMaxOutputTokens: 100,
+      minAdditionalOutputTokens: 0, completedMetering,
+    }), error => error.code === code);
+    assert.deepEqual(service.database.prepare("SELECT * FROM inflight_requests").get(), original);
+  }
+  // A failed checkpoint leaves normal final reconciliation in charge of an overrun.
+  await assert.rejects(service.recordAiUsage(context, {
+    requestId: "overrun-after-checkpoint", ...providerMetering([{...first, usage: {inputTokens: 101, outputTokens: 1}}]),
+  }), error => error.code === "usage_exceeds_reservation");
+  assert.equal(service.database.prepare("SELECT state FROM inflight_requests").get().state, "needs_reconciliation");
+});
+
+test("a failed reservation commit does not advance the completed response checkpoint", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {code: "checkpoint-rollback", sub: "checkpoint-rollback", email: "rollback@example.com"});
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse());
+  await service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: 100, maxOutputTokens: 100, minOutputTokens: 0});
+  await service.markAiProviderStarted(context);
+  const args = {model: "gpt-5.6-terra", additionalInputTokens: 100, additionalMaxOutputTokens: 100,
+    minAdditionalOutputTokens: 0, completedMetering: providerMetering([{responseId: "resp-rollback-1", usage: {inputTokens: 50, outputTokens: 10}}])};
+  service.database.exec("CREATE TRIGGER reject_budget_update BEFORE UPDATE ON inflight_requests BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END;");
+  await assert.rejects(service.extendAiBudgetReservation(context, args), /simulated write failure/);
+  service.database.exec("DROP TRIGGER reject_budget_update;");
+  const next = await service.extendAiBudgetReservation(context, args);
+  assert.equal(next.cumulativeInputTokens, 150);
+  assert.equal(next.cumulativeMaxOutputTokens, 110);
+});
+
+test("completed usage preserves concurrent holds across current-device, source-device and account budgets", async (t) => {
+  for (const scope of ["device", "source", "account"]) {
+    await t.test(scope, async () => {
+      const { service, oauthClient } = makeService({freeDeviceGrantCredits: "1"});
+      try {
+        const sourceLogin = await signIn(service, oauthClient, {code: `source-${scope}`, sub: `shared-${scope}`, email: "shared@example.com"});
+        const movedLogin = await signIn(service, oauthClient, {code: `moved-${scope}`, sub: `shared-${scope}`, email: "shared@example.com"});
+        const first = await service.authorizeAiRequest(request(movedLogin.cookie), new MockResponse());
+        const other = await service.authorizeAiRequest(request(sourceLogin.cookie), new MockResponse());
+        assert.notEqual(first.deviceId, first.sourceDeviceId);
+        await service.reserveAiBudget(first, {model: "gpt-5.6-terra", inputTokens: 0, maxOutputTokens: 50, minOutputTokens: 0});
+        await service.reserveAiBudget(other, {model: "gpt-5.6-terra", inputTokens: 0, maxOutputTokens: 33, minOutputTokens: 0});
+        await service.markAiProviderStarted(first);
+        // Existing holds now exceed the limiting grant. A clamped remaining +
+        // this request's hold would incorrectly erase the shared deficit.
+        if (scope === "account") service.database.prepare("UPDATE google_accounts SET grant_nano_usd = 700000 WHERE account_hash = ?").run(first.accountHash);
+        else service.database.prepare("UPDATE devices SET grant_nano_usd = ? WHERE id = ?").run(scope === "device" ? 200_000 : 700_000, scope === "device" ? first.deviceId : first.sourceDeviceId);
+        const next = await service.extendAiBudgetReservation(first, {
+          model: "gpt-5.6-terra", additionalInputTokens: 0, additionalMaxOutputTokens: 100,
+          minAdditionalOutputTokens: 1, completedMetering: providerMetering([{responseId: `resp-shared-${scope}`, usage: {inputTokens: 0, outputTokens: 10}}]),
+        });
+        assert.equal(next.additionalMaxOutputTokens, scope === "device" ? 6 : 15);
+        assert.equal(next.reservedNanoUsd, scope === "device" ? 192_000 : 300_000);
+        assert.equal(service.database.prepare("SELECT reserved_nano_usd FROM inflight_requests WHERE reservation_id = ?").get(other.reservationId).reserved_nano_usd, 396_000);
+        const budget = service._readBudget(first.deviceId, first.accountHash);
+        for (const key of ["device", "source", "account"]) {
+          assert.ok(budget[`${key}_spent_nano_usd`] + budget[`${key}_reserved_nano_usd`] <= budget[`${key}_grant_nano_usd`]);
+        }
+      } finally { service.close(); }
+    });
+  }
+});
+
+test("four and thirteen provider responses settle with bounded stable ordered identities", async (t) => {
+  assert.equal(MAX_PROVIDER_RESPONSES, 13);
+  for (const count of [4, MAX_PROVIDER_RESPONSES]) {
+    await t.test(`${count} responses`, async () => {
+      const {service, oauthClient} = makeService({freeDeviceGrantCredits: "100"});
+      try {
+        const login = await signIn(service, oauthClient, {code: `long-bundle-${count}`, sub: `long-bundle-${count}`, email: "bundle@example.com"});
+        const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse(), {requestId: `long-bundle-${count}`});
+        await service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: count * 100, maxOutputTokens: count * 10, minOutputTokens: 0});
+        await service.markAiProviderStarted(context);
+        const responses = Array.from({length: count}, (_, index) => ({responseId: `resp_${String(index).padStart(3, "0")}_${"a".repeat(50)}`, usage: {inputTokens: 50, cachedInputTokens: 20, outputTokens: 5}}));
+        const args = {requestId: `long-bundle-${count}`, ...providerMetering(responses)};
+        const result = await service.recordAiUsage(context, args);
+        assert.equal(result.costNanoUsd, count * 124_000);
+        const ordered = responses.map(item => `${item.responseId.length}:${item.responseId}`).join("");
+        const expectedId = `bundle:sha256:${crypto.createHash("sha256").update(ordered).digest("hex")}`;
+        assert.equal(service.database.prepare("SELECT provider_response_id FROM usage_ledger").get().provider_response_id, expectedId);
+        const duplicate = await service.recordAiUsage(context, args);
+        assert.equal(duplicate.duplicate, true);
+        assert.equal(service.database.prepare("SELECT COUNT(*) AS count FROM usage_ledger").get().count, 1);
+      } finally { service.close(); }
+    });
+  }
+});
+
+test("composite metering rejects fourteen responses and mixed or duplicated identities before settlement", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {code: "bundle-invalid", sub: "bundle-invalid", email: "bundle@example.com"});
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse());
+  await service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: 1000, maxOutputTokens: 100, minOutputTokens: 0});
+  await service.markAiProviderStarted(context);
+  const first = {provider: "openai", model: "gpt-5.6-terra", responseId: "resp-composite-1", usage: {inputTokens: 1, outputTokens: 1}};
+  for (const responses of [
+    Array.from({length: 14}, (_, index) => ({...first, responseId: `resp-limit-${index}`})),
+    [first, {...first}],
+    [first, {...first, responseId: "resp-composite-2", provider: "different"}],
+    [first, {...first, responseId: "resp-composite-2", model: "different-model"}],
+  ]) {
+    await assert.rejects(service.recordAiUsage(context, {requestId: "bundle-invalid", responses}), error => error.code === "usage_counts_invalid");
+    assert.equal(service.database.prepare("SELECT COUNT(*) AS count FROM usage_ledger").get().count, 0);
+    assert.equal(service.database.prepare("SELECT state FROM inflight_requests").get().state, "provider_started");
+  }
 });
 
 test("reservation denies a request whose input and minimum output do not fit", async (t) => {

@@ -848,6 +848,7 @@ test("records provider usage when a paid AI response fails validation", async (t
   assert.equal(body._metering, undefined);
   assert.equal(body.progress.status, "failed");
   assert.equal(body.progress.stages[1].id, "compilation");
+  assert.deepEqual(body.quota, { unit: "AI Credit", remaining: 99 });
   assert.deepEqual(calls, ["authorize", "record", "release"]);
 });
 
