@@ -385,6 +385,11 @@ function applyTerminalLayout() {
       "aria-orientation",
       isRow ? "vertical" : "horizontal"
     );
+    terminalLayoutResizer.setAttribute("aria-valuemin", String(TERMINAL_LAYOUT_MIN_PANEL_SIZE));
+    terminalLayoutResizer.setAttribute("aria-valuemax", String(TERMINAL_LAYOUT_MAX_PANEL_SIZE));
+    terminalLayoutResizer.setAttribute("aria-valuenow", String(Number(terminalLayoutState.sizes[firstId].toFixed(2))));
+    terminalLayoutResizer.setAttribute("aria-valuetext", `${firstId.toUpperCase()} ${Math.round(terminalLayoutState.sizes[firstId])}%, ${secondId.toUpperCase()} ${Math.round(terminalLayoutState.sizes[secondId])}%`);
+    if (firstPanel.id) terminalLayoutResizer.setAttribute("aria-controls", firstPanel.id);
   }
 
   scheduleTerminalLayoutRefresh();
@@ -518,40 +523,53 @@ function clearTerminalDropClasses() {
 }
 
 function handleTerminalResizePointerDown(event) {
-  if (event.button !== 0 || !uartSessionsSplit) return;
+  if (event.button !== 0 || !uartSessionsSplit || terminalLayoutResize) return;
 
   event.preventDefault();
-  terminalLayoutResize = true;
+  terminalLayoutResize = { pointerId: event.pointerId };
   document.body.classList.add("is-terminal-layout-active");
   uartSessionsSplit.classList.add("is-terminal-resizing");
-  terminalLayoutResizer?.setPointerCapture?.(event.pointerId);
+  try { terminalLayoutResizer?.setPointerCapture?.(event.pointerId); } catch {}
   updateTerminalLayoutSize(event.clientX, event.clientY);
 
   document.addEventListener("pointermove", handleTerminalResizePointerMove);
   document.addEventListener("pointerup", handleTerminalResizePointerUp);
   document.addEventListener("pointercancel", cancelTerminalResize);
+  terminalLayoutResizer?.addEventListener("lostpointercapture", cancelTerminalResize);
+  window.addEventListener("blur", cancelTerminalResize);
 }
 
 function handleTerminalResizePointerMove(event) {
-  if (!terminalLayoutResize) return;
+  if (!terminalLayoutResize || event.pointerId !== terminalLayoutResize.pointerId) return;
   event.preventDefault();
   updateTerminalLayoutSize(event.clientX, event.clientY);
 }
 
 function handleTerminalResizePointerUp(event) {
-  if (!terminalLayoutResize) return;
+  if (!terminalLayoutResize || event.pointerId !== terminalLayoutResize.pointerId) return;
   event.preventDefault();
-  cancelTerminalResize();
-  saveTerminalLayoutState();
+  updateTerminalLayoutSize(event.clientX, event.clientY);
+  cancelTerminalResize(event);
 }
 
-function cancelTerminalResize() {
+function cancelTerminalResize(event) {
+  if (!terminalLayoutResize ||
+      (event?.pointerId != null && event.pointerId !== terminalLayoutResize.pointerId)) return;
+  const pointerId = terminalLayoutResize.pointerId;
   terminalLayoutResize = null;
   uartSessionsSplit?.classList.remove("is-terminal-resizing");
   document.body.classList.remove("is-terminal-layout-active");
   document.removeEventListener("pointermove", handleTerminalResizePointerMove);
   document.removeEventListener("pointerup", handleTerminalResizePointerUp);
   document.removeEventListener("pointercancel", cancelTerminalResize);
+  terminalLayoutResizer?.removeEventListener("lostpointercapture", cancelTerminalResize);
+  window.removeEventListener("blur", cancelTerminalResize);
+  try {
+    if (terminalLayoutResizer?.hasPointerCapture?.(pointerId)) {
+      terminalLayoutResizer.releasePointerCapture(pointerId);
+    }
+  } catch {}
+  saveTerminalLayoutState();
 }
 
 function updateTerminalLayoutSize(clientX, clientY) {
@@ -562,6 +580,7 @@ function updateTerminalLayoutSize(clientX, clientY) {
   const isRow = terminalLayoutState.layout === "row";
   const axisSize = isRow ? rect.width : rect.height;
   const axisPosition = isRow ? clientX - rect.left : clientY - rect.top;
+  if (!Number.isFinite(axisPosition) || !Number.isFinite(axisSize) || axisSize <= 0) return;
   const firstSize = clampToRange(
     (axisPosition / axisSize) * 100,
     TERMINAL_LAYOUT_MIN_PANEL_SIZE,
@@ -583,7 +602,9 @@ function handleTerminalResizeKey(event) {
   } else if (decreaseKeys.includes(event.key)) {
     adjustTerminalLayoutSize(-4);
   } else if (event.key === "Home" || event.key === "End") {
-    resetTerminalLayoutSize();
+    const firstId = terminalLayoutState.order[0];
+    const endpoint = event.key === "Home" ? TERMINAL_LAYOUT_MIN_PANEL_SIZE : TERMINAL_LAYOUT_MAX_PANEL_SIZE;
+    adjustTerminalLayoutSize(endpoint - terminalLayoutState.sizes[firstId]);
   } else {
     return;
   }
@@ -902,142 +923,8 @@ function setConnectionSelectsDisabled(disabled) {
   });
 }
 
-function getSelectDisplayText(select) {
-  if (!select) return "";
-  const selected = select.selectedOptions && select.selectedOptions[0];
-  return selected ? selected.textContent.trim() : "";
-}
-
-function renderCustomSelectOptions(select, custom) {
-  const list = custom.querySelector(".custom-select-list");
-  const label = custom.querySelector(".custom-select-value");
-  if (!list || !label) return;
-
-  list.innerHTML = "";
-  label.textContent = getSelectDisplayText(select) || "Select";
-
-  for (const option of Array.from(select.options)) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "custom-select-option";
-    item.dataset.value = option.value;
-    item.setAttribute("role", "option");
-    item.setAttribute("aria-selected", String(option.value === select.value));
-    item.textContent = option.textContent.trim();
-
-    item.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (select.value !== option.value) {
-        select.value = option.value;
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-      } else {
-        updateCustomSelect(select, custom);
-      }
-      closeCustomSelect(custom);
-    });
-
-    list.appendChild(item);
-  }
-}
-
-function updateCustomSelect(select, custom) {
-  if (!select || !custom) return;
-  custom.classList.toggle("is-disabled", !!select.disabled);
-  custom.setAttribute("aria-disabled", String(!!select.disabled));
-  renderCustomSelectOptions(select, custom);
-}
-
-function closeCustomSelect(custom) {
-  if (!custom) return;
-  custom.classList.remove("is-open");
-  const trigger = custom.querySelector(".custom-select-trigger");
-  if (trigger) trigger.setAttribute("aria-expanded", "false");
-}
-
-function openCustomSelect(select, custom) {
-  if (!select || !custom || select.disabled) return;
-  updateCustomSelect(select, custom);
-  custom.classList.add("is-open");
-  const trigger = custom.querySelector(".custom-select-trigger");
-  if (trigger) trigger.setAttribute("aria-expanded", "true");
-
-  requestAnimationFrame(() => {
-    const active = custom.querySelector(
-      '.custom-select-option[aria-selected="true"]'
-    );
-    active && active.scrollIntoView({ block: "nearest" });
-  });
-}
-
 function initCustomSelect(select) {
-  if (!select || select.dataset.customized === "true") return;
-
-  select.dataset.customized = "true";
-  select.classList.add("native-select-hidden");
-
-  const custom = document.createElement("div");
-  custom.className = "custom-select";
-  custom.setAttribute("aria-hidden", "false");
-
-  const trigger = document.createElement("button");
-  trigger.type = "button";
-  trigger.className = "custom-select-trigger";
-  trigger.setAttribute("aria-haspopup", "listbox");
-  trigger.setAttribute("aria-expanded", "false");
-
-  const value = document.createElement("span");
-  value.className = "custom-select-value";
-  trigger.appendChild(value);
-
-  const menu = document.createElement("div");
-  menu.className = "custom-select-menu";
-
-  const list = document.createElement("div");
-  list.className = "custom-select-list";
-  list.setAttribute("role", "listbox");
-  menu.appendChild(list);
-
-  custom.appendChild(trigger);
-  custom.appendChild(menu);
-  select.insertAdjacentElement("afterend", custom);
-
-  trigger.addEventListener("click", (event) => {
-    event.stopPropagation();
-    if (custom.classList.contains("is-open")) {
-      closeCustomSelect(custom);
-    } else {
-      openCustomSelect(select, custom);
-    }
-  });
-
-  trigger.addEventListener("keydown", (event) => {
-    if (
-      event.key === "ArrowDown" ||
-      event.key === "Enter" ||
-      event.key === " "
-    ) {
-      event.preventDefault();
-      openCustomSelect(select, custom);
-    }
-  });
-
-  custom.addEventListener("click", (event) => event.stopPropagation());
-  select.addEventListener("change", () => updateCustomSelect(select, custom));
-
-  const observer = new MutationObserver(() => updateCustomSelect(select, custom));
-  observer.observe(select, {
-    attributes: true,
-    childList: true,
-    subtree: true,
-    attributeFilter: ["disabled", "label", "selected", "value"],
-  });
-
-  document.addEventListener("click", () => closeCustomSelect(custom));
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeCustomSelect(custom);
-  });
-
-  updateCustomSelect(select, custom);
+  return window.UartDebugControls.initSelect(select);
 }
 
 function initializeCustomSelects() {
@@ -1899,7 +1786,14 @@ function openSettings() {
     modalBaudRate.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  modal.classList.add("show");
+  const trigger = document.getElementById("settingsBtn");
+  trigger?.setAttribute("aria-expanded", "true");
+  window.UartDebugControls.openModal(modal, {
+    trigger,
+    focusTarget: () => modalBaudRate?.nextElementSibling?.querySelector(".custom-select-trigger")
+      || document.getElementById("modalCloseBtn"),
+    onClose: closeSettings,
+  });
 }
 
 /**
@@ -1917,7 +1811,8 @@ function closeSettings() {
     mainBaudRate.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  modal.classList.remove("show");
+  document.getElementById("settingsBtn")?.setAttribute("aria-expanded", "false");
+  window.UartDebugControls.closeModal(modal);
 }
 
 /**
@@ -2346,6 +2241,15 @@ function updateOscilloscopeSettings() {
  * Handle keyboard shortcuts
  */
 document.addEventListener("keydown", function (e) {
+  if (e.defaultPrevented) return;
+  const controls = window.UartDebugControls;
+  if (controls?.getTopModal()) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      controls.dismissTopModal();
+    } else controls.trapModalFocus(e);
+    return;
+  }
   // Ctrl+Enter to send
   if (e.ctrlKey && e.key === "Enter" && !sendBtn.disabled) {
     handleRunAction();
@@ -3130,4 +3034,3 @@ function toggleOscilloscopeFullscreen() {
     rxSession.requestFullscreen();
   }
 }
-

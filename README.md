@@ -36,7 +36,7 @@ The repository is under active development. Hardware access requires a browser t
 - Follow `//# Heading` through `//###### Heading` comment links from C code to matching guide sections.
 - Compile supported tinyAVR projects with Microchip XC8 on the compiler service.
 - Detect a supported chip and flash Intel HEX over UPDI from the browser.
-- Write requirements in your language on a shared canvas. The Process button asks necessary questions beside the text or generates the current project.
+- Write requirements in your language on each project's shared canvas. The Process button asks necessary questions beside the text or generates the current project. Add file → Empty project starts a blank canvas and a minimal C/Markdown project.
 - Verify AI-created or updated source with the server-side AVR compiler and let
   the assistant repair compiler errors before returning the project.
 - Keep anchored questions, answers, selected MCU/package and requirements together. Generated YAML describes resource allocation and is editable/exportable alongside C and Markdown.

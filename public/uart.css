@@ -1,39 +1,22 @@
 /* uart.css */
 :root {
-  --primary-color: #16a085;
-  --primary-hover: #1abc9c;
-  --danger-color: #e74c3c;
-  --success-color: #27ae60;
-  --info-color: #3498db;
-  --warning-color: #f39c12;
-  --dark-bg: #2c3e50;
-  --darker-bg: #34495e;
-  --text-color: #ecf0f1;
-  --border-color: #7f8c8d;
-  --muted-text: #bdc3c7;
+  --primary-color: var(--ui-accent);
+  --primary-hover: var(--ui-border-hover);
+  --danger-color: var(--ui-danger);
+  --success-color: var(--ui-accent);
+  --info-color: var(--ui-link);
+  --warning-color: var(--ui-warning);
+  --dark-bg: var(--ui-bg);
+  --darker-bg: var(--ui-surface-dark);
+  --text-color: var(--ui-text);
+  --border-color: var(--ui-border);
+  --muted-text: var(--ui-text-soft);
 }
 
 html,
 body {
   height: 100%;
   overflow: hidden;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-::selection {
-  background: #16a085;
-  color: #ecf0f1;
-}
-
-body {
-  background-color: #2c3e50;
-  color: #ecf0f1;
-  margin: 0;
-  padding: 0;
-  font-family: Arial, sans-serif;
 }
 
 /* UART specific styles with reduced top padding */
@@ -191,9 +174,7 @@ body {
 
 /* Specific styles for UART buttons */
 .uart-section button,
-.connect-btn,
-.send-btn,
-.log-btn {
+.connect-btn {
   width: auto !important;
   margin-top: 0 !important;
 }
@@ -352,16 +333,6 @@ body {
   flex-shrink: 0;
 }
 
-/* Terminal header with controls */
-.terminal-header {
-  display: flex;
-  align-items: center;
-  margin: 0 0 8px 0;
-  min-height: 20px;
-  flex-shrink: 0;
-  gap: 10px;
-}
-
 /* Log controls */
 .log-controls {
   display: flex;
@@ -370,21 +341,6 @@ body {
   flex-wrap: wrap;
   margin-left: 0;
   justify-content: flex-start;
-}
-
-.log-btn {
-  padding: 4px 8px;
-  background: #7f8c8d;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 11px;
-  transition: background 0.2s;
-}
-
-.log-btn:hover {
-  background: #95a5a6;
 }
 
 /* Terminal container */
@@ -690,27 +646,6 @@ body {
   background: #16a085;
 }
 
-.receive-toggle-btn {
-  background: #16a085;
-}
-
-.receive-toggle-btn:hover {
-  background: #1abc9c;
-}
-
-.receive-toggle-btn.receiving {
-  background: #e74c3c;
-}
-
-.receive-toggle-btn.receiving:hover {
-  background: #c0392b;
-}
-
-.receive-toggle-btn:disabled {
-  background: #7f8c8d;
-  cursor: not-allowed;
-}
-
 .play-pause-btn svg {
   width: 14px;
   height: 14px;
@@ -778,38 +713,6 @@ body {
   color: #ecf0f1;
   font-family: "Courier New", monospace;
   width: auto !important;
-}
-
-.send-btn {
-  padding: 8px 15px;
-  background: #16a085;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.send-btn:hover {
-  background: #1abc9c;
-}
-
-.send-btn.running {
-  background: #e74c3c;
-}
-
-.send-btn.running:hover {
-  background: #c0392b;
-}
-
-.send-btn:disabled {
-  background: #7f8c8d;
-  cursor: not-allowed;
-}
-
-.terminal-header .send-btn {
-  padding: 4px 8px;
-  font-size: 11px;
 }
 
 .send-loop-btn {
@@ -1031,14 +934,14 @@ body {
   width: 100%;
   height: 100%;
   background: rgba(0, 0, 0, 0.7);
-  display: none;
+  display: flex;
   justify-content: center;
   align-items: center;
   z-index: 1000;
 }
 
-.modal-overlay.show {
-  display: flex;
+.modal-overlay[hidden] {
+  display: none;
 }
 
 .modal-content {
@@ -1049,40 +952,6 @@ body {
   width: 90%;
   max-height: 80vh;
   overflow-y: auto;
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px;
-  border-bottom: 1px solid #7f8c8d;
-}
-
-.modal-header h3 {
-  margin: 0;
-  color: #16a085;
-  font-size: 18px;
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  color: #ecf0f1;
-  font-size: 24px;
-  cursor: pointer;
-  padding: 0;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  transition: background 0.2s;
-}
-
-.modal-close:hover {
-  background: rgba(255, 255, 255, 0.1);
 }
 
 .modal-body {
@@ -1205,22 +1074,8 @@ main {
     margin: 8px 15px 0 15px;
   }
 
-  .terminal-header {
-    margin-bottom: 5px;
-  }
-
   .terminal-label {
     font-size: 12px;
-  }
-
-  .log-btn {
-    padding: 3px 6px;
-    font-size: 10px;
-  }
-
-  .terminal-header .send-btn {
-    padding: 3px 6px;
-    font-size: 10px;
   }
 
   .terminal-container,
@@ -1239,11 +1094,6 @@ main {
 
   #terminalInput {
     padding: 6px;
-    font-size: 0.9rem;
-  }
-
-  .send-btn {
-    padding: 6px 12px;
     font-size: 0.9rem;
   }
 
@@ -1297,10 +1147,6 @@ main {
     padding: 8px;
   }
 
-  .terminal-header {
-    min-height: 18px;
-  }
-
   .terminal-label {
     font-size: 11px;
     letter-spacing: 0.5px;
@@ -1310,16 +1156,6 @@ main {
     gap: 6px;
   }
 
-  .log-btn {
-    padding: 2px 5px;
-    font-size: 9px;
-  }
-
-  .terminal-header .send-btn {
-    padding: 2px 5px;
-    font-size: 9px;
-  }
-
   .send-container {
     padding: 6px;
     margin-top: 6px;
@@ -1327,11 +1163,6 @@ main {
 
   #terminalInput {
     padding: 5px;
-    font-size: 0.85rem;
-  }
-
-  .send-btn {
-    padding: 5px 10px;
     font-size: 0.85rem;
   }
 
@@ -1472,12 +1303,6 @@ body {
 
 /* Ensure proper alignment when data mode controls are visible */
 .terminal-header {
-  display: flex;
-  align-items: center;
-  margin: 0 0 8px 0;
-  min-height: 20px;
-  flex-shrink: 0;
-  gap: 5px;
   flex-wrap: wrap;
 }
 
@@ -1565,25 +1390,25 @@ body {
 
 /* UART Terminal programmer-style shell */
 body.terminal-page {
-  --terminal-bg: #222f3c;
-  --terminal-surface: rgba(39, 174, 96, 0.14);
-  --terminal-surface-strong: rgba(39, 174, 96, 0.3);
-  --terminal-surface-connected: rgba(39, 174, 96, 0.5);
-  --terminal-surface-dark: #1b2834;
-  --terminal-surface-deep: #17232e;
+  --terminal-bg: var(--ui-bg);
+  --terminal-surface: var(--ui-surface);
+  --terminal-surface-strong: var(--ui-surface-strong);
+  --terminal-surface-connected: var(--ui-surface-connected);
+  --terminal-surface-dark: var(--ui-surface-dark);
+  --terminal-surface-deep: var(--ui-surface-deep);
   --terminal-border: #819f8d;
   --terminal-border-muted: rgba(129, 159, 141, 0);
-  --terminal-panel-border: rgba(129, 159, 141, 0.24);
-  --terminal-panel-bg: rgba(23, 35, 46, 0.72);
-  --terminal-panel-bg-soft: rgba(23, 35, 46, 0.68);
-  --terminal-border-hot: #46ff78;
-  --terminal-border-hover: #37c35d;
-  --terminal-text: #c8ffdd;
-  --terminal-text-soft: #9fcbb0;
-  --terminal-text-muted: #78a189;
-  --terminal-danger: #e85f5c;
-  --terminal-warning: #f2a444;
-  --terminal-radius: 15px;
+  --terminal-panel-border: var(--ui-border);
+  --terminal-panel-bg: var(--ui-window-bg);
+  --terminal-panel-bg-soft: var(--ui-control-bg);
+  --terminal-border-hot: var(--ui-accent);
+  --terminal-border-hover: var(--ui-border-hover);
+  --terminal-text: var(--ui-text);
+  --terminal-text-soft: var(--ui-text-soft);
+  --terminal-text-muted: var(--ui-text-muted);
+  --terminal-danger: var(--ui-danger);
+  --terminal-warning: var(--ui-warning);
+  --terminal-radius: var(--ui-radius);
   --terminal-scrollbar-size: 4px;
   --terminal-scrollbar-track: var(--terminal-surface-deep);
   --terminal-scrollbar-thumb: rgba(70, 255, 120, 0.55);
@@ -1593,25 +1418,10 @@ body.terminal-page {
   overflow: hidden;
   background: var(--terminal-bg);
   color: var(--terminal-text);
-  font-family:
-    Inter,
-    Arial,
-    Helvetica,
-    sans-serif;
+  font-family: var(--ui-font);
   scrollbar-width: thin;
   scrollbar-color: var(--terminal-scrollbar-thumb)
     var(--terminal-scrollbar-track);
-}
-
-body.terminal-page *,
-body.terminal-page *::before,
-body.terminal-page *::after {
-  box-sizing: border-box;
-}
-
-body.terminal-page ::selection {
-  background: rgba(70, 255, 120, 0.32);
-  color: var(--terminal-text);
 }
 
 body.terminal-page *::-webkit-scrollbar {
@@ -1966,148 +1776,6 @@ body.terminal-page .generator-field select {
     border-color 120ms ease,
     box-shadow 120ms ease,
     background-color 120ms ease;
-}
-
-body.terminal-page .native-select-hidden {
-  position: absolute !important;
-  inset: 0 auto auto 0;
-  width: 1px !important;
-  height: 1px !important;
-  min-width: 0 !important;
-  padding: 0 !important;
-  overflow: hidden !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
-}
-
-body.terminal-page .custom-select {
-  position: relative;
-  width: 100%;
-  min-width: 0;
-  font: 600 14px/1 Inter, Arial, sans-serif;
-}
-
-body.terminal-page .terminal-baud-value .custom-select {
-  width: 100%;
-}
-
-body.terminal-page .custom-select-trigger {
-  position: relative;
-  display: flex;
-  align-items: center;
-  width: 100% !important;
-  height: 44px;
-  padding: 0 40px 0 14px;
-  overflow: hidden;
-  border: 1px solid rgba(129, 159, 141, 0.34);
-  border-radius: 12px;
-  background: var(--terminal-panel-bg-soft);
-  color: var(--terminal-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 140ms ease,
-    border-color 140ms ease,
-    box-shadow 140ms ease;
-}
-
-body.terminal-page .custom-select-trigger::after {
-  position: absolute;
-  right: 14px;
-  width: 0;
-  height: 0;
-  border-right: 5px solid transparent;
-  border-left: 5px solid transparent;
-  border-top: 6px solid var(--terminal-text);
-  content: "";
-  transition: transform 140ms ease;
-}
-
-body.terminal-page .custom-select-value {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-body.terminal-page .custom-select-trigger:hover,
-body.terminal-page .custom-select.is-open .custom-select-trigger {
-  border-color: var(--terminal-border-hover);
-}
-
-body.terminal-page .custom-select-trigger:focus {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(70, 255, 120, 0.14);
-}
-
-body.terminal-page .custom-select.is-open .custom-select-trigger::after {
-  transform: rotate(180deg);
-}
-
-body.terminal-page .custom-select.is-disabled {
-  opacity: 0.62;
-}
-
-body.terminal-page .custom-select.is-disabled .custom-select-trigger {
-  cursor: not-allowed;
-}
-
-body.terminal-page .custom-select-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 2100;
-  display: none;
-  width: 100%;
-  min-width: 180px;
-  max-height: min(360px, calc(100vh - 180px));
-  overflow: hidden;
-  border: 1px solid rgba(129, 159, 141, 0.28);
-  border-radius: 12px;
-  background: var(--terminal-surface-dark);
-  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
-}
-
-body.terminal-page .custom-select.is-open .custom-select-menu {
-  display: block;
-}
-
-body.terminal-page .custom-select-list {
-  max-height: inherit;
-  padding: 6px;
-  overflow: auto;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--terminal-scrollbar-thumb)
-    var(--terminal-scrollbar-track);
-}
-
-body.terminal-page .custom-select-option {
-  display: flex;
-  align-items: center;
-  width: 100% !important;
-  min-height: 34px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--terminal-text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-body.terminal-page .custom-select-option:hover,
-body.terminal-page .custom-select-option:focus {
-  border-color: rgba(129, 159, 141, 0.28);
-  background: rgba(39, 174, 96, 0.13);
-  outline: none;
-}
-
-body.terminal-page .custom-select-option[aria-selected="true"] {
-  border-color: rgba(70, 255, 120, 0.34);
-  background: rgba(39, 174, 96, 0.18);
 }
 
 body.terminal-page .terminal-baud-value select {
@@ -2539,10 +2207,7 @@ body.terminal-page .checkbox-label:hover .checkbox-custom {
 }
 
 body.terminal-page .connect-btn:not(.terminal-connect-btn),
-body.terminal-page .send-btn,
-body.terminal-page .log-btn,
-body.terminal-page .play-pause-btn,
-body.terminal-page .receive-toggle-btn {
+body.terminal-page .play-pause-btn {
   border: 1px solid rgba(70, 255, 120, 0.32);
   border-radius: 8px;
   background: rgba(39, 174, 96, 0.34);
@@ -2550,24 +2215,17 @@ body.terminal-page .receive-toggle-btn {
   font-weight: 700;
 }
 
-body.terminal-page .send-btn:hover,
-body.terminal-page .log-btn:hover,
-body.terminal-page .play-pause-btn:hover,
-body.terminal-page .receive-toggle-btn:hover {
+body.terminal-page .play-pause-btn:hover {
   background: rgba(39, 174, 96, 0.48);
   border-color: var(--terminal-border-hot);
 }
 
-body.terminal-page .send-btn.running,
-body.terminal-page .receive-toggle-btn.receiving,
 body.terminal-page .send-loop-btn.active {
   background: rgba(232, 95, 92, 0.3);
   border-color: rgba(232, 95, 92, 0.68);
 }
 
 body.terminal-page .connect-btn:not(.terminal-connect-btn):disabled,
-body.terminal-page .send-btn:disabled,
-body.terminal-page .receive-toggle-btn:disabled,
 body.terminal-page .send-loop-btn:disabled {
   border-color: rgba(129, 159, 141, 0.2);
   background: rgba(129, 159, 141, 0.12);
@@ -2608,57 +2266,6 @@ body.terminal-page .modal-overlay {
   backdrop-filter: blur(8px);
 }
 
-body.terminal-page .modal-header {
-  gap: 16px;
-  min-height: 62px;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--terminal-panel-border);
-}
-
-body.terminal-page .modal-header h3 {
-  margin: 0;
-  color: var(--terminal-border-hot);
-  font-size: 15px;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-
-body.terminal-page .modal-close {
-  display: grid;
-  place-items: center;
-  width: 36px !important;
-  height: 36px;
-  min-width: 36px;
-  padding: 0;
-  border: 1px solid var(--terminal-panel-border);
-  border-radius: 10px;
-  background: rgba(39, 174, 96, 0.1);
-  color: var(--terminal-text-soft);
-  font-size: 0;
-  cursor: pointer;
-  transition:
-    background 140ms ease,
-    border-color 140ms ease,
-    color 140ms ease,
-    transform 140ms ease;
-}
-
-body.terminal-page .modal-close svg {
-  width: 18px;
-  height: 18px;
-}
-
-body.terminal-page .modal-close:hover,
-body.terminal-page .modal-close:focus-visible {
-  border-color: var(--terminal-border-hover);
-  background: var(--terminal-surface-strong);
-  color: var(--terminal-text);
-  outline: none;
-  transform: translateY(-1px);
-}
-
 body.terminal-page .modal-body {
   padding: 18px;
 }
@@ -2685,19 +2292,10 @@ body.terminal-page .modal-body .custom-select {
   width: 100%;
 }
 
-body.terminal-page .modal-body .custom-select-menu {
-  min-width: 100%;
-  z-index: 2300;
-}
-
 body.terminal-page .modal-body .connection-control select {
   width: 100% !important;
   max-width: none;
   height: 44px;
-}
-
-body.terminal-page footer {
-  display: none;
 }
 
 @media (max-width: 768px) {

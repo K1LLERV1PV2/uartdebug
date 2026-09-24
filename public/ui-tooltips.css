@@ -3,15 +3,12 @@
   z-index: 10000;
   max-width: min(280px, calc(100vw - 24px));
   padding: 7px 10px;
-  border: 1px solid var(--tooltip-border, rgba(129, 159, 141, 0.34));
+  border: 1px solid var(--tooltip-border);
   border-radius: 9px;
-  background: var(--tooltip-bg, rgba(23, 35, 46, 0.95));
-  color: var(--tooltip-text, #c8ffdd);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
   box-shadow: 0 14px 34px rgba(7, 13, 20, 0.32);
-  font:
-    600 12px/1.25 Inter,
-    Arial,
-    sans-serif;
+  font: 600 12px/1.25 var(--ui-font);
   letter-spacing: 0;
   text-align: center;
   white-space: normal;
@@ -33,9 +30,9 @@
   left: 50%;
   width: 8px;
   height: 8px;
-  border-right: 1px solid var(--tooltip-border, rgba(129, 159, 141, 0.34));
-  border-bottom: 1px solid var(--tooltip-border, rgba(129, 159, 141, 0.34));
-  background: var(--tooltip-bg, rgba(23, 35, 46, 0.95));
+  border-right: 1px solid var(--tooltip-border);
+  border-bottom: 1px solid var(--tooltip-border);
+  background: var(--tooltip-bg);
   content: "";
 }
 
@@ -57,22 +54,18 @@
   transform: translateX(-50%) rotate(225deg);
 }
 
-body.terminal-page,
 body {
-  --tooltip-bg: rgba(23, 35, 46, 0.96);
-  --tooltip-border: rgba(129, 159, 141, 0.42);
-  --tooltip-text: var(--terminal-text, var(--avr-text, #c8ffdd));
+  --tooltip-bg: var(--ui-surface-hover);
+  --tooltip-border: var(--ui-control-border);
+  --tooltip-text: var(--ui-text);
 }
 
 .oscilloscope-info-tooltip {
   padding: 6px 9px;
-  border: 1px solid var(--tooltip-border, rgba(129, 159, 141, 0.34));
-  border-radius: 8px;
-  background: var(--tooltip-bg, rgba(23, 35, 46, 0.95));
-  color: var(--tooltip-text, #c8ffdd);
+  border: 1px solid var(--tooltip-border);
+  border-radius: var(--ui-radius-small);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
   box-shadow: 0 12px 28px rgba(7, 13, 20, 0.26);
-  font:
-    600 11px/1.25 Inter,
-    Arial,
-    sans-serif;
+  font: 600 11px/1.25 var(--ui-font);
 }

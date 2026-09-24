@@ -26,6 +26,11 @@ Open `http://localhost:8000`. The static server covers browser-only behavior. Co
 ## Code and UI changes
 
 - Preserve the existing visual language unless the change explicitly redesigns a component.
+- Reuse `public/ui-theme.css` for shared visual tokens and `public/ui-controls.css`
+  plus `public/ui-controls.js` for panel headers, selectors, and modal behavior.
+  Keep page-specific layouts in their own stylesheets; do not fork common controls
+  between AVR and UART. Interface labels are English; user content and generated
+  project documentation retain the user's language.
 - Keep Web Serial and hardware failures recoverable and understandable to the user.
 - Do not expose backend credentials, AI rules, internal filesystem paths, or raw compiler paths in browser responses.
 - Add or update tests for behavior changes.

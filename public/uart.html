@@ -10,12 +10,15 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <!-- Link global and UART-specific styles. -->
-    <link rel="stylesheet" href="uart.css?v=20260709-port-overlay-v1" />
+    <link rel="stylesheet" href="ui-theme.css?v=20260924-shared-ui-v1" />
+    <link rel="stylesheet" href="uart.css?v=20260924-shared-ui-v1" />
+    <link rel="stylesheet" href="ui-controls.css?v=20260924-shared-ui-v1" />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
     <!-- Include Chart.js. -->
     <script src="vendor/chart.umd.js"></script>
     <script defer src="ui-tooltips.js?v=20260616-responsive-actions-v1"></script>
-    <script defer src="uart.js?v=20260709-port-overlay-v1"></script>
+    <script defer src="ui-controls.js?v=20260924-shared-ui-v1"></script>
+    <script defer src="uart.js?v=20260924-shared-ui-v1"></script>
   </head>
   <body class="terminal-page">
     <div
@@ -94,6 +97,10 @@
               id="settingsBtn"
               type="button"
               title="Connection settings"
+              aria-label="Connection settings"
+              aria-haspopup="dialog"
+              aria-controls="settingsModal"
+              aria-expanded="false"
             >
               <!-- Settings icon. -->
               <svg
@@ -119,7 +126,7 @@
             aria-disabled="true"
           >
             <div class="terminal-wrapper">
-              <div class="terminal-header">
+              <div class="terminal-header ui-panel-header">
                 <h3 class="terminal-label">TxD</h3>
                 <div class="view-toggle">
                   <div class="radio-group">
@@ -220,7 +227,7 @@
                     />
                     <span class="loop-interval-label">ms</span>
                   </div>
-                  <button class="send-btn" id="sendBtn" disabled>Run</button>
+                  <button class="send-btn ui-action ui-action--compact" id="sendBtn" disabled>Run</button>
                 </div>
               </div>
               <div class="terminal-shell" id="txTerminalShell">
@@ -373,7 +380,7 @@
             aria-disabled="true"
           >
             <div class="terminal-wrapper">
-              <div class="terminal-header">
+              <div class="terminal-header ui-panel-header">
                 <h3 class="terminal-label">RxD</h3>
                 <div class="view-toggle">
                   <div class="radio-group">
@@ -449,7 +456,7 @@
                 </div>
                 <div class="rx-controls-right">
                   <button
-                    class="log-btn receive-toggle-btn receiving"
+                    class="log-btn receive-toggle-btn ui-action ui-action--compact receiving"
                     id="receiveToggleBtn"
                     title="Stop receiving"
                   >
@@ -598,12 +605,12 @@
         </div>
 
         <!-- Connection settings modal. -->
-        <div class="modal-overlay" id="settingsModal">
+        <div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle" hidden>
           <div class="modal-content">
-            <div class="modal-header">
-              <h3>Connection settings</h3>
+            <div class="modal-header ui-dialog-header">
+              <h3 id="settingsModalTitle" class="editor-title">Connection settings</h3>
               <button
-                class="modal-close"
+                class="modal-close ui-dialog-close"
                 id="modalCloseBtn"
                 type="button"
                 aria-label="Close settings"
@@ -661,29 +668,6 @@
         </div>
       </div>
     </main>
-    <footer
-      style="
-        margin: 40px auto;
-        max-width: 980px;
-        padding: 16px;
-        opacity: 0.7;
-        text-align: center;
-        font:
-          14px/1.4 system-ui,
-          -apple-system,
-          Segoe UI,
-          Roboto,
-          Ubuntu,
-          Cantarell,
-          &quot;Helvetica Neue&quot;,
-          Arial,
-          &quot;Noto Sans&quot;,
-          &quot;Apple Color Emoji&quot;,
-          &quot;Segoe UI Emoji&quot;;
-      "
-    >
-      Contact: <a href="mailto:uartdebug@gmail.com">uartdebug@gmail.com</a>
-    </footer>
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
