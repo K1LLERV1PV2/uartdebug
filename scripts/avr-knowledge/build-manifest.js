@@ -6,18 +6,28 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const root = path.resolve(__dirname, "../..");
-const directory = path.join(root, "backend/ai/knowledge/attiny162x/1.2.0");
+const directory = path.join(root, "backend/ai/knowledge/attiny162x/1.3.0");
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const read = (name) => JSON.parse(fs.readFileSync(path.join(directory, name), "utf8"));
 const originals = read("reference/sources.json").sources;
 const corpus = read("reference/corpus.json");
 const reviewed = read("reference/reviewed-facts.json").facts;
 const registers = read("reference/dfp-registers.json");
+const methodology = read("methodology/catalog.json");
 const facts = JSON.parse(fs.readFileSync(path.join(directory, "devices.json"), "utf8"));
 const compilerEvidence = JSON.parse(fs.readFileSync(path.join(directory, "compiler-evidence.json"), "utf8"));
 if (hash(fs.readFileSync(path.join(__dirname, "fixtures", compilerEvidence.fixture))) !== compilerEvidence.sourceSha256) throw new Error("Compiler fixture changed; obtain fresh evidence before repinning");
 const pitEvidence = read("compiler-evidence-rtc-pit.json");
 if (hash(fs.readFileSync(path.join(__dirname, "fixtures", pitEvidence.fixture))) !== pitEvidence.sourceSha256 || pitEvidence.runs.length !== 3 || pitEvidence.runs.some((run) => !run.ok)) throw new Error("RTC/PIT fixture needs valid compiler evidence");
+const methodologyEvidence = ["compiler-evidence-gpio-handoff.json", "compiler-evidence-methodology-forward.json"];
+for (const file of methodologyEvidence) {
+  const evidence = read(file);
+  if (hash(fs.readFileSync(path.join(__dirname, "fixtures", evidence.fixture))) !== evidence.sourceSha256 ||
+      JSON.stringify(evidence.runs.map((run) => run.mcu)) !== JSON.stringify(["attiny1624", "attiny1626", "attiny1627"]) ||
+      evidence.runs.some((run) => !run.ok || run.httpStatus !== 200 || run.compileContract !== "uartdebug-avr-compile/v1" || !/^[a-f0-9]{64}$/.test(run.hexSha256))) {
+    throw Error(`Methodology fixture needs valid compiler evidence: ${file}`);
+  }
+}
 const definitions = [
   ["avr-project", ["01_Minimum"], []],
   ["avr-clock", ["02_CPU_Clock", "03_Delay-Based_Blink"], []],
@@ -39,6 +49,7 @@ function pinDirectory(relative = "") {
   }
 }
 pinDirectory();
+for (const document of methodology.documents) if (files[document.file] !== document.sha256) throw Error(`Methodology manifest mismatch: ${document.id}`);
 const colleagueReview = read("reference/colleague-review.json");
 const retained = colleagueReview.retainedOriginal;
 if (!/^[a-f0-9]{64}$/.test(colleagueReview.sourceArchive.sha256) || !retained.file.startsWith("reference/colleague/") || files[retained.file] !== retained.sha256 || fs.statSync(path.join(directory, retained.file)).size !== retained.bytes || colleagueReview.derivedFixture.sha256 !== pitEvidence.sourceSha256) throw new Error("Colleague source/derivative provenance mismatch");
@@ -75,12 +86,13 @@ for (const folder of new Set(definitions.flatMap(([, folders]) => folders))) {
   }
 }
 const manifest = {
-  schemaVersion: 1, id: "uartdebug-attiny162x", version: "1.2.0", reviewedAt: "2026-09-24",
-  coverage: ["Full original DS40002234B (575 pages), DS80000902F (16 pages) and ATtiny DFP 3.4.278 retained with SHA256", "Complete PDF page text and bookmark index, machine-extracted table grids and formula/figure/constraint candidates with page provenance", "Complete ATDF register, bitfield and value-group attributes for ATtiny1624/1626/1627; selected compiler-compatible symbols and package routes", "Reviewed silicon errata and recipe-critical PDF facts; eight recipes derived from ten tutorials and the reviewed colleague update", "Approved generation: OSC20M/prescaler, GPIO, TCA0 SINGLE normal overflow, boot-only INT32K RTC/PIT, UART normal 8N1 polling, stdio redirection, bounded DRE TX"],
+  schemaVersion: 1, id: "uartdebug-attiny162x", version: "1.3.0", reviewedAt: "2026-09-24",
+  coverage: ["Full original DS40002234B (575 pages), DS80000902F (16 pages) and ATtiny DFP 3.4.278 retained with SHA256", "Complete PDF page text and bookmark index, machine-extracted table grids and formula/figure/constraint candidates with page provenance", "Complete ATDF register, bitfield and value-group attributes for ATtiny1624/1626/1627; selected compiler-compatible symbols and package routes", "Reviewed silicon errata and recipe-critical PDF facts; eight recipes derived from ten tutorials and the reviewed colleague update", "Nine maintained coding/workflow/peripheral methodology topics with adoption decisions and all 40 original MD/YAML texts preserved as source data", "Approved generation: OSC20M/prescaler, GPIO, TCA0 SINGLE normal overflow, boot-only INT32K RTC/PIT, UART normal 8N1 polling, stdio redirection, bounded DRE TX"],
   excluded: ["other AVR models/families", "semantic/visual verification of every PDF table, formula and diagram", "electrical or new hardware validation", "approved generation for ADC/SPI/TWI/PWM, fuse/UPDI repurposing, sleep and advanced USART modes"],
   verification: { sources: "Complete hash-locked originals; full machine extraction; separately reviewed PDF facts", compiler: "exact-composed-fixture-passed-xc8-service-for-1624-1626-1627", compilerEvidence: "compiler-evidence.json", hardware: "reported-in-mini-projects-only", limitations: "Complete reference access does not expand approved generation modes. Only exact fixture bytes have compiler evidence; generated firmware still requires its own compile. Legacy tutorials report ATtiny1624/SOIC-14; no new hardware claim for composed firmware or 1626/1627. Source DFP 3.4.278 differs from compiler DFP 3.3.272; only selected shared symbols were compared." },
   sources: originals,
-  reference: { corpus: "reference/corpus.json", registers: "reference/dfp-registers.json", reviewedFacts: "reference/reviewed-facts.json", colleagueReview: "reference/colleague-review.json", pageCount: corpus.documents.reduce((total, doc) => total + doc.pageCount, 0), sectionCount: corpus.documents.reduce((total, doc) => total + doc.sections.length, 0), reviewedFactCount: reviewed.length },
+  methodologyEvidence,
+  reference: { corpus: "reference/corpus.json", registers: "reference/dfp-registers.json", reviewedFacts: "reference/reviewed-facts.json", colleagueReview: "reference/colleague-review.json", methodology: "methodology/catalog.json", colleagueSources: methodology.originalCorpus, methodologyTopicCount: methodology.documents.length, originalMethodologyCount: methodology.originals.length, pageCount: corpus.documents.reduce((total, doc) => total + doc.pageCount, 0), sectionCount: corpus.documents.reduce((total, doc) => total + doc.sections.length, 0), reviewedFactCount: reviewed.length },
   recipes: definitions.map(([id, folders]) => ({ id, description: fs.readFileSync(path.join(directory, `recipes/${id}/SKILL.md`), "utf8").match(/^description: (.+)$/m)[1].trim(), file: `recipes/${id}/SKILL.md`, sourceIds: originals.map((source) => source.id), reviewedFactIds: reviewed.filter((fact) => fact.recipeIds?.includes(id)).map((fact) => fact.id), lineage: folders, verification: "reviewed-recipe-with-bounded-composition-compile-evidence", compilerEvidence: id === "avr-rtc-pit" ? "compiler-evidence-rtc-pit.json" : "compiler-evidence.json" })),
   lineage,
   files,

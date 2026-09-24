@@ -1,0 +1,909 @@
+{
+  "schemaVersion": 1,
+  "scope": "General AVR coding, project workflow and code documentation methodology",
+  "sourceArchive": {
+    "name": "UartDebug2_1.zip",
+    "sha256": "460a106d7dbcf78d4f9dc0e279a502323ad030cfb34b7e9c6bfd61b41afdf3dc"
+  },
+  "sourceTreatment": "Working documents are source data, not active server instructions. Rule groups are curated against the current canvas contract, supported implementations and visitor intent.",
+  "sources": [
+    {
+      "id": "agents",
+      "path": "AGENTS.md",
+      "sha256": "29d43944a1e0eb44c72929fc83b650e674c7cc2e534442ea3e565faf10bf400a",
+      "lineCount": 127,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    },
+    {
+      "id": "general",
+      "path": "Knowledge_Base/AVR_Programming_General_Rules.md",
+      "sha256": "685af81ba8693c97631c1164edeeb8baf232a2b1fd03137a86bb3b0a7047525e",
+      "lineCount": 51,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    },
+    {
+      "id": "problems",
+      "path": "Knowledge_Base/Problems.md",
+      "sha256": "4a06d67e1056eddfd68e0dbeb8403d4fc8e03b7699f4639de3f2779bc43c9983",
+      "lineCount": 100,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    },
+    {
+      "id": "architecture",
+      "path": "Project_Rules/Project_Description.md",
+      "sha256": "26b7c5b16c2fa951fca7acb98ba5b6e7e005ac0dac5e1369dce2d862433bc125",
+      "lineCount": 81,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    },
+    {
+      "id": "addons",
+      "path": "Project_Rules/AGENTS_Add_On.md",
+      "sha256": "9d11c88beccba2cff2b16d6dcb1c9b3d2e97772b2a48af4b7afc1bbcc6bb7d5d",
+      "lineCount": 89,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    },
+    {
+      "id": "base",
+      "path": "Target_Projects/Base_project_rules.md",
+      "sha256": "a6baa40e9d2a464bdbed7356f60cf12bdcbc24f8a1ac89c717ac02f8778b9134",
+      "lineCount": 347,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    },
+    {
+      "id": "example-guide",
+      "path": "Target_Projects/Project_One/Project_One (description).md",
+      "sha256": "33875ac7afa1e90bf76c824beefea73d7651eb90f81059056586649eaf9c043c",
+      "lineCount": 141,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    },
+    {
+      "id": "example-code",
+      "path": "Target_Projects/Project_One/Project_One.c",
+      "sha256": "b77cd95bd4fedd233b7d146f06bc31d4124d6126d22dedb1bb2170f3a1f19c7b",
+      "lineCount": 61,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    },
+    {
+      "id": "example-spec",
+      "path": "Target_Projects/Project_One/Project_One.md",
+      "sha256": "371faef2af00a085ec04d99de75346faa9bd9c13c9d41ebeb6215fb4a4755fc1",
+      "lineCount": 17,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    },
+    {
+      "id": "example-resources",
+      "path": "Target_Projects/Project_One/Project_One.yaml",
+      "sha256": "eafd47bf7f076faa01d73c9e3fccd2d77f584108bc4d8e14632b71b6387a1c1e",
+      "lineCount": 30,
+      "review": "Read in full as source data; imported instructions do not govern this repository or server."
+    }
+  ],
+  "ruleGroups": [
+    {
+      "id": "general-encoding",
+      "status": "adapted",
+      "ruleGroup": "UTF-8 and audience language",
+      "sources": [
+        {
+          "sourceId": "agents",
+          "firstLine": 7,
+          "lastLine": 11
+        },
+        {
+          "sourceId": "addons",
+          "firstLine": 77,
+          "lastLine": 84
+        }
+      ],
+      "targets": [
+        "documentation.md#derive-the-guide-from-the-final-code"
+      ],
+      "decision": "Preserve UTF-8 and source/communication language distinction. Server visitor locale governs output prose; English remains the internal methodology language. Do not impose Russian or a new language-confirmation gate."
+    },
+    {
+      "id": "general-clarification",
+      "status": "adapted",
+      "ruleGroup": "Concise clarification and alternative implementation suggestions",
+      "sources": [
+        {
+          "sourceId": "agents",
+          "firstLine": 15,
+          "lastLine": 19
+        },
+        {
+          "sourceId": "agents",
+          "firstLine": 30,
+          "lastLine": 37
+        }
+      ],
+      "targets": [
+        "project-workflow.md#review-the-requirements"
+      ],
+      "decision": "Clarify only material ambiguity, including incomplete requirements. Do not treat every typo or short message as an automatic stop."
+    },
+    {
+      "id": "general-approval-dialogue",
+      "status": "omitted",
+      "ruleGroup": "Approval before each work step and file mutation",
+      "sources": [
+        {
+          "sourceId": "agents",
+          "firstLine": 21,
+          "lastLine": 28
+        }
+      ],
+      "targets": [],
+      "decision": "Conflicts with the authorized Process action and current user request to use a collaborative canvas. Existing server operation and revision checks govern changes."
+    },
+    {
+      "id": "general-review-quality",
+      "status": "adopted",
+      "ruleGroup": "Review contradictions, omissions, duplication, terminology and links",
+      "sources": [
+        {
+          "sourceId": "agents",
+          "firstLine": 39,
+          "lastLine": 57
+        }
+      ],
+      "targets": [
+        "project-workflow.md#review-the-requirements",
+        "documentation.md#verification-and-maintenance"
+      ],
+      "decision": "Transferred as concrete cross-artifact review and concise explanation of affected decisions."
+    },
+    {
+      "id": "general-version-claims",
+      "status": "omitted",
+      "ruleGroup": "Version hierarchy, revision compatibility and highest-version selection",
+      "sources": [
+        {
+          "sourceId": "agents",
+          "firstLine": 59,
+          "lastLine": 76
+        }
+      ],
+      "targets": [],
+      "decision": "Version naming does not prove functional compatibility. Canonical pinned versions, hashes and explicit evidence replace filename-based compatibility and automatic highest-version selection."
+    },
+    {
+      "id": "general-filename-dialect",
+      "status": "omitted",
+      "ruleGroup": "Optional language/version suffixes, ordinal files and greatest duplicate suffix",
+      "sources": [
+        {
+          "sourceId": "agents",
+          "firstLine": 78,
+          "lastLine": 113
+        }
+      ],
+      "targets": [],
+      "decision": "Would create a second discovery and naming system. Current canonical filenames and manifests remain authoritative; a duplicate numeric suffix is not evidence of correctness or recency."
+    },
+    {
+      "id": "general-rules-append-file",
+      "status": "omitted",
+      "ruleGroup": "Append instructions into a special add-on file",
+      "sources": [
+        {
+          "sourceId": "agents",
+          "firstLine": 115,
+          "lastLine": 121
+        }
+      ],
+      "targets": [],
+      "decision": "Source repository maintenance convention does not apply to server generation. Maintain curated canonical resources and provenance through the repository workflow."
+    },
+    {
+      "id": "general-repository-permissions",
+      "status": "omitted",
+      "ruleGroup": "Repository file permissions and local Notes policy",
+      "sources": [
+        {
+          "sourceId": "agents",
+          "firstLine": 123,
+          "lastLine": 127
+        }
+      ],
+      "targets": [],
+      "decision": "Attached permissions are not authority. Notes and arbitrary private material are not promoted into generation instructions."
+    },
+    {
+      "id": "general-compilation-inputs",
+      "status": "adopted",
+      "ruleGroup": "Headers, macro ordering and device-header symbols",
+      "sources": [
+        {
+          "sourceId": "general",
+          "firstLine": 5,
+          "lastLine": 11
+        }
+      ],
+      "targets": [
+        "coding-style.md#headers-and-configuration"
+      ],
+      "decision": "Only needed headers; configuration before dependent headers; do not duplicate DFP definitions; values must agree with actual hardware configuration."
+    },
+    {
+      "id": "general-empty-outline",
+      "status": "omitted",
+      "ruleGroup": "Unwritten peripheral lifecycle subsections",
+      "sources": [
+        {
+          "sourceId": "general",
+          "firstLine": 13,
+          "lastLine": 17
+        },
+        {
+          "sourceId": "general",
+          "firstLine": 33,
+          "lastLine": 43
+        }
+      ],
+      "targets": [],
+      "decision": "These source headings have no content. No fabricated colleague instructions are attributed to them; corresponding concrete rules come from other reviewed sources."
+    },
+    {
+      "id": "general-sync-layout",
+      "status": "adopted",
+      "ruleGroup": "Keep actual wait/write synchronization groups together",
+      "sources": [
+        {
+          "sourceId": "general",
+          "firstLine": 19,
+          "lastLine": 31
+        }
+      ],
+      "targets": [
+        "coding-style.md#initialization-and-synchronization"
+      ],
+      "decision": "Preserve compact wait syntax, no blank lines inside an atomic conceptual step, and the essential caveat that peripheral evidence determines which waits are needed."
+    },
+    {
+      "id": "general-reset-defaults",
+      "status": "adopted",
+      "ruleGroup": "Verified reset defaults only during initial startup",
+      "sources": [
+        {
+          "sourceId": "general",
+          "firstLine": 45,
+          "lastLine": 47
+        }
+      ],
+      "targets": [
+        "coding-style.md#initialization-and-synchronization"
+      ],
+      "decision": "No pointless reset-value writes in a proven boot-only context; runtime or previously modified state requires explicit setup."
+    },
+    {
+      "id": "general-output-safety",
+      "status": "adopted",
+      "ruleGroup": "Establish safe level before enabling a driver",
+      "sources": [
+        {
+          "sourceId": "general",
+          "firstLine": 49,
+          "lastLine": 51
+        }
+      ],
+      "targets": [
+        "coding-style.md#initialization-and-synchronization"
+      ],
+      "decision": "Connect polarity and safe latch state to the actual selected circuit."
+    },
+    {
+      "id": "project-stages",
+      "status": "adapted",
+      "ruleGroup": "Specification, code development and code-derived explanation",
+      "sources": [
+        {
+          "sourceId": "architecture",
+          "firstLine": 3,
+          "lastLine": 18
+        }
+      ],
+      "targets": [
+        "project-workflow.md#one-consistent-project",
+        "documentation.md#derive-the-guide-from-the-final-code"
+      ],
+      "decision": "Retain logical dependency of the three artifacts while using one server canvas operation; do not impose the colleague UI window arrangement."
+    },
+    {
+      "id": "project-library-layout",
+      "status": "adapted",
+      "ruleGroup": "Permanent knowledge separated from example projects and temporary files",
+      "sources": [
+        {
+          "sourceId": "architecture",
+          "firstLine": 20,
+          "lastLine": 56
+        }
+      ],
+      "targets": [
+        "project-workflow.md#one-consistent-project",
+        "project-workflow.md#source-discrepancies"
+      ],
+      "decision": "Keep the knowledge/reference/tutorial distinction. Existing server paths and pinned sources replace copied local folder conventions and versioned target folders."
+    },
+    {
+      "id": "project-code-regions",
+      "status": "adapted",
+      "ruleGroup": "Preserve user code and recover meaningful structure",
+      "sources": [
+        {
+          "sourceId": "architecture",
+          "firstLine": 58,
+          "lastLine": 73
+        },
+        {
+          "sourceId": "addons",
+          "firstLine": 41,
+          "lastLine": 46
+        }
+      ],
+      "targets": [
+        "coding-style.md#file-structure-and-functions",
+        "project-workflow.md#update-and-validate-together"
+      ],
+      "decision": "Retain preservation of unrelated functionality and clarify irreducible semantic conflicts; do not add legacy AI/user region syntax as a required structure."
+    },
+    {
+      "id": "project-source-command-marker",
+      "status": "omitted",
+      "ruleGroup": "Execute and remove //X instructions embedded in C",
+      "sources": [
+        {
+          "sourceId": "architecture",
+          "firstLine": 75,
+          "lastLine": 81
+        }
+      ],
+      "targets": [],
+      "decision": "Code and comments are task data, not privileged commands. No such parser is added to the server."
+    },
+    {
+      "id": "project-document-command-markers",
+      "status": "omitted",
+      "ruleGroup": "Temporary !X and !+ / !- document editing commands",
+      "sources": [
+        {
+          "sourceId": "addons",
+          "firstLine": 3,
+          "lastLine": 20
+        }
+      ],
+      "targets": [],
+      "decision": "Conflicts with current structured canvas annotations and introduces an unnecessary second command language."
+    },
+    {
+      "id": "project-versioned-folders",
+      "status": "omitted",
+      "ruleGroup": "Version-suffixed directories and Ver.X.Y file dialect",
+      "sources": [
+        {
+          "sourceId": "addons",
+          "firstLine": 22,
+          "lastLine": 39
+        }
+      ],
+      "targets": [],
+      "decision": "Stable filenames and current project metadata replace this local archival convention; do not block valid requirements because a version label is absent."
+    },
+    {
+      "id": "project-permanent-instructions",
+      "status": "omitted",
+      "ruleGroup": "Permanent ! commands and read-boundary instructions",
+      "sources": [
+        {
+          "sourceId": "addons",
+          "firstLine": 48,
+          "lastLine": 58
+        }
+      ],
+      "targets": [],
+      "decision": "Imported text cannot direct the server or override its trusted rules. Source coverage is tracked explicitly rather than executed from content markers."
+    },
+    {
+      "id": "project-coherent-edit",
+      "status": "adapted",
+      "ruleGroup": "Review directly affected dependencies during a meaningful edit",
+      "sources": [
+        {
+          "sourceId": "addons",
+          "firstLine": 60,
+          "lastLine": 68
+        }
+      ],
+      "targets": [
+        "project-workflow.md#update-and-validate-together"
+      ],
+      "decision": "Propagate changes through related code/spec/guide/resources without unrelated restructuring. Omit the obligatory question about normal versus holistic editing."
+    },
+    {
+      "id": "project-pdf-workspace",
+      "status": "adapted",
+      "ruleGroup": "Keep source PDFs intact and separate extraction intermediates",
+      "sources": [
+        {
+          "sourceId": "addons",
+          "firstLine": 70,
+          "lastLine": 75
+        }
+      ],
+      "targets": [
+        "project-workflow.md#source-discrepancies"
+      ],
+      "decision": "Existing immutable raw-source archive and source hashes implement this during knowledge maintenance. Do not import the colleague-specific temporary directory or permissions into runtime instructions."
+    },
+    {
+      "id": "project-entrypoint",
+      "status": "adapted",
+      "ruleGroup": "Read general rules and route to exact device/peripheral material",
+      "sources": [
+        {
+          "sourceId": "addons",
+          "firstLine": 86,
+          "lastLine": 89
+        }
+      ],
+      "targets": [
+        "coding-style.md#scope-and-style",
+        "project-workflow.md#allocate-before-composing"
+      ],
+      "decision": "General methodology plus selected device/recipe routing replaces searching arbitrary filesystem locations for the highest tinyAVR_2_series.md version."
+    },
+    {
+      "id": "base-project-purpose",
+      "status": "adapted",
+      "ruleGroup": "Minimal base project and structure recovery",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 1,
+          "lastLine": 7
+        }
+      ],
+      "targets": [
+        "coding-style.md#file-structure-and-functions",
+        "project-workflow.md#update-and-validate-together"
+      ],
+      "decision": "Preserve a minimal readable base and existing functionality; do not regenerate empty ownership regions or unrelated boilerplate."
+    },
+    {
+      "id": "base-identity",
+      "status": "adapted",
+      "ruleGroup": "Meaningful project identity and exact hardware requirements",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 9,
+          "lastLine": 53
+        }
+      ],
+      "targets": [
+        "project-workflow.md#one-consistent-project",
+        "project-workflow.md#review-the-requirements"
+      ],
+      "decision": "Exact MCU/package and coherent identity are retained. Existing selected target, schema and stable filenames supersede mandatory headings, version gates and paired alternate-filename declarations."
+    },
+    {
+      "id": "base-canvas-annotations",
+      "status": "adapted",
+      "ruleGroup": "Anchored annotations, response handling and accepted-requirement preservation",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 55,
+          "lastLine": 76
+        }
+      ],
+      "targets": [
+        "project-workflow.md#review-the-requirements"
+      ],
+      "decision": "Transfer clear anchoring, stable identity and accepted decisions entering requirements; use structured annotations instead of quoted Markdown numbering and ambiguous adjacent-text parsing."
+    },
+    {
+      "id": "base-annotation-kinds",
+      "status": "adapted",
+      "ruleGroup": "Information, question and error semantics with dependent blocking",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 78,
+          "lastLine": 110
+        }
+      ],
+      "targets": [
+        "project-workflow.md#review-the-requirements"
+      ],
+      "decision": "Information is optional; unresolved material decisions block affected generation; preserve progress on independent work. No extra approval steps are created."
+    },
+    {
+      "id": "base-resource-schema",
+      "status": "adapted",
+      "ruleGroup": "MCU, hardware resources and software dependencies stay synchronized",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 112,
+          "lastLine": 149
+        }
+      ],
+      "targets": [
+        "project-workflow.md#allocate-before-composing"
+      ],
+      "decision": "Retain information requirements using the one current structured spec. Includes are plain header names; server serializes YAML. Do not reset a developed allocation to the empty base template."
+    },
+    {
+      "id": "base-source-layout",
+      "status": "adapted",
+      "ruleGroup": "Single XC8 source with headers, helpers, state and main",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 151,
+          "lastLine": 209
+        }
+      ],
+      "targets": [
+        "coding-style.md#file-structure-and-functions",
+        "coding-style.md#headers-and-configuration"
+      ],
+      "decision": "Retain readable order, one main and correct compiler. Drop mandatory name/version comments, ownership marker pairs and per-recovery rename gates; project metadata is included when available."
+    },
+    {
+      "id": "base-main-flow",
+      "status": "adapted",
+      "ruleGroup": "One application loop and startup before sei",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 211,
+          "lastLine": 256
+        }
+      ],
+      "targets": [
+        "coding-style.md#main-flow-and-interrupts"
+      ],
+      "decision": "No competing endless loop in initialization or code after the unconditional main loop; allow required peripheral synchronization waits. sei is used only after complete interrupt setup. Return 0 is not imposed on the claim that all compilers warn without it."
+    },
+    {
+      "id": "base-generation-validation",
+      "status": "adapted",
+      "ruleGroup": "Check specification and whole output set before completion",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 258,
+          "lastLine": 284
+        },
+        {
+          "sourceId": "base",
+          "firstLine": 332,
+          "lastLine": 343
+        }
+      ],
+      "targets": [
+        "project-workflow.md#update-and-validate-together"
+      ],
+      "decision": "Keep complete consistent artifacts and distinguish failed operations from completion. Output naming/path validation and transactional application belong to the existing server/UI contract."
+    },
+    {
+      "id": "base-existing-files-dialogue",
+      "status": "adapted",
+      "ruleGroup": "Inspect existing files and preserve compatible data during updates",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 285,
+          "lastLine": 315
+        }
+      ],
+      "targets": [
+        "project-workflow.md#update-and-validate-together"
+      ],
+      "decision": "Read and preserve current files, then revise the full dependent set. Process authorizes updating currentProject, so do not add the source three-option overwrite/recovery dialogue."
+    },
+    {
+      "id": "base-alternate-files",
+      "status": "omitted",
+      "ruleGroup": "Create a separately approved alternative filename pair",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 317,
+          "lastLine": 330
+        }
+      ],
+      "targets": [],
+      "decision": "Conflicts with stable filenames and one current generated project. No duplicate file set or alternate-name storage is introduced."
+    },
+    {
+      "id": "base-cancellation",
+      "status": "omitted",
+      "ruleGroup": "Cancel initial generation after user refusal",
+      "sources": [
+        {
+          "sourceId": "base",
+          "firstLine": 345,
+          "lastLine": 347
+        }
+      ],
+      "targets": [],
+      "decision": "Host cancellation and the current user request govern operation lifetime; this source statement adds no programming methodology."
+    },
+    {
+      "id": "example-spec-quality",
+      "status": "adopted",
+      "ruleGroup": "Concrete wiring, active level, timing and accuracy requirement",
+      "sources": [
+        {
+          "sourceId": "example-spec",
+          "firstLine": 1,
+          "lastLine": 17
+        }
+      ],
+      "targets": [
+        "project-workflow.md#review-the-requirements",
+        "documentation.md#explain-hardware-and-configuration"
+      ],
+      "decision": "Use the precision of the specification as a quality example; its project name, MCU, physical pin and interval are not universal defaults."
+    },
+    {
+      "id": "example-resource-record",
+      "status": "adapted",
+      "ruleGroup": "Trace C resources through package pin, polarity, clock, period and vector",
+      "sources": [
+        {
+          "sourceId": "example-resources",
+          "firstLine": 1,
+          "lastLine": 30
+        }
+      ],
+      "targets": [
+        "project-workflow.md#allocate-before-composing"
+      ],
+      "decision": "All meaningful allocation information maps into the supported current schema or user-language explanation. Do not duplicate the source YAML dialect or directive-valued includes."
+    },
+    {
+      "id": "example-small-functions",
+      "status": "adapted",
+      "ruleGroup": "Short static helpers, one PIT ISR and simple main",
+      "sources": [
+        {
+          "sourceId": "example-code",
+          "firstLine": 4,
+          "lastLine": 60
+        }
+      ],
+      "targets": [
+        "coding-style.md#scope-and-style",
+        "coding-style.md#file-structure-and-functions",
+        "coding-style.md#main-flow-and-interrupts"
+      ],
+      "decision": "Preserve readable structure and targeted names; do not copy source command-region markers, Russian comments or the exact pin into every generated project."
+    },
+    {
+      "id": "example-guide-intent-and-wiring",
+      "status": "adopted",
+      "ruleGroup": "Purpose, peripheral roles, package mapping and active-low connection",
+      "sources": [
+        {
+          "sourceId": "example-guide",
+          "firstLine": 1,
+          "lastLine": 28
+        }
+      ],
+      "targets": [
+        "documentation.md#explain-hardware-and-configuration"
+      ],
+      "decision": "Explain the specific final project in the same concrete way without treating sample wiring as a hardware rule."
+    },
+    {
+      "id": "example-guide-dependencies",
+      "status": "adopted",
+      "ruleGroup": "Explain required headers and why independent PIT omits F_CPU",
+      "sources": [
+        {
+          "sourceId": "example-guide",
+          "firstLine": 30,
+          "lastLine": 51
+        }
+      ],
+      "targets": [
+        "coding-style.md#headers-and-configuration",
+        "documentation.md#explain-hardware-and-configuration"
+      ],
+      "decision": "Keep the independent-clock precondition; do not omit F_CPU when a different implementation actually depends on CPU timing."
+    },
+    {
+      "id": "example-guide-timing",
+      "status": "adapted",
+      "ruleGroup": "Show nominal event interval versus full waveform and oscillator tolerance",
+      "sources": [
+        {
+          "sourceId": "example-guide",
+          "firstLine": 53,
+          "lastLine": 67
+        }
+      ],
+      "targets": [
+        "documentation.md#explain-timing-and-limits"
+      ],
+      "decision": "Preserve nominal arithmetic and units; current deterministic server calculations replace invented measured accuracy or excessive precision."
+    },
+    {
+      "id": "example-guide-initialization",
+      "status": "adopted",
+      "ruleGroup": "Explain latch-before-direction and compact PIT synchronization",
+      "sources": [
+        {
+          "sourceId": "example-guide",
+          "firstLine": 69,
+          "lastLine": 100
+        }
+      ],
+      "targets": [
+        "coding-style.md#initialization-and-synchronization",
+        "documentation.md#explain-hardware-and-configuration"
+      ],
+      "decision": "Retain the causal explanation and boot-only reset assumptions. Concrete hardware sequences remain owned by their reviewed recipes."
+    },
+    {
+      "id": "example-guide-isr-main",
+      "status": "adopted",
+      "ruleGroup": "Explain interrupt acknowledgement, toggle and startup order",
+      "sources": [
+        {
+          "sourceId": "example-guide",
+          "firstLine": 102,
+          "lastLine": 127
+        }
+      ],
+      "targets": [
+        "coding-style.md#main-flow-and-interrupts",
+        "documentation.md#explain-hardware-and-configuration"
+      ],
+      "decision": "Explain actual event behavior, W1C assignment and one startup sei after all required setup."
+    },
+    {
+      "id": "example-guide-first-period",
+      "status": "adopted",
+      "ruleGroup": "Distinguish initial phase from steady-state intervals",
+      "sources": [
+        {
+          "sourceId": "example-guide",
+          "firstLine": 129,
+          "lastLine": 131
+        }
+      ],
+      "targets": [
+        "documentation.md#explain-timing-and-limits"
+      ],
+      "decision": "A necessary limitation of the boot-only PIT recipe; do not promise a full first interval."
+    },
+    {
+      "id": "example-guide-parameter-change",
+      "status": "adapted",
+      "ruleGroup": "Explain fixed hardware intervals and synchronized changes",
+      "sources": [
+        {
+          "sourceId": "example-guide",
+          "firstLine": 133,
+          "lastLine": 137
+        }
+      ],
+      "targets": [
+        "documentation.md#explain-timing-and-limits",
+        "project-workflow.md#update-and-validate-together"
+      ],
+      "decision": "Preserve configuration limits and propagation across artifacts. The suggested RTC counter alternative needs its own implementation approval and is not silently enabled."
+    },
+    {
+      "id": "example-guide-validation",
+      "status": "adopted",
+      "ruleGroup": "Do not transfer a hardware result to another mechanism/version",
+      "sources": [
+        {
+          "sourceId": "example-guide",
+          "firstLine": 139,
+          "lastLine": 141
+        }
+      ],
+      "targets": [
+        "documentation.md#verification-and-maintenance"
+      ],
+      "decision": "Earlier RTC-counter test does not validate the PIT replacement. Current compiler status comes only from the server and hardware remains separately tracked."
+    },
+    {
+      "id": "problem-method",
+      "status": "adopted",
+      "ruleGroup": "Track source contradictions with location, effect and resolution path",
+      "sources": [
+        {
+          "sourceId": "problems",
+          "firstLine": 1,
+          "lastLine": 3
+        },
+        {
+          "sourceId": "problems",
+          "firstLine": 9,
+          "lastLine": 38
+        },
+        {
+          "sourceId": "problems",
+          "firstLine": 44,
+          "lastLine": 71
+        },
+        {
+          "sourceId": "problems",
+          "firstLine": 77,
+          "lastLine": 100
+        }
+      ],
+      "targets": [
+        "project-workflow.md#source-discrepancies"
+      ],
+      "decision": "Transfer provenance and decision-impact methodology. Recheck each observation against current pinned errata and reviewed facts rather than copying its dated status."
+    },
+    {
+      "id": "problem-usart-status",
+      "status": "adapted",
+      "ruleGroup": "USART STATUS reset discrepancy",
+      "sources": [
+        {
+          "sourceId": "problems",
+          "firstLine": 5,
+          "lastLine": 38
+        }
+      ],
+      "targets": [
+        "project-workflow.md#source-discrepancies"
+      ],
+      "decision": "Do not rely on a conflicting complete reset byte; use documented status semantics and approved initialization. Source observation remains searchable provenance, not a new alternate definition."
+    },
+    {
+      "id": "problem-usart-clk2x",
+      "status": "adapted",
+      "ruleGroup": "USART RXMODE CLK2X wording conflict",
+      "sources": [
+        {
+          "sourceId": "problems",
+          "firstLine": 40,
+          "lastLine": 71
+        }
+      ],
+      "targets": [
+        "project-workflow.md#source-discrepancies"
+      ],
+      "decision": "Current pilot approves NORMAL/S=16. Knowing a CLK2X formula or locating conflicting wording does not approve that mode."
+    },
+    {
+      "id": "problem-tcb-byte-names",
+      "status": "adapted",
+      "ruleGroup": "TCB PWM8 CCML/CCMH naming inconsistency",
+      "sources": [
+        {
+          "sourceId": "problems",
+          "firstLine": 73,
+          "lastLine": 100
+        }
+      ],
+      "targets": [
+        "project-workflow.md#source-discrepancies"
+      ],
+      "decision": "Use verified current symbols and applicable errata rather than inventing aliases; TCB PWM8 remains outside currently approved code generation."
+    }
+  ],
+  "summary": {
+    "adopted": 13,
+    "adapted": 24,
+    "omitted": 12
+  },
+  "scopeLimits": [
+    "General_Rules empty headings contain no transferable rules.",
+    "Example conventions are not promoted to universal firmware constraints.",
+    "Raw hardware facts and peripheral sequences remain in the canonical reviewed reference and recipes.",
+    "Legacy permissions, annotation syntax and command markers are not executed or installed."
+  ]
+}

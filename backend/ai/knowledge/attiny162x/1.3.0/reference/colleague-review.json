@@ -27,7 +27,7 @@
     "bytes": 1337,
     "scope": "Reviewed derivative. Compiler evidence is recorded separately and applies only to exact fixture bytes; no hardware testing was performed."
   },
-  "noDuplicateImports": "Original datasheet content already matches the pinned PDF; MD/YAML translations, header copies, diagrams and workflow documents are not imported as parallel runtime knowledge. The source inventory and adoption decisions preserve provenance.",
+  "noDuplicateImports": "Initial 1.2.0 import omitted MD/YAML copies. Since 1.3.0 all relevant original MD/YAML texts are preserved separately in reference/colleague-sources.json as work-in-progress source data; corrected generation guidance lives in methodology. Official PDF/header copies and translation duplicates are not separate maintained instructions.",
   "sourceInventory": [
     {
       "path": "AGENTS.md",
@@ -252,13 +252,13 @@
       "role": "reviewed work-in-progress reference; only decisions recorded below are adopted"
     },
     {
-      "path": "Notes/Заметки.md",
+      "path": "Notes/Р—Р°РјРµС‚РєРё.md",
       "sha256": "7a8920005bf644f1154c5b9ea13bba99d06125df9e56a424c9d75c8b86e9e721",
       "bytes": 265,
       "role": "unadopted notes and user links"
     },
     {
-      "path": "Notes/По ходу работы.md",
+      "path": "Notes/РџРѕ С…РѕРґСѓ СЂР°Р±РѕС‚С‹.md",
       "sha256": "1c3ed3aec635032e720f4ad876757dd90c7e1dbea12ade3ca1239338aa831b26",
       "bytes": 674,
       "role": "unadopted notes and user links"
@@ -465,5 +465,12 @@
     "The new PIT demo is not reported as hardware tested; earlier RTC-counter demonstrations do not verify PIT behavior.",
     "Logical pin mapping does not verify LED resistor/current, supply or physical wiring.",
     "Nominal interval calculations do not prove oscillator accuracy or ISR latency."
+  ],
+  "reviewStage": "Initial selective adoption shipped in bundle 1.2.0; retained as historical provenance for Project_One and the RTC/PIT recipe.",
+  "supersededBy": [
+    "methodology/catalog.json",
+    "methodology/provenance/adoption-general.json",
+    "methodology/provenance/adoption-gpio-interrupts.json",
+    "methodology/provenance/adoption-peripherals.json"
   ]
 }

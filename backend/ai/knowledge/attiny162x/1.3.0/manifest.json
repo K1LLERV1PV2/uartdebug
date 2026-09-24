@@ -1,13 +1,14 @@
 {
   "schemaVersion": 1,
   "id": "uartdebug-attiny162x",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "reviewedAt": "2026-09-24",
   "coverage": [
     "Full original DS40002234B (575 pages), DS80000902F (16 pages) and ATtiny DFP 3.4.278 retained with SHA256",
     "Complete PDF page text and bookmark index, machine-extracted table grids and formula/figure/constraint candidates with page provenance",
     "Complete ATDF register, bitfield and value-group attributes for ATtiny1624/1626/1627; selected compiler-compatible symbols and package routes",
     "Reviewed silicon errata and recipe-critical PDF facts; eight recipes derived from ten tutorials and the reviewed colleague update",
+    "Nine maintained coding/workflow/peripheral methodology topics with adoption decisions and all 40 original MD/YAML texts preserved as source data",
     "Approved generation: OSC20M/prescaler, GPIO, TCA0 SINGLE normal overflow, boot-only INT32K RTC/PIT, UART normal 8N1 polling, stdio redirection, bounded DRE TX"
   ],
   "excluded": [
@@ -68,11 +69,19 @@
       "license": "Original component licenses are preserved inside the archive; extracted ATDF/header license is in MICROCHIP-LICENSE.txt."
     }
   ],
+  "methodologyEvidence": [
+    "compiler-evidence-gpio-handoff.json",
+    "compiler-evidence-methodology-forward.json"
+  ],
   "reference": {
     "corpus": "reference/corpus.json",
     "registers": "reference/dfp-registers.json",
     "reviewedFacts": "reference/reviewed-facts.json",
     "colleagueReview": "reference/colleague-review.json",
+    "methodology": "methodology/catalog.json",
+    "colleagueSources": "reference/colleague-sources.json",
+    "methodologyTopicCount": 9,
+    "originalMethodologyCount": 40,
     "pageCount": 591,
     "sectionCount": 914,
     "reviewedFactCount": 39
@@ -80,7 +89,7 @@
   "recipes": [
     {
       "id": "avr-project",
-      "description": "Compose XC8 C, resource YAML and user-language documentation for the supported ATtiny162x pilot.",
+      "description": "Compose supported XC8 firmware, one resource specification and a synchronized educational guide using the local coding methodology.",
       "file": "recipes/avr-project/SKILL.md",
       "sourceIds": [
         "datasheet-ds40002234b",
@@ -390,20 +399,36 @@
     }
   ],
   "files": {
+    "compiler-evidence-gpio-handoff.json": "184fa54b56b8437a2416cc9ef10b7ccf62f7b00de5e06ba061b9e1a7f28c3d04",
+    "compiler-evidence-methodology-forward.json": "156b643bc0fca818f5454aae461e3843e71a5ecf9c3921e4bfe2dd485cd684f6",
     "compiler-evidence-rtc-pit.json": "fa9c74f82d629b7567d602fabd67b8cdcd25a00ec6f7fabb2ebd6914a3492789",
     "compiler-evidence.json": "f6e82a4566723acf465ffdf079aa2f3e1e877f2b45843f4e71719101698bc417",
     "devices.json": "d957a336e3dfaff55c7abd5be21ffc8d8175c0dad90456ee97cf41bcc6fd5b1d",
+    "methodology/catalog.json": "946ca5392689488e276424de1d4518018902da0ca13caa1d54a0d8e823b7cf45",
+    "methodology/coding-style.md": "50ba23c4861243e3c4134af2ec3b5d43c84f3c07d02d23dacdc57e1efdc38eb1",
+    "methodology/documentation.md": "edb8481e6afb331374d89999c76e3afebd47ab801e8fa90f6173f7e274b50aff",
+    "methodology/gpio.md": "10a0a5dbc2a153a0fc0f19827d87b429b7017a9d230b4b9acf5e1c249bff979b",
+    "methodology/interrupts.md": "273db53f6312d15cb983aa497c2c83fbf2e349fe1baeb834ea4864d92435385d",
+    "methodology/project-workflow.md": "2083800d5a72af582f47ad9707cdea26fc4b8bba9c5fdbb3dad2e0f1f5b7f9b7",
+    "methodology/provenance/adoption-general.json": "85c4e584f93e9205187a4c63fce3548a154a5bc093ec03420df7a22e20e6a07c",
+    "methodology/provenance/adoption-gpio-interrupts.json": "3ef4e0164e760300d88451ef63228ea0039f24ee17597110bc189207cef3891c",
+    "methodology/provenance/adoption-peripherals.json": "9984828ac51179595a6af1ed6f81afc7a436fd80c1fde89bd501dc43b9c70baa",
+    "methodology/rtc.md": "01aff62b61bd156734e716c4e2c010889fb41d32bf3a161b18d80963fc2684b8",
+    "methodology/tca.md": "877a1c0e888bb7001b47a9cc51e5bb1aa3e9aea46b437be2c994562b66130d94",
+    "methodology/tcb.md": "e1ec06356d8ed7e6ec0d3974937d99a75e4f4996227f8ebe3b856abfaec4f352",
+    "methodology/usart.md": "e65200df6cfad2630ab26529cf8a91d61116ba9c265634dba452ae28c7d8a0f0",
     "MICROCHIP-LICENSE.txt": "3bf0a101f2b2e44eda3b477f866bd24204c35fa1f841c865933028adf155336a",
     "recipes/avr-clock/SKILL.md": "475c82db2b3a9873206379ca9157cd59238c5e99b4786742ef770a300a85ea70",
     "recipes/avr-gpio/SKILL.md": "9b991040f44273915cbadf4184ca5c1459ca50c888e30939fd14f1134093561d",
     "recipes/avr-printf/SKILL.md": "7d8d3e2a759a7243241c0162620d569fc6df3e9ca25f09039fb8ab119f64c04a",
-    "recipes/avr-project/SKILL.md": "bed5a01a2f0cf577dfba0325915c519e4934dc3fa2e4874f3444659eea4784f4",
+    "recipes/avr-project/SKILL.md": "8c9d81c5650752354b8109de2f22951c86cd9ef7430280ba3ad370525d9716c0",
     "recipes/avr-rtc-pit/SKILL.md": "2f0744a6b10c11ed39e0caa07665fe724f56ac768329c3907b67b67159646fc9",
     "recipes/avr-timer/SKILL.md": "97e0cbb14d0416e24d183b7ef8c500a5c15eb8e18dab00fe25513438c4d4db96",
     "recipes/avr-uart-polling/SKILL.md": "535354084cdf77bdfba6727c0d8eeab4798d7c4192c36b3055d6eb6bc052a240",
     "recipes/avr-uart-tx-interrupt/SKILL.md": "20da7d16a7745721e6c4fc54597bd5397c39c17278c9d36bb6ba2758b702f4f7",
     "reference/colleague/Project_One.c": "b77cd95bd4fedd233b7d146f06bc31d4124d6126d22dedb1bb2170f3a1f19c7b",
-    "reference/colleague-review.json": "31d36e8236bb7f77862a602b9d6a6e7ed422c414e016d2b2dfdc0c2fabb99091",
+    "reference/colleague-review.json": "c3e09a1370d4536d66d5a5c993acb3bb42fdf1080c00f8a8ae3282aec16337d8",
+    "reference/colleague-sources.json": "cc4aeaf4f9ed42fc0243e2ff7c85ac100eb4f0f3ba55b3b71de8a3c388ad2623",
     "reference/corpus.json": "954706656f3c349cf381a4919f14c86bb95b66b02de75a1f623599155ece37a6",
     "reference/dfp-registers.json": "59a428d4002ef1918fe89d35d52ee0320be31aafbd9f7ae15b93a55b3fb6e78b",
     "reference/raw/DS40002234B.pdf": "b3e94e9fef6425405905f5241f9535c9b274c1247b4b7a8ea631921fcf458782",

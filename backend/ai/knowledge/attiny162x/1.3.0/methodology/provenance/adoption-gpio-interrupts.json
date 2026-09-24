@@ -1,0 +1,1103 @@
+{
+  "schemaVersion": 1,
+  "area": "gpio-interrupts",
+  "reviewedOn": "2026-09-24",
+  "sourceArchive": {
+    "name": "UartDebug2_1.zip",
+    "sha256": "460a106d7dbcf78d4f9dc0e279a502323ad030cfb34b7e9c6bfd61b41afdf3dc"
+  },
+  "documents": [
+    "gpio",
+    "interrupts"
+  ],
+  "sourcePathBase": "UartDebug2/",
+  "sources": [
+    {
+      "id": "g-practical",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_GPIO_Practical_Use_Cases.md",
+      "sha256": "2481ea4108a59c5c75092b2631898b755678de6024df0da5070f25b576eb7f8d",
+      "bytes": 11909,
+      "lineCount": 125,
+      "reviewRole": "active-method-and-example"
+    },
+    {
+      "id": "g-guide",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_GPIO_Source_Guide.md",
+      "sha256": "a840006ce60f8298d290d5e269615631e256932235a1fabb544ce06c2e2b7c3f",
+      "bytes": 3593,
+      "lineCount": 24,
+      "reviewRole": "active-source-routing"
+    },
+    {
+      "id": "g-model",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_PORT_Block_Model.yaml",
+      "sha256": "dab833f5376af5efc4b8e31ddf080b4a2aa593c64f7f5a89742d40c9fb185ab3",
+      "bytes": 5309,
+      "lineCount": 216,
+      "reviewRole": "derived-model"
+    },
+    {
+      "id": "g-reference",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_PORT_IO_Pin_Configuration.md",
+      "sha256": "0bca2866695e0f8e09da0decc665bfab910e5692e4e704c1fd49323779a99303",
+      "bytes": 19526,
+      "lineCount": 315,
+      "reviewRole": "active-derived-reference"
+    },
+    {
+      "id": "g-rules",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_Working_Rules_GPIO.md",
+      "sha256": "9477b61250faee4138666c9020948e70e282a7c0a07ae8e0e1b5237e56acf93a",
+      "bytes": 9722,
+      "lineCount": 64,
+      "reviewRole": "active-method"
+    },
+    {
+      "id": "g-ru-overview",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/Additional_GPIO_Files/ATtiny162x_GPIO_Overview.md",
+      "sha256": "586a91bcf8e1beed07778bf4e095502aa02224ce0d848fcdb67cde43695e2108",
+      "bytes": 9453,
+      "lineCount": 123,
+      "reviewRole": "archival-comparison"
+    },
+    {
+      "id": "g-ru-reference",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/Additional_GPIO_Files/ATtiny162x_PORT_IO_Pin_Configuration (ru).md",
+      "sha256": "d57c5b8c53152b5c4c5d4ca8601f3a4f57ad2a603a2feaeb56b0f3c88327a1bb",
+      "bytes": 31243,
+      "lineCount": 406,
+      "reviewRole": "archival-comparison"
+    },
+    {
+      "id": "g-ru-rules",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/Additional_GPIO_Files/ATtiny162x_Working_Rules_GPIO (ru).md",
+      "sha256": "29412b35ecdcf4a257a5568c43f19a91e7c79b1e01916263fda57fc885beb5c3",
+      "bytes": 16105,
+      "lineCount": 62,
+      "reviewRole": "archival-comparison"
+    },
+    {
+      "id": "i-reference",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_CPUINT_CPU_Interrupt_Controller.md",
+      "sha256": "0f9376eb022f9d5c2e8228a8f6d234a24dc74ea31d43f0d8ad9c46361d06ab9a",
+      "bytes": 11474,
+      "lineCount": 194,
+      "reviewRole": "active-derived-reference"
+    },
+    {
+      "id": "i-model",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_CPUINT_Model.yaml",
+      "sha256": "d91162e3316eee4a237b7e14daa3d7298b31d616cb22dd3f7c73a56885dbc443",
+      "bytes": 6957,
+      "lineCount": 256,
+      "reviewRole": "derived-model"
+    },
+    {
+      "id": "i-guide",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_Interrupts_Source_Guide.md",
+      "sha256": "e120b5717f4a8d1ec61b868d3d3d5fd1ea8b0409b3f8fab5dc5836715efce545",
+      "bytes": 4915,
+      "lineCount": 27,
+      "reviewRole": "active-source-routing"
+    },
+    {
+      "id": "i-rules",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_Working_Rules_Interrupts.md",
+      "sha256": "f060ae7b772a5287979c493bed6099ec642e5d47d0858e5c423c8ea3947e7950",
+      "bytes": 10412,
+      "lineCount": 160,
+      "reviewRole": "active-method"
+    },
+    {
+      "id": "i-ru-guide",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/Additional_Interrupts_Files/ATtiny162x_Interrupts_Source_Guide (ru).md",
+      "sha256": "08f4e34316a420dc7a079f48892355e976aadd42312b545795124b9f3f7404c0",
+      "bytes": 9175,
+      "lineCount": 27,
+      "reviewRole": "archival-comparison"
+    },
+    {
+      "id": "i-ru-rules",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/Additional_Interrupts_Files/ATtiny162x_Working_Rules_Interrupts (ru).md",
+      "sha256": "96b0c135e1c5f2f3fc2a80feded66993648aafe68592514795a69c32b4f68eb5",
+      "bytes": 19935,
+      "lineCount": 161,
+      "reviewRole": "archival-comparison"
+    },
+    {
+      "id": "g-svg",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/GPIO/ATtiny162x_PORT_Block_Diagram.svg",
+      "sha256": "c7fbb88f5c6c8cd19e3782e5edca870ae95529b76aa4c5b04ab294fcbe92cce8",
+      "bytes": 214222,
+      "lineCount": 1426,
+      "reviewRole": "derived-diagram-visually-read"
+    },
+    {
+      "id": "i-svg",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_CPUINT_Block_Diagram.svg",
+      "sha256": "2c283779718053210b6d63bc8408d40b07d92b45362597bc66581508a7d3418a",
+      "bytes": 5251,
+      "lineCount": 86,
+      "reviewRole": "derived-diagram-labels-and-paths-read"
+    },
+    {
+      "id": "i-scheduling",
+      "path": "Knowledge_Base/tinyAVR_2_series/ATtiny1624_1626_1627/Interrupts/ATtiny162x_CPUINT_Priority_Scheduling.svg",
+      "sha256": "013133a4ec71c7e4e91a8ee746ea3c1134bee53dcb477a8dd298cd14f49961ec",
+      "bytes": 5535,
+      "lineCount": 82,
+      "reviewRole": "derived-diagram-labels-and-paths-read"
+    },
+    {
+      "id": "general",
+      "path": "Knowledge_Base/AVR_Programming_General_Rules.md",
+      "sha256": "685af81ba8693c97631c1164edeeb8baf232a2b1fd03137a86bb3b0a7047525e",
+      "bytes": 3781,
+      "lineCount": 51,
+      "reviewRole": "shared-method"
+    }
+  ],
+  "primarySources": [
+    {
+      "file": "reference/raw/DS40002234B.pdf",
+      "sha256": "b3e94e9fef6425405905f5241f9535c9b274c1247b4b7a8ea631921fcf458782"
+    },
+    {
+      "file": "reference/raw/DS80000902F.pdf",
+      "sha256": "36dfcc2a15e9dcb1103f58f0857c21e5f17292f5276803bed2524ebc0f7733db"
+    },
+    {
+      "file": "reference/dfp-registers.json",
+      "sha256": "59a428d4002ef1918fe89d35d52ee0320be31aafbd9f7ae15b93a55b3fb6e78b"
+    }
+  ],
+  "review": {
+    "allRelevantMarkdownAndYamlRead": true,
+    "archivalTranslationsCompared": true,
+    "svgReview": "GPIO outlined glyph SVG rendered on a white background; both CPUINT SVG text labels, descriptions and connecting paths inspected. No contradictory GPIO signal path or CPUINT scheduling relationship found.",
+    "datasheetTextPages": [
+      18,
+      102,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      122,
+      123,
+      125,
+      149,
+      150,
+      151,
+      152,
+      165
+    ],
+    "datasheetPagesVisuallyReviewedInThisPass": [
+      116,
+      151
+    ],
+    "additionalEstablishedReviewedFacts": [
+      "gpio-w1c",
+      "gpio-input-control",
+      "clarification-pin-mux",
+      "clarification-pullup-resistance"
+    ],
+    "symbolChecks": [
+      {
+        "mcu": "ATtiny1624",
+        "member": "xc8/avr/include/avr/iotn1624.h",
+        "sha256": "d5112e6b698cabcdcb7ff1f6f66e394ec0b99fffbeeca271845c1dd184c0e8aa",
+        "symbolsPresent": [
+          "PIN1_bm",
+          "PIN6_bm",
+          "PORT_PULLUPEN_bm",
+          "PORT_ISC_INTDISABLE_gc",
+          "PORT_ISC_FALLING_gc",
+          "PORT_ISC_BOTHEDGES_gc",
+          "PORT_ISC_INPUT_DISABLE_gc",
+          "PORT_ISC_gm",
+          "PORTA_PORT_vect"
+        ]
+      },
+      {
+        "mcu": "ATtiny1626",
+        "member": "xc8/avr/include/avr/iotn1626.h",
+        "sha256": "aaf15a91e2122135910854513d2bf4546ed1a18a74e143b81f15ce81b4a61385",
+        "symbolsPresent": [
+          "PIN1_bm",
+          "PIN6_bm",
+          "PORT_PULLUPEN_bm",
+          "PORT_ISC_INTDISABLE_gc",
+          "PORT_ISC_FALLING_gc",
+          "PORT_ISC_BOTHEDGES_gc",
+          "PORT_ISC_INPUT_DISABLE_gc",
+          "PORT_ISC_gm",
+          "PORTA_PORT_vect"
+        ]
+      },
+      {
+        "mcu": "ATtiny1627",
+        "member": "xc8/avr/include/avr/iotn1627.h",
+        "sha256": "67a9a6febb6f23591ef1b7da75c0122fffa7fff5e1b10b7954650a1509997fce",
+        "symbolsPresent": [
+          "PIN1_bm",
+          "PIN6_bm",
+          "PORT_PULLUPEN_bm",
+          "PORT_ISC_INTDISABLE_gc",
+          "PORT_ISC_FALLING_gc",
+          "PORT_ISC_BOTHEDGES_gc",
+          "PORT_ISC_INPUT_DISABLE_gc",
+          "PORT_ISC_gm",
+          "PORTA_PORT_vect"
+        ]
+      }
+    ],
+    "compilerStatus": "not-claimed-by-this-document; complete composition requires exact installed XC8/DFP build",
+    "hardwareStatus": "not-tested",
+    "scope": "Instruction/reference transfer only; no generated peripheral mode is approved solely by these methodology files."
+  },
+  "decisions": [
+    {
+      "id": "gpio-scope-routing",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "g-guide",
+          "lineStart": 1,
+          "lineEnd": 24
+        },
+        {
+          "sourceId": "g-rules",
+          "lineStart": 7,
+          "lineEnd": 10
+        },
+        {
+          "sourceId": "g-practical",
+          "lineStart": 3,
+          "lineEnd": 28
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO scope and source selection"
+        }
+      ],
+      "reason": "Preserve progressive local-source selection and exact package/ownership method. Route to canonical corrected pin data and installed DFP, keep PA0 reserved, and distinguish copied ATmega4809 application techniques from device facts.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            18,
+            147,
+            150
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpio-safe-output",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "g-rules",
+          "lineStart": 11,
+          "lineEnd": 14
+        },
+        {
+          "sourceId": "g-practical",
+          "lineStart": 29,
+          "lineEnd": 63
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 13,
+          "lineEnd": 61
+        },
+        {
+          "sourceId": "general",
+          "lineStart": 1,
+          "lineEnd": 51
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO output state, polarity and reset"
+        }
+      ],
+      "reason": "Adopt safe latch-before-driver ordering, actual load polarity, reset-time circuit boundary and boot-only versus reusable setup. Replace numeric or AVR-GCC-oriented fragments with named masks and XC8 convention; explicitly handle inversion/previous ownership on reuse.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            149,
+            155,
+            159,
+            165
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpio-mask-aliases",
+      "action": "adopt",
+      "sourceRefs": [
+        {
+          "sourceId": "g-rules",
+          "lineStart": 31,
+          "lineEnd": 40
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 62,
+          "lineEnd": 101
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 232,
+          "lineEnd": 245
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO mask writes and VPORT timing"
+        }
+      ],
+      "reason": "Retain hardware mask semantics, intentional whole-port ownership, VPORT limitations, special IN write-to-toggle, and assembly verification instead of claiming a C statement is single-cycle.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            149,
+            150,
+            155,
+            156,
+            157,
+            158,
+            159,
+            160,
+            161,
+            162,
+            167,
+            168,
+            169,
+            170
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpio-input-and-fields",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "g-rules",
+          "lineStart": 19,
+          "lineEnd": 26
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 102,
+          "lineEnd": 138
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 277,
+          "lineEnd": 283
+        },
+        {
+          "sourceId": "g-practical",
+          "lineStart": 29,
+          "lineEnd": 63
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO input buffer, pull-up and field ownership"
+        }
+      ],
+      "reason": "Preserve INTDISABLE versus INPUT_DISABLE, sampled input versus latch, pull-up behavior, field-preserving updates and concurrency boundary. Add canonical errata-corrected pull-up resistance. Output input-disable remains optional and conditional, matching the newer English rule.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            149,
+            150,
+            165
+          ]
+        },
+        {
+          "sourceId": "errata-ds80000902f",
+          "pages": [
+            10
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpio-unused-and-analog",
+      "action": "adopt",
+      "sourceRefs": [
+        {
+          "sourceId": "g-rules",
+          "lineStart": 15,
+          "lineEnd": 18
+        },
+        {
+          "sourceId": "g-rules",
+          "lineStart": 27,
+          "lineEnd": 30
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 139,
+          "lineEnd": 148
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 268,
+          "lineEnd": 275
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO unused pins, analog preparation and electrical boundaries"
+        }
+      ],
+      "reason": "Keep unused-pin pull-up plus disabled digital input as a conditional project preference; do not apply to all unassigned pins or conflict with external pull-downs. Analog pin preparation is not ADC setup. Slew control is port-wide and electrical claims need separate evidence.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            149,
+            150,
+            164,
+            165
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpio-signal-paths",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "g-model",
+          "lineStart": 1,
+          "lineEnd": 216
+        },
+        {
+          "sourceId": "g-svg",
+          "lineStart": 1,
+          "lineEnd": 1426
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 113,
+          "lineEnd": 122
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 188,
+          "lineEnd": 208
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO inversion and peripheral integration"
+        }
+      ],
+      "reason": "Preserve peripheral override, inversion, independent input synchronization, asynchronous pin-level event and analog paths. Do not infer precise timing or each peripheral override condition from the diagram. Rendered outlined-text GPIO SVG; no contradictory signal relationship found.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            148,
+            149,
+            150,
+            151
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpio-w1c-and-shared-vector",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "g-rules",
+          "lineStart": 41,
+          "lineEnd": 46
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 150,
+          "lineEnd": 172
+        },
+        {
+          "sourceId": "g-practical",
+          "lineStart": 76,
+          "lineEnd": 105
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO interrupts, shared flags and reconfiguration"
+        },
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt acknowledgement and shared-vector dispatch"
+        }
+      ],
+      "reason": "Retain direct serviced-mask W1C, whole-program single-source simplification and reconfiguration edge cases. Qualify the reference snapshot-write example: clearing the entire observed snapshot is valid only when all included flags were actually serviced.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            150,
+            151,
+            163,
+            165
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gpio-debounce-application",
+      "action": "adopt",
+      "sourceRefs": [
+        {
+          "sourceId": "g-practical",
+          "lineStart": 64,
+          "lineEnd": 74
+        },
+        {
+          "sourceId": "g-practical",
+          "lineStart": 101,
+          "lineEnd": 125
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO button interpretation and debounce"
+        }
+      ],
+      "reason": "Retain stable press/release states, known time base, chosen debounce threshold, nonblocking concurrent design and deferred interpretation; make boot-held state, timer wrap and one-action-per-cycle policy explicit. Ten milliseconds is an example, not a switch guarantee."
+    },
+    {
+      "id": "gpio-async-and-debug",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "g-rules",
+          "lineStart": 47,
+          "lineEnd": 54
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 174,
+          "lineEnd": 200
+        },
+        {
+          "sourceId": "g-practical",
+          "lineStart": 107,
+          "lineEnd": 125
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO asynchronous wake-up and verification boundary"
+        }
+      ],
+      "reason": "Retain full/partial asynchronous restrictions and debug/service effects. Visually checked the merged timing cell on datasheet page 151. Do not turn less-than-one-clock wording into zero-width or absolute nanosecond guarantee; keep advanced sleep generation outside scope.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            18,
+            151,
+            152
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interrupt-init-and-isr-form",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "i-rules",
+          "lineStart": 5,
+          "lineEnd": 56
+        },
+        {
+          "sourceId": "i-reference",
+          "lineStart": 21,
+          "lineEnd": 43
+        },
+        {
+          "sourceId": "g-practical",
+          "lineStart": 82,
+          "lineEnd": 93
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt initialization and compiler-managed handlers"
+        }
+      ],
+      "reason": "Adopt XC8 ISR macro convention and initialize all shared state before main-level sei. Correct the button helper-local sei in practical GPIO. Replace generic source enable/start/clear ordering with peripheral-specific ordering to avoid clearing a newly valid event.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            115,
+            116
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interrupt-acknowledgement",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "i-rules",
+          "lineStart": 58,
+          "lineEnd": 64
+        },
+        {
+          "sourceId": "i-rules",
+          "lineStart": 152,
+          "lineEnd": 156
+        },
+        {
+          "sourceId": "i-reference",
+          "lineStart": 35,
+          "lineEnd": 43
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt acknowledgement and shared-vector dispatch"
+        }
+      ],
+      "reason": "Preserve source-specific acknowledgement and shared dispatch. Do not convert CPUINT statement into a universal assertion that all peripheral flags need software W1C. Add existing approved USART ready-condition and data-access integration guidance.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            116,
+            150,
+            163
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interrupt-atomic-shared-data",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "i-rules",
+          "lineStart": 66,
+          "lineEnd": 130
+        },
+        {
+          "sourceId": "g-practical",
+          "lineStart": 103,
+          "lineEnd": 105
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt masking and atomic shared-state exchange"
+        }
+      ],
+      "reason": "Preserve volatile versus atomicity, whole consume/clear exchange, prior-state restore, short critical section, multi-byte data, Boolean/counter/queue choice and preemption. Prefer compiler-aware ATOMIC_RESTORESTATE example; note NMI is not masked and ISR counters cannot recover hardware-coalesced pulses.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            118
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interrupt-compiler-context",
+      "action": "adopt",
+      "sourceRefs": [
+        {
+          "sourceId": "i-rules",
+          "lineStart": 132,
+          "lineEnd": 136
+        },
+        {
+          "sourceId": "i-reference",
+          "lineStart": 107,
+          "lineEnd": 115
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt initialization and compiler-managed handlers"
+        }
+      ],
+      "reason": "Retain compiler-managed prologue/epilogue, no ordinary ISR call, no manual RETI and no unreviewed naked ISR; controller execution state is read-only.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            120,
+            123
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interrupt-bounded-reentrant",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "i-rules",
+          "lineStart": 138,
+          "lineEnd": 150
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt duration, called functions and overload"
+        }
+      ],
+      "reason": "Preserve bounded ISR work, defer expensive application work, analyze reentrancy/static state/hidden waits, and keep explicit short-delay exception conditional. Add practical deadlock/overload consequences without imposing an arbitrary maximum ISR duration."
+    },
+    {
+      "id": "interrupt-priority-stack",
+      "action": "adopt",
+      "sourceRefs": [
+        {
+          "sourceId": "i-rules",
+          "lineStart": 152,
+          "lineEnd": 160
+        },
+        {
+          "sourceId": "i-reference",
+          "lineStart": 71,
+          "lineEnd": 115
+        },
+        {
+          "sourceId": "i-model",
+          "lineStart": 127,
+          "lineEnd": 175
+        },
+        {
+          "sourceId": "i-scheduling",
+          "lineStart": 1,
+          "lineEnd": 82
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt latency, priority and stack review"
+        }
+      ],
+      "reason": "Retain default/modified-static/round-robin distinctions, one optional LVL1, NMI, preemption-aware data/calls/stack and controller return-state rules. SVG labels and paths agree with MD/YAML. Keep changed CPUINT policy outside approved generation.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            117,
+            118,
+            119,
+            120,
+            123,
+            124,
+            125
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interrupt-latency-model",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "i-reference",
+          "lineStart": 56,
+          "lineEnd": 69
+        },
+        {
+          "sourceId": "i-model",
+          "lineStart": 104,
+          "lineEnd": 125
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt latency, priority and stack review"
+        }
+      ],
+      "reason": "Visually verified table 14-1 page 116 and checked page 117. Explain six cycles as the listed hardware minimum for 16 KB devices, excluding synchronization, multi-cycle completion, compiler prologue and blocking; no C-level timing guarantee.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            116,
+            117
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interrupt-vector-layout-ccp",
+      "action": "adapt",
+      "sourceRefs": [
+        {
+          "sourceId": "i-reference",
+          "lineStart": 45,
+          "lineEnd": 54
+        },
+        {
+          "sourceId": "i-reference",
+          "lineStart": 97,
+          "lineEnd": 105
+        },
+        {
+          "sourceId": "i-reference",
+          "lineStart": 117,
+          "lineEnd": 158
+        },
+        {
+          "sourceId": "i-model",
+          "lineStart": 164,
+          "lineEnd": 244
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt vector layout, compact vectors and CCP boundary"
+        }
+      ],
+      "reason": "Retain vector location, reset PC independence, compact class-vector dispatch and protected IVSEL/CVT versus unprotected LVL0RR. Avoid manual unverified C CCP sequences and keep relocation/compact/boot modes unsupported.",
+      "primaryEvidence": [
+        {
+          "sourceId": "datasheet-ds40002234b",
+          "pages": [
+            120,
+            122
+          ]
+        }
+      ]
+    },
+    {
+      "id": "interrupt-source-routing",
+      "action": "adopt",
+      "sourceRefs": [
+        {
+          "sourceId": "i-guide",
+          "lineStart": 1,
+          "lineEnd": 27
+        },
+        {
+          "sourceId": "i-reference",
+          "lineStart": 160,
+          "lineEnd": 186
+        },
+        {
+          "sourceId": "i-model",
+          "lineStart": 20,
+          "lineEnd": 49
+        },
+        {
+          "sourceId": "i-model",
+          "lineStart": 250,
+          "lineEnd": 256
+        },
+        {
+          "sourceId": "i-svg",
+          "lineStart": 1,
+          "lineEnd": 86
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt scope and evidence selection"
+        },
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt verification and sleep integration boundary"
+        }
+      ],
+      "reason": "Preserve minimal source-specific reading, exact compiler/device verification and distinction between source acknowledgement and controller policy. Diagram is explanatory only; sleep protocol requires source/mode/build review."
+    },
+    {
+      "id": "gpio-register-catalog",
+      "action": "omit",
+      "sourceRefs": [
+        {
+          "sourceId": "g-reference",
+          "lineStart": 210,
+          "lineEnd": 230
+        },
+        {
+          "sourceId": "g-reference",
+          "lineStart": 300,
+          "lineEnd": 315
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO scope and source selection"
+        }
+      ],
+      "reason": "Do not create a second hand-maintained register/address/pin catalog. Keep behavior-changing rules in methodology and use canonical full DFP plus indexed pinned datasheet for exact registers and layout. Original source remains reference data."
+    },
+    {
+      "id": "cpuint-register-catalog-and-unused-vectors",
+      "action": "omit",
+      "sourceRefs": [
+        {
+          "sourceId": "i-reference",
+          "lineStart": 45,
+          "lineEnd": 54
+        },
+        {
+          "sourceId": "i-reference",
+          "lineStart": 123,
+          "lineEnd": 158
+        },
+        {
+          "sourceId": "i-model",
+          "lineStart": 187,
+          "lineEnd": 244
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt vector layout, compact vectors and CCP boundary"
+        }
+      ],
+      "reason": "Do not duplicate complete numeric register catalog or promote placing ordinary code at unused vectors as a generic optimization. Linker/vector layout is a separately reviewed build concern; canonical DFP retains the reference data."
+    },
+    {
+      "id": "gpio-russian-archives",
+      "action": "omit",
+      "sourceRefs": [
+        {
+          "sourceId": "g-ru-overview",
+          "lineStart": 1,
+          "lineEnd": 123
+        },
+        {
+          "sourceId": "g-ru-reference",
+          "lineStart": 1,
+          "lineEnd": 406
+        },
+        {
+          "sourceId": "g-ru-rules",
+          "lineStart": 1,
+          "lineEnd": 62
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO input buffer, pull-up and field ownership"
+        },
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO asynchronous wake-up and verification boundary"
+        }
+      ],
+      "reason": "Read full archival copies for differences. Mostly translations/earlier summaries, not an independent instruction layer. Earlier overview omits input-buffer and partial-asynchronous wake qualifiers; Russian output-order wording is stronger than physical guarantee. English GPIO rule contains additional optional output INPUT_DISABLE conditions. Use qualified active meaning once."
+    },
+    {
+      "id": "interrupt-russian-archives",
+      "action": "omit",
+      "sourceRefs": [
+        {
+          "sourceId": "i-ru-guide",
+          "lineStart": 1,
+          "lineEnd": 27
+        },
+        {
+          "sourceId": "i-ru-rules",
+          "lineStart": 1,
+          "lineEnd": 161
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "interrupts",
+          "file": "interrupts.md",
+          "heading": "Interrupt scope and evidence selection"
+        }
+      ],
+      "reason": "Read both archival Russian files. They repeat active source-routing and eight interrupt rules with translated prose and link changes; no additional hardware rule warrants a duplicate active instruction."
+    },
+    {
+      "id": "general-unfinished-headings",
+      "action": "omit",
+      "sourceRefs": [
+        {
+          "sourceId": "general",
+          "lineStart": 1,
+          "lineEnd": 51
+        }
+      ],
+      "targetSections": [
+        {
+          "documentId": "gpio",
+          "file": "gpio.md",
+          "heading": "GPIO output state, polarity and reset"
+        }
+      ],
+      "reason": "General source contains unfinished resource-method headings. Retain its implemented reset-state and safe-output principles; do not invent colleague rules to populate blank headings. Broader general methodology is integrated by the root task."
+    }
+  ]
+}

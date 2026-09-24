@@ -18,7 +18,7 @@ import pypdf
 from pypdf import PdfReader
 
 ROOT = Path(__file__).resolve().parents[2]
-BUNDLE = ROOT / "backend/ai/knowledge/attiny162x/1.2.0"
+BUNDLE = ROOT / "backend/ai/knowledge/attiny162x/1.3.0"
 REFERENCE = BUNDLE / "reference"
 
 

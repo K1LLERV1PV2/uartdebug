@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-09-24T20:44:52.579Z",
+  "fixture": "gpio-interrupt-handoff.c",
+  "sourceSha256": "96400eb4a85464e97d982aff8ee1232239c6b386392238cfca72a784a49ad452",
+  "scope": "These exact fixture bytes compiled on the recorded XC8 service for these targets. This is not hardware testing or proof that arbitrary compositions compile.",
+  "runs": [
+    {
+      "mcu": "attiny1624",
+      "responseMcu": "attiny1624",
+      "httpStatus": 200,
+      "ok": true,
+      "compileContract": "uartdebug-avr-compile/v1",
+      "compileServerVersion": "20260826-rate-limit-v1",
+      "compiler": "xc8-cc",
+      "optimize": "O1",
+      "hexSha256": "718d777949a0fba7a0dc0c1a2bfd3f2c446a883154633abe8f1f196db2e3d606",
+      "stdout": "Info: Loading file: /opt/microchip/xc8/v3.10/avr/avr/bin/../lib/ldscripts/avrxmega3.xn\n",
+      "stderr": "XCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\nXCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\n",
+      "stage": null
+    },
+    {
+      "mcu": "attiny1626",
+      "responseMcu": "attiny1626",
+      "httpStatus": 200,
+      "ok": true,
+      "compileContract": "uartdebug-avr-compile/v1",
+      "compileServerVersion": "20260826-rate-limit-v1",
+      "compiler": "xc8-cc",
+      "optimize": "O1",
+      "hexSha256": "718d777949a0fba7a0dc0c1a2bfd3f2c446a883154633abe8f1f196db2e3d606",
+      "stdout": "Info: Loading file: /opt/microchip/xc8/v3.10/avr/avr/bin/../lib/ldscripts/avrxmega3.xn\n",
+      "stderr": "XCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\nXCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\n",
+      "stage": null
+    },
+    {
+      "mcu": "attiny1627",
+      "responseMcu": "attiny1627",
+      "httpStatus": 200,
+      "ok": true,
+      "compileContract": "uartdebug-avr-compile/v1",
+      "compileServerVersion": "20260826-rate-limit-v1",
+      "compiler": "xc8-cc",
+      "optimize": "O1",
+      "hexSha256": "718d777949a0fba7a0dc0c1a2bfd3f2c446a883154633abe8f1f196db2e3d606",
+      "stdout": "Info: Loading file: /opt/microchip/xc8/v3.10/avr/avr/bin/../lib/ldscripts/avrxmega3.xn\n",
+      "stderr": "XCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\nXCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\n",
+      "stage": null
+    }
+  ]
+}

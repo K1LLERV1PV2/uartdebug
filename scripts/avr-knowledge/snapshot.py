@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "backend/ai/knowledge/attiny162x/1.2.0"
+OUT = ROOT / "backend/ai/knowledge/attiny162x/1.3.0"
 PACK_URL = "https://packs.download.microchip.com/Microchip.ATtiny_DFP.3.4.278.atpack"
 PACK_SHA256 = "41f09d5825abaa764c9000f4488f8ba3fab152afe6229b359de4a5efe9a21eda"
 PACKAGES = {

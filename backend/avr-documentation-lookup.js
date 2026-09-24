@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const { parse } = require("parse5");
+const { createMethodologyIndex } = require("./avr-methodology");
 
 // Restrict retrieval to the pilot device's full datasheet and silicon errata.
 // New device families must register their reviewed official roots explicitly.
@@ -16,15 +17,15 @@ const LOOKUP_TOOL = {
   name: "read_avr_documentation",
   strict: true,
   description:
-    "Browse, search and read the complete local PDF reference corpus first. Results retain source revision and page provenance but are not approved recipes. External HTML requires a prior search across ALL local documents (empty documentId and sectionId) for the same query plus an explicit remaining knowledge gap; at most two network requests are allowed.",
+    "Browse, search and read local coding methodology, its original colleague sources, complete official PDFs and DFP definitions. Maintained methodology guides coding within its stated scope; original work-in-progress texts and extracted PDF pages are reference data. External HTML requires a prior search across ALL local documents (empty documentId and sectionId) for the same query plus an explicit remaining knowledge gap; at most two network requests are allowed.",
   parameters: {
     type: "object",
     additionalProperties: false,
     properties: {
-      operation: { type: "string", enum: ["catalog", "search", "read", "registers", "external"], description: "catalog browses documents or immediate section children; search finds page candidates; read retrieves up to three consecutive PDF pages; registers finds DFP register/field definitions for the selected MCU; external requests a registered official HTML section." },
+      operation: { type: "string", enum: ["catalog", "search", "read", "registers", "external"], description: "catalog browses documents and sections; search finds PDF and methodology candidates; read retrieves up to three PDF pages or 12000 bytes of methodology sections with nextSectionId; registers finds DFP definitions; external requests an official HTML section." },
       documentId: { type: "string", description: "Local document id from the catalog, or empty for a search across ALL documents. Only an unrestricted search with empty documentId and sectionId satisfies the local-first external-lookup requirement." },
       sectionId: { type: "string", description: "Local section id for catalog/read, module name for registers, or empty. Catalog without a section lists top-level sections." },
-      page: { type: "integer", minimum: 0, description: "One-based PDF page for read; 0 starts at the chosen section. Use nextPage to continue. Use 0 for other operations." },
+      page: { type: "integer", minimum: 0, description: "One-based PDF page for read; 0 starts at the chosen section. Use nextPage to continue PDFs. Methodology and original colleague documents use page=0 and nextSectionId instead; results cite source line ranges." },
       url: {
         type: "string",
         description:
@@ -302,6 +303,7 @@ function createDocumentationLookup({
   corpus = { documents: [] },
   reviewedFacts = { facts: [] },
   dfpRegisters = null,
+  methodology = {},
   mcu = "",
   enabled = true,
   roots = DOCUMENT_ROOTS,
@@ -310,6 +312,7 @@ function createDocumentationLookup({
 } = {}) {
   let externalRequests = 0;
   const local = createLocalReferenceIndex(corpus, reviewedFacts, dfpRegisters, mcu);
+  const methods = createMethodologyIndex(methodology);
   const examinedQueries = new Set();
   async function lookup(args) {
     const operation = args?.operation || (args?.url ? "external" : "search");
@@ -321,7 +324,24 @@ function createDocumentationLookup({
           (args.sectionId !== undefined && typeof args.sectionId !== "string") ||
           (args.page !== undefined && (!Number.isSafeInteger(args.page) || args.page < 0)))
         return { ok: false, code: "local_request_invalid", message: "Use valid local catalog ids, a bounded query and a nonnegative page." };
-      const result = operation === "registers" ? local.registers(args) : local.lookup({ ...args, operation });
+      let result;
+      if (operation !== "registers" && methods.handles(args.documentId)) {
+        result = methods.lookup({ ...args, operation });
+      } else {
+        result = operation === "registers" ? local.registers(args) : local.lookup({ ...args, operation });
+        if (!args.documentId && !args.sectionId && operation === "catalog" && result.ok && methodology.documents?.length)
+          result.documents.push(...methods.catalog);
+        if (!args.documentId && !args.sectionId && operation === "search" && methodology.documents?.length) {
+          const methodResult = methods.lookup({ ...args, operation });
+          if (methodResult.ok) {
+            // Keep both result classes visible; WIP originals never displace
+            // the maintained methodology or official PDF candidates.
+            if (!result.ok && result.code === "local_documentation_not_found") result = { ...methodResult, results: [] };
+            result.methodologyResults = methodResult.results.filter((item) => item.kind === "methodology");
+            result.colleagueSourceCandidates = methodResult.results.filter((item) => item.kind === "colleague-source").map(({text, ...item}) => item);
+          }
+        }
+      }
       if (operation === "search" && !args.documentId && !args.sectionId && (result.ok || result.code === "local_documentation_not_found")) {
         if (queryTerms(args.query).length) examinedQueries.add(queryKey(args.query));
       }
