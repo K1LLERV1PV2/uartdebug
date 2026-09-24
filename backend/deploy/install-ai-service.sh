@@ -9,10 +9,9 @@ fi
 stage="$(readlink -f "$1")"
 backend_link="/var/www/uartdebug/backend"
 backend_dir="$(readlink -f "${backend_link}")"
-drafts_root="/var/lib/uartdebug-ai/drafts"
+documentation_root="/var/lib/uartdebug-ai/documentation"
 data_root="/var/lib/uartdebug-ai/data"
 access_db_file="${data_root}/ai-access.sqlite"
-skills_catalog="${stage}/ai/skills/catalog.json"
 credential_file="/etc/uartdebug/secrets/openai-api-key"
 access_credential_file="/etc/uartdebug/secrets/ai-access-token"
 google_client_id_file="/etc/uartdebug/secrets/google-oauth-client-id"
@@ -29,17 +28,20 @@ required=(
   "${stage}/ai-server.js"
   "${stage}/ai-access-service.js"
   "${stage}/avr-ai-service.js"
+  "${stage}/avr-ai-runtime.js"
+  "${stage}/avr-canvas-contract.js"
+  "${stage}/avr-documentation-lookup.js"
+  "${stage}/avr-knowledge.js"
   "${stage}/avr-compiler-contract.js"
   "${stage}/avr-compiler-readiness.js"
   "${stage}/avr-documentation-markers.js"
   "${stage}/package.json"
   "${stage}/package-lock.json"
-  "${stage}/ai/rule-packs/active.json"
-  "${skills_catalog}"
+  "${stage}/ai/canvas-rules.md"
+  "${stage}/ai/knowledge/attiny162x/1.0.0/manifest.json"
   "${stage}/deploy/uartdebug-ai.service"
   "${stage}/deploy/nginx-avr-ai-location.conf"
   "${stage}/deploy/nginx-avr-ai-oauth-callback-location.conf"
-  "${stage}/deploy/install-ai-rule-pack.sh"
   "${stage}/deploy/backup-ai-access-database.sh"
   "${stage}/deploy/set-ai-workspace-body-limit.sh"
   "${stage}/deploy/redact-oauth-callback-logging.sh"
@@ -73,13 +75,13 @@ node -e '
   exit 69
 }
 node -e '
-  const service = require(process.argv[1]);
-  service.loadAiSkillCatalog(process.argv[2]).catch((error) => {
-    console.error(error && error.message ? error.message : error);
-    process.exit(1);
-  });
-' "${stage}/avr-ai-service.js" "${skills_catalog}" || {
-  echo "The staged AI skill catalog is invalid" >&2
+  const fs = require("node:fs");
+  const { loadKnowledge } = require(process.argv[1]);
+  const knowledge = loadKnowledge();
+  if (!knowledge.devices.length || !knowledge.recipes.length) process.exit(1);
+  if (!fs.readFileSync(process.argv[2], "utf8").trim()) process.exit(1);
+' "${stage}/avr-knowledge.js" "${stage}/ai/canvas-rules.md" || {
+  echo "The staged AVR knowledge bundle or canvas rules are invalid" >&2
   exit 66
 }
 install -d -o root -g root -m 0700 "${backup_root}"
@@ -143,33 +145,24 @@ ensure_random_credential "${access_credential_file}" "the optional AI access cre
 # deployment. Public mode never sends it to the browser.
 
 install -d -o root -g root -m 0755 /var/lib/uartdebug-ai
-install -d -o uartai -g uartai -m 0700 "${drafts_root}"
+install -d -o uartai -g uartai -m 0700 "${documentation_root}"
 install -d -o uartai -g uartai -m 0700 "${data_root}"
 if [ -f "${access_db_file}" ]; then
   chown uartai:uartai "${access_db_file}"
   chmod 0600 "${access_db_file}"
 fi
 
-/bin/bash "${stage}/deploy/install-ai-rule-pack.sh" "${stage}"
-
 if [ "${stage}" != "${backend_dir}" ]; then
-  shopt -s nullglob
-  skill_markdown=("${stage}"/ai/skills/*.md)
   install -d -o deploy -g deploy -m 0755 \
     "${backend_dir}/ai" \
-    "${backend_dir}/ai/skills"
+    "${backend_dir}/ai/knowledge"
   install -o deploy -g deploy -m 0644 \
-    "${skills_catalog}" \
-    "${backend_dir}/ai/skills/catalog.json"
-  # The catalog is authoritative. Remove obsolete prototype blocks before
-  # installing the currently allowlisted Markdown files from the staged release.
-  rm -f -- "${backend_dir}/ai/skills/"*.md
-  if [ "${#skill_markdown[@]}" -gt 0 ]; then
-    install -o deploy -g deploy -m 0644 \
-      "${skill_markdown[@]}" \
-      "${backend_dir}/ai/skills/"
-  fi
-  shopt -u nullglob
+    "${stage}/ai/canvas-rules.md" \
+    "${backend_dir}/ai/canvas-rules.md"
+  cp -R "${stage}/ai/knowledge/." "${backend_dir}/ai/knowledge/"
+  chown -R deploy:deploy "${backend_dir}/ai/knowledge"
+  find "${backend_dir}/ai/knowledge" -type d -exec chmod 0755 {} +
+  find "${backend_dir}/ai/knowledge" -type f -exec chmod 0644 {} +
   install -o deploy -g deploy -m 0644 \
     "${stage}/ai-server.js" \
     "${backend_dir}/ai-server.js"
@@ -178,7 +171,11 @@ if [ "${stage}" != "${backend_dir}" ]; then
     "${backend_dir}/ai-access-service.js"
   install -o deploy -g deploy -m 0644 \
     "${stage}/avr-ai-service.js" \
-    "${backend_dir}/avr-ai-service.js"
+    "${stage}/avr-ai-runtime.js" \
+    "${stage}/avr-canvas-contract.js" \
+    "${stage}/avr-documentation-lookup.js" \
+    "${stage}/avr-knowledge.js" \
+    "${backend_dir}/"
   install -o deploy -g deploy -m 0644 \
     "${stage}/avr-compiler-contract.js" \
     "${stage}/avr-compiler-readiness.js" \
@@ -249,19 +246,16 @@ for attempt in $(seq 1 20); do
   fi
   sleep 1
 done
+status_body="$(mktemp)"
+trap 'rm -f "${status_body}"' EXIT
 curl --fail --silent --show-error --max-time 10 \
+  --output "${status_body}" \
   http://127.0.0.1:8083/api/avr/ai/status
-echo
-skills_body="$(mktemp)"
-curl --fail --silent --show-error --max-time 10 \
-  --output "${skills_body}" \
-  http://127.0.0.1:8083/api/avr/ai/skills
 node -e '
   const fs = require("fs");
   const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  if (value.ok !== true || value.schemaVersion !== 1) process.exit(1);
-  if (!Array.isArray(value.skills) || value.skills.length !== value.count) process.exit(1);
-  if (!/^[a-f0-9]{64}$/.test(String(value.digest || ""))) process.exit(1);
-' "${skills_body}"
-rm -f "${skills_body}"
+  if (value.contract !== "uartdebug-canvas/v1" || !value.rules || !value.knowledge) process.exit(1);
+  if (!Array.isArray(value.knowledge.devices) || !value.knowledge.devices.length) process.exit(1);
+' "${status_body}"
+cat "${status_body}"
 echo "AI service installed. Backups: ${backup_root}"

@@ -18,11 +18,13 @@
     SOURCE: "source",
     GUIDE: "guide",
     AI_SPEC: "aiSpec",
+    SPECIFICATION: "specification",
   });
   const CANONICAL_ROLES = Object.freeze([
     ROLES.SOURCE,
     ROLES.GUIDE,
     ROLES.AI_SPEC,
+    ROLES.SPECIFICATION,
   ]);
 
   const ROLE_ALIASES = Object.freeze({
@@ -47,6 +49,7 @@
     agent: ROLES.AI_SPEC,
     api: ROLES.AI_SPEC,
     yaml: ROLES.AI_SPEC,
+    specification: ROLES.SPECIFICATION,
     metadata: ROLES.AI_SPEC,
     machine: ROLES.AI_SPEC,
     prompt: ROLES.AI_SPEC,
@@ -57,6 +60,7 @@
     [ROLES.SOURCE]: "text/x-c",
     [ROLES.GUIDE]: "text/markdown",
     [ROLES.AI_SPEC]: "text/markdown",
+    [ROLES.SPECIFICATION]: "application/yaml",
   });
 
   function normalizeRole(value) {
@@ -95,6 +99,7 @@
 
     const normalizedName = name.trim().toLowerCase();
     if (/\.c$/i.test(normalizedName)) return ROLES.SOURCE;
+    if (/\.ya?ml$/i.test(normalizedName)) return ROLES.SPECIFICATION;
     if (
       /_ai[^/\\]*\.md$/i.test(normalizedName) ||
       /\.(?:ai|agent|ya?ml|api)\.md$/i.test(normalizedName) ||
@@ -182,6 +187,9 @@
     );
     const files = { source: filesByRole[ROLES.SOURCE] };
     if (guideSelection.guide) files.guide = guideSelection.guide;
+    if (filesByRole[ROLES.SPECIFICATION]) {
+      files.specification = filesByRole[ROLES.SPECIFICATION];
+    }
     if (filesByRole[ROLES.AI_SPEC]) {
       files.aiSpec = filesByRole[ROLES.AI_SPEC];
     }
@@ -305,11 +313,12 @@
       throw new Error(`Mini-project source file must use the .c extension: ${name}.`);
     }
     if (
-      (role === ROLES.GUIDE || role === ROLES.AI_SPEC) &&
-      !/\.md$/i.test(name)
+      (role === ROLES.GUIDE && !/\.md$/i.test(name)) ||
+      (role === ROLES.AI_SPEC && !/\.md$/i.test(name)) ||
+      (role === ROLES.SPECIFICATION && !/\.ya?ml$/i.test(name))
     ) {
       throw new Error(
-        `Mini-project ${role} file must use the .md extension: ${name}.`
+        `Mini-project ${role} file must use the ${role === ROLES.SPECIFICATION ? ".yaml or .yml" : ".md"} extension: ${name}.`
       );
     }
 
@@ -319,7 +328,9 @@
       );
     }
 
-    let mediaType = DEFAULT_MEDIA_TYPES[role];
+    let mediaType = /\.ya?ml$/i.test(name)
+      ? "application/yaml"
+      : DEFAULT_MEDIA_TYPES[role];
     if (rawFile.mediaType !== undefined && rawFile.mediaType !== null) {
       if (typeof rawFile.mediaType !== "string" || !rawFile.mediaType.trim()) {
         throw new TypeError(

@@ -1,0 +1,1442 @@
+{
+  "schemaVersion": 1,
+  "sourceId": "microchip-attiny-dfp-3.4.278",
+  "packSha256": "41f09d5825abaa764c9000f4488f8ba3fab152afe6229b359de4a5efe9a21eda",
+  "devices": [
+    {
+      "mcu": "ATtiny1624",
+      "architecture": "AVR8X",
+      "family": "tinyAVR 2",
+      "packages": [
+        "SOIC-14",
+        "TSSOP-14"
+      ],
+      "pinouts": {
+        "SOIC-14": {
+          "dfpPinoutId": "DIP14",
+          "pins": {
+            "VDD": 1,
+            "PA4": 2,
+            "PA5": 3,
+            "PA6": 4,
+            "PA7": 5,
+            "PB3": 6,
+            "PB2": 7,
+            "PB1": 8,
+            "PB0": 9,
+            "PA0": 10,
+            "PA1": 11,
+            "PA2": 12,
+            "PA3": 13,
+            "GND": 14
+          }
+        },
+        "TSSOP-14": {
+          "dfpPinoutId": "DIP14",
+          "pins": {
+            "VDD": 1,
+            "PA4": 2,
+            "PA5": 3,
+            "PA6": 4,
+            "PA7": 5,
+            "PB3": 6,
+            "PB2": 7,
+            "PB1": 8,
+            "PB0": 9,
+            "PA0": 10,
+            "PA1": 11,
+            "PA2": 12,
+            "PA3": 13,
+            "GND": 14
+          }
+        }
+      },
+      "memory": {
+        "EEPROM": {
+          "bytes": 256,
+          "start": 5120
+        },
+        "INTERNAL_SRAM": {
+          "bytes": 2048,
+          "start": 14336
+        },
+        "PROGMEM": {
+          "bytes": 16384,
+          "start": 0
+        }
+      },
+      "maxClockHz": 20000000,
+      "uart": {
+        "USART0": {
+          "register": "PORTMUX.USARTROUTEA",
+          "maskSymbol": "PORTMUX_USART0_gm",
+          "mask": 3,
+          "routes": {
+            "DEFAULT": {
+              "pins": {
+                "rxd": "PB3",
+                "txd": "PB2",
+                "xck": "PB1",
+                "xdir": "PB0"
+              },
+              "symbol": "PORTMUX_USART0_DEFAULT_gc",
+              "value": 0
+            },
+            "ALT1": {
+              "pins": {
+                "rxd": "PA2",
+                "txd": "PA1",
+                "xck": "PA3",
+                "xdir": "PA4"
+              },
+              "symbol": "PORTMUX_USART0_ALT1_gc",
+              "value": 1
+            }
+          }
+        },
+        "USART1": {
+          "register": "PORTMUX.USARTROUTEA",
+          "maskSymbol": "PORTMUX_USART1_gm",
+          "mask": 12,
+          "routes": {
+            "DEFAULT": {
+              "pins": {
+                "rxd": "PA2",
+                "txd": "PA1",
+                "xck": "PA3",
+                "xdir": "PA4"
+              },
+              "symbol": "PORTMUX_USART1_DEFAULT_gc",
+              "value": 0
+            }
+          }
+        }
+      },
+      "cSymbols": {
+        "CLKCTRL_CLKOUT_bm": "0x80",
+        "CLKCTRL_CLKSEL_OSC20M_gc": "(CLKCTRL_CLKSEL_OSC20M_gv << CLKCTRL_CLKSEL_gp)",
+        "CLKCTRL_CLKSEL_OSC20M_gv": "0x00",
+        "CLKCTRL_PDIV_0_bm": "(1<<1)",
+        "CLKCTRL_PDIV_10X_gc": "(CLKCTRL_PDIV_10X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_10X_gv": "0x09",
+        "CLKCTRL_PDIV_12X_gc": "(CLKCTRL_PDIV_12X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_12X_gv": "0x0A",
+        "CLKCTRL_PDIV_16X_gc": "(CLKCTRL_PDIV_16X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_16X_gv": "0x03",
+        "CLKCTRL_PDIV_1_bm": "(1<<2)",
+        "CLKCTRL_PDIV_24X_gc": "(CLKCTRL_PDIV_24X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_24X_gv": "0x0B",
+        "CLKCTRL_PDIV_2X_gc": "(CLKCTRL_PDIV_2X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_2X_gv": "0x00",
+        "CLKCTRL_PDIV_2_bm": "(1<<3)",
+        "CLKCTRL_PDIV_32X_gc": "(CLKCTRL_PDIV_32X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_32X_gv": "0x04",
+        "CLKCTRL_PDIV_3_bm": "(1<<4)",
+        "CLKCTRL_PDIV_48X_gc": "(CLKCTRL_PDIV_48X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_48X_gv": "0x0C",
+        "CLKCTRL_PDIV_4X_gc": "(CLKCTRL_PDIV_4X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_4X_gv": "0x01",
+        "CLKCTRL_PDIV_64X_gc": "(CLKCTRL_PDIV_64X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_64X_gv": "0x05",
+        "CLKCTRL_PDIV_6X_gc": "(CLKCTRL_PDIV_6X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_6X_gv": "0x08",
+        "CLKCTRL_PDIV_8X_gc": "(CLKCTRL_PDIV_8X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_8X_gv": "0x02",
+        "CLKCTRL_PEN_bm": "0x01",
+        "PIN0_bm": "0x01",
+        "PIN1_bm": "0x02",
+        "PIN2_bm": "0x04",
+        "PIN3_bm": "0x08",
+        "PIN4_bm": "0x10",
+        "PIN5_bm": "0x20",
+        "PIN6_bm": "0x40",
+        "PIN7_bm": "0x80",
+        "PORTA_PORT_vect": "_VECTOR(6)",
+        "PORTA_PORT_vect_num": "6",
+        "PORTB_PORT_vect": "_VECTOR(7)",
+        "PORTB_PORT_vect_num": "7",
+        "PORTC_PORT_vect": "_VECTOR(24)",
+        "PORTC_PORT_vect_num": "24",
+        "PORTMUX_USART0_ALT1_gc": "(PORTMUX_USART0_ALT1_gv << PORTMUX_USART0_gp)",
+        "PORTMUX_USART0_ALT1_gv": "0x01",
+        "PORTMUX_USART0_DEFAULT_gc": "(PORTMUX_USART0_DEFAULT_gv << PORTMUX_USART0_gp)",
+        "PORTMUX_USART0_DEFAULT_gv": "0x00",
+        "PORTMUX_USART0_NONE_gc": "(PORTMUX_USART0_NONE_gv << PORTMUX_USART0_gp)",
+        "PORTMUX_USART0_NONE_gv": "0x03",
+        "PORTMUX_USART0_gm": "0x03",
+        "PORTMUX_USART0_gp": "0",
+        "PORTMUX_USART1_DEFAULT_gc": "(PORTMUX_USART1_DEFAULT_gv << PORTMUX_USART1_gp)",
+        "PORTMUX_USART1_DEFAULT_gv": "0x00",
+        "PORTMUX_USART1_NONE_gc": "(PORTMUX_USART1_NONE_gv << PORTMUX_USART1_gp)",
+        "PORTMUX_USART1_NONE_gv": "0x03",
+        "PORTMUX_USART1_gm": "0x0C",
+        "PORTMUX_USART1_gp": "2",
+        "PORT_INVEN_bm": "0x80",
+        "PORT_ISC_0_bm": "(1<<0)",
+        "PORT_ISC_1_bm": "(1<<1)",
+        "PORT_ISC_2_bm": "(1<<2)",
+        "PORT_ISC_BOTHEDGES_gc": "(PORT_ISC_BOTHEDGES_gv << PORT_ISC_gp)",
+        "PORT_ISC_BOTHEDGES_gv": "0x01",
+        "PORT_ISC_FALLING_gc": "(PORT_ISC_FALLING_gv << PORT_ISC_gp)",
+        "PORT_ISC_FALLING_gv": "0x03",
+        "PORT_ISC_INPUT_DISABLE_gc": "(PORT_ISC_INPUT_DISABLE_gv << PORT_ISC_gp)",
+        "PORT_ISC_INPUT_DISABLE_gv": "0x04",
+        "PORT_ISC_INTDISABLE_gc": "(PORT_ISC_INTDISABLE_gv << PORT_ISC_gp)",
+        "PORT_ISC_INTDISABLE_gv": "0x00",
+        "PORT_ISC_LEVEL_gc": "(PORT_ISC_LEVEL_gv << PORT_ISC_gp)",
+        "PORT_ISC_LEVEL_gv": "0x05",
+        "PORT_ISC_RISING_gc": "(PORT_ISC_RISING_gv << PORT_ISC_gp)",
+        "PORT_ISC_RISING_gv": "0x02",
+        "PORT_PULLUPEN_bm": "0x08",
+        "TCA0_OVF_vect": "_VECTOR(8)",
+        "TCA0_OVF_vect_num": "8",
+        "TCA_SINGLE_CLKSEL_0_bm": "(1<<1)",
+        "TCA_SINGLE_CLKSEL_1_bm": "(1<<2)",
+        "TCA_SINGLE_CLKSEL_2_bm": "(1<<3)",
+        "TCA_SINGLE_CLKSEL_DIV1024_gc": "(TCA_SINGLE_CLKSEL_DIV1024_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV1024_gv": "0x07",
+        "TCA_SINGLE_CLKSEL_DIV16_gc": "(TCA_SINGLE_CLKSEL_DIV16_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV16_gv": "0x04",
+        "TCA_SINGLE_CLKSEL_DIV1_gc": "(TCA_SINGLE_CLKSEL_DIV1_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV1_gv": "0x00",
+        "TCA_SINGLE_CLKSEL_DIV256_gc": "(TCA_SINGLE_CLKSEL_DIV256_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV256_gv": "0x06",
+        "TCA_SINGLE_CLKSEL_DIV2_gc": "(TCA_SINGLE_CLKSEL_DIV2_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV2_gv": "0x01",
+        "TCA_SINGLE_CLKSEL_DIV4_gc": "(TCA_SINGLE_CLKSEL_DIV4_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV4_gv": "0x02",
+        "TCA_SINGLE_CLKSEL_DIV64_gc": "(TCA_SINGLE_CLKSEL_DIV64_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV64_gv": "0x05",
+        "TCA_SINGLE_CLKSEL_DIV8_gc": "(TCA_SINGLE_CLKSEL_DIV8_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV8_gv": "0x03",
+        "TCA_SINGLE_ENABLE_bm": "0x01",
+        "TCA_SINGLE_OVF_bm": "0x01",
+        "TCA_SINGLE_WGMODE_NORMAL_gc": "(TCA_SINGLE_WGMODE_NORMAL_gv << TCA_SINGLE_WGMODE_gp)",
+        "TCA_SINGLE_WGMODE_NORMAL_gv": "0x00",
+        "USART0_DRE_vect": "_VECTOR(18)",
+        "USART0_DRE_vect_num": "18",
+        "USART0_RXC_vect": "_VECTOR(17)",
+        "USART0_RXC_vect_num": "17",
+        "USART0_TXC_vect": "_VECTOR(19)",
+        "USART0_TXC_vect_num": "19",
+        "USART1_DRE_vect": "_VECTOR(27)",
+        "USART1_DRE_vect_num": "27",
+        "USART1_RXC_vect": "_VECTOR(26)",
+        "USART1_RXC_vect_num": "26",
+        "USART1_TXC_vect": "_VECTOR(28)",
+        "USART1_TXC_vect_num": "28",
+        "USART_BUFOVF_bm": "0x40",
+        "USART_CHSIZE_8BIT_gc": "(USART_CHSIZE_8BIT_gv << USART_CHSIZE_gp)",
+        "USART_CHSIZE_8BIT_gv": "0x03",
+        "USART_CMODE_ASYNCHRONOUS_gc": "(USART_CMODE_ASYNCHRONOUS_gv << USART_CMODE_gp)",
+        "USART_CMODE_ASYNCHRONOUS_gv": "0x00",
+        "USART_DREIE_bm": "0x20",
+        "USART_DREIF_bm": "0x20",
+        "USART_FERR_bm": "0x04",
+        "USART_PERR_bm": "0x02",
+        "USART_PMODE_DISABLED_gc": "(USART_PMODE_DISABLED_gv << USART_PMODE_gp)",
+        "USART_PMODE_DISABLED_gv": "0x00",
+        "USART_RXCIF_bm": "0x80",
+        "USART_RXEN_bm": "0x80",
+        "USART_RXMODE_CLK2X_gc": "(USART_RXMODE_CLK2X_gv << USART_RXMODE_gp)",
+        "USART_RXMODE_CLK2X_gv": "0x01",
+        "USART_RXMODE_NORMAL_gc": "(USART_RXMODE_NORMAL_gv << USART_RXMODE_gp)",
+        "USART_RXMODE_NORMAL_gv": "0x00",
+        "USART_SBMODE_1BIT_gc": "(USART_SBMODE_1BIT_gv << USART_SBMODE_bp)",
+        "USART_SBMODE_1BIT_gv": "0x00",
+        "USART_TXCIF_bm": "0x40",
+        "USART_TXEN_bm": "0x40"
+      },
+      "registers": {
+        "CLKCTRL.MCLKCTRLA": {
+          "offset": 0,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "CLKSEL": "0x03",
+            "CLKOUT": "0x80"
+          }
+        },
+        "CLKCTRL.MCLKCTRLB": {
+          "offset": 1,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x11",
+          "fields": {
+            "PEN": "0x01",
+            "PDIV": "0x1E"
+          }
+        },
+        "PORT.DIR": {
+          "offset": 0,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.DIRSET": {
+          "offset": 1,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.DIRCLR": {
+          "offset": 2,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUT": {
+          "offset": 4,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUTSET": {
+          "offset": 5,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUTCLR": {
+          "offset": 6,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUTTGL": {
+          "offset": 7,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.IN": {
+          "offset": 8,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.INTFLAGS": {
+          "offset": 9,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "INT": "0xFF"
+          }
+        },
+        "PORT.PIN0CTRL": {
+          "offset": 16,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "ISC": "0x07",
+            "PULLUPEN": "0x08",
+            "INVEN": "0x80"
+          }
+        },
+        "USART.RXDATAL": {
+          "offset": 0,
+          "bytes": 1,
+          "access": "R",
+          "reset": "0x00",
+          "fields": {
+            "DATA": "0xFF"
+          }
+        },
+        "USART.RXDATAH": {
+          "offset": 1,
+          "bytes": 1,
+          "access": "R",
+          "reset": "0x00",
+          "fields": {
+            "DATA8": "0x01",
+            "PERR": "0x02",
+            "FERR": "0x04",
+            "BUFOVF": "0x40",
+            "RXCIF": "0x80"
+          }
+        },
+        "USART.TXDATAL": {
+          "offset": 2,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "DATA": "0xFF"
+          }
+        },
+        "USART.STATUS": {
+          "offset": 4,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x20",
+          "fields": {
+            "WFB": "0x01",
+            "BDF": "0x02",
+            "ISFIF": "0x08",
+            "RXSIF": "0x10",
+            "DREIF": "0x20",
+            "TXCIF": "0x40",
+            "RXCIF": "0x80"
+          }
+        },
+        "USART.CTRLA": {
+          "offset": 5,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "RS485": "0x01",
+            "ABEIE": "0x04",
+            "LBME": "0x08",
+            "RXSIE": "0x10",
+            "DREIE": "0x20",
+            "TXCIE": "0x40",
+            "RXCIE": "0x80"
+          }
+        },
+        "USART.CTRLB": {
+          "offset": 6,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "MPCM": "0x01",
+            "RXMODE": "0x06",
+            "ODME": "0x08",
+            "SFDEN": "0x10",
+            "TXEN": "0x40",
+            "RXEN": "0x80"
+          }
+        },
+        "USART.CTRLC": {
+          "offset": 7,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x03",
+          "fields": {
+            "CMODE": "0xC0",
+            "UCPHA": "0x02",
+            "UDORD": "0x04",
+            "CHSIZE": "0x07",
+            "SBMODE": "0x08",
+            "PMODE": "0x30"
+          }
+        },
+        "USART.BAUD": {
+          "offset": 8,
+          "bytes": 2,
+          "access": "RW",
+          "reset": "0x0000",
+          "fields": {}
+        },
+        "PORTMUX.USARTROUTEA": {
+          "offset": 2,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "USART0": "0x03",
+            "USART1": "0x0C"
+          }
+        }
+      },
+      "provenance": {
+        "sourceId": "microchip-attiny-dfp-3.4.278",
+        "atdf": {
+          "member": "atdf/ATtiny1624.atdf",
+          "sha256": "145f2893a7f2cd9f994916862b2bb56b1f251f62bbd70a919a31202cac6a4b1f"
+        },
+        "header": {
+          "member": "xc8/avr/include/avr/iotn1624.h",
+          "sha256": "d5112e6b698cabcdcb7ff1f6f66e394ec0b99fffbeeca271845c1dd184c0e8aa"
+        },
+        "packageNormalization": "DFP pinout ids DIP14/DIP20/QFP20/QFP24 are internal labels; marketed packages are normalized using the official datasheet pinout table."
+      }
+    },
+    {
+      "mcu": "ATtiny1626",
+      "architecture": "AVR8X",
+      "family": "tinyAVR 2",
+      "packages": [
+        "SOIC-20",
+        "SSOP-20",
+        "VQFN-20"
+      ],
+      "pinouts": {
+        "SOIC-20": {
+          "dfpPinoutId": "DIP20",
+          "pins": {
+            "VDD": 1,
+            "PA4": 2,
+            "PA5": 3,
+            "PA6": 4,
+            "PA7": 5,
+            "PB5": 6,
+            "PB4": 7,
+            "PB3": 8,
+            "PB2": 9,
+            "PB1": 10,
+            "PB0": 11,
+            "PC0": 12,
+            "PC1": 13,
+            "PC2": 14,
+            "PC3": 15,
+            "PA0": 16,
+            "PA1": 17,
+            "PA2": 18,
+            "PA3": 19,
+            "GND": 20
+          }
+        },
+        "SSOP-20": {
+          "dfpPinoutId": "DIP20",
+          "pins": {
+            "VDD": 1,
+            "PA4": 2,
+            "PA5": 3,
+            "PA6": 4,
+            "PA7": 5,
+            "PB5": 6,
+            "PB4": 7,
+            "PB3": 8,
+            "PB2": 9,
+            "PB1": 10,
+            "PB0": 11,
+            "PC0": 12,
+            "PC1": 13,
+            "PC2": 14,
+            "PC3": 15,
+            "PA0": 16,
+            "PA1": 17,
+            "PA2": 18,
+            "PA3": 19,
+            "GND": 20
+          }
+        },
+        "VQFN-20": {
+          "dfpPinoutId": "QFP20",
+          "pins": {
+            "PA2": 1,
+            "PA3": 2,
+            "GND": 3,
+            "VDD": 4,
+            "PA4": 5,
+            "PA5": 6,
+            "PA6": 7,
+            "PA7": 8,
+            "PB5": 9,
+            "PB4": 10,
+            "PB3": 11,
+            "PB2": 12,
+            "PB1": 13,
+            "PB0": 14,
+            "PC0": 15,
+            "PC1": 16,
+            "PC2": 17,
+            "PC3": 18,
+            "PA0": 19,
+            "PA1": 20
+          }
+        }
+      },
+      "memory": {
+        "EEPROM": {
+          "bytes": 256,
+          "start": 5120
+        },
+        "INTERNAL_SRAM": {
+          "bytes": 2048,
+          "start": 14336
+        },
+        "PROGMEM": {
+          "bytes": 16384,
+          "start": 0
+        }
+      },
+      "maxClockHz": 20000000,
+      "uart": {
+        "USART0": {
+          "register": "PORTMUX.USARTROUTEA",
+          "maskSymbol": "PORTMUX_USART0_gm",
+          "mask": 3,
+          "routes": {
+            "DEFAULT": {
+              "pins": {
+                "rxd": "PB3",
+                "txd": "PB2",
+                "xck": "PB1",
+                "xdir": "PB0"
+              },
+              "symbol": "PORTMUX_USART0_DEFAULT_gc",
+              "value": 0
+            },
+            "ALT1": {
+              "pins": {
+                "rxd": "PA2",
+                "txd": "PA1",
+                "xck": "PA3",
+                "xdir": "PA4"
+              },
+              "symbol": "PORTMUX_USART0_ALT1_gc",
+              "value": 1
+            }
+          }
+        },
+        "USART1": {
+          "register": "PORTMUX.USARTROUTEA",
+          "maskSymbol": "PORTMUX_USART1_gm",
+          "mask": 12,
+          "routes": {
+            "DEFAULT": {
+              "pins": {
+                "rxd": "PA2",
+                "txd": "PA1",
+                "xck": "PA3",
+                "xdir": "PA4"
+              },
+              "symbol": "PORTMUX_USART1_DEFAULT_gc",
+              "value": 0
+            },
+            "ALT1": {
+              "pins": {
+                "rxd": "PC1",
+                "txd": "PC2",
+                "xck": "PC0",
+                "xdir": "PC3"
+              },
+              "symbol": "PORTMUX_USART1_ALT1_gc",
+              "value": 4
+            }
+          }
+        }
+      },
+      "cSymbols": {
+        "CLKCTRL_CLKOUT_bm": "0x80",
+        "CLKCTRL_CLKSEL_OSC20M_gc": "(CLKCTRL_CLKSEL_OSC20M_gv << CLKCTRL_CLKSEL_gp)",
+        "CLKCTRL_CLKSEL_OSC20M_gv": "0x00",
+        "CLKCTRL_PDIV_0_bm": "(1<<1)",
+        "CLKCTRL_PDIV_10X_gc": "(CLKCTRL_PDIV_10X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_10X_gv": "0x09",
+        "CLKCTRL_PDIV_12X_gc": "(CLKCTRL_PDIV_12X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_12X_gv": "0x0A",
+        "CLKCTRL_PDIV_16X_gc": "(CLKCTRL_PDIV_16X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_16X_gv": "0x03",
+        "CLKCTRL_PDIV_1_bm": "(1<<2)",
+        "CLKCTRL_PDIV_24X_gc": "(CLKCTRL_PDIV_24X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_24X_gv": "0x0B",
+        "CLKCTRL_PDIV_2X_gc": "(CLKCTRL_PDIV_2X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_2X_gv": "0x00",
+        "CLKCTRL_PDIV_2_bm": "(1<<3)",
+        "CLKCTRL_PDIV_32X_gc": "(CLKCTRL_PDIV_32X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_32X_gv": "0x04",
+        "CLKCTRL_PDIV_3_bm": "(1<<4)",
+        "CLKCTRL_PDIV_48X_gc": "(CLKCTRL_PDIV_48X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_48X_gv": "0x0C",
+        "CLKCTRL_PDIV_4X_gc": "(CLKCTRL_PDIV_4X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_4X_gv": "0x01",
+        "CLKCTRL_PDIV_64X_gc": "(CLKCTRL_PDIV_64X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_64X_gv": "0x05",
+        "CLKCTRL_PDIV_6X_gc": "(CLKCTRL_PDIV_6X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_6X_gv": "0x08",
+        "CLKCTRL_PDIV_8X_gc": "(CLKCTRL_PDIV_8X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_8X_gv": "0x02",
+        "CLKCTRL_PEN_bm": "0x01",
+        "PIN0_bm": "0x01",
+        "PIN1_bm": "0x02",
+        "PIN2_bm": "0x04",
+        "PIN3_bm": "0x08",
+        "PIN4_bm": "0x10",
+        "PIN5_bm": "0x20",
+        "PIN6_bm": "0x40",
+        "PIN7_bm": "0x80",
+        "PORTA_PORT_vect": "_VECTOR(6)",
+        "PORTA_PORT_vect_num": "6",
+        "PORTB_PORT_vect": "_VECTOR(7)",
+        "PORTB_PORT_vect_num": "7",
+        "PORTC_PORT_vect": "_VECTOR(24)",
+        "PORTC_PORT_vect_num": "24",
+        "PORTMUX_USART0_ALT1_gc": "(PORTMUX_USART0_ALT1_gv << PORTMUX_USART0_gp)",
+        "PORTMUX_USART0_ALT1_gv": "0x01",
+        "PORTMUX_USART0_DEFAULT_gc": "(PORTMUX_USART0_DEFAULT_gv << PORTMUX_USART0_gp)",
+        "PORTMUX_USART0_DEFAULT_gv": "0x00",
+        "PORTMUX_USART0_NONE_gc": "(PORTMUX_USART0_NONE_gv << PORTMUX_USART0_gp)",
+        "PORTMUX_USART0_NONE_gv": "0x03",
+        "PORTMUX_USART0_gm": "0x03",
+        "PORTMUX_USART0_gp": "0",
+        "PORTMUX_USART1_ALT1_gc": "(PORTMUX_USART1_ALT1_gv << PORTMUX_USART1_gp)",
+        "PORTMUX_USART1_ALT1_gv": "0x01",
+        "PORTMUX_USART1_DEFAULT_gc": "(PORTMUX_USART1_DEFAULT_gv << PORTMUX_USART1_gp)",
+        "PORTMUX_USART1_DEFAULT_gv": "0x00",
+        "PORTMUX_USART1_NONE_gc": "(PORTMUX_USART1_NONE_gv << PORTMUX_USART1_gp)",
+        "PORTMUX_USART1_NONE_gv": "0x03",
+        "PORTMUX_USART1_gm": "0x0C",
+        "PORTMUX_USART1_gp": "2",
+        "PORT_INVEN_bm": "0x80",
+        "PORT_ISC_0_bm": "(1<<0)",
+        "PORT_ISC_1_bm": "(1<<1)",
+        "PORT_ISC_2_bm": "(1<<2)",
+        "PORT_ISC_BOTHEDGES_gc": "(PORT_ISC_BOTHEDGES_gv << PORT_ISC_gp)",
+        "PORT_ISC_BOTHEDGES_gv": "0x01",
+        "PORT_ISC_FALLING_gc": "(PORT_ISC_FALLING_gv << PORT_ISC_gp)",
+        "PORT_ISC_FALLING_gv": "0x03",
+        "PORT_ISC_INPUT_DISABLE_gc": "(PORT_ISC_INPUT_DISABLE_gv << PORT_ISC_gp)",
+        "PORT_ISC_INPUT_DISABLE_gv": "0x04",
+        "PORT_ISC_INTDISABLE_gc": "(PORT_ISC_INTDISABLE_gv << PORT_ISC_gp)",
+        "PORT_ISC_INTDISABLE_gv": "0x00",
+        "PORT_ISC_LEVEL_gc": "(PORT_ISC_LEVEL_gv << PORT_ISC_gp)",
+        "PORT_ISC_LEVEL_gv": "0x05",
+        "PORT_ISC_RISING_gc": "(PORT_ISC_RISING_gv << PORT_ISC_gp)",
+        "PORT_ISC_RISING_gv": "0x02",
+        "PORT_PULLUPEN_bm": "0x08",
+        "TCA0_OVF_vect": "_VECTOR(8)",
+        "TCA0_OVF_vect_num": "8",
+        "TCA_SINGLE_CLKSEL_0_bm": "(1<<1)",
+        "TCA_SINGLE_CLKSEL_1_bm": "(1<<2)",
+        "TCA_SINGLE_CLKSEL_2_bm": "(1<<3)",
+        "TCA_SINGLE_CLKSEL_DIV1024_gc": "(TCA_SINGLE_CLKSEL_DIV1024_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV1024_gv": "0x07",
+        "TCA_SINGLE_CLKSEL_DIV16_gc": "(TCA_SINGLE_CLKSEL_DIV16_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV16_gv": "0x04",
+        "TCA_SINGLE_CLKSEL_DIV1_gc": "(TCA_SINGLE_CLKSEL_DIV1_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV1_gv": "0x00",
+        "TCA_SINGLE_CLKSEL_DIV256_gc": "(TCA_SINGLE_CLKSEL_DIV256_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV256_gv": "0x06",
+        "TCA_SINGLE_CLKSEL_DIV2_gc": "(TCA_SINGLE_CLKSEL_DIV2_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV2_gv": "0x01",
+        "TCA_SINGLE_CLKSEL_DIV4_gc": "(TCA_SINGLE_CLKSEL_DIV4_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV4_gv": "0x02",
+        "TCA_SINGLE_CLKSEL_DIV64_gc": "(TCA_SINGLE_CLKSEL_DIV64_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV64_gv": "0x05",
+        "TCA_SINGLE_CLKSEL_DIV8_gc": "(TCA_SINGLE_CLKSEL_DIV8_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV8_gv": "0x03",
+        "TCA_SINGLE_ENABLE_bm": "0x01",
+        "TCA_SINGLE_OVF_bm": "0x01",
+        "TCA_SINGLE_WGMODE_NORMAL_gc": "(TCA_SINGLE_WGMODE_NORMAL_gv << TCA_SINGLE_WGMODE_gp)",
+        "TCA_SINGLE_WGMODE_NORMAL_gv": "0x00",
+        "USART0_DRE_vect": "_VECTOR(18)",
+        "USART0_DRE_vect_num": "18",
+        "USART0_RXC_vect": "_VECTOR(17)",
+        "USART0_RXC_vect_num": "17",
+        "USART0_TXC_vect": "_VECTOR(19)",
+        "USART0_TXC_vect_num": "19",
+        "USART1_DRE_vect": "_VECTOR(27)",
+        "USART1_DRE_vect_num": "27",
+        "USART1_RXC_vect": "_VECTOR(26)",
+        "USART1_RXC_vect_num": "26",
+        "USART1_TXC_vect": "_VECTOR(28)",
+        "USART1_TXC_vect_num": "28",
+        "USART_BUFOVF_bm": "0x40",
+        "USART_CHSIZE_8BIT_gc": "(USART_CHSIZE_8BIT_gv << USART_CHSIZE_gp)",
+        "USART_CHSIZE_8BIT_gv": "0x03",
+        "USART_CMODE_ASYNCHRONOUS_gc": "(USART_CMODE_ASYNCHRONOUS_gv << USART_CMODE_gp)",
+        "USART_CMODE_ASYNCHRONOUS_gv": "0x00",
+        "USART_DREIE_bm": "0x20",
+        "USART_DREIF_bm": "0x20",
+        "USART_FERR_bm": "0x04",
+        "USART_PERR_bm": "0x02",
+        "USART_PMODE_DISABLED_gc": "(USART_PMODE_DISABLED_gv << USART_PMODE_gp)",
+        "USART_PMODE_DISABLED_gv": "0x00",
+        "USART_RXCIF_bm": "0x80",
+        "USART_RXEN_bm": "0x80",
+        "USART_RXMODE_CLK2X_gc": "(USART_RXMODE_CLK2X_gv << USART_RXMODE_gp)",
+        "USART_RXMODE_CLK2X_gv": "0x01",
+        "USART_RXMODE_NORMAL_gc": "(USART_RXMODE_NORMAL_gv << USART_RXMODE_gp)",
+        "USART_RXMODE_NORMAL_gv": "0x00",
+        "USART_SBMODE_1BIT_gc": "(USART_SBMODE_1BIT_gv << USART_SBMODE_bp)",
+        "USART_SBMODE_1BIT_gv": "0x00",
+        "USART_TXCIF_bm": "0x40",
+        "USART_TXEN_bm": "0x40"
+      },
+      "registers": {
+        "CLKCTRL.MCLKCTRLA": {
+          "offset": 0,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "CLKSEL": "0x03",
+            "CLKOUT": "0x80"
+          }
+        },
+        "CLKCTRL.MCLKCTRLB": {
+          "offset": 1,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x11",
+          "fields": {
+            "PEN": "0x01",
+            "PDIV": "0x1E"
+          }
+        },
+        "PORT.DIR": {
+          "offset": 0,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.DIRSET": {
+          "offset": 1,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.DIRCLR": {
+          "offset": 2,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUT": {
+          "offset": 4,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUTSET": {
+          "offset": 5,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUTCLR": {
+          "offset": 6,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUTTGL": {
+          "offset": 7,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.IN": {
+          "offset": 8,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.INTFLAGS": {
+          "offset": 9,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "INT": "0xFF"
+          }
+        },
+        "PORT.PIN0CTRL": {
+          "offset": 16,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "ISC": "0x07",
+            "PULLUPEN": "0x08",
+            "INVEN": "0x80"
+          }
+        },
+        "USART.RXDATAL": {
+          "offset": 0,
+          "bytes": 1,
+          "access": "R",
+          "reset": "0x00",
+          "fields": {
+            "DATA": "0xFF"
+          }
+        },
+        "USART.RXDATAH": {
+          "offset": 1,
+          "bytes": 1,
+          "access": "R",
+          "reset": "0x00",
+          "fields": {
+            "DATA8": "0x01",
+            "PERR": "0x02",
+            "FERR": "0x04",
+            "BUFOVF": "0x40",
+            "RXCIF": "0x80"
+          }
+        },
+        "USART.TXDATAL": {
+          "offset": 2,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "DATA": "0xFF"
+          }
+        },
+        "USART.STATUS": {
+          "offset": 4,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x20",
+          "fields": {
+            "WFB": "0x01",
+            "BDF": "0x02",
+            "ISFIF": "0x08",
+            "RXSIF": "0x10",
+            "DREIF": "0x20",
+            "TXCIF": "0x40",
+            "RXCIF": "0x80"
+          }
+        },
+        "USART.CTRLA": {
+          "offset": 5,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "RS485": "0x01",
+            "ABEIE": "0x04",
+            "LBME": "0x08",
+            "RXSIE": "0x10",
+            "DREIE": "0x20",
+            "TXCIE": "0x40",
+            "RXCIE": "0x80"
+          }
+        },
+        "USART.CTRLB": {
+          "offset": 6,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "MPCM": "0x01",
+            "RXMODE": "0x06",
+            "ODME": "0x08",
+            "SFDEN": "0x10",
+            "TXEN": "0x40",
+            "RXEN": "0x80"
+          }
+        },
+        "USART.CTRLC": {
+          "offset": 7,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x03",
+          "fields": {
+            "CMODE": "0xC0",
+            "UCPHA": "0x02",
+            "UDORD": "0x04",
+            "CHSIZE": "0x07",
+            "SBMODE": "0x08",
+            "PMODE": "0x30"
+          }
+        },
+        "USART.BAUD": {
+          "offset": 8,
+          "bytes": 2,
+          "access": "RW",
+          "reset": "0x0000",
+          "fields": {}
+        },
+        "PORTMUX.USARTROUTEA": {
+          "offset": 2,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "USART0": "0x03",
+            "USART1": "0x0C"
+          }
+        }
+      },
+      "provenance": {
+        "sourceId": "microchip-attiny-dfp-3.4.278",
+        "atdf": {
+          "member": "atdf/ATtiny1626.atdf",
+          "sha256": "ab0ffe3717e5c619948b29e7d53cc01c40b53e5302100bbd8b04631a96cff48a"
+        },
+        "header": {
+          "member": "xc8/avr/include/avr/iotn1626.h",
+          "sha256": "aaf15a91e2122135910854513d2bf4546ed1a18a74e143b81f15ce81b4a61385"
+        },
+        "packageNormalization": "DFP pinout ids DIP14/DIP20/QFP20/QFP24 are internal labels; marketed packages are normalized using the official datasheet pinout table."
+      }
+    },
+    {
+      "mcu": "ATtiny1627",
+      "architecture": "AVR8X",
+      "family": "tinyAVR 2",
+      "packages": [
+        "VQFN-24"
+      ],
+      "pinouts": {
+        "VQFN-24": {
+          "dfpPinoutId": "QFP24",
+          "pins": {
+            "PA2": 1,
+            "PA3": 2,
+            "GND": 3,
+            "VDD": 4,
+            "PA4": 5,
+            "PA5": 6,
+            "PA6": 7,
+            "PA7": 8,
+            "PB7": 9,
+            "PB6": 10,
+            "PB5": 11,
+            "PB4": 12,
+            "PB3": 13,
+            "PB2": 14,
+            "PB1": 15,
+            "PB0": 16,
+            "PC0": 17,
+            "PC1": 18,
+            "PC2": 19,
+            "PC3": 20,
+            "PC4": 21,
+            "PC5": 22,
+            "PA0": 23,
+            "PA1": 24
+          }
+        }
+      },
+      "memory": {
+        "EEPROM": {
+          "bytes": 256,
+          "start": 5120
+        },
+        "INTERNAL_SRAM": {
+          "bytes": 2048,
+          "start": 14336
+        },
+        "PROGMEM": {
+          "bytes": 16384,
+          "start": 0
+        }
+      },
+      "maxClockHz": 20000000,
+      "uart": {
+        "USART0": {
+          "register": "PORTMUX.USARTROUTEA",
+          "maskSymbol": "PORTMUX_USART0_gm",
+          "mask": 3,
+          "routes": {
+            "DEFAULT": {
+              "pins": {
+                "rxd": "PB3",
+                "txd": "PB2",
+                "xck": "PB1",
+                "xdir": "PB0"
+              },
+              "symbol": "PORTMUX_USART0_DEFAULT_gc",
+              "value": 0
+            },
+            "ALT1": {
+              "pins": {
+                "rxd": "PA2",
+                "txd": "PA1",
+                "xck": "PA3",
+                "xdir": "PA4"
+              },
+              "symbol": "PORTMUX_USART0_ALT1_gc",
+              "value": 1
+            }
+          }
+        },
+        "USART1": {
+          "register": "PORTMUX.USARTROUTEA",
+          "maskSymbol": "PORTMUX_USART1_gm",
+          "mask": 12,
+          "routes": {
+            "DEFAULT": {
+              "pins": {
+                "rxd": "PA2",
+                "txd": "PA1",
+                "xck": "PA3",
+                "xdir": "PA4"
+              },
+              "symbol": "PORTMUX_USART1_DEFAULT_gc",
+              "value": 0
+            },
+            "ALT1": {
+              "pins": {
+                "rxd": "PC1",
+                "txd": "PC2",
+                "xck": "PC0",
+                "xdir": "PC3"
+              },
+              "symbol": "PORTMUX_USART1_ALT1_gc",
+              "value": 4
+            }
+          }
+        }
+      },
+      "cSymbols": {
+        "CLKCTRL_CLKOUT_bm": "0x80",
+        "CLKCTRL_CLKSEL_OSC20M_gc": "(CLKCTRL_CLKSEL_OSC20M_gv << CLKCTRL_CLKSEL_gp)",
+        "CLKCTRL_CLKSEL_OSC20M_gv": "0x00",
+        "CLKCTRL_PDIV_0_bm": "(1<<1)",
+        "CLKCTRL_PDIV_10X_gc": "(CLKCTRL_PDIV_10X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_10X_gv": "0x09",
+        "CLKCTRL_PDIV_12X_gc": "(CLKCTRL_PDIV_12X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_12X_gv": "0x0A",
+        "CLKCTRL_PDIV_16X_gc": "(CLKCTRL_PDIV_16X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_16X_gv": "0x03",
+        "CLKCTRL_PDIV_1_bm": "(1<<2)",
+        "CLKCTRL_PDIV_24X_gc": "(CLKCTRL_PDIV_24X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_24X_gv": "0x0B",
+        "CLKCTRL_PDIV_2X_gc": "(CLKCTRL_PDIV_2X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_2X_gv": "0x00",
+        "CLKCTRL_PDIV_2_bm": "(1<<3)",
+        "CLKCTRL_PDIV_32X_gc": "(CLKCTRL_PDIV_32X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_32X_gv": "0x04",
+        "CLKCTRL_PDIV_3_bm": "(1<<4)",
+        "CLKCTRL_PDIV_48X_gc": "(CLKCTRL_PDIV_48X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_48X_gv": "0x0C",
+        "CLKCTRL_PDIV_4X_gc": "(CLKCTRL_PDIV_4X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_4X_gv": "0x01",
+        "CLKCTRL_PDIV_64X_gc": "(CLKCTRL_PDIV_64X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_64X_gv": "0x05",
+        "CLKCTRL_PDIV_6X_gc": "(CLKCTRL_PDIV_6X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_6X_gv": "0x08",
+        "CLKCTRL_PDIV_8X_gc": "(CLKCTRL_PDIV_8X_gv << CLKCTRL_PDIV_gp)",
+        "CLKCTRL_PDIV_8X_gv": "0x02",
+        "CLKCTRL_PEN_bm": "0x01",
+        "PIN0_bm": "0x01",
+        "PIN1_bm": "0x02",
+        "PIN2_bm": "0x04",
+        "PIN3_bm": "0x08",
+        "PIN4_bm": "0x10",
+        "PIN5_bm": "0x20",
+        "PIN6_bm": "0x40",
+        "PIN7_bm": "0x80",
+        "PORTA_PORT_vect": "_VECTOR(6)",
+        "PORTA_PORT_vect_num": "6",
+        "PORTB_PORT_vect": "_VECTOR(7)",
+        "PORTB_PORT_vect_num": "7",
+        "PORTC_PORT_vect": "_VECTOR(24)",
+        "PORTC_PORT_vect_num": "24",
+        "PORTMUX_USART0_ALT1_gc": "(PORTMUX_USART0_ALT1_gv << PORTMUX_USART0_gp)",
+        "PORTMUX_USART0_ALT1_gv": "0x01",
+        "PORTMUX_USART0_DEFAULT_gc": "(PORTMUX_USART0_DEFAULT_gv << PORTMUX_USART0_gp)",
+        "PORTMUX_USART0_DEFAULT_gv": "0x00",
+        "PORTMUX_USART0_NONE_gc": "(PORTMUX_USART0_NONE_gv << PORTMUX_USART0_gp)",
+        "PORTMUX_USART0_NONE_gv": "0x03",
+        "PORTMUX_USART0_gm": "0x03",
+        "PORTMUX_USART0_gp": "0",
+        "PORTMUX_USART1_ALT1_gc": "(PORTMUX_USART1_ALT1_gv << PORTMUX_USART1_gp)",
+        "PORTMUX_USART1_ALT1_gv": "0x01",
+        "PORTMUX_USART1_DEFAULT_gc": "(PORTMUX_USART1_DEFAULT_gv << PORTMUX_USART1_gp)",
+        "PORTMUX_USART1_DEFAULT_gv": "0x00",
+        "PORTMUX_USART1_NONE_gc": "(PORTMUX_USART1_NONE_gv << PORTMUX_USART1_gp)",
+        "PORTMUX_USART1_NONE_gv": "0x03",
+        "PORTMUX_USART1_gm": "0x0C",
+        "PORTMUX_USART1_gp": "2",
+        "PORT_INVEN_bm": "0x80",
+        "PORT_ISC_0_bm": "(1<<0)",
+        "PORT_ISC_1_bm": "(1<<1)",
+        "PORT_ISC_2_bm": "(1<<2)",
+        "PORT_ISC_BOTHEDGES_gc": "(PORT_ISC_BOTHEDGES_gv << PORT_ISC_gp)",
+        "PORT_ISC_BOTHEDGES_gv": "0x01",
+        "PORT_ISC_FALLING_gc": "(PORT_ISC_FALLING_gv << PORT_ISC_gp)",
+        "PORT_ISC_FALLING_gv": "0x03",
+        "PORT_ISC_INPUT_DISABLE_gc": "(PORT_ISC_INPUT_DISABLE_gv << PORT_ISC_gp)",
+        "PORT_ISC_INPUT_DISABLE_gv": "0x04",
+        "PORT_ISC_INTDISABLE_gc": "(PORT_ISC_INTDISABLE_gv << PORT_ISC_gp)",
+        "PORT_ISC_INTDISABLE_gv": "0x00",
+        "PORT_ISC_LEVEL_gc": "(PORT_ISC_LEVEL_gv << PORT_ISC_gp)",
+        "PORT_ISC_LEVEL_gv": "0x05",
+        "PORT_ISC_RISING_gc": "(PORT_ISC_RISING_gv << PORT_ISC_gp)",
+        "PORT_ISC_RISING_gv": "0x02",
+        "PORT_PULLUPEN_bm": "0x08",
+        "TCA0_OVF_vect": "_VECTOR(8)",
+        "TCA0_OVF_vect_num": "8",
+        "TCA_SINGLE_CLKSEL_0_bm": "(1<<1)",
+        "TCA_SINGLE_CLKSEL_1_bm": "(1<<2)",
+        "TCA_SINGLE_CLKSEL_2_bm": "(1<<3)",
+        "TCA_SINGLE_CLKSEL_DIV1024_gc": "(TCA_SINGLE_CLKSEL_DIV1024_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV1024_gv": "0x07",
+        "TCA_SINGLE_CLKSEL_DIV16_gc": "(TCA_SINGLE_CLKSEL_DIV16_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV16_gv": "0x04",
+        "TCA_SINGLE_CLKSEL_DIV1_gc": "(TCA_SINGLE_CLKSEL_DIV1_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV1_gv": "0x00",
+        "TCA_SINGLE_CLKSEL_DIV256_gc": "(TCA_SINGLE_CLKSEL_DIV256_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV256_gv": "0x06",
+        "TCA_SINGLE_CLKSEL_DIV2_gc": "(TCA_SINGLE_CLKSEL_DIV2_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV2_gv": "0x01",
+        "TCA_SINGLE_CLKSEL_DIV4_gc": "(TCA_SINGLE_CLKSEL_DIV4_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV4_gv": "0x02",
+        "TCA_SINGLE_CLKSEL_DIV64_gc": "(TCA_SINGLE_CLKSEL_DIV64_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV64_gv": "0x05",
+        "TCA_SINGLE_CLKSEL_DIV8_gc": "(TCA_SINGLE_CLKSEL_DIV8_gv << TCA_SINGLE_CLKSEL_gp)",
+        "TCA_SINGLE_CLKSEL_DIV8_gv": "0x03",
+        "TCA_SINGLE_ENABLE_bm": "0x01",
+        "TCA_SINGLE_OVF_bm": "0x01",
+        "TCA_SINGLE_WGMODE_NORMAL_gc": "(TCA_SINGLE_WGMODE_NORMAL_gv << TCA_SINGLE_WGMODE_gp)",
+        "TCA_SINGLE_WGMODE_NORMAL_gv": "0x00",
+        "USART0_DRE_vect": "_VECTOR(18)",
+        "USART0_DRE_vect_num": "18",
+        "USART0_RXC_vect": "_VECTOR(17)",
+        "USART0_RXC_vect_num": "17",
+        "USART0_TXC_vect": "_VECTOR(19)",
+        "USART0_TXC_vect_num": "19",
+        "USART1_DRE_vect": "_VECTOR(27)",
+        "USART1_DRE_vect_num": "27",
+        "USART1_RXC_vect": "_VECTOR(26)",
+        "USART1_RXC_vect_num": "26",
+        "USART1_TXC_vect": "_VECTOR(28)",
+        "USART1_TXC_vect_num": "28",
+        "USART_BUFOVF_bm": "0x40",
+        "USART_CHSIZE_8BIT_gc": "(USART_CHSIZE_8BIT_gv << USART_CHSIZE_gp)",
+        "USART_CHSIZE_8BIT_gv": "0x03",
+        "USART_CMODE_ASYNCHRONOUS_gc": "(USART_CMODE_ASYNCHRONOUS_gv << USART_CMODE_gp)",
+        "USART_CMODE_ASYNCHRONOUS_gv": "0x00",
+        "USART_DREIE_bm": "0x20",
+        "USART_DREIF_bm": "0x20",
+        "USART_FERR_bm": "0x04",
+        "USART_PERR_bm": "0x02",
+        "USART_PMODE_DISABLED_gc": "(USART_PMODE_DISABLED_gv << USART_PMODE_gp)",
+        "USART_PMODE_DISABLED_gv": "0x00",
+        "USART_RXCIF_bm": "0x80",
+        "USART_RXEN_bm": "0x80",
+        "USART_RXMODE_CLK2X_gc": "(USART_RXMODE_CLK2X_gv << USART_RXMODE_gp)",
+        "USART_RXMODE_CLK2X_gv": "0x01",
+        "USART_RXMODE_NORMAL_gc": "(USART_RXMODE_NORMAL_gv << USART_RXMODE_gp)",
+        "USART_RXMODE_NORMAL_gv": "0x00",
+        "USART_SBMODE_1BIT_gc": "(USART_SBMODE_1BIT_gv << USART_SBMODE_bp)",
+        "USART_SBMODE_1BIT_gv": "0x00",
+        "USART_TXCIF_bm": "0x40",
+        "USART_TXEN_bm": "0x40"
+      },
+      "registers": {
+        "CLKCTRL.MCLKCTRLA": {
+          "offset": 0,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "CLKSEL": "0x03",
+            "CLKOUT": "0x80"
+          }
+        },
+        "CLKCTRL.MCLKCTRLB": {
+          "offset": 1,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x11",
+          "fields": {
+            "PEN": "0x01",
+            "PDIV": "0x1E"
+          }
+        },
+        "PORT.DIR": {
+          "offset": 0,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.DIRSET": {
+          "offset": 1,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.DIRCLR": {
+          "offset": 2,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUT": {
+          "offset": 4,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUTSET": {
+          "offset": 5,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUTCLR": {
+          "offset": 6,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.OUTTGL": {
+          "offset": 7,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.IN": {
+          "offset": 8,
+          "bytes": 1,
+          "access": "RW",
+          "reset": null,
+          "fields": {}
+        },
+        "PORT.INTFLAGS": {
+          "offset": 9,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "INT": "0xFF"
+          }
+        },
+        "PORT.PIN0CTRL": {
+          "offset": 16,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "ISC": "0x07",
+            "PULLUPEN": "0x08",
+            "INVEN": "0x80"
+          }
+        },
+        "USART.RXDATAL": {
+          "offset": 0,
+          "bytes": 1,
+          "access": "R",
+          "reset": "0x00",
+          "fields": {
+            "DATA": "0xFF"
+          }
+        },
+        "USART.RXDATAH": {
+          "offset": 1,
+          "bytes": 1,
+          "access": "R",
+          "reset": "0x00",
+          "fields": {
+            "DATA8": "0x01",
+            "PERR": "0x02",
+            "FERR": "0x04",
+            "BUFOVF": "0x40",
+            "RXCIF": "0x80"
+          }
+        },
+        "USART.TXDATAL": {
+          "offset": 2,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "DATA": "0xFF"
+          }
+        },
+        "USART.STATUS": {
+          "offset": 4,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x20",
+          "fields": {
+            "WFB": "0x01",
+            "BDF": "0x02",
+            "ISFIF": "0x08",
+            "RXSIF": "0x10",
+            "DREIF": "0x20",
+            "TXCIF": "0x40",
+            "RXCIF": "0x80"
+          }
+        },
+        "USART.CTRLA": {
+          "offset": 5,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "RS485": "0x01",
+            "ABEIE": "0x04",
+            "LBME": "0x08",
+            "RXSIE": "0x10",
+            "DREIE": "0x20",
+            "TXCIE": "0x40",
+            "RXCIE": "0x80"
+          }
+        },
+        "USART.CTRLB": {
+          "offset": 6,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "MPCM": "0x01",
+            "RXMODE": "0x06",
+            "ODME": "0x08",
+            "SFDEN": "0x10",
+            "TXEN": "0x40",
+            "RXEN": "0x80"
+          }
+        },
+        "USART.CTRLC": {
+          "offset": 7,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x03",
+          "fields": {
+            "CMODE": "0xC0",
+            "UCPHA": "0x02",
+            "UDORD": "0x04",
+            "CHSIZE": "0x07",
+            "SBMODE": "0x08",
+            "PMODE": "0x30"
+          }
+        },
+        "USART.BAUD": {
+          "offset": 8,
+          "bytes": 2,
+          "access": "RW",
+          "reset": "0x0000",
+          "fields": {}
+        },
+        "PORTMUX.USARTROUTEA": {
+          "offset": 2,
+          "bytes": 1,
+          "access": "RW",
+          "reset": "0x00",
+          "fields": {
+            "USART0": "0x03",
+            "USART1": "0x0C"
+          }
+        }
+      },
+      "provenance": {
+        "sourceId": "microchip-attiny-dfp-3.4.278",
+        "atdf": {
+          "member": "atdf/ATtiny1627.atdf",
+          "sha256": "9611b4c26599c33a46996e072c9d30dc3eeb79ef51d7b9d1fe2b601acee4d1a8"
+        },
+        "header": {
+          "member": "xc8/avr/include/avr/iotn1627.h",
+          "sha256": "67a9a6febb6f23591ef1b7da75c0122fffa7fff5e1b10b7954650a1509997fce"
+        },
+        "packageNormalization": "DFP pinout ids DIP14/DIP20/QFP20/QFP24 are internal labels; marketed packages are normalized using the official datasheet pinout table."
+      }
+    }
+  ]
+}

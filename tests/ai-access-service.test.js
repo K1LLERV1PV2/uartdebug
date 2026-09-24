@@ -1427,7 +1427,7 @@ test("account workspace snapshots persist independently without spending AI cred
   assert.deepEqual(Object.keys(empty.documents), ["chats", "files", "instruction"]);
   assert.equal(empty.documents.chats.revision, 0);
   assert.equal(empty.documents.files.data, null);
-  assert.equal(empty.documents.instruction.schemaVersion, 1);
+  assert.equal(empty.documents.instruction.schemaVersion, 2);
 
   const chats = {
     schemaVersion: 1,
@@ -1786,7 +1786,7 @@ test("account workspace validates authentication, schemas, and payload limits", 
   assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.instruction, 256 * 1024);
 });
 
-test("AI access database migrates to schema 2 with account workspace storage", (t) => {
+test("AI access database migrates to schema 3 with canvas-capable account storage", (t) => {
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "uartdebug-ai-schema-")
   );
@@ -1802,10 +1802,10 @@ test("AI access database migrates to schema 2 with account workspace storage", (
     service.close();
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   });
-  assert.equal(AI_ACCESS_SCHEMA_VERSION, 2);
+  assert.equal(AI_ACCESS_SCHEMA_VERSION, 3);
   assert.equal(
     Number(service.database.prepare("PRAGMA user_version").get().user_version),
-    2
+    3
   );
   const table = service.database
     .prepare(
@@ -1813,4 +1813,73 @@ test("AI access database migrates to schema 2 with account workspace storage", (
     )
     .get();
   assert.match(String(table?.sql || ""), /instruction/);
+});
+
+test("canvas v2 and a public YAML specification survive account synchronization", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {
+    code: "canvas-workspace", sub: "canvas-workspace-account", email: "canvas@example.com",
+  });
+  const context = service.authenticateAccountWorkspaceRequest(request(login.cookie), new MockResponse());
+  const canvas = {
+    schemaVersion: 2, revision: 9, locale: "ru", markdown: "# Задача\nМигать светодиодом.",
+    target: { mcu: "attiny1624", packageName: "SOIC-14" },
+    annotations: [{ id: "period-question", kind: "question", anchor: { quote: "Мигать светодиодом", line: 2 }, message: "Какой период?", status: "open", answer: "Одна секунда" }],
+    authorship: { schemaVersion: 1, lines: ["human", "human"], updatedAt: 8 },
+  };
+  const files = {
+    schemaVersion: 2,
+    files: { "blink.c": "int main(void) {}", "blink.ru.md": "# Мигание", "blink.yaml": 'schemaVersion: 1\nlanguage: "ru"\n' },
+    fileGroups: { "blink.yaml": { groupId: "blink", role: "specification" } },
+    miniProjects: { blink: { source: "blink.c", guide: "blink.ru.md", specification: "blink.yaml" } },
+    current: "blink.yaml",
+  };
+  for (const [type, data] of [["instruction", canvas], ["files", files]]) {
+    service.writeAccountWorkspace(context, type, { baseRevision: 0, expectedAccountKey: context.accountKey, data });
+  }
+  const stored = service.readAccountWorkspace(context);
+  assert.equal(stored.documents.instruction.schemaVersion, 2);
+  assert.deepEqual(stored.documents.instruction.data, canvas);
+  assert.deepEqual(stored.documents.files.data, files);
+  assert.throws(() => service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 1, expectedAccountKey: context.accountKey,
+    data: { schemaVersion: 1, revision: 10, markdown: "Old cached client", skillRefs: [] },
+  }), (error) => error.code === "account_data_schema_downgrade" && error.status === 409);
+  assert.deepEqual(service.readAccountWorkspace(context).documents.instruction.data, canvas);
+  assert.throws(() => service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 0, expectedAccountKey: context.accountKey, data: canvas,
+  }), (error) => error.code === "account_data_revision_conflict");
+  assert.throws(() => service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 1, expectedAccountKey: context.accountKey, data: { ...canvas, skillRefs: [] },
+  }), (error) => error.code === "invalid_account_data");
+  assert.throws(() => service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 1, expectedAccountKey: context.accountKey, data: { ...canvas, annotations: [canvas.annotations[0], canvas.annotations[0]] },
+  }), (error) => error.code === "invalid_account_data");
+});
+
+test("schema-2 migration preserves sessions, credits and legacy workspace bytes", async (t) => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-canvas-migration-"));
+  const databasePath = path.join(temporaryDirectory, "ai-access.sqlite");
+  const initial = makeService({ databasePath });
+  const login = await signIn(initial.service, initial.oauthClient, {
+    code: "legacy-workspace", sub: "legacy-workspace-account", email: "legacy@example.com",
+  });
+  const context = initial.service.authenticateAccountWorkspaceRequest(request(login.cookie), new MockResponse());
+  const legacyInstruction = { schemaVersion: 1, revision: 7, markdown: "# Existing project\n", skillRefs: [] };
+  initial.service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 0, expectedAccountKey: context.accountKey, data: legacyInstruction,
+  });
+  initial.service.database.exec("UPDATE google_accounts SET spent_nano_usd = 12345; UPDATE devices SET spent_nano_usd = 12345; PRAGMA user_version = 2;");
+  const snapshot = initial.service.database.prepare("SELECT * FROM account_workspace_snapshots").get();
+  const account = initial.service.database.prepare("SELECT * FROM google_accounts").get();
+  initial.service.close();
+  const migrated = makeService({ databasePath }).service;
+  t.after(() => { migrated.close(); fs.rmSync(temporaryDirectory, { recursive: true, force: true }); });
+  assert.equal(migrated.database.prepare("PRAGMA user_version").get().user_version, 3);
+  const restoredContext = migrated.authenticateAccountWorkspaceRequest(request(login.cookie), new MockResponse());
+  assert.equal(restoredContext.accountKey, context.accountKey);
+  assert.deepEqual(migrated.readAccountWorkspace(restoredContext).documents.instruction.data, legacyInstruction);
+  assert.deepEqual(migrated.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
+  assert.deepEqual(migrated.database.prepare("SELECT * FROM google_accounts").get(), account);
 });

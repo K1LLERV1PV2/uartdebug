@@ -58,10 +58,14 @@ jobs:
           node --check frontend/markdown-runtime/scripts/build.mjs
 
       - name: Check deployment shell scripts
-        run: bash -n backend/deploy/*.sh
+        run: |
+          for script in backend/deploy/*.sh; do bash -n "$script"; done
+
+      - name: Verify local AVR knowledge manifest
+        run: node scripts/avr-knowledge/build-manifest.js --verify
 
       - name: Check deployment helper syntax
-        run: python3 -m py_compile .github/scripts/stamp_frontend_build.py
+        run: python3 -m py_compile .github/scripts/stamp_frontend_build.py scripts/avr-knowledge/snapshot.py scripts/avr-knowledge/compare-installed.py
 
       - name: Check generated diff hygiene
         run: git diff --check

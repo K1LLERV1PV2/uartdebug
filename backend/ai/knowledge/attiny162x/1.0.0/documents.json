@@ -1,0 +1,68 @@
+[
+  {
+    "sourceId": "clkctrl-a",
+    "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-97AF88DA-84E6-4F03-97DF-AE909401F570.html",
+    "title": "ATtiny1624/1626/1627 11.5.1 Main Clock Control A",
+    "text": "Curated factual digest, not the complete page. MCLKCTRLA is CCP-protected, offset 0, reset 0. CLKOUT is bit 7. CLKSEL bits 1:0 select OSC20M=0, OSCULP32K=1, XOSC32K=2, EXTCLK=3. CLKOUT emits the system clock on the designated physical pin. Pin availability depends on package. Source facts were reviewed through the official HTML on 2026-09-24; no raw HTML hash is claimed.",
+    "snapshotKind": "curated-factual-digest",
+    "rawSourceSha256": null,
+    "reviewedAt": "2026-09-24",
+    "links": ["https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-B396A7CB-AB0C-4909-9F5D-A8CA1BE83255.html"]
+  },
+  {
+    "sourceId": "clkctrl-b",
+    "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-B396A7CB-AB0C-4909-9F5D-A8CA1BE83255.html",
+    "title": "ATtiny1624/1626/1627 11.5.2 Main Clock Control B",
+    "text": "Curated factual digest. MCLKCTRLB is CCP-protected, offset 1, reset 0x11. PEN bit 0 enables the PDIV prescaler (bits 4:1); PEN=0 passes CLK_MAIN without division. PDIV encodings 0,1,2,3,4,5 divide by 2,4,8,16,32,64; 8,9,10,11,12 divide by 6,10,12,24,48. Other encodings are reserved. Resulting CLK_PER must meet the electrical-characteristic limits. The division-by-six reset does not independently verify oscillator frequency on a user's board.",
+    "snapshotKind": "curated-factual-digest",
+    "rawSourceSha256": null,
+    "reviewedAt": "2026-09-24"
+  },
+  {
+    "sourceId": "usart-rx",
+    "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-AB733FBE-E312-404A-B75E-937A6B8C5E1D.html",
+    "title": "ATtiny1624/1626/1627 24.5.2 Receiver Data Register High Byte",
+    "text": "Curated factual digest. RXDATAH describes the oldest frame in the double-buffered receiver: RXCIF bit 7, BUFOVF bit 6, FERR bit 2, PERR bit 1 and DATA[8] bit 0. Normally RXDATAL reading advances the buffer, so RXDATAH must be captured first to associate status with the correct byte. In 9-bit low-byte-first mode RXDATAH advances the buffer instead. BUFOVF reports receive-buffer overflow; FERR reports an invalid first stop bit; PERR reports a parity error when parity is enabled. These rules are specific to the selected USART mode.",
+    "snapshotKind": "curated-factual-digest",
+    "rawSourceSha256": null,
+    "reviewedAt": "2026-09-24"
+  },
+  {
+    "sourceId": "usart-baud",
+    "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-B48A617D-A912-430B-A8FD-98B0F38C8411.html",
+    "title": "ATtiny1624/1626/1627 24.3.2.2.1 The Fractional Baud Rate Generator",
+    "text": "Curated factual digest. Asynchronous fractional BAUD encodes the clock division factor with six fractional bits. Valid BAUD range: 64..65535. Asynchronous NORMAL uses 16 samples per bit; CLK2X uses 8. The requested rate must not exceed CLK_PER divided by samples. Use BAUD=round(64*CLK_PER/(samples*requested_baud)), actual_baud=64*CLK_PER/(samples*BAUD), and evaluate rounding error. The implementation's 2% error threshold is a project policy, not a datasheet assertion; oscillator/peer errors are additional. The equation is also corroborated by the existing 05-10 mini-project formula for samples=16.",
+    "snapshotKind": "curated-factual-digest",
+    "rawSourceSha256": null,
+    "reviewedAt": "2026-09-24",
+    "links": ["https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-95A88A1C-6C9D-4CF0-8063-3B836BCE0DAD.html"]
+  },
+  {
+    "sourceId": "usart-baud-register",
+    "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-95A88A1C-6C9D-4CF0-8063-3B836BCE0DAD.html",
+    "title": "ATtiny1624/1626/1627 24.5.10 Baud Register",
+    "text": "Curated factual digest. USARTn.BAUD is a 16-bit register pair at offset 0x08. BAUDL is at the base offset; BAUDH is at offset +1. Writing BAUD updates the prescaler immediately and corrupts ongoing transmit or receive traffic. Select the value before enabling communication or use an explicit idle reconfiguration protocol.",
+    "snapshotKind": "curated-factual-digest",
+    "rawSourceSha256": null,
+    "reviewedAt": "2026-09-24"
+  },
+  {
+    "sourceId": "usart-status",
+    "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-4C0D6B24-3B4F-4AC8-80E8-1030614D43D1.html",
+    "title": "ATtiny1624/1626/1627 24.5.5 USART Status Register",
+    "text": "Curated register-field digest only. USART STATUS is at offset 0x04. RXCIF bit 7 and DREIF bit 5 are read-only status; TXCIF bit 6 is read/write. DFP header masks agree with these positions. The local polling recipe waits on DREIF before filling TXDATAL and RXCIF before reading received data. Coverage does not include every STATUS bit or all operating modes; the full official section is needed for extended modes.",
+    "snapshotKind": "curated-factual-digest",
+    "rawSourceSha256": null,
+    "reviewedAt": "2026-09-24"
+  },
+  {
+    "sourceId": "attiny162x-errata",
+    "url": "https://onlinedocs.microchip.com/oxy/GUID-CB68AD87-CF90-4076-861C-33A2E4841D9C-en-US-19/GUID-17FC76E6-835F-424B-91B5-6F23A1571AC1.html",
+    "title": "ATtiny1624/1626/1627 Silicon Errata, DS80000902F introduction",
+    "text": "Provenance-only digest. The official HTML introduction identifies revision DS80000902F and states that the document summarizes silicon issues across device revisions. The document revision is not a user's chip revision. This bundle does NOT contain a complete applicability/workaround matrix and must not be interpreted as clearance of silicon errata. Missing advanced-mode knowledge requires the relevant issue section and the actual silicon revision. The bundled simple recipes do not cover auto-baud, LIN, open-drain UART, fuse calibration changes, TCA restart/split/PWM or low-power modes.",
+    "snapshotKind": "provenance-only",
+    "rawSourceSha256": null,
+    "reviewedAt": "2026-09-24",
+    "links": ["https://onlinedocs.microchip.com/oxy/GUID-CB68AD87-CF90-4076-861C-33A2E4841D9C-en-US-19/index.html"]
+  }
+]

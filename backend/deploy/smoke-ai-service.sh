@@ -4,10 +4,10 @@ set -euo pipefail
 base_url="${1:-https://uartdebug.com}"
 status_file="$(mktemp)"
 auth_file="$(mktemp)"
-skills_file="$(mktemp)"
+retired_file="$(mktemp)"
 public_file="$(mktemp)"
 cleanup() {
-  rm -f "${status_file}" "${auth_file}" "${skills_file}" "${public_file}"
+  rm -f "${status_file}" "${auth_file}" "${retired_file}" "${public_file}"
 }
 trap cleanup EXIT
 
@@ -22,26 +22,22 @@ status_code="$(
 grep -q '"ok":true' "${status_file}"
 grep -q '"accessRequired":false' "${status_file}"
 grep -q '"rules":{"packageId":' "${status_file}"
-
-skills_code="$(
-  curl --silent --show-error \
-    --output "${skills_file}" \
-    --write-out '%{http_code}' \
-    --max-time 15 \
-    "${base_url}/api/avr/ai/skills"
-)"
-[ "${skills_code}" = "200" ]
 node -e '
   const fs = require("fs");
   const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  if (value.ok !== true || value.schemaVersion !== 1) process.exit(1);
-  if (!Array.isArray(value.skills) || value.skills.length !== value.count) process.exit(1);
-  if (!/^[a-f0-9]{64}$/.test(String(value.digest || ""))) process.exit(1);
-  const allowed = ["id", "markdown", "summary", "title", "version"];
-  for (const skill of value.skills) {
-    if (Object.keys(skill).some((key) => !allowed.includes(key))) process.exit(1);
-  }
-' "${skills_file}"
+  if (value.contract !== "uartdebug-canvas/v1" || !value.knowledge) process.exit(1);
+  if (!Array.isArray(value.knowledge.devices) || !value.knowledge.devices.length) process.exit(1);
+' "${status_file}"
+
+for retired_route in respond generate skills; do
+  retired_method="POST"
+  [ "${retired_route}" != "skills" ] || retired_method="GET"
+  retired_code="$(curl --silent --show-error --max-time 15 \
+    --output "${retired_file}" --write-out '%{http_code}' \
+    --request "${retired_method}" --header "Origin: ${base_url}" \
+    "${base_url}/api/avr/ai/${retired_route}")"
+  [ "${retired_code}" = "404" ]
+done
 
 auth_code="$(
   curl --silent --show-error \
@@ -71,15 +67,15 @@ else
       --request POST \
       --header "Origin: ${base_url}" \
       --header 'Content-Type: application/json' \
-      --data-binary '{"prompt":"Service smoke test"}' \
-      "${base_url}/api/avr/ai/respond"
+      --data-binary '{"canvas":{"schemaVersion":2,"revision":0,"markdown":"Service smoke test","locale":"en","annotations":[],"target":{"mcu":"attiny1624","packageName":"SOIC-14"}},"mcu":"attiny1624","packageName":"SOIC-14"}' \
+      "${base_url}/api/avr/ai/canvas"
   )"
   [ "${public_code}" = "503" ]
   grep -q '"code":"api_key_not_configured"' "${public_file}"
 fi
 
-printf 'status=%s skills=%s auth=%s public-without-key=%s\n' \
+printf 'status=%s retired-routes=%s auth=%s canvas-without-key=%s\n' \
   "${status_code}" \
-  "${skills_code}" \
+  "${retired_code}" \
   "${auth_code}" \
   "${public_code}"

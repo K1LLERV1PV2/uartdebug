@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260826-commonmark-gfm-v1";
+const CACHE_NAME = "uartdebug-shell-20260924-canvas-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",

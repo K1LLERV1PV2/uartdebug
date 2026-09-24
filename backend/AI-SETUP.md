@@ -85,24 +85,24 @@ sudo systemctl daemon-reload
 sudo systemctl restart uartdebug-ai.service
 ```
 
-Access state, the append-only credit ledger, signed-in AI chat history, the
+Access state, the append-only credit ledger, preserved legacy chat history, the
 latest account-scoped AVR file-workspace snapshot, and the separate latest
-Project-instruction snapshot live in:
+canvas snapshot live in:
 
 ```text
 /var/lib/uartdebug-ai/data/ai-access.sqlite
 ```
 
-The directory is owned by `uartai:uartai`, has mode `0700`, and is the only new
-writable path granted to the hardened unit. It is outside release directories so
+The directory is owned by `uartai:uartai`, has mode `0700`, and is writable by the
+hardened unit alongside the official-documentation cache. It is outside release directories so
 deployments and rollbacks do not replace it. Treat the database and its backups
 as sensitive personal, project-content, and financial-adjacent data. Account
 workspace/chat records are structurally and size bounded and use optimistic
 revision checks; a stale write must fail as a conflict instead of replacing a
 newer snapshot. The current serialized ceilings are 1 MiB for chats, 4 MiB for
-files, and 256 KiB for the account Project-instruction snapshot; the more
+files, and 256 KiB for the account canvas snapshot; the more
 granular collection and field limits are enforced alongside those byte ceilings
-in `ai-access-service.js`. The AI request path validates the instruction again
+in `ai-access-service.js`. The AI request path validates the canvas again
 and may use a stricter limit than account storage. The sync API exposes a second,
 domain-separated HMAC value as `accountKey` for browser-local sync metadata; it
 never exposes the stored account hash, Google subject, or email address. Every
@@ -147,11 +147,17 @@ Then run:
 npm run start:ai --prefix backend
 ```
 
-The checked-in rule pack and AI-reference catalog are used by default, and
-generated drafts go to the operating system's temporary directory. Set
-`AI_RULE_PACK_ROOT` or `AI_DRAFTS_DIR` only when testing alternate locations.
-Starting the process without `AI_ENABLED=1` and a readable key file keeps the
-health and status endpoints available but disables assistant responses.
+The versioned local knowledge bundle and `backend/ai/canvas-rules.md` ship with
+the backend release. A new canvas may omit its language; the model determines
+it from the requirements, then C explanations, YAML descriptions and the guide
+use that language. Stable schema keys and code identifiers are not translated.
+
+Optional documentation lookup first reads the local bundle and a persistent
+cache. Set `AI_DOCUMENTATION_CACHE_DIR` to a writable directory outside the
+repository; the default for local development is an operating-system temporary
+directory. Set `AI_EXTERNAL_DOCUMENTATION_ENABLED=0` to prohibit external
+retrieval. A missing API key or `AI_ENABLED=0` leaves health/status endpoints
+available while generation remains disabled.
 
 ## Compiler verification and repair
 
@@ -170,8 +176,7 @@ per client and 120 starts globally per 60-second process window. Configure
 `COMPILE_RATE_LIMIT_WINDOW_MS`, `COMPILE_RATE_LIMIT_MAX_PER_CLIENT`, and
 `COMPILE_RATE_LIMIT_MAX_GLOBAL` when server capacity changes. At most two
 compiles run simultaneously by default; tune that separate in-flight guard with
-`COMPILE_MAX_CONCURRENT`. These guards do not count chat messages and do not
-spend or reduce AI credits.
+`COMPILE_MAX_CONCURRENT`. These guards do not spend or reduce AI credits.
 
 These AI-service variables control the integration:
 
@@ -195,57 +200,72 @@ partially settled or released.
 Generation is public to visitors of the AVR page during the prototype stage.
 The OpenAI key remains server-only; the browser never receives it. Same-origin
 checks and technical request safeguards still apply. There is currently no
-per-IP generation quota, conversation-message quota, or daily usage quota.
+per-IP generation quota or daily usage quota.
 The Google OAuth start endpoint has a separate technical abuse guard: by
 default it permits 10 starts per source IP and 1,000 globally per 10-minute
 process window. This protects SQLite from login-start bursts and does not limit
-AI conversation messages. Account-workspace PUTs have a separate account-scoped
+canvas processing. Account-workspace PUTs have a separate account-scoped
 technical guard of 1,200 attempts per 10-minute process window by default. A 429
 response includes `Retry-After`; this safeguard neither consumes AI Credits nor
-sets a conversation-message limit.
+sets a canvas-operation quota.
 
-## Instruction blocks and the reviewed project instruction
+## Canvas, project contract and local knowledge
 
-Reusable browser-visible instruction blocks are versioned separately from the
-private mini-project AI references:
+`POST /api/avr/ai/canvas` is the only active AI operation. The request contains
+`canvas: {schemaVersion: 2, revision, markdown, locale, annotations, target}`, the
+selected `mcu` and `packageName`, and optionally the current C/guide/YAML project.
+The agent either returns clarification annotations or generates the complete
+project. The response carries `baseRevision`; the browser refuses to overwrite
+requirements edited while the request was running. Annotation IDs and user
+answers survive every model edit.
+
+Generated projects contain public `source`, `guide` and `specification` file
+roles. The server serializes YAML from a checked JSON specification containing
+the MCU, package, clock, allocated peripherals and pins. There is no new private
+`_AI.md` artifact or browser-visible skill-block catalog. `/respond`, `/generate`
+and `/skills` are retired and return 404. The legacy account chat storage routes
+remain available so stored user history is not deleted by this migration.
+
+The browser stores its canvas locally and synchronizes it to the account
+`instruction` snapshot when signed in. This route name is retained for existing
+accounts; schema 2 replaces obsolete `skillRefs` with locale, annotations and
+target. Schema-1 snapshots are still readable for migration. Once a schema-2
+canvas has been saved, older clients cannot downgrade it and erase annotations;
+their save returns a conflict requiring an application refresh. Files and the
+canvas have independent optimistic revisions and account-identity checks.
+
+The pilot knowledge release is stored under:
 
 ```text
-backend/ai/skills/catalog.json
-backend/ai/skills/*.md
+backend/ai/canvas-rules.md
+backend/ai/knowledge/attiny162x/1.0.0/
 ```
 
-The catalog may intentionally contain an empty `skills` array while the real
-instruction-block library is being designed. The endpoint remains available so
-future versioned blocks can be published without changing the browser contract.
+The manifest records source provenance, versioned device facts, recipe paths and
+SHA-256 digests. `loadKnowledge()` verifies each declared file before using the
+bundle. All seven compact pilot recipes are supplied regardless of the user's
+language, without attaching the complete tutorials. The pilot covers ATtiny1624/1626/1627 with the
+packages listed in status metadata; unsupported hardware yields a canvas issue.
+Do not interpret the pilot as support for every AVR or every peripheral.
 
-`GET /api/avr/ai/skills` returns only the allowlisted `id`, `version`, `title`,
-`summary`, and Markdown content. The loader rejects symlinks, escaping paths,
-unexpected catalog fields, oversized content, duplicate identifiers, and files
-whose SHA-256 does not match the catalog. Private `_AI.md` mini-project
-references are never exposed by this endpoint.
+When a necessary fact is missing, the model may call `read_avr_documentation`
+with an official section URL, a search term and an explanation of the gap.
+The server checks local text and cache first, permits at most two external HTML
+requests per generation, and restricts URLs to the registered Microchip
+datasheet/errata roots. Redirects are rejected; timeout and byte ceilings apply.
+The tool reads sections rather than offering general web search. Downloaded
+references are not automatically promoted into approved recipes.
 
-To add or replace a block, create a new Markdown file, update its catalog entry
-and version, calculate the SHA-256 over the exact UTF-8 file bytes, and run:
+Production reference cache:
 
-```sh
-npm test --prefix backend
+```text
+/var/lib/uartdebug-ai/documentation
 ```
 
-Do not edit a published block in place without also changing its version and
-hash. The deployment installer validates and copies the complete catalog before
-restarting the service; the smoke test verifies that the public endpoint exposes
-only the allowlisted shape.
-
-The AVR page stores the visitor's assembled Markdown instruction in
-`localStorage` for unsigned and offline use. After Google sign-in it also syncs
-that document as a third account-scoped snapshot, with a revision independent
-from the chat and file snapshots. It is not attached to a chat, so switching
-chats must not switch instructions. The instruction is sent as untrusted user
-context with explicit AI requests. A request to revise that document uses the
-dedicated `edit_avr_project_instruction` tool and returns the exact base
-revision; the browser refuses to overwrite newer manual edits. Project
-create/update actions receive the reviewed instruction as their primary project
-requirements, but do not silently rewrite it while generating project files.
+The installer creates it as `uartai:uartai`, mode `0700`; cached files use mode
+`0600`. Entries expire for reuse after 30 days. Cached public documentation is
+separate from account data and may be rebuilt. Legacy drafts and rule-pack
+folders are not used by the canvas service and are left on disk during migration.
 
 The service also keeps a dormant random access credential in:
 
@@ -288,8 +308,10 @@ The deployment workflow invokes `backup-ai-access-database.sh` before switching
 the backend release or restarting the AI service. The helper uses SQLite's
 online backup command and verifies the copy's integrity and schema version. A
 schema-changing deployment therefore fails closed if `sqlite3` is missing or the
-backup cannot be verified. Rolling back from schema 2 to an older schema-1
-backend also requires restoring its matching pre-migration database backup;
+backup cannot be verified. The canvas release advances SQLite `user_version`
+to 3 without rewriting existing rows: older schema-2 backends cannot read the
+new canvas payloads. Rolling back to a pre-canvas backend therefore requires
+restoring its matching pre-migration database backup;
 switching only the release symlink is insufficient. Before any rollback release
 symlink changes, the workflow compares the live SQLite `user_version` with the
 target backend's `AI_ACCESS_SCHEMA_VERSION` and refuses an incompatible rollback
@@ -299,28 +321,24 @@ the newest 10 and deletes only older root-owned mode-0700 directories whose
 database integrity and metadata schema version are verified. Manual installer
 and unrelated operational backups are outside that retention set.
 
-## Replacing the rule pack
+## Updating the knowledge release
 
-Rule packs are immutable directories under:
+Update recipes, device facts and their source records together, then recalculate
+manifest digests and run the contract, knowledge, service and compiler checks.
+Changing only an authoritative source file without its digest fails loading.
+A successful C compile alone does not demonstrate correct electrical behavior.
+Keep hardware verification status explicit when adding or changing a recipe.
 
-```text
-/var/lib/uartdebug-ai/rule-packs/packages/<package-id>/
-```
+The complete `ai/knowledge` directory and `ai/canvas-rules.md` are shipped with
+each backend release, alongside `avr-ai-runtime.js`, `avr-canvas-contract.js`,
+`avr-documentation-lookup.js` and `avr-knowledge.js`. Deploy and rollback use the
+corresponding release's corpus. Status exposes the active rules digest and
+knowledge version; old rule-pack pointers are not read by the canvas service.
 
-Install and validate a new package beside the old one. Then atomically replace
-`/var/lib/uartdebug-ai/rule-packs/active.json` with a pointer containing its
-`packageId`. The service reads the pointer for every status/generation request,
-so no restart is required. Keep the previous package for rollback.
-
-Normal deployments run `deploy/install-ai-rule-pack.sh` before switching the
-release and verify that the status endpoint reports the exact package declared
-by that release. The same installer is run for rollbacks, so code and rules
-return to a compatible pair.
-
-`manifest.json` declares the runtime files, their order, and the SHA-256 of
-every package file. The foundation rules and all versioned mini-project templates are
-included in the runtime prompt. `codex/AGENTS.md` stays maintenance-only and is
-never sent to the model.
+Run the installer when migrating an existing host to provision the documentation
+cache and writable-unit path. Database backups, secret preservation and schema
+rollback guards remain required. The smoke test checks the canvas status,
+retired routes and account session without spending OpenAI credits.
 
 ## Runtime safeguards and retention
 
@@ -328,7 +346,7 @@ The production service unit allows one concurrent generation. The HTTP server
 enforces a 1 MiB generation-request ceiling, bounded individual fields, a model
 timeout, an output-token ceiling, and the Google-login start guard described
 above. Authenticated account snapshots are limited independently to 1 MiB for
-chats, 4 MiB for files, and 256 KiB for the Project instruction. The nginx AI
+chats, 4 MiB for files, and 256 KiB for the canvas. The nginx AI
 location allows 5 MiB so the largest revision envelope can reach the stricter
 Node validator. nginx keeps a connection-concurrency safeguard, but AI
 generation-rate and daily quotas are currently disabled. The account-scoped
@@ -336,23 +354,18 @@ workspace PUT guard described above only bounds repeated persistence writes; the
 1 MiB aggregate chat snapshot and 128 KiB per-message field limit are technical
 storage bounds, not a fixed chat-message count.
 
-Without Google sign-in, chat and AVR file-workspace state remain browser-local,
-and the Project instruction remains in `localStorage`. After sign-in, the
-browser can restore and revision-sync the account's chat history, latest
-complete AVR file-workspace snapshot, and separate Project-instruction snapshot
-through the AI service. All three have independent revisions; the instruction
-remains independent of chat selection.
+Without Google sign-in, the canvas and AVR files remain browser-local. After
+sign-in, the browser restores and revision-syncs the latest account file and
+canvas snapshots. Existing legacy chat snapshots are retained but do not form
+the active AI context.
 
-Synchronization alone does not call Google or OpenAI. Each explicit AI request
-includes the newest complete exchanges and project context that fit a 768 KiB
-target. This is transport/context protection rather than a message or access
-quota; users can continue the conversation without a fixed interaction count.
+Synchronization does not call OpenAI. Each explicit canvas request sends the
+current requirements, structured annotations and optional current project. The
+OpenAI Responses request uses Structured Outputs with `store: false`.
+Application logs contain request identifiers, status codes, error codes and
+durations, not requirements or generated content.
 
-The OpenAI Responses request uses Structured Outputs with `store: false`.
-Application logs contain request identifiers, status codes, error codes, and
-durations, not user prompts or generated content.
-
-For a create or update action, only the generated server-side `_AI.md` reference
-and a small non-secret manifest are stored in `/var/lib/uartdebug-ai/drafts`.
-With the checked-in service defaults, drafts expire after 30 days and the
-directory is capped at 100 drafts.
+The canvas service does not create new private draft artifacts. Generated C,
+YAML and documentation are returned to the browser and may be stored in the
+account workspace. Removing obsolete server-side drafts is a separate data
+retention operation, not part of deployment.

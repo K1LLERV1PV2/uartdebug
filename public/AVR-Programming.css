@@ -2158,11 +2158,7 @@ body.is-row-resizing * {
 }
 
 .project-ai-layout {
-  display: grid;
-  grid-template-rows:
-    var(--project-ai-instruction-height, minmax(190px, 1fr))
-    var(--project-ai-resizer-height, 14px)
-    var(--project-ai-chat-height, minmax(190px, 1fr));
+  display: flex;
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
   width: 100%;
@@ -2180,7 +2176,8 @@ body.is-row-resizing * {
 }
 
 .project-instruction-panel {
-  grid-row: 1;
+  flex: 1 1 auto;
+  width: 100%;
 }
 
 .project-ai-chat-panel {
@@ -2231,7 +2228,7 @@ body.is-row-resizing * {
 
 .canvas-split-container.is-project-ai-compact
   .project-instruction-panel::before {
-  content: "I\A N\A S\A T\A R\A U\A C\A T\A I\A O\A N";
+  content: "C\A A\A N\A V\A A\A S";
 }
 
 .canvas-split-container.is-project-ai-compact
@@ -5184,6 +5181,138 @@ body.is-row-resizing * {
 }
 
 /* Unified CommonMark/GFM live editing surfaces. */
+.project-canvas-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+  margin: 0 0 10px;
+  flex: 0 0 auto;
+}
+
+.project-canvas-controls label,
+.project-canvas-hint {
+  color: var(--avr-text-muted);
+  font: 11px/1.5 Inter, Arial, sans-serif;
+}
+
+.project-canvas-controls select,
+.canvas-annotation textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--avr-border);
+  border-radius: 8px;
+  color: var(--avr-text-soft);
+  background: var(--avr-window-bg);
+  font: 12px/1.5 Inter, Arial, sans-serif;
+}
+
+.project-canvas-controls select:focus-visible,
+.canvas-annotation textarea:focus-visible {
+  outline: 2px solid var(--avr-border-hot);
+  outline-offset: 2px;
+}
+
+.project-canvas-hint {
+  margin: 0 0 10px;
+}
+
+.project-canvas-status {
+  flex: 0 0 auto;
+  max-height: 150px;
+  margin-top: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--avr-text-soft);
+  font: 12px/1.5 Inter, Arial, sans-serif;
+}
+
+.project-canvas-status.is-error {
+  color: #f4a09e;
+}
+
+.project-canvas-annotations {
+  max-height: 35%;
+  overflow: auto;
+  flex: 0 1 auto;
+}
+
+.project-canvas-status[hidden],
+.project-canvas-annotations[hidden] {
+  display: none;
+}
+
+.canvas-annotation {
+  margin: 8px 12px 12px;
+  padding: 10px;
+  border: 1px solid rgba(129, 159, 141, 0.36);
+  border-left: 3px solid rgba(112, 205, 145, 0.72);
+  border-radius: 8px;
+  color: var(--avr-text-soft);
+  background: rgba(31, 48, 37, 0.85);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font: 12px/1.5 Inter, Arial, sans-serif;
+}
+
+.canvas-annotation.is-error {
+  border-left-color: #f4a09e;
+}
+
+.canvas-annotation.is-resolved {
+  border-left-color: rgba(129, 159, 141, 0.5);
+  background: rgba(24, 35, 29, 0.65);
+}
+
+.canvas-annotation-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.canvas-annotation-heading span,
+.canvas-annotation small {
+  color: var(--avr-text-muted);
+  font-size: 10px;
+}
+
+.canvas-annotation blockquote {
+  margin: 7px 0;
+  padding-left: 8px;
+  border-left: 2px solid rgba(129, 159, 141, 0.36);
+  color: var(--avr-text-muted);
+  white-space: pre-wrap;
+  max-height: 70px;
+  overflow: auto;
+}
+
+.canvas-annotation p {
+  margin: 8px 0;
+  white-space: pre-wrap;
+}
+
+.canvas-annotation label {
+  display: block;
+  margin-top: 8px;
+}
+
+.canvas-annotation textarea {
+  display: block;
+  margin-top: 4px;
+  resize: vertical;
+  min-height: 54px;
+}
+
+.canvas-annotation .canvas-annotation-resolved {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+
 .markdown-live-editor .CodeMirror {
   width: 100%;
   height: 100%;

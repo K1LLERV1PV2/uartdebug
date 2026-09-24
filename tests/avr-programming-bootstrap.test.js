@@ -227,40 +227,99 @@ test("exposes the mini-project bridge before DOMContentLoaded", () => {
   assert.equal(typeof documentListeners.get("DOMContentLoaded"), "function");
 });
 
-test("truncates an edited AI-chat branch before resubmission", () => {
-  const { truncateProjectAiMessageBranchForEdit } =
-    loadAvrFrontendFunctionHooks(["truncateProjectAiMessageBranchForEdit"]);
-  const userMessage = {
-    id: "message-user",
-    role: "user",
-    content: "old request",
-    createdAt: 100,
-  };
-  const chat = {
-    id: "chat-one",
-    updatedAt: 300,
-    messages: [
-      { id: "message-before", role: "assistant", content: "context" },
-      userMessage,
-      { id: "message-stale", role: "assistant", content: "stale answer" },
-      { id: "message-after", role: "user", content: "stale follow-up" },
-    ],
-  };
+test("migrates legacy instructions without losing text or authorship and removes skill refs", () => {
+  const { normalizeProjectInstructionDocument, parseStoredProjectInstruction } =
+    loadAvrFrontendFunctionHooks(["normalizeProjectInstructionDocument", "parseStoredProjectInstruction"]);
+  const legacy = { schemaVersion: 1, revision: 7, markdown: "# Светодиод\nPB2",
+    skillRefs: [{ id: "legacy", version: "1" }],
+    authorship: { schemaVersion: 1, lines: ["human", "ai"], updatedAt: 123 } };
+  const canvas = parseStoredProjectInstruction(JSON.stringify(legacy));
+  assert.equal(canvas.schemaVersion, 2);
+  assert.equal(canvas.markdown, legacy.markdown);
+  assert.equal(canvas.revision, 7);
+  assert.deepEqual(Array.from(canvas.authorship.lines), ["human", "ai"]);
+  assert.equal("skillRefs" in canvas, false);
+  assert.equal("target" in normalizeProjectInstructionDocument(null), false);
+});
 
-  const edited = truncateProjectAiMessageBranchForEdit(
-    { chat, message: userMessage, index: 1 },
-    "new request",
-    500
-  );
+test("keeps annotation answers separate from Markdown and relocates quoted anchors", () => {
+  const hooks = loadAvrFrontendFunctionHooks([
+    "normalizeProjectInstructionDocument", "resolveCanvasAnnotationLine",
+  ]);
+  const markdown = "# Проект\n\nМигать светодиодом.";
+  const canvas = hooks.normalizeProjectInstructionDocument({ schemaVersion: 2,
+    revision: 1, markdown, locale: "ru", target: { mcu: "attiny1624", packageName: "SOIC-14" },
+    annotations: [{ id: "q:frequency", kind: "question", anchor: { quote: "Мигать светодиодом.", line: 3 },
+      message: "Какая частота?", status: "resolved", answer: "1 Гц" }] });
+  assert.equal(canvas.markdown, markdown);
+  assert.equal(canvas.annotations[0].answer, "1 Гц");
+  assert.equal(canvas.annotations[0].id, "q:frequency");
+  assert.equal(hooks.resolveCanvasAnnotationLine(canvas.annotations[0], "Новая строка\n" + markdown), 3);
+  assert.equal(hooks.resolveCanvasAnnotationLine(canvas.annotations[0], "# Удалён текст"), null);
+  assert.equal(canvas.target.packageName, "SOIC-14");
+});
 
-  assert.equal(edited.id, userMessage.id);
-  assert.equal(edited.content, "new request");
-  assert.equal(edited.editedAt, 500);
-  assert.equal(chat.updatedAt, 500);
-  assert.deepEqual(
-    chat.messages.map((message) => message.id),
-    ["message-before"]
-  );
+test("rejects a delayed canvas result after a user edit", () => {
+  const hooks = loadAvrFrontendFunctionHooks([
+    "assertProjectAiInstructionIsFresh",
+    "setCanvas(value) { projectInstructionDocument = normalizeProjectInstructionDocument(value); }",
+  ]);
+  hooks.setCanvas({ schemaVersion: 2, revision: 5, markdown: "Newer edit" });
+  assert.throws(() => hooks.assertProjectAiInstructionIsFresh({ canvas: { revision: 4 } }), /newer edits were preserved/i);
+  assert.equal(hooks.assertProjectAiInstructionIsFresh({ canvas: { revision: 5 } }), 5);
+});
+
+test("infers language again after a manual canvas edit while preserving answers and target", () => {
+  const hooks = loadAvrFrontendFunctionHooks([
+    "getProjectInstructionSnapshot", "updateProjectInstructionFromUser",
+    "setCanvas(value) { projectInstructionDocument = normalizeProjectInstructionDocument(value); }",
+  ]);
+  hooks.setCanvas({ schemaVersion: 2, revision: 6, markdown: "Мигать", locale: "ru",
+    target: { mcu: "attiny1624", packageName: "SOIC-14" },
+    annotations: [{ id: "q1", kind: "question", anchor: { quote: "Мигать", line: 1 },
+      message: "Как часто?", status: "resolved", answer: "1 секунда" }] });
+  hooks.updateProjectInstructionFromUser("Blink the LED", { schemaVersion: 1, lines: ["human"], updatedAt: 123 });
+  const canvas = hooks.getProjectInstructionSnapshot();
+  assert.equal(canvas.locale, "");
+  assert.equal(canvas.revision, 7);
+  assert.equal(canvas.target.packageName, "SOIC-14");
+  assert.equal(canvas.annotations[0].answer, "1 секунда");
+});
+
+test("sends only the canvas and selected target without chat history or skill refs", () => {
+  const { document } = parseHTML('<html><body><select id="mcuSelect"><option value="attiny1624" selected>ATtiny1624</option></select><select id="projectPackageSelect"><option value="SOIC-14" selected>SOIC-14</option></select></body></html>');
+  const hooks = loadAvrFrontendFunctionHooks([
+    "getProjectAiRequestPayload",
+    "setCanvas(value) { projectInstructionDocument = normalizeProjectInstructionDocument(value); }",
+  ], { document });
+  hooks.setCanvas({ schemaVersion: 2, revision: 2, markdown: "Мигать PB2", locale: "ru" });
+  const request = hooks.getProjectAiRequestPayload();
+  assert.deepEqual(Object.keys(request).sort(), ["canvas", "mcu", "packageName"]);
+  assert.equal(request.canvas.markdown, "Мигать PB2");
+  assert.equal(request.mcu, "attiny1624");
+  assert.equal(request.packageName, "SOIC-14");
+  assert.equal("skillRefs" in request.canvas, false);
+});
+
+test("replaces chat controls with one canvas action while retaining account and neighboring resizers", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "../public/AVR-Programming.js"), "utf8");
+  const { document } = parseHTML(html);
+  assert.ok(document.getElementById("projectInstructionEditor"));
+  assert.equal(document.querySelectorAll("#projectCanvasForm button[type=submit]").length, 1);
+  assert.ok(document.getElementById("projectPackageSelect"));
+  for (const id of ["projectAiHistory", "projectAiPrompt", "projectAiChatsBtn", "projectAiChatResizer"]) {
+    assert.equal(document.getElementById(id), null, id);
+  }
+  for (const id of ["fileListResizer", "projectAiColumnResizer", "documentationResizer", "projectAiAccountBtn", "projectAiBudget"]) {
+    assert.ok(document.getElementById(id), id);
+  }
+  assert.ok(source.includes('fetch("/api/avr/ai/canvas"'));
+  assert.equal(source.includes('fetch("/api/avr/ai/respond"'), false);
+  assert.equal(source.includes("restoreProjectAiChats"), false);
+  assert.equal(source.includes("skillRefs"), false);
+  assert.ok(source.includes("sourceAuthorship"));
+  assert.ok(source.includes("guideAuthorship"));
 });
 
 test("streams AI progress events before the final NDJSON result", async () => {
@@ -591,43 +650,6 @@ test("renders semantic Markdown widgets without changing CM5 source or page scro
   assert.equal(editor.getValue(), markdown);
 });
 
-test("defers rename rendering and listens for keyboard text selections", () => {
-  const source = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.js"),
-    "utf8"
-  );
-
-  assert.match(
-    source,
-    /input\.addEventListener\("blur", \(\) =>\s*saveRename\(\{ deferRender: true \}\)\s*\)/
-  );
-  assert.match(source, /persistProjectAiChats\(\{ renderList: !deferRender \}\)/);
-  assert.match(
-    source,
-    /addEventListener\("pointerdown", \(event\) => \{\s*projectAiPendingChatPointerAction = getProjectAiChatAction\(event\.target\)/
-  );
-  assert.match(
-    source,
-    /const action =\s*projectAiPendingChatPointerAction \|\|\s*getProjectAiChatAction\(event\.target\)/
-  );
-  assert.match(
-    source,
-    /codeMirror\.on\?\.\("cursorActivity", showFocusedSelection\)/
-  );
-  assert.match(
-    source,
-    /\(event\.ctrlKey \|\| event\.metaKey\)[\s\S]*?\.toLowerCase\(\) === "a"/
-  );
-  assert.match(
-    source,
-    /document\.addEventListener\("selectionchange",[\s\S]*?showProjectAiHistorySelectionQuote/
-  );
-  assert.match(
-    source,
-    /submitProjectAiRequest\(content, \{[\s\S]*?existingUserMessage: editedMessage,[\s\S]*?clearPromptOnSuccess: false/
-  );
-});
-
 test("vendored Markdown mode uses a non-ambiguous HTML tag lookahead", () => {
   const markdownMode = fs.readFileSync(
     path.join(
@@ -659,231 +681,6 @@ test("uses the MP badge for mini-projects in the AVR outliner", () => {
   );
 });
 
-test("keeps every workspace on one canvas and stacks instruction above chat", () => {
-  const html = fs.readFileSync(
-    path.join(__dirname, "../public/avr.html"),
-    "utf8"
-  );
-  const css = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.css"),
-    "utf8"
-  );
-  const source = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.js"),
-    "utf8"
-  );
-  const fileListIndex = html.indexOf('id="fileList"');
-  const instructionIndex = html.indexOf("project-instruction-panel");
-  const chatResizerIndex = html.indexOf('id="projectAiChatResizer"');
-  const chatIndex = html.indexOf("project-ai-chat-panel");
-  const documentationIndex = html.indexOf('id="projectDocumentationPane"');
-
-  assert.ok(fileListIndex >= 0);
-  assert.ok(instructionIndex > fileListIndex);
-  assert.ok(chatResizerIndex > instructionIndex);
-  assert.ok(chatIndex > chatResizerIndex);
-  assert.ok(documentationIndex > chatIndex);
-  assert.match(html, /id="projectWorkspaceStage"[\s\S]*data-mode="avr"/);
-  assert.doesNotMatch(html, /projectAiScene|projectAiToggle|project-skills-panel|projectAiSkillsResizer/);
-  assert.match(
-    html,
-    /id="projectAiChatResizer"[\s\S]*role="separator"[\s\S]*aria-orientation="horizontal"/
-  );
-  assert.match(html, /id="projectAiColumnResizer"[\s\S]*aria-orientation="vertical"/);
-  assert.match(css, /\.canvas-split-container\s*\{[\s\S]*?--project-ai-width:/);
-  assert.match(css, /--project-ai-compact-width:\s*62px/);
-  assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?grid-template-rows:/);
-  assert.match(
-    css,
-    /\.canvas-split-container\.is-project-ai-compact[\s\S]*content: "I\\A N/
-  );
-  assert.match(
-    css,
-    /\.canvas-split-container\.is-project-ai-compact[\s\S]*content: "C\\A H/
-  );
-  assert.doesNotMatch(
-    source,
-    /setProjectWorkspaceMode|fetchProjectAiSkills|AI_SKILL_DRAG_MIME|projectAiStackCollapsedPanel|is-instruction-collapsed|is-chat-collapsed/
-  );
-  assert.doesNotMatch(html, /project-ai-eyebrow[^>]*>\s*Reviewed Markdown/);
-  assert.match(css, /\.feature-panel\s*\{[\s\S]*?scrollbar-gutter:\s*auto;/);
-});
-
-test("wires the project AI pane to the AVR AI API contract", () => {
-  const html = fs.readFileSync(
-    path.join(__dirname, "../public/avr.html"),
-    "utf8"
-  );
-  const source = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.js"),
-    "utf8"
-  );
-
-  assert.match(html, /id="projectWorkspaceStage"[\s\S]*data-mode="avr"/);
-  assert.match(html, /id="avrWorkspaceScene"/);
-  assert.doesNotMatch(html, /projectAiScene|projectAiToggle/);
-  assert.match(html, /id="projectAiHeader"/);
-  assert.match(
-    html,
-    /class="sr-only" id="projectAiTitle">\s*Uart Debug AI conversation/
-  );
-  assert.doesNotMatch(html, /AVR project assistant/);
-  assert.match(html, /id="projectAiView"/);
-  assert.match(html, /id="projectAiWorkspace"/);
-  assert.match(html, /id="projectAiHistory"[\s\S]*role="log"/);
-  assert.match(html, /id="projectAiForm"/);
-  assert.match(
-    html,
-    /id="projectAiAuth"[\s\S]*?aria-label="AI access"[\s\S]*?hidden[\s\S]*?id="projectAiAccountBtn"/
-  );
-  assert.match(
-    html,
-    /id="projectAiAccountStatus"[\s\S]*?role="status"[\s\S]*?aria-live="polite"/
-  );
-  assert.match(html, /id="projectAiAccountBtn"/);
-  assert.match(html, /id="projectAiSignInBtn"[\s\S]*Continue with Google/);
-  assert.match(html, /id="projectAiAccount"/);
-  assert.match(html, /id="projectAiCredits"/);
-  assert.match(html, /id="projectAiBudget"[\s\S]*role="progressbar"/);
-  assert.match(html, /id="projectAiBudgetFill"/);
-  assert.match(
-    html,
-    /id="projectAiChatsBtn"[\s\S]*?aria-haspopup="menu"[\s\S]*?aria-controls="projectAiChatsMenu"/
-  );
-  assert.match(html, /id="projectAiNewChatBtn"[\s\S]*?New chat/);
-  assert.match(html, /id="projectAiChatList"/);
-  assert.match(html, /id="projectAiSignOutBtn"[\s\S]*Sign out/);
-  assert.match(html, /id="projectInstructionEditor"/);
-  assert.doesNotMatch(html, /id="projectInstructionPreview"/);
-  assert.match(
-    html,
-    /vendor\/codemirror\/5\.65\.16\/mode\/markdown\/markdown\.js/
-  );
-  assert.doesNotMatch(html, /projectSkillsList|project-skills-panel|projectAiSkillsResizer/);
-  assert.doesNotMatch(html, /accounts\.google\.com\/gsi|gsi\/client/);
-  assert.doesNotMatch(html, /id="projectAiAccessToken"/);
-  assert.doesNotMatch(html, /id="projectAiClearBtn"/);
-  assert.doesNotMatch(html, /project-ai-status-label/);
-  assert.doesNotMatch(html, /id="projectAiStatus"/);
-  assert.doesNotMatch(html, /Describe the mini-project you need/);
-  assert.doesNotMatch(source, /fetch\("\/api\/avr\/ai\/status"/);
-  assert.match(source, /fetch\("\/api\/avr\/ai\/respond"/);
-  assert.doesNotMatch(source, /PROJECT_AI_SKILLS_URL|fetchProjectAiSkills|AI_SKILL_DRAG_MIME/);
-  assert.doesNotMatch(source, /AI_BROWSER_INSTALLATION_STORAGE_KEY/);
-  assert.doesNotMatch(source, /X-UartDebug-Installation/);
-  assert.doesNotMatch(source, /getAiBrowserInstallationHeader/);
-  assert.match(
-    source,
-    /if \(session\?\.mode !== "google"\) \{[\s\S]*?closeProjectAiAccountModal\(\{ restoreFocus: false \}\);[\s\S]*?return;[\s\S]*?\}/
-  );
-  assert.match(source, /PROJECT_AI_AUTH_SESSION_URL[\s\S]*method: "GET"/);
-  assert.match(source, /credentials: "same-origin"/);
-  assert.match(
-    source,
-    /fetch\("\/api\/avr\/ai\/respond"[\s\S]*credentials: "same-origin"/
-  );
-  assert.match(
-    source,
-    /fetchProjectAiAuthSession\(\)[\s\S]*fetch\(PROJECT_AI_GOOGLE_START_URL[\s\S]*credentials: "same-origin"[\s\S]*redirectUrl\.hostname !== "accounts\.google\.com"[\s\S]*window\.location\.assign\(redirectUrl\.toString\(\)\)/
-  );
-  assert.match(source, /PROJECT_AI_LOGOUT_URL[\s\S]*method: "POST"/);
-  assert.match(source, /google_sign_in_required/);
-  assert.match(source, /free_quota_exhausted/);
-  assert.match(source, /browser installation are exhausted/);
-  assert.match(source, /data\.kind === "answer"/);
-  assert.match(source, /data\.kind === "instruction"/);
-  assert.match(
-    source,
-    /instructionDocument:\s*getProjectInstructionSnapshot\(\{ forRequest: true \}\)/
-  );
-  assert.match(source, /assertProjectAiInstructionIsFresh\(requestPayload\)/);
-  assert.match(source, /updateProjectAiQuota\(data\.quota\)/);
-  assert.match(source, /schemaVersion !== 1/);
-  assert.match(source, /responseRevision !== baseRevision \+ 1/);
-  assert.match(source, /typeof revisedMarkdown !== "string"/);
-  assert.match(source, /projectAiQuotaUpdateSequence/);
-  assert.match(source, /projectAiLatestQuota/);
-  assert.match(source, /projectAiAuthRequestEpoch/);
-  assert.match(source, /projectAiAuthSessionPromise === sessionPromise/);
-  assert.match(source, /function recordProjectAiMessage\(kind, message, title/);
-  assert.match(source, /STORAGE_PROJECT_AI_CHATS\s*=\s*"ud_avr_ai_chats_v1"/);
-  assert.match(
-    source,
-    /PROJECT_AI_ACCOUNT_WORKSPACE_URL\s*=\s*\n\s*"\/api\/avr\/ai\/account\/workspace"/
-  );
-  assert.match(source, /markProjectAiAccountDocumentDirty\("instruction"\)/);
-  assert.match(
-    source,
-    /for \(const kind of \["chats", "files", "instruction"\]\)/
-  );
-  assert.match(
-    source,
-    /STORAGE_PROJECT_AI_LOCAL_DIRTY\s*=\s*\n\s*"ud_avr_ai_local_dirty_v1"/
-  );
-  assert.match(source, /projectAiAccountWorkspaceEpoch/);
-  assert.match(source, /conflicts: projectAiAccountSync\.conflicts/);
-  assert.match(source, /title: "Different Google account"/);
-  assert.match(source, /confirmText: "Import local data"/);
-  assert.match(source, /title: `Cloud sync conflict: \$\{label\}`/);
-  assert.match(source, /cancelText: "Pause sync"/);
-  assert.match(source, /expectedAccountKey: accountKey/);
-  assert.match(source, /account_workspace_account_mismatch/);
-  assert.match(source, /sourceAccountKey: recoveryScope/);
-  assert.match(source, /scopedCopies[\s\S]*?\.slice\(3\)/);
-  assert.match(source, /projectAiAccountWorkspaceRetryTimer/);
-  assert.match(source, /function projectAiAccountDocumentsMatch\(kind, remoteData\)/);
-  assert.match(source, /if \(projectAiAccountDocumentsMatch\(kind, remote\.data\)\)/);
-  assert.doesNotMatch(source, /PROJECT_AI_MAX_MESSAGES_PER_CHAT/);
-  assert.match(source, /appendProjectAiThinking\(\)/);
-  assert.match(source, /removeProjectAiThinking\(thinkingIndicator\)/);
-  assert.match(source, /data\.kind !== "project" && !data\.project/);
-  assert.match(source, /operation === "update"/);
-  assert.match(source, /responseTarget !== expectedTarget/);
-  assert.match(source, /assertProjectAiUpdateIsFresh\(requestPayload\)/);
-  assert.match(source, /Newer local edits were not overwritten/);
-  assert.match(
-    source,
-    /UartDebugAvrMiniProjects\.updateInstance\([\s\S]*?expectedTarget/
-  );
-  assert.match(source, /projectAiForm\?\.requestSubmit\(\)/);
-  assert.match(source, /"API key is not configured"/);
-  assert.doesNotMatch(source, /"X-UartDebug-AI-Token"/);
-  assert.doesNotMatch(source, /PROJECT_AI_ACCESS_STORAGE_KEY/);
-  assert.doesNotMatch(source, /readProjectAiAccessToken/);
-  assert.doesNotMatch(source, /clearProjectAiHistory/);
-  assert.match(source, /typeof publicProject\.aiSpecRef\?\.id === "string"/);
-  assert.doesNotMatch(source, /PROJECT_AI_MAX_CONVERSATION_MESSAGES/);
-  assert.doesNotMatch(source, /projectAiConversation\.slice\(/);
-  assert.match(source, /PROJECT_AI_REQUEST_TARGET_BYTES\s*=\s*768 \* 1024/);
-  assert.match(source, /selectProjectAiConversation\(payload\)/);
-  assert.match(source, /selected\.unshift\(\.\.\.added\)/);
-  assert.doesNotMatch(
-    source,
-    /cloneJsonMetadata\(publicProject\.aiSpecRef/
-  );
-  assert.doesNotMatch(
-    source,
-    /^\s*aiSpecRef:\s*descriptor\.aiSpecRef,\s*$/m
-  );
-  assert.match(
-    source,
-    /\.\.\.\(descriptor\.aiSpecRef[\s\S]*?\{\s*aiSpecRef:\s*descriptor\.aiSpecRef\s*\}/
-  );
-  assert.match(
-    source,
-    /window\.UartDebugAvrMiniProjects\.install\(\s*definition/
-  );
-  assert.match(
-    source,
-    /rawFile\?\.role === "humanGuide"[\s\S]*miniProjectCore\.ROLES\.GUIDE/
-  );
-  assert.match(
-    html,
-    /placeholder="Ask, revise the instruction, or request a project"/
-  );
-  assert.match(html, />\s*Send\s*<\/button>/);
-});
-
 test("keeps Google AI account controls in an accessible account modal", () => {
   const html = fs.readFileSync(
     path.join(__dirname, "../public/avr.html"),
@@ -899,7 +696,7 @@ test("keeps Google AI account controls in an accessible account modal", () => {
   );
 
   const headerStart = html.indexOf('id="projectAiHeader"');
-  const headerEnd = html.indexOf('id="projectAiView"', headerStart);
+  const headerEnd = html.indexOf('id="projectCanvasForm"', headerStart);
   const accountModalStart = html.indexOf('id="projectAiAccountModal"');
   const accountModalEnd = html.indexOf('id="siteDialog"', accountModalStart);
   assert.ok(headerStart >= 0 && headerEnd > headerStart);
@@ -911,7 +708,7 @@ test("keeps Google AI account controls in an accessible account modal", () => {
     header,
     /id="projectAiAccountBtn"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="projectAiAccountModal"[\s\S]*?aria-expanded="false"/
   );
-  assert.match(header, /id="projectAiChatsBtn"/);
+  assert.doesNotMatch(header, /id="projectAiChatsBtn"/);
   assert.match(header, /id="projectAiBudget"/);
   assert.doesNotMatch(
     header,
@@ -1162,18 +959,15 @@ test("installs OAuth callback log redaction idempotently", (t) => {
   assert.match(migrated, /location \^~ \/api\/avr\/ai\//);
 });
 
-test("treats the staged AI skills catalog as authoritative during deploy", () => {
+test("deploys the local AVR knowledge package instead of the old skill catalog", () => {
   const installer = fs.readFileSync(
     path.join(__dirname, "../backend/deploy/install-ai-service.sh"),
     "utf8"
   );
 
-  assert.match(installer, /shopt -s nullglob/);
-  assert.match(
-    installer,
-    /rm -f -- "\$\{backend_dir\}\/ai\/skills\/"\*\.md/
-  );
-  assert.match(installer, /if \[ "\$\{#skill_markdown\[@\]\}" -gt 0 \]/);
+  assert.match(installer, /loadKnowledge/);
+  assert.match(installer, /ai\/knowledge/);
+  assert.doesNotMatch(installer, /loadAiSkillCatalog/);
 });
 
 test("gives Add file enough width and lets catalog text wrap", () => {
@@ -1215,9 +1009,8 @@ test("does not render the obsolete AI context row", () => {
   assert.doesNotMatch(html, /id="projectAiContextMcu"/);
   assert.doesNotMatch(css, /\.project-ai-context/);
   assert.doesNotMatch(source, /refreshProjectAiContext/);
-  assert.match(source, /const selectedMcu = String\(mcuSelect\?\.value/);
-  assert.match(source, /mcu:\s*selectedMcu/);
-  assert.match(source, /detectedMcu/);
+  assert.match(source, /function getCanvasTarget/);
+  assert.match(source, /getDetectedTargetKey/);
 });
 
 test("snaps the guide pane and resolves one shared AVR side-panel budget", () => {
@@ -1470,289 +1263,6 @@ test("uses one CommonMark GFM runtime across every Markdown surface", () => {
   assert.match(source, /addMarkdownLiveFootnotesWidget/);
   assert.match(source, /instead of presenting a second, incompatible interpretation/);
   assert.match(source, /childEnd\.ch < end\.ch/);
-});
-
-test("wires safe prompt quotes, external chat actions, and hidden provenance", () => {
-  const { getProjectAiQuoteDisplayText, serializeProjectAiPromptRequest } =
-    loadAvrFrontendFunctionHooks([
-      "getProjectAiQuoteDisplayText",
-      "serializeProjectAiPromptRequest",
-    ]);
-  const html = fs.readFileSync(
-    path.join(__dirname, "../public/avr.html"),
-    "utf8"
-  );
-  const css = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.css"),
-    "utf8"
-  );
-  const source = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.js"),
-    "utf8"
-  );
-  assert.match(source, /function bindCodeMirrorQuoteSurface/);
-  assert.equal(
-    getProjectAiQuoteDisplayText("# Архитектура мини-проекта"),
-    "Архитектура мини-проекта"
-  );
-  const serializedQuote = serializeProjectAiPromptRequest("Проверь это", [
-    {
-      source: "Project instruction",
-      rawText: "# Архитектура мини-проекта",
-    },
-  ]);
-  assert.match(serializedQuote, /Source: Project instruction/);
-  assert.match(serializedQuote, /Content:\n# Архитектура мини-проекта/);
-  assert.match(serializedQuote, /Проверь это$/);
-  assert.match(
-    source,
-    /showProjectAiHistorySelectionQuote\(projectAiHistory\)/
-  );
-  assert.match(source, /id = "projectAiSelectionQuoteBtn"/);
-  assert.match(source, /dataset\.copyMessageId/);
-  assert.match(source, /dataset\.editMessageId/);
-  assert.match(source, /dataset\.renameChatId/);
-  assert.match(source, /deriveProjectAiChatTitle/);
-  assert.match(
-    html,
-    /class="project-ai-prompt-field"[\s\S]*?id="projectAiPromptQuotes"[\s\S]*?aria-label="Quoted context"[\s\S]*?hidden[\s\S]*?id="projectAiPrompt"[\s\S]*?maxlength="6000"/
-  );
-  assert.doesNotMatch(html, /projectAiPromptHighlight/);
-  assert.doesNotMatch(source, /renderProjectAiPromptHighlight|syncProjectAiPromptHighlight/);
-  assert.match(
-    source,
-    /function getProjectAiQuoteDisplayText\(value\)[\s\S]*?replace\(\/\^ \{0,3\}#\{1,6\}/
-  );
-  assert.match(
-    source,
-    /function renderProjectAiPromptQuotes\(\)[\s\S]*?document\.createElement\("strong"\)[\s\S]*?text\.textContent = quote\.displayText[\s\S]*?container\.replaceChildren\(fragment\)/
-  );
-  assert.match(
-    source,
-    /function serializeProjectAiPromptRequest\([\s\S]*?Source: \$\{source\}[\s\S]*?String\(quote\.rawText[\s\S]*?\[\/Uart Debug quoted context\]/
-  );
-  assert.match(
-    source,
-    /function getProjectAiPromptDisplayRequest\(promptValue = ""\)[\s\S]*?quote\.displayText/
-  );
-  assert.match(
-    source,
-    /submitProjectAiRequest\(getProjectAiPromptDisplayRequest\(visiblePrompt\), \{[\s\S]*?aiRequest: requestForAi/
-  );
-  assert.doesNotMatch(source, /> \*\*\$\{source\}\*\*/);
-  assert.match(
-    css,
-    /\.project-ai-prompt-quotes\s*\{[\s\S]*?max-height:\s*164px;[\s\S]*?overflow-y:\s*auto;[\s\S]*?\.project-ai-prompt-quote\s*\{[\s\S]*?border-left:[\s\S]*?background:\s*rgba\(112, 205, 145, 0\.11\);[\s\S]*?\.project-ai-prompt-quote strong\s*\{/
-  );
-  assert.match(
-    css,
-    /#projectAiPrompt\s*\{[\s\S]*?max-height:\s*190px;[\s\S]*?scrollbar-gutter:\s*auto;[\s\S]*?scrollbar-width:\s*thin;/
-  );
-  assert.match(
-    css,
-    /#projectAiPrompt::-webkit-scrollbar\s*\{[\s\S]*?width:\s*var\(--avr-scrollbar-size\);/
-  );
-  assert.match(
-    source,
-    /function autoSizeTextarea\([\s\S]*?textarea\.style\.height = "auto";[\s\S]*?textarea\.scrollHeight[\s\S]*?textarea\.style\.overflowY/
-  );
-  assert.match(
-    source,
-    /projectAiPrompt\.addEventListener\("input", \(\) => \{[\s\S]*?resizeProjectAiPrompt\(\)/
-  );
-  assert.match(
-    source,
-    /article\.appendChild\(bubble\);[\s\S]*?actions\.className = "project-ai-message-actions";[\s\S]*?article\.appendChild\(actions\);/
-  );
-  assert.match(
-    css,
-    /\.project-ai-message-bubble\s*\{[\s\S]*?padding:\s*10px 11px;[\s\S]*?border-radius:/
-  );
-  assert.match(
-    css,
-    /\.project-ai-message-actions\s*\{[\s\S]*?margin-top:\s*3px;[\s\S]*?align-self:\s*flex-start;/
-  );
-  assert.match(
-    source,
-    /bubble\.hidden\s*=\s*true;[\s\S]*?actions\.hidden\s*=\s*true;[\s\S]*?form\.className\s*=\s*"project-ai-message-edit-form";/
-  );
-  assert.match(
-    css,
-    /\.project-ai-message-edit-form\s*\{[\s\S]*?padding:\s*12px;[\s\S]*?border:\s*1px solid[\s\S]*?border-radius:\s*14px;[\s\S]*?box-shadow:/
-  );
-  assert.match(
-    css,
-    /\.project-ai-message-edit-form textarea:focus\s*\{[\s\S]*?box-shadow:\s*0 0 0 3px/
-  );
-  assert.match(
-    css,
-    /\.project-ai-message-edit-form textarea\s*\{[\s\S]*?max-height:\s*none;[\s\S]*?overflow-y:\s*hidden;[\s\S]*?resize:\s*none;/
-  );
-  assert.match(
-    source,
-    /textarea\.addEventListener\("input", \(\) =>[\s\S]*?autoSizeTextarea\(textarea,[\s\S]*?PROJECT_AI_MESSAGE_EDIT_MIN_HEIGHT/
-  );
-  assert.match(source, /MARKDOWN_AUTHORSHIP_VALUES/);
-  assert.match(source, /sourceAuthorship/);
-  assert.match(source, /guideAuthorship/);
-  assert.doesNotMatch(source, /addMarkdownAuthorshipGutter/);
-  assert.doesNotMatch(source, /setGutterMarker\(/);
-  assert.doesNotMatch(source, /markdown-authorship-gutter/);
-  assert.doesNotMatch(css, /markdown-authorship-gutter/);
-  assert.doesNotMatch(css, /markdown-authorship-marker/);
-  assert.match(source, /instructionDocument:[\s\S]*?getProjectInstructionSnapshot/);
-  assert.match(source, /detectedMcu/);
-  assert.match(source, /renderProjectAiThinkingProgress/);
-});
-
-test("uses stacked AI instruction and chat panels with a framed composer", () => {
-  const html = fs.readFileSync(
-    path.join(__dirname, "../public/avr.html"),
-    "utf8"
-  );
-  const css = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.css"),
-    "utf8"
-  );
-  const source = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.js"),
-    "utf8"
-  );
-  const viewStart = html.indexOf('id="projectAiView"');
-  const view = html.slice(viewStart);
-  const workspace = view.indexOf('id="projectAiWorkspace"');
-  const formStart = html.indexOf('id="projectAiForm"');
-  const formEnd = html.indexOf("</form>", formStart);
-  const form = html.slice(formStart, formEnd);
-  const composer = form.indexOf("project-ai-composer");
-  const prompt = form.indexOf('id="projectAiPrompt"');
-  const submit = form.indexOf('id="projectAiSubmitBtn"');
-  const aiLayoutStart = html.indexOf("project-ai-layout");
-  const instructionPanel = html.indexOf(
-    "project-instruction-panel",
-    aiLayoutStart
-  );
-  const chatResizer = html.indexOf('id="projectAiChatResizer"', aiLayoutStart);
-  const chatPanel = html.indexOf("project-ai-chat-panel", aiLayoutStart);
-
-  assert.ok(viewStart >= 0);
-  assert.ok(aiLayoutStart >= 0);
-  assert.ok(instructionPanel > aiLayoutStart);
-  assert.ok(chatResizer > instructionPanel);
-  assert.ok(chatPanel > chatResizer);
-  assert.ok(workspace >= 0);
-  assert.ok(view.indexOf('id="projectAiForm"') > workspace);
-  assert.ok(composer < prompt);
-  assert.ok(prompt < submit);
-  assert.doesNotMatch(form, /projectAiAccessToken|projectAiClearBtn/);
-  assert.match(
-    view,
-    /project-ai-workspace[^"]*scroll-frame|scroll-frame[^"]*project-ai-workspace/
-  );
-  assert.match(
-    form,
-    /project-ai-composer[^"]*scroll-frame|scroll-frame[^"]*project-ai-composer/
-  );
-  assert.match(css, /\.project-ai-view\s*\{[\s\S]*?flex-direction:\s*column;/);
-  assert.match(
-    css,
-    /\.project-ai-form\s*\{[\s\S]*?margin-top:\s*12px;/
-  );
-  assert.match(css, /\.project-ai-composer:focus-within\s*\{/);
-  assert.match(css, /#projectAiPrompt\s*\{[\s\S]*?border:\s*0;/);
-  assert.match(css, /#projectAiPrompt\s*\{[\s\S]*?background:\s*transparent;/);
-  assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?grid-template-rows:/);
-  assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?gap:\s*0;/);
-  assert.match(
-    html,
-    /id="projectAiChatResizer"[\s\S]*?role="separator"[\s\S]*?aria-orientation="horizontal"/
-  );
-  assert.match(source, /projectAiColumnPreferredWidth/);
-  assert.match(
-    css,
-    /\.project-instruction-workspace\s*\{[\s\S]*?display:\s*flex;/
-  );
-  assert.doesNotMatch(source, /AI_SKILL_DRAG_MIME|projectAiSkills|projectSkillsList/);
-  assert.match(source, /CodeMirror\.fromTextArea\(editorElement/);
-  assert.match(source, /name:\s*"markdown"/);
-  assert.match(source, /inputField\.setAttribute\("role", "textbox"\)/);
-  assert.match(
-    source,
-    /inputField\.setAttribute\("data-tooltip-disabled", ""\)/
-  );
-  assert.match(
-    source,
-    /function addMarkdownLiveMark[\s\S]*?state\.editor\.markText\(/
-  );
-  assert.doesNotMatch(source, /projectInstructionEditor\.markText\(/);
-  assert.match(source, /"cursorActivity"/);
-  assert.match(source, /projectInstructionEditor\.replaceRange\(/);
-  assert.doesNotMatch(source, /setRangeText\(/);
-  assert.match(source, /function bindProjectAiResizers\(\)/);
-  assert.match(source, /STORAGE_PROJECT_AI_COLUMN_WIDTH/);
-  assert.match(source, /is-project-ai-compact/);
-  assert.match(
-    html,
-    /project-instruction-live-editor scroll-frame[\s\S]*?id="projectInstructionDropZone"/
-  );
-  assert.doesNotMatch(html, /project-skills-help|Saved locally/);
-  assert.doesNotMatch(source, /Saved locally/);
-  assert.match(source, /normalizeInstructionSkillRefs[\s\S]*projectInstructionDocument\.skillRefs/);
-  assert.match(source, /projectInstructionStorageReadFailed && !recover/);
-  assert.match(source, /Stored instruction is unreadable/);
-  assert.match(source, /const DEFAULT_PROJECT_INSTRUCTION = "";/);
-  assert.match(source, /ud_avr_ai_project_instruction_v2/);
-  assert.match(source, /ud_avr_ai_project_instruction_v1/);
-  assert.match(source, /const LEGACY_DEFAULT_PROJECT_INSTRUCTION = \[/);
-  assert.match(
-    source,
-    /legacyDocument\.markdown === LEGACY_DEFAULT_PROJECT_INSTRUCTION[\s\S]*?markdown:\s*DEFAULT_PROJECT_INSTRUCTION[\s\S]*?skillRefs:\s*\[\]/
-  );
-  assert.match(
-    source,
-    /localStorage\.setItem\(\s*STORAGE_PROJECT_INSTRUCTION,[\s\S]*?JSON\.stringify\(projectInstructionDocument\)/
-  );
-  assert.doesNotMatch(
-    html,
-    /placeholder="# Initialization|Describe what the project should do/
-  );
-  for (const level of [1, 2, 3, 4, 5, 6]) {
-    assert.match(
-      css,
-      new RegExp(
-        `pre\\.CodeMirror-line\\.project-instruction-line-heading-${level}`
-      )
-    );
-  }
-  assert.doesNotMatch(source, /setextHeading|underscoreExpression/);
-  assert.doesNotMatch(source, /function decorateProjectInstructionInline/);
-  assert.match(source, /node\.type === "heading"/);
-  assert.match(source, /node\.type === "inlineCode"/);
-  assert.match(
-    source,
-    /strong:\s*"project-instruction-live-strong"[\s\S]*?emphasis:[\s\S]*?delete:/
-  );
-  assert.match(source, /project-instruction-task-marker/);
-  assert.match(source, /node\.type === "listItem"/);
-  assert.match(source, /renderMarkdownInto\(markdown, message, null, \{ allowImages: false \}\)/);
-  assert.match(source, /match\[0\]\.startsWith\("\*\*"\)/);
-  assert.match(source, /document\.createElement\("strong"\)/);
-  assert.match(source, /document\.createElement\("em"\)/);
-  assert.match(source, /document\.createElement\("del"\)/);
-  assert.match(source, /\(\?<!\[A-Za-z0-9\]\)_/);
-  const headingSixRule = css.match(
-    /pre\.CodeMirror-line\.project-instruction-line-heading-6\s*\{[\s\S]*?\}/
-  )?.[0];
-  assert.ok(headingSixRule);
-  assert.doesNotMatch(headingSixRule, /text-transform:\s*uppercase/);
-  assert.match(source, /control\.readOnly = !!busy/);
-  assert.match(source, /prompt\?\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(source, /function consumeProjectAiAuthReturn\(\)/);
-  assert.match(source, /url\.searchParams\.delete\("ai_auth"\)/);
-  assert.match(source, /window\.history\.replaceState\(/);
-  assert.match(source, /google_sign_in_denied:\s*"Google sign-in was cancelled\."/);
-  assert.match(css, /@media \(max-width: 1040px\)/);
-  assert.match(css, /\.project-ai-layout\s*\{[\s\S]*?height:\s*clamp\(680px, 90vh, 900px\)/);
 });
 
 test("uses a full-width three-stage draggable device-panel separator", () => {

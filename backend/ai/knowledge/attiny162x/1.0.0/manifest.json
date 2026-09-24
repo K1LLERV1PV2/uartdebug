@@ -1,0 +1,321 @@
+{
+  "schemaVersion": 1,
+  "id": "uartdebug-attiny162x",
+  "version": "1.0.0",
+  "reviewedAt": "2026-09-24",
+  "coverage": [
+    "ATtiny1624/1626/1627 package pinouts, memory, selected DFP symbols and USART routes",
+    "OSC20M/prescaler, basic GPIO, TCA0 SINGLE normal overflow, UART normal 8N1 polling, stdio redirection, bounded DRE TX",
+    "selected official HTML factual digests; errata revision provenance only"
+  ],
+  "excluded": [
+    "other AVR models/families",
+    "complete datasheet and errata coverage",
+    "electrical validation",
+    "ADC/SPI/TWI/PWM",
+    "fuse/UPDI repurposing",
+    "sleep and advanced USART modes"
+  ],
+  "verification": {
+    "sources": "DFP extracted with SHA256; selected HTML reviewed as factual digests",
+    "compiler": "exact-composed-fixture-passed-xc8-service-for-1624-1626-1627",
+    "compilerEvidence": "compiler-evidence.json",
+    "hardware": "reported-in-mini-projects-only",
+    "limitations": "Only exact fixture bytes have new compiler evidence; generated firmware still requires its own compile. Legacy tutorials report ATtiny1624/SOIC-14; no new hardware claim for composed firmware or 1626/1627."
+  },
+  "sources": [
+    {
+      "id": "microchip-attiny-dfp-3.4.278",
+      "title": "Microchip ATtiny Device Family Pack 3.4.278",
+      "url": "https://packs.download.microchip.com/Microchip.ATtiny_DFP.3.4.278.atpack",
+      "sha256": "41f09d5825abaa764c9000f4488f8ba3fab152afe6229b359de4a5efe9a21eda",
+      "digestScope": "downloaded-pack-bytes",
+      "verification": "extracted-official-atdf-and-xc8-header",
+      "license": "Apache-2.0; see MICROCHIP-LICENSE.txt"
+    },
+    {
+      "id": "clkctrl-a",
+      "title": "ATtiny1624/1626/1627 11.5.1 Main Clock Control A",
+      "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-97AF88DA-84E6-4F03-97DF-AE909401F570.html",
+      "sha256": "b881f4c50f5d450c1570e48680444fdf0434385f4c61f9434b0b2362331cfa5c",
+      "digestScope": "curated-local-digest-not-raw-html",
+      "verification": "selected-facts-reviewed-official-html",
+      "rawSourceSha256": null
+    },
+    {
+      "id": "clkctrl-b",
+      "title": "ATtiny1624/1626/1627 11.5.2 Main Clock Control B",
+      "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-B396A7CB-AB0C-4909-9F5D-A8CA1BE83255.html",
+      "sha256": "9ad403c015f8326d2706f37b5f6103cd99a2997243b330c2ba74d2b70fc98f61",
+      "digestScope": "curated-local-digest-not-raw-html",
+      "verification": "selected-facts-reviewed-official-html",
+      "rawSourceSha256": null
+    },
+    {
+      "id": "usart-rx",
+      "title": "ATtiny1624/1626/1627 24.5.2 Receiver Data Register High Byte",
+      "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-AB733FBE-E312-404A-B75E-937A6B8C5E1D.html",
+      "sha256": "db1b1ea8f32b151f7f67860545fdfae85270293ddc057abc1b04688955466a85",
+      "digestScope": "curated-local-digest-not-raw-html",
+      "verification": "selected-facts-reviewed-official-html",
+      "rawSourceSha256": null
+    },
+    {
+      "id": "usart-baud",
+      "title": "ATtiny1624/1626/1627 24.3.2.2.1 The Fractional Baud Rate Generator",
+      "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-B48A617D-A912-430B-A8FD-98B0F38C8411.html",
+      "sha256": "abe540f298d45e16200265a9f353dc67db2f2cfaba7f7658a2f6b9c06ccbd2b4",
+      "digestScope": "curated-local-digest-not-raw-html",
+      "verification": "selected-facts-reviewed-official-html",
+      "rawSourceSha256": null
+    },
+    {
+      "id": "usart-baud-register",
+      "title": "ATtiny1624/1626/1627 24.5.10 Baud Register",
+      "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-95A88A1C-6C9D-4CF0-8063-3B836BCE0DAD.html",
+      "sha256": "b890fc55d2358c2c1410cdb826206f67d783580fec7f26adc1a50107fb2fa02c",
+      "digestScope": "curated-local-digest-not-raw-html",
+      "verification": "selected-facts-reviewed-official-html",
+      "rawSourceSha256": null
+    },
+    {
+      "id": "usart-status",
+      "title": "ATtiny1624/1626/1627 24.5.5 USART Status Register",
+      "url": "https://onlinedocs.microchip.com/oxy/GUID-7056F141-DF07-46C5-A4B8-97EB46E9B945-en-US-12/GUID-4C0D6B24-3B4F-4AC8-80E8-1030614D43D1.html",
+      "sha256": "44f33f5229f10138621250b4c02c4d4bab60c8bb02c84ac4535290e48f13b1c1",
+      "digestScope": "curated-local-digest-not-raw-html",
+      "verification": "selected-facts-reviewed-official-html",
+      "rawSourceSha256": null
+    },
+    {
+      "id": "attiny162x-errata",
+      "title": "ATtiny1624/1626/1627 Silicon Errata, DS80000902F introduction",
+      "url": "https://onlinedocs.microchip.com/oxy/GUID-CB68AD87-CF90-4076-861C-33A2E4841D9C-en-US-19/GUID-17FC76E6-835F-424B-91B5-6F23A1571AC1.html",
+      "sha256": "4aacd75068fdb7c388f2394330b137a471ddfe6aff22a06f1da2751d6578322b",
+      "digestScope": "curated-local-digest-not-raw-html",
+      "verification": "revision-provenance-only",
+      "rawSourceSha256": null
+    }
+  ],
+  "recipes": [
+    {
+      "id": "avr-project",
+      "description": "Compose XC8 C, resource YAML and user-language documentation for the supported ATtiny162x pilot.",
+      "file": "recipes/avr-project/SKILL.md",
+      "sourceIds": [
+        "microchip-attiny-dfp-3.4.278"
+      ],
+      "lineage": [
+        "01_Minimum"
+      ],
+      "verification": "reviewed-recipe-with-bounded-composition-compile-evidence",
+      "compilerEvidence": "compiler-evidence.json"
+    },
+    {
+      "id": "avr-clock",
+      "description": "Configure OSC20M and a supported prescaler before timing-dependent ATtiny162x peripherals.",
+      "file": "recipes/avr-clock/SKILL.md",
+      "sourceIds": [
+        "microchip-attiny-dfp-3.4.278",
+        "clkctrl-a",
+        "clkctrl-b"
+      ],
+      "lineage": [
+        "02_CPU_Clock",
+        "03_Delay-Based_Blink"
+      ],
+      "verification": "reviewed-recipe-with-bounded-composition-compile-evidence",
+      "compilerEvidence": "compiler-evidence.json"
+    },
+    {
+      "id": "avr-gpio",
+      "description": "Initialize and update available ATtiny162x GPIO without disturbing unrelated pins.",
+      "file": "recipes/avr-gpio/SKILL.md",
+      "sourceIds": [
+        "microchip-attiny-dfp-3.4.278"
+      ],
+      "lineage": [
+        "03_Delay-Based_Blink",
+        "04_Timer_Interrupt_Blink"
+      ],
+      "verification": "reviewed-recipe-with-bounded-composition-compile-evidence",
+      "compilerEvidence": "compiler-evidence.json"
+    },
+    {
+      "id": "avr-timer",
+      "description": "Generate periodic TCA0 SINGLE normal-mode overflow work with checked timing constants.",
+      "file": "recipes/avr-timer/SKILL.md",
+      "sourceIds": [
+        "microchip-attiny-dfp-3.4.278"
+      ],
+      "lineage": [
+        "04_Timer_Interrupt_Blink"
+      ],
+      "verification": "reviewed-recipe-with-bounded-composition-compile-evidence",
+      "compilerEvidence": "compiler-evidence.json"
+    },
+    {
+      "id": "avr-uart-polling",
+      "description": "Configure routed 8N1 normal asynchronous USART0/1 and poll TX/RX on ATtiny162x.",
+      "file": "recipes/avr-uart-polling/SKILL.md",
+      "sourceIds": [
+        "microchip-attiny-dfp-3.4.278",
+        "usart-rx",
+        "usart-baud",
+        "usart-baud-register",
+        "usart-status"
+      ],
+      "lineage": [
+        "05_UART_Basic_Transmission",
+        "06_UART_Basic_Receive"
+      ],
+      "verification": "reviewed-recipe-with-bounded-composition-compile-evidence",
+      "compilerEvidence": "compiler-evidence.json"
+    },
+    {
+      "id": "avr-printf",
+      "description": "Redirect XC8 AVR stdio to a chosen blocking USART without losing stdout ownership.",
+      "file": "recipes/avr-printf/SKILL.md",
+      "sourceIds": [
+        "microchip-attiny-dfp-3.4.278",
+        "usart-status"
+      ],
+      "lineage": [
+        "07_Printf_Redirect_USART0",
+        "08_Printf_Redirect_USART1"
+      ],
+      "verification": "reviewed-recipe-with-bounded-composition-compile-evidence",
+      "compilerEvidence": "compiler-evidence.json"
+    },
+    {
+      "id": "avr-uart-tx-interrupt",
+      "description": "Compose a bounded USART DRE transmitter with explicit buffer lifetime and ISR ownership.",
+      "file": "recipes/avr-uart-tx-interrupt/SKILL.md",
+      "sourceIds": [
+        "microchip-attiny-dfp-3.4.278",
+        "usart-status"
+      ],
+      "lineage": [
+        "09_UART0_Interrupt_Transmission",
+        "10_UART1_Interrupt_Transmission"
+      ],
+      "verification": "reviewed-recipe-with-bounded-composition-compile-evidence",
+      "compilerEvidence": "compiler-evidence.json"
+    }
+  ],
+  "lineage": [
+    {
+      "path": "public/avr-mini-projects/01_Minimum/01_Minimum_1.2.3-d.c",
+      "sha256": "bfa0fce9be44c09dfed21eb7a5153aab98fae55c15f3ac07dd58e93f96645be2",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/01_Minimum/01_Minimum_AI_1.2.3-d.md",
+      "sha256": "650abdc59c60d5443cded0475b8e1b1d785162b5876c9a1fbb2b66ee4bc32a9d",
+      "role": "legacy-integration-guidance"
+    },
+    {
+      "path": "public/avr-mini-projects/02_CPU_Clock/02_CPU_Clock_1.2.3-b.c",
+      "sha256": "55684ced1ca0feb2329d9680b74924b9296d0b36298f428f3091a297d654ff9f",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/02_CPU_Clock/02_CPU_Clock_AI_1.2.3-a.md",
+      "sha256": "cde5e719ae3c6efedf350421497321420583feecb8a2e3cd77071b09e0826618",
+      "role": "legacy-integration-guidance"
+    },
+    {
+      "path": "public/avr-mini-projects/03_Delay-Based_Blink/03_Delay-Based_Blink_1.2.3-b.c",
+      "sha256": "6383a339c41b670cdd8fd1676e7d2c097b63f52d9ae5a09716028d93d4a04519",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/03_Delay-Based_Blink/03_Delay-Based_Blink_AI_1.2.3-b.md",
+      "sha256": "48aa1815948ba006bcd4bd7e93e0e18d19f3c66b62ff1665af0918f23d554db6",
+      "role": "legacy-integration-guidance"
+    },
+    {
+      "path": "public/avr-mini-projects/04_Timer_Interrupt_Blink/04_Timer_Interrupt_Blink_1.2.3-d.c",
+      "sha256": "d107ea39cb0600c3af949b6f14a090747260a5a987af92fddc7fa0a027e8a7c1",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/04_Timer_Interrupt_Blink/04_Timer_Interrupt_Blink_AI_1.2.3-d.md",
+      "sha256": "8fe5db8189dbddedc0647610a8a6f9fa681e8c7ff4b07b45335ef3aec4c8994b",
+      "role": "legacy-integration-guidance"
+    },
+    {
+      "path": "public/avr-mini-projects/05_UART_Basic_Transmission/05_UART_Basic_Transmission_1.2.3-c.c",
+      "sha256": "71e3f05a9623cdddb830022ca284d8e4f94fa7ac4d3edfb695ce4e453cc554cf",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/05_UART_Basic_Transmission/05_UART_Basic_Transmission_AI_1.2.3-c.md",
+      "sha256": "7b0b1c9c4890c9f183776ad7f8dba6b1a2765c1b04195ac802b6d697ce9a1f3c",
+      "role": "legacy-integration-guidance"
+    },
+    {
+      "path": "public/avr-mini-projects/06_UART_Basic_Receive/06_UART_Basic_Receive_1.2.3-a.c",
+      "sha256": "a3ce8ff34a373baf8b3dec0ba29567bbc1fe5ced545e43d880724c4073387fab",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/06_UART_Basic_Receive/06_UART_Basic_Receive_AI_1.2.3-a.md",
+      "sha256": "327a549b2789d2b29c713830bff9067d7356f1ff94f5a6b8f0cc5463c85570d3",
+      "role": "legacy-integration-guidance"
+    },
+    {
+      "path": "public/avr-mini-projects/07_Printf_Redirect_USART0/07_Printf_Redirect_USART0_1.2.3-a.c",
+      "sha256": "9eba901c864ff232357f59288e90db7ed2de93a925aedc33171062265c781c83",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/07_Printf_Redirect_USART0/07_Printf_Redirect_USART0_AI_1.2.3-a.md",
+      "sha256": "af80e492cf188f4a515e037b5a56be0c438d546913dcef3401f5304594f7c176",
+      "role": "legacy-integration-guidance"
+    },
+    {
+      "path": "public/avr-mini-projects/08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_1.2.3-a.c",
+      "sha256": "c7162cabc5c8da8df48a373a2292505fc9cb8aef0f62955ee84900047154959c",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/08_Printf_Redirect_USART1/08_Printf_Redirect_USART1_AI_1.2.3-a.md",
+      "sha256": "3a34ce9197ea1159745653dd9d1a1b8c0264b2bca3fc87b5ec5092ae761573b1",
+      "role": "legacy-integration-guidance"
+    },
+    {
+      "path": "public/avr-mini-projects/09_UART0_Interrupt_Transmission/09_UART0_Interrupt_Transmission_1.2.3-a.c",
+      "sha256": "ea314e6b4a822d0d3b20d0047f7d6d69286cdbd8f7c7660b8c7eb4046d1f2ab8",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/09_UART0_Interrupt_Transmission/09_UART0_Interrupt_Transmission_AI_1.2.3-a.md",
+      "sha256": "e72576a6660257f5586af60d085c6c1c7ecc0554716c657cc13bd65dee82d0a3",
+      "role": "legacy-integration-guidance"
+    },
+    {
+      "path": "public/avr-mini-projects/10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_1.2.3-a.c",
+      "sha256": "f4ba4cef6ef7669a94bdb806eb0961a9eee89f8e5f3c47cdfba02ef4eb0c00bf",
+      "role": "legacy-example"
+    },
+    {
+      "path": "backend/ai/mini-projects/10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_AI_1.2.3-a.md",
+      "sha256": "7e9ca6fd48f49ca851ed8b8e468e38e1bf36377fa858d233ca6d215ac559fe60",
+      "role": "legacy-integration-guidance"
+    }
+  ],
+  "files": {
+    "devices.json": "ab6c41ed5cf8c6543de96f33d6b3cb859b82f3503f92f44e48ceabc62254a95c",
+    "documents.json": "0127a51f46009763d69ce082ca75cbc23a603c3bd0704564757386c0a1426028",
+    "compiler-evidence.json": "00b1c40df78f7f2269cbe73de7785ffb00f139683e4c35993224bc885626c216",
+    "MICROCHIP-LICENSE.txt": "3bf0a101f2b2e44eda3b477f866bd24204c35fa1f841c865933028adf155336a",
+    "recipes/avr-project/SKILL.md": "ba78ce51699ec8a409ee311f9140c42c7e1e7e649581376ef8729356f76aff3d",
+    "recipes/avr-clock/SKILL.md": "5db8f893116e69eaa05bb194421dfc37c394b1e825b9b4922f06b21b7277a65c",
+    "recipes/avr-gpio/SKILL.md": "2f00408c25d463b1fe47d881a52f60c8ccfcbca71a9eed9326079548da693224",
+    "recipes/avr-timer/SKILL.md": "0b26aa8381a58f574740d5c954063a0ce1a994dafb82a9cd4d500ef58742be49",
+    "recipes/avr-uart-polling/SKILL.md": "2bf3e5db4610a77a395c3973014d0e7ab392727403146183722bbe3515e872aa",
+    "recipes/avr-printf/SKILL.md": "b6efcad969544c86a51852dc7090a839096090e5cd8f80df70ebcd5d29ef785e",
+    "recipes/avr-uart-tx-interrupt/SKILL.md": "151baf879ce4abf378a899904b014b4854627a22bcda500829dda6dfa69a7141"
+  }
+}
