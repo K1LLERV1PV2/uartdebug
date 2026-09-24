@@ -19,7 +19,7 @@
   "dependencies": {
     "express": "4.22.2",
     "express-rate-limit": "8.6.2",
-    "google-auth-library": "11.0.2",
+    "google-auth-library": "11.1.0",
     "parse5": "7.3.0"
   }
 }
