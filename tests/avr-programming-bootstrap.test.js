@@ -987,6 +987,66 @@ test("keeps Google AI account controls in an accessible account modal", () => {
   );
 });
 
+test("unlimited AI quota replaces finite progress semantics and finite snapshots restore them", () => {
+  const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+  const hooks = loadAvrFrontendFunctionHooks(["updateProjectAiQuota", "renderProjectAiQuota"], { document });
+  const budget = document.getElementById("projectAiBudget");
+  const value = document.getElementById("projectAiBudgetValue");
+  const fill = document.getElementById("projectAiBudgetFill");
+
+  hooks.updateProjectAiQuota({ granted: 100, spent: 90, reserved: 0, remaining: 10 });
+  assert.equal(budget.classList.contains("is-low"), true);
+  assert.equal(value.textContent, "10 / 100");
+  hooks.updateProjectAiQuota({ unlimited: true, granted: null, spent: null, reserved: null, remaining: null });
+  assert.equal(budget.hidden, false);
+  assert.equal(value.textContent, "Unlimited");
+  assert.equal(fill.style.width, "100%");
+  assert.equal(budget.getAttribute("role"), "status");
+  assert.equal(budget.getAttribute("aria-label"), "Unlimited AI Credits");
+  assert.equal(budget.classList.contains("is-low"), false);
+  assert.equal(budget.classList.contains("is-empty"), false);
+  for (const attribute of ["aria-valuemin", "aria-valuemax", "aria-valuenow", "aria-valuetext"]) {
+    assert.equal(budget.hasAttribute(attribute), false, attribute);
+  }
+
+  // Normal snapshots keep the old API shape, with no unlimited flag.
+  hooks.updateProjectAiQuota({ granted: 100, spent: 100, reserved: 0, remaining: 0 });
+  assert.equal(value.textContent, "0 / 100");
+  assert.equal(fill.style.width, "0%");
+  assert.equal(budget.getAttribute("role"), "progressbar");
+  assert.equal(budget.getAttribute("aria-label"), "AI Credits remaining");
+  assert.equal(budget.getAttribute("aria-valuemin"), "0");
+  assert.equal(budget.getAttribute("aria-valuemax"), "100");
+  assert.equal(budget.getAttribute("aria-valuenow"), "0");
+  assert.equal(budget.classList.contains("is-empty"), true);
+  hooks.renderProjectAiQuota({ unlimited: "true", granted: null, remaining: null });
+  assert.equal(budget.hidden, true, "Only an explicit boolean flag grants unlimited display");
+});
+
+test("unlimited Google account shows its entitlement without hiding or disabling canvas controls", () => {
+  const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+  const hooks = loadAvrFrontendFunctionHooks(["renderProjectAiAuthSession", "setProjectAiFormBusy"], { document });
+  const session = { mode: "google", configured: true, authenticated: true,
+    user: { emailMasked: "t***@example.com" },
+    quota: { unlimited: true, granted: null, spent: null, reserved: null, remaining: null } };
+  hooks.renderProjectAiAuthSession(session);
+  const credits = document.getElementById("projectAiCredits");
+  const button = document.getElementById("projectCanvasRunBtn");
+  assert.equal(credits.textContent, "Unlimited AI Credits");
+  assert.equal(credits.title, "Unlimited AI Credits");
+  assert.equal(credits.hidden, false);
+  assert.equal(document.getElementById("projectAiAuthSession").hidden, false);
+  hooks.setProjectAiFormBusy(true);
+  assert.equal(button.disabled, true, "Request concurrency protection remains");
+  hooks.setProjectAiFormBusy(false);
+  assert.equal(button.disabled, false);
+  hooks.renderProjectAiAuthSession({ ...session, quota: { granted: 100, remaining: 1 } });
+  assert.equal(credits.textContent, "1 AI Credit remaining");
+  hooks.renderProjectAiAuthSession({ ...session, authenticated: false, quota: null });
+  assert.equal(credits.hidden, true);
+  assert.equal(document.getElementById("projectAiBudget").hidden, true);
+});
+
 test("keeps only technical AI concurrency safeguards", () => {
   const serverSource = fs.readFileSync(
     path.join(__dirname, "../backend/ai-server.js"),

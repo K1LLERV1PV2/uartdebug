@@ -7348,6 +7348,22 @@
     const fill = $("projectAiBudgetFill");
     if (!budget || !value || !fill) return;
 
+    if (quota?.unlimited === true) {
+      budget.hidden = false;
+      budget.classList.remove("is-low", "is-empty");
+      budget.setAttribute("role", "status");
+      budget.setAttribute("aria-label", "Unlimited AI Credits");
+      for (const attribute of ["aria-valuemin", "aria-valuemax", "aria-valuenow", "aria-valuetext"]) {
+        budget.removeAttribute(attribute);
+      }
+      value.textContent = "Unlimited";
+      fill.style.width = "100%";
+      return;
+    }
+
+    budget.setAttribute("role", "progressbar");
+    budget.setAttribute("aria-label", "AI Credits remaining");
+    budget.setAttribute("aria-valuemin", "0");
     const granted = Number(quota?.granted);
     const remaining = Number(quota?.remaining);
     if (
@@ -7387,6 +7403,8 @@
     projectAiLatestQuota = {
       ...(projectAiLatestQuota || {}),
       ...quota,
+      // Each server quota snapshot must explicitly grant unlimited access.
+      unlimited: quota.unlimited === true,
     };
     quota = projectAiLatestQuota;
     if (projectAiAuthSession?.mode === "google") {
@@ -7508,7 +7526,11 @@
     );
     const remaining = Number(session.quota?.remaining);
     renderProjectAiQuota(session.quota);
-    if (Number.isFinite(remaining)) {
+    if (session.quota?.unlimited === true) {
+      credits.textContent = "Unlimited AI Credits";
+      credits.title = credits.textContent;
+      credits.hidden = false;
+    } else if (Number.isFinite(remaining)) {
       const availableCredits = Math.max(0, remaining);
       const formattedCredits = new Intl.NumberFormat(undefined, {
         maximumFractionDigits: 2,

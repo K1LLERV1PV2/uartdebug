@@ -33,6 +33,18 @@ function providerMetering(responses) {
   return { ...normalized.at(-1), usage, ...(normalized.length > 1 ? {responses: normalized} : {}) };
 }
 
+function unlimitedTestAccountHash(sub) {
+  return crypto.createHmac("sha256", "identity-secret-for-tests-0123456789abcdef")
+    .update(`google-sub\0${sub}`, "utf8").digest("base64url");
+}
+
+function assertUnlimitedQuota(quota) {
+  assert.equal(quota.unlimited, true);
+  for (const key of ["granted", "spent", "reserved", "remaining"]) {
+    assert.equal(quota[key], null, `${key} must not present a finite unlimited allowance`);
+  }
+}
+
 class MockResponse {
   constructor() {
     this.headers = new Map();
@@ -2150,4 +2162,153 @@ test("schema-2 migration preserves sessions, credits and legacy workspace bytes"
   assert.deepEqual(migrated.readAccountWorkspace(restoredContext).documents.instruction.data, legacyInstruction);
   assert.deepEqual(migrated.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
   assert.deepEqual(migrated.database.prepare("SELECT * FROM google_accounts").get(), account);
+});
+
+test("unlimited account configuration rejects malformed options and missing or invalid private files", () => {
+  for (const value of ["*", {}, null, ["*"], ["a".repeat(64)], ["x".repeat(42)], [123]]) {
+    assert.throws(() => makeService({ unlimitedAccountHashes: value }), undefined, JSON.stringify(value));
+  }
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-unlimited-config-"));
+  const configPath = path.join(directory, "accounts.json");
+  try {
+    assert.throws(() => makeService({environment: {AI_UNLIMITED_ACCOUNT_HASHES_FILE: configPath}}));
+    for (const value of ["{", "null", '{"accounts":[]}', '["*"]']) {
+      fs.writeFileSync(configPath, value);
+      assert.throws(() => makeService({environment: {AI_UNLIMITED_ACCOUNT_HASHES_FILE: configPath}}), undefined, value);
+    }
+  } finally {
+    if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
+    fs.rmdirSync(directory);
+  }
+});
+
+test("private unlimited account configuration is loaded once and does not leak account hashes", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-unlimited-file-"));
+  const configPath = path.join(directory, "accounts.json");
+  const accountHash = unlimitedTestAccountHash("file-allowlisted");
+  fs.writeFileSync(configPath, JSON.stringify([accountHash]));
+  const {service, oauthClient} = makeService({
+    freeDeviceGrantCredits: "0", environment: {AI_UNLIMITED_ACCOUNT_HASHES_FILE: configPath},
+  });
+  t.after(() => { service.close(); fs.unlinkSync(configPath); fs.rmdirSync(directory); });
+  fs.writeFileSync(configPath, "[]");
+  const login = await signIn(service, oauthClient, {code: "private-file", sub: "file-allowlisted", email: "private@example.com"});
+  const status = await service.getPublicStatus(request(login.cookie), new MockResponse());
+  assertUnlimitedQuota(status.quota);
+  assert.equal(JSON.stringify(status).includes(accountHash), false);
+  assert.equal(JSON.stringify(status).includes(configPath), false);
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse());
+  await service.releaseAiRequest(context, {providerCalled: false});
+});
+
+test("unlimited zero-credit account keeps full response budgets and records actual usage without spending grants", async (t) => {
+  const sub = "unlimited-zero-credit";
+  const {service, oauthClient} = makeService({freeDeviceGrantCredits: "0", unlimitedAccountHashes: [unlimitedTestAccountHash(sub)]});
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {code: "unlimited-zero", sub, email: "person@example.com"});
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse(), {requestId: "unlimited-budget"});
+  const reserved = await service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: 100, maxOutputTokens: 1000, minOutputTokens: 128});
+  assert.equal(reserved.maxOutputTokens, 1000);
+  assertUnlimitedQuota(reserved.quota);
+  await service.markAiProviderStarted(context);
+  const first = {responseId: "resp-unlimited-one", usage: {inputTokens: 100, outputTokens: 10}};
+  const extended = await service.extendAiBudgetReservation(context, {
+    model: "gpt-5.6-terra", additionalInputTokens: 50, additionalMaxOutputTokens: 2000,
+    minAdditionalOutputTokens: 128, completedMetering: providerMetering([first]),
+  });
+  assert.equal(extended.additionalMaxOutputTokens, 2000);
+  assertUnlimitedQuota(extended.quota);
+  const metering = providerMetering([first, {responseId: "resp-unlimited-two", usage: {inputTokens: 50, outputTokens: 20}}]);
+  const result = await service.recordAiUsage(context, {requestId: "unlimited-budget", ...metering});
+  assert.equal(result.recorded, true);
+  assert.equal(result.costNanoUsd, 660_000);
+  assertUnlimitedQuota(result.quota);
+  const duplicate = await service.recordAiUsage(context, {requestId: "unlimited-budget", ...metering});
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(duplicate.recorded, false);
+  assert.equal(service.database.prepare("SELECT COUNT(*) AS n FROM usage_ledger").get().n, 1);
+  assert.equal(service.database.prepare("SELECT cost_nano_usd FROM usage_ledger").get().cost_nano_usd, 660_000);
+  assert.equal(service.database.prepare("SELECT COUNT(*) AS n FROM inflight_requests").get().n, 0);
+  assert.equal(service.database.prepare("SELECT SUM(spent_nano_usd) AS spent FROM devices").get().spent, 0);
+  assert.equal(service.database.prepare("SELECT SUM(spent_nano_usd) AS spent FROM google_accounts").get().spent, 0);
+});
+
+test("unlimited status follows exactly the four account identities across devices and cannot be spoofed", async (t) => {
+  const subjects = ["allowlisted-one", "allowlisted-two", "allowlisted-three", "allowlisted-four"];
+  const {service, oauthClient} = makeService({freeDeviceGrantCredits: "0", unlimitedAccountHashes: subjects.map(unlimitedTestAccountHash)});
+  t.after(() => service.close());
+  let sharedCookie = "";
+  for (const [index, sub] of subjects.entries()) {
+    const login = await signIn(service, oauthClient, {cookie: sharedCookie, code: `listed-${index}`, sub, email: `person-${index}@example.com`});
+    sharedCookie = login.cookie;
+    const status = await service.getPublicStatus(request(login.cookie), new MockResponse());
+    assertUnlimitedQuota(status.quota);
+    const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse());
+    assert.equal(context.accountHash, unlimitedTestAccountHash(sub));
+    await service.releaseAiRequest(context, {providerCalled: false});
+  }
+  const ordinary = await signIn(service, oauthClient, {cookie: sharedCookie, code: "not-listed", sub: "ordinary-same-mask", email: "person-ordinary@example.com"});
+  const ordinaryStatus = await service.getPublicStatus(request(ordinary.cookie), new MockResponse());
+  assert.equal(ordinaryStatus.account.maskedEmail, "p***@e***.com");
+  assert.equal(Object.hasOwn(ordinaryStatus.quota, "unlimited"), false);
+  assert.equal(ordinaryStatus.quota.remaining, 0);
+  const spoofed = {...request(ordinary.cookie, {"x-uartdebug-unlimited": "true"}), body: {quota: {unlimited: true}, accountHash: unlimitedTestAccountHash(subjects[0])}};
+  await assert.rejects(service.authorizeAiRequest(spoofed, new MockResponse(), {unlimited: true}), error => error.code === "free_quota_exhausted");
+  const otherDevice = await signIn(service, oauthClient, {code: "listed-new-device", sub: subjects[0], email: "person-0@example.com"});
+  const newStatus = await service.getPublicStatus(request(otherDevice.cookie), new MockResponse());
+  assertUnlimitedQuota(newStatus.quota);
+  const newContext = await service.authorizeAiRequest(request(otherDevice.cookie), new MockResponse());
+  assert.notEqual(newContext.deviceId, newContext.sourceDeviceId);
+  await service.releaseAiRequest(newContext, {providerCalled: false});
+  assert.equal(service.database.prepare("SELECT COUNT(*) AS n FROM google_accounts").get().n, 5);
+});
+
+test("unlimited credit policy preserves authentication, model and concurrent-request restrictions", async (t) => {
+  const sub = "unlimited-guarded";
+  const {service, oauthClient} = makeService({freeDeviceGrantCredits: "0", maxGlobalInFlight: 1, unlimitedAccountHashes: [unlimitedTestAccountHash(sub)]});
+  t.after(() => service.close());
+  await assert.rejects(service.authorizeAiRequest(request(), new MockResponse(), {unlimited: true}), error => error.code === "google_sign_in_required");
+  const login = await signIn(service, oauthClient, {code: "guarded", sub, email: "guarded@example.com"});
+  const secondDevice = await signIn(service, oauthClient, {code: "guarded-second", sub, email: "guarded@example.com"});
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse());
+  await assert.rejects(service.authorizeAiRequest(request(secondDevice.cookie), new MockResponse()), error => error.code === "ai_busy");
+  await assert.rejects(service.reserveAiBudget(context, {model: "unpriced-model", inputTokens: 1, maxOutputTokens: 2, minOutputTokens: 1}), error => error.code === "model_price_unavailable");
+  await assert.rejects(service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: 1, maxOutputTokens: 1, minOutputTokens: 2}), error => error.code === "output_budget_invalid");
+  await service.releaseAiRequest(context, {providerCalled: false});
+});
+
+test("unlimited reservations and usage do not reduce a shared ordinary free-credit grant", async (t) => {
+  for (const location of ["same-device", "shared-source-device"]) {
+    await t.test(location, async (t) => {
+      const sub = `unlimited-${location}`;
+      const {service, oauthClient} = makeService({freeDeviceGrantCredits: "1", maxGlobalInFlight: 4, maxDeviceInFlight: 2, unlimitedAccountHashes: [unlimitedTestAccountHash(sub)]});
+      t.after(() => service.close());
+      let unlimited = await signIn(service, oauthClient, {code: "unlimited-source", sub, email: "unlimited@example.com"});
+      let ordinary = await signIn(service, oauthClient, {cookie: unlimited.cookie, code: "ordinary-source", sub: "ordinary-shared-source", email: "ordinary@example.com"});
+      if (location === "shared-source-device") {
+        unlimited = await signIn(service, oauthClient, {code: "unlimited-moved", sub, email: "unlimited@example.com"});
+        ordinary = await signIn(service, oauthClient, {code: "ordinary-moved", sub: "ordinary-shared-source", email: "ordinary@example.com"});
+      }
+      const freeContext = await service.authorizeAiRequest(request(unlimited.cookie), new MockResponse());
+      await service.reserveAiBudget(freeContext, {model: "gpt-5.6-terra", inputTokens: 100, maxOutputTokens: 1000, minOutputTokens: 1000});
+      const ordinaryStatus = await service.getPublicStatus(request(ordinary.cookie), new MockResponse());
+      assert.equal(ordinaryStatus.quota.remaining, 1);
+      assert.equal(ordinaryStatus.quota.reserved, 0);
+      const limitedContext = await service.authorizeAiRequest(request(ordinary.cookie), new MockResponse());
+      const limitedReservation = await service.reserveAiBudget(limitedContext, {model: "gpt-5.6-terra", inputTokens: 0, maxOutputTokens: 80, minOutputTokens: 80});
+      assert.equal(limitedReservation.maxOutputTokens, 80);
+      assert.equal(limitedReservation.quota.remaining, 0.04);
+      await service.markAiProviderStarted(freeContext);
+      await service.recordAiUsage(freeContext, {requestId: freeContext.requestId, provider: "openai", responseId: `resp-${location}`, model: "gpt-5.6-terra", usage: {inputTokens: 100, outputTokens: 50}});
+      const statusAfter = await service.getPublicStatus(request(ordinary.cookie), new MockResponse());
+      assert.equal(statusAfter.quota.remaining, 0.04);
+      assert.equal(statusAfter.quota.spent, 0);
+      assert.equal(statusAfter.quota.reserved, 0.96);
+      await service.releaseAiRequest(limitedContext, {providerCalled: false});
+      const remaining = await service.getPublicStatus(request(ordinary.cookie), new MockResponse());
+      assert.equal(remaining.quota.remaining, 1);
+      assert.equal(service.database.prepare("SELECT SUM(spent_nano_usd) AS spent FROM devices").get().spent, 0);
+      assert.equal(service.database.prepare("SELECT SUM(spent_nano_usd) AS spent FROM google_accounts").get().spent, 0);
+    });
+  }
 });

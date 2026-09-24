@@ -120,6 +120,11 @@ class AiAccessService {
     this.hasPersistentDatabasePath = Boolean(
       firstDefined(options.databasePath, this.environment.AI_ACCESS_DB_PATH)
     );
+    this.unlimitedAccountHashes = readUnlimitedAccounts(
+      options.unlimitedAccountHashes,
+      this.environment.AI_UNLIMITED_ACCOUNT_HASHES_FILE
+    );
+    this.unlimitedAccountsJson = JSON.stringify([...this.unlimitedAccountHashes]);
     this.priceCatalogVersion = normalizeIdentifier(
       firstDefined(
         options.priceCatalogVersion,
@@ -763,7 +768,7 @@ class AiAccessService {
         )
         .run(now);
       budget = this._readBudget(device.id, session.account_hash);
-      if (!budget || budget.remaining_nano_usd <= 0) {
+      if (!budget || (!budget.unlimited && budget.remaining_nano_usd <= 0)) {
         throw new AiAccessError(
           429,
           "free_quota_exhausted",
@@ -848,8 +853,9 @@ class AiAccessService {
       accountHash: session.account_hash,
       safetyIdentifier: `ud_${device.id}`,
       priceCatalogVersion: this.priceCatalogVersion,
-      remainingNanoUsd: budget.remaining_nano_usd,
-      remainingCredits: nanoUsdToCredits(budget.remaining_nano_usd),
+      ...(budget.unlimited ? { unlimited: true } : {}),
+      remainingNanoUsd: budget.unlimited ? null : budget.remaining_nano_usd,
+      remainingCredits: budget.unlimited ? null : nanoUsdToCredits(budget.remaining_nano_usd),
     };
   }
 
@@ -1083,14 +1089,14 @@ class AiAccessService {
         context.deviceId,
         context.accountHash
       );
-      if (!available || available.remaining_nano_usd < minimumRequiredNanoUsd) {
+      if (!available || (!available.unlimited && available.remaining_nano_usd < minimumRequiredNanoUsd)) {
         throw new AiAccessError(
           429,
           "free_quota_insufficient",
           "The remaining free AI credits cannot cover this request."
         );
       }
-      const affordableOutputTokens = Math.floor(
+      const affordableOutputTokens = available.unlimited ? normalizedMaxOutputTokens : Math.floor(
         (available.remaining_nano_usd - inputCostNanoUsd) / outputRate
       );
       const cappedMaxOutputTokens = Math.min(
@@ -1359,8 +1365,10 @@ class AiAccessService {
         multiplyCost(normalizedMinAdditionalOutputTokens, outputRate)
       );
       if (
-        (completed && retainedNanoUsd > availableExcludingOwnHold) ||
-        availableAdditionalNanoUsd < minimumRequiredNanoUsd
+        !currentBudget || (!currentBudget.unlimited && (
+          (completed && retainedNanoUsd > availableExcludingOwnHold) ||
+          availableAdditionalNanoUsd < minimumRequiredNanoUsd
+        ))
       ) {
         throw new AiAccessError(
           429,
@@ -1368,7 +1376,7 @@ class AiAccessService {
           "The remaining free AI credits cannot cover the next AI step."
         );
       }
-      const affordableAdditionalOutputTokens = Math.floor(
+      const affordableAdditionalOutputTokens = currentBudget.unlimited ? normalizedAdditionalMaxOutputTokens : Math.floor(
         (availableAdditionalNanoUsd - inputCostNanoUsd) / outputRate
       );
       const allowedAdditionalMaxOutputTokens = Math.min(
@@ -1640,8 +1648,9 @@ class AiAccessService {
           priceCatalogVersion: existing.price_catalog_version,
           costNanoUsd: Number(existing.cost_nano_usd),
           costCredits: nanoUsdToCredits(Number(existing.cost_nano_usd)),
-          remainingNanoUsd: existingBudget.remaining_nano_usd,
-          remainingCredits: nanoUsdToCredits(existingBudget.remaining_nano_usd),
+          ...(existingBudget.unlimited ? { unlimited: true } : {}),
+          remainingNanoUsd: existingBudget.unlimited ? null : existingBudget.remaining_nano_usd,
+          remainingCredits: existingBudget.unlimited ? null : nanoUsdToCredits(existingBudget.remaining_nano_usd),
           quota: toPublicQuota(existingBudget),
         };
         return;
@@ -1839,6 +1848,10 @@ class AiAccessService {
           calculated.costNanoUsd,
           now
         );
+      // Sponsored usage remains in the cost ledger, but must not consume a
+      // shared browser's free allowance or the account's metered allowance.
+      const debitNanoUsd = this.unlimitedAccountHashes.has(context.accountHash)
+        ? 0 : calculated.costNanoUsd;
       const chargedDevices = this.database
         .prepare(
           `UPDATE devices
@@ -1846,7 +1859,7 @@ class AiAccessService {
             WHERE id = ? OR id = ?`
         )
         .run(
-          calculated.costNanoUsd,
+          debitNanoUsd,
           now,
           context.deviceId,
           inflight.source_device_id
@@ -1866,7 +1879,7 @@ class AiAccessService {
               SET spent_nano_usd = spent_nano_usd + ?, last_seen_at = ?
             WHERE account_hash = ?`
         )
-        .run(calculated.costNanoUsd, now, context.accountHash);
+        .run(debitNanoUsd, now, context.accountHash);
       if (Number(chargedAccount.changes) !== 1) {
         throw new AiAccessError(
           500,
@@ -1899,8 +1912,9 @@ class AiAccessService {
         priceCatalogVersion: this.priceCatalogVersion,
         costNanoUsd: calculated.costNanoUsd,
         costCredits: nanoUsdToCredits(calculated.costNanoUsd),
-        remainingNanoUsd: updatedBudget.remaining_nano_usd,
-        remainingCredits: nanoUsdToCredits(updatedBudget.remaining_nano_usd),
+        ...(updatedBudget.unlimited ? { unlimited: true } : {}),
+        remainingNanoUsd: updatedBudget.unlimited ? null : updatedBudget.remaining_nano_usd,
+        remainingCredits: updatedBudget.unlimited ? null : nanoUsdToCredits(updatedBudget.remaining_nano_usd),
         quota: toPublicQuota(updatedBudget),
       };
     });
@@ -2175,22 +2189,23 @@ class AiAccessService {
   _readDeviceBudget(deviceId) {
     const row = this.database
       .prepare(
-        `SELECT devices.grant_nano_usd,
+        `WITH budget_holds AS (SELECT * FROM inflight_requests WHERE account_hash NOT IN (SELECT value FROM json_each(?)))
+         SELECT devices.grant_nano_usd,
                 devices.spent_nano_usd,
                 COALESCE((
-                  SELECT SUM(inflight_requests.reserved_nano_usd)
-                    FROM inflight_requests
+                  SELECT SUM(budget_holds.reserved_nano_usd)
+                    FROM budget_holds
                    WHERE (
-                     inflight_requests.device_id = devices.id OR
-                     inflight_requests.source_device_id = devices.id
+                     budget_holds.device_id = devices.id OR
+                     budget_holds.source_device_id = devices.id
                    )
-                     AND inflight_requests.state IN
+                     AND budget_holds.state IN
                        ('reserved', 'provider_started', 'needs_reconciliation')
                 ), 0) AS reserved_nano_usd
            FROM devices
           WHERE devices.id = ?`
       )
-      .get(deviceId);
+      .get(this.unlimitedAccountsJson, deviceId);
     if (!row) return null;
     const grantNanoUsd = Number(row.grant_nano_usd);
     const spentNanoUsd = Number(row.spent_nano_usd);
@@ -2209,7 +2224,8 @@ class AiAccessService {
   _readBudget(deviceId, accountHash) {
     const row = this.database
       .prepare(
-        `SELECT current_device.id AS device_id,
+        `WITH budget_holds AS (SELECT * FROM inflight_requests WHERE account_hash NOT IN (SELECT value FROM json_each(?)))
+         SELECT current_device.id AS device_id,
                 source_device.id AS source_device_id,
                 current_device.grant_nano_usd AS device_grant_nano_usd,
                 current_device.spent_nano_usd AS device_spent_nano_usd,
@@ -2218,61 +2234,61 @@ class AiAccessService {
                 account.grant_nano_usd AS account_grant_nano_usd,
                 account.spent_nano_usd AS account_spent_nano_usd,
                 COALESCE((
-                  SELECT SUM(inflight_requests.reserved_nano_usd)
-                    FROM inflight_requests
+                  SELECT SUM(budget_holds.reserved_nano_usd)
+                    FROM budget_holds
                    WHERE (
-                     inflight_requests.device_id = current_device.id OR
-                     inflight_requests.source_device_id = current_device.id
+                     budget_holds.device_id = current_device.id OR
+                     budget_holds.source_device_id = current_device.id
                    )
-                     AND inflight_requests.state IN
+                     AND budget_holds.state IN
                        ('reserved', 'provider_started', 'needs_reconciliation')
                 ), 0) AS device_reserved_nano_usd,
                 COALESCE((
-                  SELECT SUM(inflight_requests.reserved_nano_usd)
-                    FROM inflight_requests
+                  SELECT SUM(budget_holds.reserved_nano_usd)
+                    FROM budget_holds
                    WHERE (
-                     inflight_requests.device_id = source_device.id OR
-                     inflight_requests.source_device_id = source_device.id
+                     budget_holds.device_id = source_device.id OR
+                     budget_holds.source_device_id = source_device.id
                    )
-                     AND inflight_requests.state IN
+                     AND budget_holds.state IN
                        ('reserved', 'provider_started', 'needs_reconciliation')
                 ), 0) AS source_reserved_nano_usd,
                 COALESCE((
-                  SELECT SUM(inflight_requests.reserved_nano_usd)
-                    FROM inflight_requests
-                   WHERE inflight_requests.account_hash = account.account_hash
-                     AND inflight_requests.state IN
+                  SELECT SUM(budget_holds.reserved_nano_usd)
+                    FROM budget_holds
+                   WHERE budget_holds.account_hash = account.account_hash
+                     AND budget_holds.state IN
                        ('reserved', 'provider_started', 'needs_reconciliation')
                 ), 0) AS account_reserved_nano_usd,
                 MIN(
                   MAX(0, current_device.grant_nano_usd - current_device.spent_nano_usd -
                     COALESCE((
-                      SELECT SUM(inflight_requests.reserved_nano_usd)
-                        FROM inflight_requests
+                      SELECT SUM(budget_holds.reserved_nano_usd)
+                        FROM budget_holds
                        WHERE (
-                         inflight_requests.device_id = current_device.id OR
-                         inflight_requests.source_device_id = current_device.id
+                         budget_holds.device_id = current_device.id OR
+                         budget_holds.source_device_id = current_device.id
                        )
-                         AND inflight_requests.state IN
+                         AND budget_holds.state IN
                            ('reserved', 'provider_started', 'needs_reconciliation')
                     ), 0)),
                   MAX(0, source_device.grant_nano_usd - source_device.spent_nano_usd -
                     COALESCE((
-                      SELECT SUM(inflight_requests.reserved_nano_usd)
-                        FROM inflight_requests
+                      SELECT SUM(budget_holds.reserved_nano_usd)
+                        FROM budget_holds
                        WHERE (
-                         inflight_requests.device_id = source_device.id OR
-                         inflight_requests.source_device_id = source_device.id
+                         budget_holds.device_id = source_device.id OR
+                         budget_holds.source_device_id = source_device.id
                        )
-                         AND inflight_requests.state IN
+                         AND budget_holds.state IN
                            ('reserved', 'provider_started', 'needs_reconciliation')
                     ), 0)),
                   MAX(0, account.grant_nano_usd - account.spent_nano_usd -
                     COALESCE((
-                      SELECT SUM(inflight_requests.reserved_nano_usd)
-                        FROM inflight_requests
-                       WHERE inflight_requests.account_hash = account.account_hash
-                         AND inflight_requests.state IN
+                      SELECT SUM(budget_holds.reserved_nano_usd)
+                        FROM budget_holds
+                       WHERE budget_holds.account_hash = account.account_hash
+                         AND budget_holds.state IN
                            ('reserved', 'provider_started', 'needs_reconciliation')
                     ), 0))
                 ) AS remaining_nano_usd
@@ -2282,7 +2298,7 @@ class AiAccessService {
              ON source_device.id = account.grant_source_device_id
           WHERE current_device.id = ?`
       )
-      .get(accountHash, deviceId);
+      .get(this.unlimitedAccountsJson, accountHash, deviceId);
     if (!row) return null;
     const deviceGrantNanoUsd = Number(row.device_grant_nano_usd);
     const deviceSpentNanoUsd = Number(row.device_spent_nano_usd);
@@ -2314,6 +2330,7 @@ class AiAccessService {
       spent_nano_usd: effectiveSpentNanoUsd,
       reserved_nano_usd: reservedNanoUsd,
       remaining_nano_usd: remainingNanoUsd,
+      unlimited: this.unlimitedAccountHashes.has(accountHash),
       device_id: row.device_id,
       source_device_id: row.source_device_id,
       device_grant_nano_usd: deviceGrantNanoUsd,
@@ -3463,6 +3480,9 @@ function nanoUsdToCredits(value) {
 }
 
 function toPublicQuota(budget) {
+  if (budget.unlimited) {
+    return { unit: "AI Credit", unlimited: true, granted: null, spent: null, reserved: null, remaining: null };
+  }
   return {
     unit: "AI Credit",
     granted: nanoUsdToCredits(budget.grant_nano_usd),
@@ -3473,6 +3493,13 @@ function toPublicQuota(budget) {
 }
 
 function toDiagnosticBudget(budget) {
+  if (budget.unlimited) {
+    return { unlimited: true, grantNanoUsd: null, spentNanoUsd: null,
+      reservedNanoUsd: null, remainingNanoUsd: null, grantCredits: null,
+      spentCredits: null, reservedCredits: null, remainingCredits: null,
+      deviceRemainingCredits: null, sourceDeviceRemainingCredits: null,
+      accountRemainingCredits: null };
+  }
   return {
     grantNanoUsd: budget.grant_nano_usd,
     spentNanoUsd: budget.spent_nano_usd,
@@ -3507,6 +3534,26 @@ function toDiagnosticBudget(budget) {
       )
     ),
   };
+}
+
+function readUnlimitedAccounts(option, file) {
+  let values = option;
+  if (values === undefined && file) {
+    // This operator-owned file is outside releases and never sent to clients.
+    // Reject a broken configured file rather than silently changing entitlement.
+    const filename = String(file);
+    if (!path.isAbsolute(filename) || fs.statSync(filename).size > 65536) {
+      throw new TypeError("AI_UNLIMITED_ACCOUNT_HASHES_FILE is invalid.");
+    }
+    try { values = JSON.parse(fs.readFileSync(filename, "utf8")); }
+    catch { throw new TypeError("AI_UNLIMITED_ACCOUNT_HASHES_FILE must contain a JSON array of account hashes."); }
+  }
+  if (values === undefined) values = [];
+  if (!Array.isArray(values) || values.length > 1000 ||
+      values.some((value) => typeof value !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(value))) {
+    throw new TypeError("Unlimited accounts must be an array of stored account hashes.");
+  }
+  return new Set(values);
 }
 
 function maskEmail(value) {
