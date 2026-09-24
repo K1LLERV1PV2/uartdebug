@@ -61,14 +61,23 @@ def main():
         for stable_url in stable_urls
     ]
 
-    # These files change frequently while keeping stable public paths. Stamp
-    # their HTML references on every deploy so an already-open AVR session
-    # cannot combine fresh markup with an older cached script or stylesheet.
-    revisioned_page_assets = [
-        "AVR-Programming.css",
-        "AVR-Programming.js",
-        "vendor/uartdebug-markdown.js",
-    ]
+    # Shared controls and page code must update together on every route.
+    revisioned_page_assets = {
+        "AVR-Programming.css": 1,
+        "AVR-Programming.js": 1,
+        "vendor/uartdebug-markdown.js": 1,
+        "ui-theme.css": 5,
+        "ui-controls.css": 2,
+        "ui-controls.js": 2,
+        "ui-tooltips.css": 2,
+        "ui-tooltips.js": 2,
+        "uart.css": 2,
+        "uart.js": 1,
+        "home.css": 1,
+        "legal.css": 2,
+        "avr-mini-projects.js": 1,
+        "avr-mini-project-archive.js": 1,
+    }
     revisioned_page_asset_patterns = [
         (
             asset_url,
@@ -107,11 +116,11 @@ def main():
     unexpected_asset_counts = {
         asset_url: count
         for asset_url, count in revisioned_page_asset_counts.items()
-        if count != 1
+        if count != revisioned_page_assets[asset_url]
     }
     if unexpected_asset_counts:
         raise SystemExit(
-            "Expected exactly one HTML reference for each revisioned page asset: "
+            "Unexpected HTML reference counts for revisioned page assets: "
             f"{unexpected_asset_counts}"
         )
 

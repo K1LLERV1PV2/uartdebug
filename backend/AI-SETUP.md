@@ -226,13 +226,14 @@ the MCU, package, clock, allocated peripherals and pins. There is no new private
 and `/skills` are retired and return 404. The legacy account chat storage routes
 remain available so stored user history is not deleted by this migration.
 
-The browser stores its canvas locally and synchronizes it to the account
-`instruction` snapshot when signed in. This route name is retained for existing
-accounts; schema 2 replaces obsolete `skillRefs` with locale, annotations and
-target. Schema-1 snapshots are still readable for migration. Once a schema-2
-canvas has been saved, older clients cannot downgrade it and erase annotations;
-their save returns a conflict requiring an application refresh. Files and the
-canvas have independent optimistic revisions and account-identity checks.
+The browser stores each mini-project's canvas locally and synchronizes it in
+that project's metadata in the account `files` snapshot. The separate
+`instruction` snapshot holds the draft for loose files. Canvas schema 2 replaces
+obsolete `skillRefs` with locale, annotations and target. Schema-1 instructions
+are still readable for migration; the former shared draft is retained for the
+active legacy project. The separate instruction route rejects schema downgrades.
+Both account documents use optimistic revisions and account-identity checks;
+the browser also rejects AI responses after a project switch.
 
 The pilot knowledge release is stored under:
 

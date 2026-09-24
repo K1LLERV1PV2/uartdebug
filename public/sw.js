@@ -1,7 +1,11 @@
-const CACHE_NAME = "uartdebug-shell-20260924-canvas-v1";
+const CACHE_NAME = "uartdebug-shell-20260924-ui-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
+  "/home.css",
+  "/ui-theme.css",
+  "/ui-controls.css",
+  "/ui-controls.js",
   "/avr",
   "/avr.html",
   "/uart",

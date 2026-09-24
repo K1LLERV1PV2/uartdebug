@@ -53,6 +53,7 @@ jobs:
           node --check public/avr-mini-projects.js
           node --check public/avr-mini-project-archive.js
           node --check public/uart.js
+          node --check public/ui-controls.js
           node --check public/sw.js
           node --check frontend/markdown-runtime/src/index.js
           node --check frontend/markdown-runtime/scripts/build.mjs

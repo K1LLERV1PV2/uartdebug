@@ -124,8 +124,12 @@
       updatedAt: 1,
     },
   };
-  let projectInstructionSaveTimer = null;
-  let projectInstructionSaveAttempts = 0;
+  const projectInstructionSaveJobs = new Map();
+  // The separate instruction document belongs to loose files. Mini-project
+  // canvases travel with their project in the workspace/account snapshot.
+  let unassignedProjectInstructionDocument = null;
+  let projectInstructionInstanceId = null;
+  let projectInstructionScopeEpoch = 0;
   let projectInstructionStorageReadFailed = false;
   let projectInstructionRenderFrame = null;
   let projectInstructionEditor = null;
@@ -691,9 +695,15 @@
     return issue;
   }
 
+  const {
+    openModal: openWorkspaceModal,
+    closeModal: closeWorkspaceModal,
+    trapModalFocus: trapWorkspaceModalFocus,
+    dismissTopModal: dismissTopWorkspaceModal,
+  } = window.UartDebugControls;
+
   function resolveSiteDialog(value) {
-    const modal = $("siteDialog");
-    if (modal) modal.hidden = true;
+    closeWorkspaceModal($("siteDialog"));
 
     const resolve = siteDialogResolve;
     siteDialogResolve = null;
@@ -728,10 +738,9 @@
     cancelBtn.hidden = !cancelText;
     confirmBtn.classList.toggle("warning-btn", !!danger);
 
-    modal.hidden = false;
-
-    requestAnimationFrame(() => {
-      (cancelText ? cancelBtn : confirmBtn).focus();
+    openWorkspaceModal(modal, {
+      focusTarget: cancelText ? cancelBtn : confirmBtn,
+      onClose: () => resolveSiteDialog(false),
     });
 
     return new Promise((resolve) => {
@@ -770,7 +779,6 @@
 
     const isExpanded = !!expanded;
     const optionsLabel = "More options";
-    modal.hidden = !isExpanded;
     btn.setAttribute("aria-expanded", String(isExpanded));
     btn.setAttribute("aria-label", optionsLabel);
     btn.textContent = "More";
@@ -779,10 +787,13 @@
       : "Show advanced UPDI tools";
 
     if (isExpanded) {
-      requestAnimationFrame(() => {
-        const card = document.querySelector(".updi-options-card");
-        if (card) card.focus();
+      openWorkspaceModal(modal, {
+        trigger: btn,
+        focusTarget: $("updiOptionsCloseBtn"),
+        onClose: closeMoreOptions,
       });
+    } else {
+      closeWorkspaceModal(modal);
     }
   }
 
@@ -1490,6 +1501,9 @@
           rawProject.aiSpecRef && typeof rawProject.aiSpecRef === "object"
             ? cloneJsonMetadata(rawProject.aiSpecRef, null)
             : null,
+        ...(rawProject.canvas && typeof rawProject.canvas === "object"
+          ? { canvas: normalizeProjectInstructionDocument(rawProject.canvas) }
+          : {}),
       };
     }
 
@@ -1992,19 +2006,15 @@
     if (!modal) return;
 
     closeFileContextMenu();
-    modal.hidden = false;
     void renderBuiltInMiniProjectCards();
-
-    requestAnimationFrame(() => {
-      const primaryAction = $("uploadExistingFileCard");
-      primaryAction && primaryAction.focus();
+    openWorkspaceModal(modal, {
+      focusTarget: () => $("createEmptyProjectCard") || $("uploadExistingFileCard"),
+      onClose: closeAddFileModal,
     });
   }
 
   function closeAddFileModal() {
-    const modal = $("fileAddModal");
-    if (!modal) return;
-    modal.hidden = true;
+    closeWorkspaceModal($("fileAddModal"));
   }
 
   function dispatchHexArtifact(detail) {
@@ -2273,6 +2283,9 @@
         selectedLocale: defaultLocale,
         assets: normalizeProjectAssets(definition.assets),
         aiSpecRef: cloneJsonMetadata(definition.aiSpecRef, null),
+        canvas: String(origin || "local") === "ai"
+          ? getProjectInstructionSnapshot()
+          : normalizeProjectInstructionDocument(null),
       };
 
       const sourceFile = roleFiles.source;
@@ -2287,6 +2300,10 @@
       fileGroups = previousGroups;
       miniProjects = previousProjects;
       current = previousCurrent;
+
+      if (selectionStarted) {
+        activateCurrentProjectCanvas({ savePrevious: false, legacyFallback: true });
+      }
 
       if (selectionStarted && editor) {
         editor.setOption("readOnly", previousCurrent ? false : "nocursor");
@@ -2453,6 +2470,10 @@
       miniProjects = previousProjects;
       current = previousCurrent;
 
+      if (selectionStarted) {
+        activateCurrentProjectCanvas({ savePrevious: false, legacyFallback: true });
+      }
+
       if (selectionStarted && editor) {
         editor.setOption("readOnly", previousCurrent ? false : "nocursor");
         editor.setOption("mode", getEditorModeForFile(previousCurrent));
@@ -2562,6 +2583,38 @@
 
     installMiniProjectDefinition(definition, { origin: "builtin" });
     return true;
+  }
+
+  function createEmptyProject() {
+    const names = new Set(Object.values(miniProjects).map((project) =>
+      String(project.displayName || project.title || "").toLowerCase()));
+    let title = "Untitled project";
+    for (let suffix = 2; names.has(title.toLowerCase()); suffix += 1) {
+      title = `Untitled project ${suffix}`;
+    }
+    return installMiniProjectDefinition({
+      schemaVersion: 1,
+      id: "empty-project",
+      title,
+      summary: "",
+      defaultLocale: "en",
+      files: [
+        {
+          role: "source",
+          name: "main.c",
+          mediaType: "text/x-c",
+          content: "int main(void)\n{\n    for (;;) {\n    }\n}\n",
+        },
+        {
+          role: "guide",
+          name: "README.md",
+          mediaType: "text/markdown",
+          locale: "en",
+          label: "English",
+          content: "# Project\n",
+        },
+      ],
+    }, { origin: "local" });
   }
 
   function loadHexIntoUpdiRuntime(updi, fileName, hexText, source = "uploaded") {
@@ -3837,6 +3890,15 @@
     newRow.className = "file-item new-item";
     newRow.dataset.outlinerIcon = "+";
     newRow.title = "Add file";
+    newRow.setAttribute("role", "button");
+    newRow.setAttribute("aria-label", "Add file");
+    newRow.tabIndex = 0;
+    newRow.addEventListener("keydown", (event) => {
+      if (event.target === newRow && ["Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        newRow.click();
+      }
+    });
 
     if (inlineFileEdit && inlineFileEdit.mode === "create") {
       newRow.classList.add("active", "editing");
@@ -4001,6 +4063,15 @@
     newRow.className = "file-item new-item";
     newRow.dataset.outlinerIcon = "+";
     newRow.title = "Add file";
+    newRow.setAttribute("role", "button");
+    newRow.setAttribute("aria-label", "Add file");
+    newRow.tabIndex = 0;
+    newRow.addEventListener("keydown", (event) => {
+      if (event.target === newRow && ["Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        newRow.click();
+      }
+    });
 
     if (inlineFileEdit && inlineFileEdit.mode === "create") {
       newRow.classList.add("active", "editing");
@@ -4841,8 +4912,32 @@
     return normalizeProjectInstructionDocument(projectInstructionDocument);
   }
 
-  function canvasText(english, russian) {
-    return /[\u0400-\u04ff]/u.test(projectInstructionDocument.markdown) ? russian : english;
+  function getUnassignedProjectInstructionSnapshot() {
+    return normalizeProjectInstructionDocument(
+      unassignedProjectInstructionDocument || projectInstructionDocument
+    );
+  }
+
+  function activateCurrentProjectCanvas({ savePrevious = true, legacyFallback = false } = {}) {
+    const linkedProject = getMiniProjectForFile(current);
+    const nextInstanceId = linkedProject?.instanceId || null;
+    if (savePrevious && nextInstanceId === projectInstructionInstanceId) return;
+    if (savePrevious) persistProjectInstruction({ immediate: true });
+    projectInstructionInstanceId = nextInstanceId;
+    projectInstructionScopeEpoch += 1;
+    projectInstructionDocument = normalizeProjectInstructionDocument(
+      linkedProject
+        ? linkedProject.project.canvas || (legacyFallback
+          ? getUnassignedProjectInstructionSnapshot() : null)
+        : getUnassignedProjectInstructionSnapshot()
+    );
+    setProjectInstructionEditorValue(projectInstructionDocument.markdown);
+    projectInstructionEditor?.clearHistory?.();
+    scheduleProjectInstructionPreview();
+    renderCanvasAnnotations();
+    syncCanvasTargetControls(true);
+    reportProjectCanvasMessage("", "");
+    refreshProjectInstructionSaveState();
   }
 
   function reportProjectCanvasMessage(kind, message) {
@@ -4871,24 +4966,25 @@
     if (!select) return;
     const mcuSelect = $("mcuSelect");
     const savedTarget = projectInstructionDocument.target;
-    if (restore && savedTarget?.mcu && mcuSelect &&
-        [...mcuSelect.options].some((option) => option.value === savedTarget.mcu)) {
-      mcuSelect.value = savedTarget.mcu;
+    if (restore && mcuSelect) {
+      const savedMcu = String(savedTarget?.mcu || "auto").toLowerCase();
+      mcuSelect.value = [...mcuSelect.options].some((option) => option.value === savedMcu)
+        ? savedMcu : "auto";
       const custom = mcuSelect.nextElementSibling;
       if (custom?.classList.contains("custom-select")) updateCustomSelect(mcuSelect, custom);
     }
     const target = getCanvasTarget();
     const device = canvasSupportedDevices.find((item) => item.mcu === target.mcu);
-    const selectedPackage = restore && savedTarget?.mcu === target.mcu
-      ? savedTarget.packageName : select.value;
+    const selectedPackage = restore
+      ? (savedTarget?.mcu === target.mcu ? savedTarget.packageName : "") : select.value;
     const previousMcu = select.dataset.mcu;
     const placeholder = document.createElement("option");
     placeholder.value = "";
     placeholder.textContent = !target.mcu
-      ? canvasText("Select or detect an MCU", "Выберите или определите МК")
+      ? "Choose package"
       : device
-        ? canvasText("Choose package", "Выберите корпус")
-        : canvasText("MCU is outside the pilot", "МК вне пилотного набора");
+        ? "Choose package"
+        : "Package unavailable";
     select.replaceChildren(placeholder);
     for (const packageName of device?.packages || []) {
       const option = document.createElement("option");
@@ -4928,12 +5024,12 @@
           .map((device) => ({ ...device, mcu: device.mcu.toLowerCase() }));
         syncCanvasTargetControls(true);
         if (!canvasSupportedDevices.length) {
-          reportProjectCanvasMessage("system", canvasText("The AVR knowledge pack is unavailable. Your canvas remains saved.", "База AVR недоступна. Холст сохранён."));
+          reportProjectCanvasMessage("system", "The AVR knowledge pack is unavailable. Your canvas remains saved.");
         }
       })
       .catch(() => {
         syncCanvasTargetControls();
-        reportProjectCanvasMessage("system", canvasText("AI is unavailable. You can keep editing the canvas.", "ИИ недоступен. Можно продолжать редактировать холст."));
+        reportProjectCanvasMessage("system", "AI is unavailable. You can keep editing the canvas.");
       });
     syncCanvasTargetControls();
   }
@@ -4967,25 +5063,24 @@
     const heading = document.createElement("div");
     heading.className = "canvas-annotation-heading";
     const title = document.createElement("strong");
-    title.textContent = annotation.kind === "question" ? canvasText("Question", "Вопрос")
-      : annotation.kind === "error" ? canvasText("Needs attention", "Требует внимания")
-        : canvasText("Note", "Замечание");
+    title.textContent = annotation.kind === "question" ? "Question"
+      : annotation.kind === "error" ? "Needs attention" : "Note";
     const state = document.createElement("span");
-    state.textContent = annotation.status === "resolved" ? canvasText("Resolved", "Решено") : canvasText("Open", "Открыто");
+    state.textContent = annotation.status === "resolved" ? "Resolved" : "Open";
     heading.append(title, state);
     const quote = document.createElement("blockquote");
     quote.textContent = annotation.anchor.quote;
-    quote.title = anchored ? canvasText("Linked canvas text", "Связанный текст холста") : canvasText("The linked text was moved or removed", "Связанный текст перемещён или удалён");
+    quote.title = anchored ? "Linked canvas text" : "The linked text was moved or removed";
     const message = document.createElement("p");
     message.textContent = annotation.message;
     card.append(heading, quote, message);
     if (!anchored) {
       const moved = document.createElement("small");
-      moved.textContent = canvasText("Linked text changed; AI will relocate this note on the next run.", "Связанный текст изменён; ИИ уточнит привязку при следующем запуске.");
+      moved.textContent = "Linked text changed; AI will relocate this note on the next run.";
       card.appendChild(moved);
     }
     const answerLabel = document.createElement("label");
-    answerLabel.textContent = canvasText("Your answer", "Ваш ответ");
+    answerLabel.textContent = "Your answer";
     const answer = document.createElement("textarea");
     answer.rows = 2;
     answer.maxLength = 8000;
@@ -4999,7 +5094,7 @@
     resolved.type = "checkbox";
     resolved.checked = annotation.status === "resolved";
     resolved.disabled = annotation.kind === "question" && !answer.value.trim();
-    resolvedLabel.append(resolved, document.createTextNode(canvasText("Resolved", "Решено")));
+    resolvedLabel.append(resolved, document.createTextNode("Resolved"));
     answer.addEventListener("input", () => {
       const changes = { answer: answer.value };
       if (annotation.kind === "question" && !answer.value.trim()) {
@@ -5043,6 +5138,23 @@
     saveState.classList.toggle("is-error", error && !!visibleMessage);
   }
 
+  function refreshProjectInstructionSaveState() {
+    if (projectInstructionStorageReadFailed) {
+      setProjectInstructionSaveState("Stored instruction is unreadable", { error: true });
+      return;
+    }
+    const failures = [...projectInstructionSaveJobs.values()].filter((job) => job.attempts > 0);
+    setProjectInstructionSaveState(failures.length
+      ? failures.some((job) => job.timer) ? "Save failed — retrying" : "Save failed"
+      : "", { error: failures.length > 0 });
+  }
+
+  function cancelProjectInstructionSave(scope) {
+    const job = projectInstructionSaveJobs.get(scope);
+    if (job?.timer) window.clearTimeout(job.timer);
+    projectInstructionSaveJobs.delete(scope);
+  }
+
   function restoreProjectInstruction() {
     try {
       const stored = window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION);
@@ -5076,59 +5188,66 @@
       });
       console.warn("The stored project instruction could not be read.");
     }
+    unassignedProjectInstructionDocument = getProjectInstructionSnapshot();
+    // Only the formerly active project inherits the old shared canvas. New
+    // projects always have an explicit, empty canvas of their own.
+    const linkedProject = getMiniProjectForFile(current);
+    if (linkedProject && !linkedProject.project.canvas && !projectInstructionStorageReadFailed) {
+      linkedProject.project.canvas = getProjectInstructionSnapshot();
+    }
+    activateCurrentProjectCanvas({ savePrevious: false, legacyFallback: true });
   }
 
   function persistProjectInstruction(
     { immediate = false, recover = false } = {}
   ) {
-    if (projectInstructionStorageReadFailed && !recover) {
+    if (projectInstructionStorageReadFailed && !recover && !projectInstructionInstanceId) {
       setProjectInstructionSaveState("Stored instruction is unreadable", {
         error: true,
       });
       return;
     }
-    if (recover) {
+    if (recover && !projectInstructionInstanceId) {
       projectInstructionStorageReadFailed = false;
-      setProjectInstructionSaveState();
     }
-    if (projectInstructionSaveTimer) {
-      window.clearTimeout(projectInstructionSaveTimer);
-      projectInstructionSaveTimer = null;
+    const scope = projectInstructionInstanceId;
+    cancelProjectInstructionSave(scope);
+    const job = { attempts: 0, timer: null };
+    projectInstructionSaveJobs.set(scope, job);
+    const project = projectInstructionInstanceId
+      ? miniProjects[projectInstructionInstanceId] : null;
+    if (project) project.canvas = getProjectInstructionSnapshot();
+    else if (!projectInstructionInstanceId) {
+      unassignedProjectInstructionDocument = getProjectInstructionSnapshot();
     }
-    projectInstructionSaveAttempts = 0;
     if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
-      markProjectAiAccountDocumentDirty("instruction");
+      markProjectAiAccountDocumentDirty(project ? "files" : "instruction");
     }
 
     const save = () => {
-      projectInstructionSaveTimer = null;
+      job.timer = null;
       try {
-        window.localStorage.setItem(
+        if (project) persistState({ throwOnError: true });
+        else window.localStorage.setItem(
           STORAGE_PROJECT_INSTRUCTION,
-          JSON.stringify(getProjectInstructionSnapshot())
+          JSON.stringify(getUnassignedProjectInstructionSnapshot())
         );
       } catch {
-        projectInstructionSaveAttempts += 1;
-        const retrying = projectInstructionSaveAttempts < 3;
-        setProjectInstructionSaveState(
-          retrying ? "Save failed — retrying" : "Save failed",
-          { error: true }
-        );
+        job.attempts += 1;
+        const retrying = job.attempts < 3;
         console.warn("The project instruction could not be saved locally.");
         if (retrying) {
-          projectInstructionSaveTimer = window.setTimeout(
-            save,
-            600 * projectInstructionSaveAttempts
-          );
+          job.timer = window.setTimeout(save, 600 * job.attempts);
         }
+        refreshProjectInstructionSaveState();
         return;
       }
-      projectInstructionSaveAttempts = 0;
-      setProjectInstructionSaveState();
+      projectInstructionSaveJobs.delete(scope);
+      refreshProjectInstructionSaveState();
     };
 
     if (immediate) save();
-    else projectInstructionSaveTimer = window.setTimeout(save, 240);
+    else job.timer = window.setTimeout(save, 240);
   }
 
   function walkMarkdownAst(node, visitor, parent = null) {
@@ -6232,7 +6351,7 @@
 
   function getProjectAiAccountDocumentSnapshot(kind) {
     if (kind === "files") return getProjectAiAccountFilesSnapshot();
-    if (kind === "instruction") return getProjectInstructionSnapshot();
+    if (kind === "instruction") return getUnassignedProjectInstructionSnapshot();
     throw new TypeError(`Unsupported account document: ${kind}`);
   }
 
@@ -6370,6 +6489,9 @@
       window.clearTimeout(documentationEditSaveTimer);
       documentationEditSaveTimer = null;
     }
+    for (const scope of projectInstructionSaveJobs.keys()) {
+      if (scope !== null) cancelProjectInstructionSave(scope);
+    }
     renderOutliner();
     if (editor) {
       editor.setOption("readOnly", !current ? "nocursor" : false);
@@ -6379,6 +6501,7 @@
       scheduleMarkdownLivePreview("editor");
     }
     updateEditorFileWatermark(current || "");
+    activateCurrentProjectCanvas({ savePrevious: false, legacyFallback: true });
     refreshDocumentationPane();
     scheduleDocumentationMarkerRefresh();
     resetHexArtifact();
@@ -6405,17 +6528,13 @@
           );
           return false;
         }
-        if (projectInstructionSaveTimer) {
-          window.clearTimeout(projectInstructionSaveTimer);
-          projectInstructionSaveTimer = null;
-        }
+        cancelProjectInstructionSave(null);
         projectInstructionStorageReadFailed = false;
-        projectInstructionDocument = nextInstruction;
-        setProjectInstructionEditorValue(projectInstructionDocument.markdown);
-        scheduleProjectInstructionPreview();
-        setProjectInstructionSaveState();
-        renderCanvasAnnotations();
-        syncCanvasTargetControls(true);
+        unassignedProjectInstructionDocument = nextInstruction;
+        const linkedProject = getMiniProjectForFile(current);
+        if (!linkedProject || !linkedProject.project.canvas) {
+          activateCurrentProjectCanvas({ savePrevious: false, legacyFallback: true });
+        }
       } else {
         return false;
       }
@@ -6645,7 +6764,7 @@
       );
     }
     if (kind === "instruction") {
-      const snapshot = getProjectInstructionSnapshot();
+      const snapshot = getUnassignedProjectInstructionSnapshot();
       return (
         String(snapshot.markdown || "").trim().length > 0 ||
         (Array.isArray(snapshot.annotations) && snapshot.annotations.length > 0)
@@ -7069,7 +7188,7 @@
     const indicator = document.createElement("div");
     const label = document.createElement("span");
     label.className = "project-ai-thinking-stage";
-    label.textContent = canvasText("Analyzing the canvas…", "Анализ холста…");
+    label.textContent = "Analyzing the canvas…";
     indicator.appendChild(label);
     status.appendChild(indicator);
     return indicator;
@@ -7290,12 +7409,14 @@
     const card = $("projectAiAccountCard");
     if (!modal || !trigger || !card) return;
 
-    modal.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
-    requestAnimationFrame(() => {
-      const signIn = $("projectAiSignInBtn");
-      const focusTarget = signIn && !signIn.hidden ? signIn : card;
-      focusTarget.focus({ preventScroll: true });
+    openWorkspaceModal(modal, {
+      trigger,
+      focusTarget: () => {
+        const signIn = $("projectAiSignInBtn");
+        return signIn && !signIn.hidden ? signIn : card;
+      },
+      onClose: closeProjectAiAccountModal,
     });
   }
 
@@ -7304,13 +7425,8 @@
     const trigger = $("projectAiAccountBtn");
     if (!modal || !trigger || modal.hidden) return;
 
-    modal.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
-    if (restoreFocus) {
-      requestAnimationFrame(() => {
-        trigger.focus({ preventScroll: true });
-      });
-    }
+    closeWorkspaceModal(modal, { restoreFocus });
   }
 
   function setProjectAiAccountStatus(message = "", tone = "info") {
@@ -7320,48 +7436,6 @@
     status.textContent = normalizedMessage;
     status.dataset.tone = tone;
     status.hidden = !normalizedMessage;
-  }
-
-  function trapProjectAiAccountFocus(event) {
-    const modal = $("projectAiAccountModal");
-    const card = $("projectAiAccountCard");
-    if (!modal || !card || modal.hidden || event.key !== "Tab") return false;
-
-    const focusable = Array.from(
-      modal.querySelectorAll(
-        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      )
-    ).filter(
-      (element) =>
-        !element.closest("[hidden]") && element.getClientRects().length > 0
-    );
-
-    if (focusable.length === 0) {
-      event.preventDefault();
-      card.focus({ preventScroll: true });
-      return true;
-    }
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const activeElement = document.activeElement;
-    if (
-      event.shiftKey &&
-      (activeElement === first || !focusable.includes(activeElement))
-    ) {
-      event.preventDefault();
-      last.focus({ preventScroll: true });
-      return true;
-    }
-    if (
-      !event.shiftKey &&
-      (activeElement === last || !focusable.includes(activeElement))
-    ) {
-      event.preventDefault();
-      first.focus({ preventScroll: true });
-      return true;
-    }
-    return false;
   }
 
   function renderProjectAiAuthSession(session) {
@@ -7711,8 +7785,7 @@
     if (button) {
       button.disabled = !!busy;
       button.textContent = busy
-        ? canvasText("Working…", "Выполнение…")
-        : canvasText("Process canvas", "Обработать холст");
+        ? "Working…" : "Process canvas";
     }
     $("projectCanvasForm")?.setAttribute("aria-busy", String(!!busy));
   }
@@ -7782,13 +7855,14 @@
     if (unchanged) return;
 
     throw new Error(
-      /[\u0400-\u04ff]/u.test(String(requestPayload?.canvas?.markdown || ""))
-        ? "Текущий мини-проект изменился, пока ИИ готовил ответ. Новые локальные правки не были перезаписаны. Отправьте запрос ещё раз."
-        : "The current mini-project changed while the AI was responding. Newer local edits were not overwritten. Submit the request again."
+      "The current mini-project changed while the AI was responding. Newer local edits were not overwritten. Submit the request again."
     );
   }
 
-  function assertProjectAiInstructionIsFresh(requestPayload) {
+  function assertProjectAiInstructionIsFresh(requestPayload, expectedScope = projectInstructionScopeEpoch) {
+    if (expectedScope !== projectInstructionScopeEpoch) {
+      throw new Error("The active project changed while AI was working. Run the canvas again.");
+    }
     const expectedRevision = Number(
       requestPayload?.canvas?.revision
     );
@@ -7799,9 +7873,7 @@
       return expectedRevision;
     }
     throw new Error(
-      /[\u0400-\u04ff]/u.test(String(requestPayload?.canvas?.markdown || ""))
-        ? "Инструкция изменилась, пока ИИ готовил ответ. Ваши более новые правки сохранены. Отправьте запрос ещё раз."
-        : "The instruction changed while the AI was responding. Your newer edits were preserved. Submit the request again."
+      "The instruction changed while the AI was responding. Your newer edits were preserved. Submit the request again."
     );
   }
 
@@ -7864,17 +7936,19 @@
     if (projectAiRequestInFlight) return;
     const request = getProjectAiRequestPayload();
     if (!request.canvas.markdown.trim()) {
-      reportProjectCanvasMessage("system", canvasText("Describe your project on the canvas first.", "Сначала опишите проект на холсте."));
+      reportProjectCanvasMessage("system", "Describe your project on the canvas first.");
       projectInstructionEditor?.focus();
       return;
     }
     if (!request.mcu || request.mcu === "auto" || !request.packageName) {
-      reportProjectCanvasMessage("system", canvasText("Choose the target MCU and chip package first.", "Выберите микроконтроллер и корпус."));
-      $("projectPackageSelect")?.focus();
+      reportProjectCanvasMessage("system", "Choose the target MCU and chip package first.");
+      const missingTarget = request.mcu ? $("projectPackageSelect") : $("mcuSelect");
+      missingTarget?.nextElementSibling?.querySelector(".custom-select-trigger")?.focus();
       return;
     }
     const accountEpoch = projectAiAccountWorkspaceEpoch;
     const authEpoch = projectAiAuthRequestEpoch;
+    const canvasScopeEpoch = projectInstructionScopeEpoch;
     let quotaUpdated = false;
     let indicator = appendProjectAiThinking();
     setProjectAiFormBusy(true);
@@ -7892,12 +7966,12 @@
         throw new Error(String(data?.message || data?.error?.message || `Canvas request failed (${result.status}).`));
       }
       if (accountEpoch !== projectAiAccountWorkspaceEpoch || authEpoch !== projectAiAuthRequestEpoch) {
-        throw new Error(canvasText("The account changed while AI was working. No changes were applied.", "Аккаунт изменился во время работы ИИ. Изменения не применены."));
+        throw new Error("The account changed while AI was working. No changes were applied.");
       }
-      const baseRevision = assertProjectAiInstructionIsFresh(request);
+      const baseRevision = assertProjectAiInstructionIsFresh(request, canvasScopeEpoch);
       const target = getCanvasTarget();
       if (target.mcu !== request.mcu || target.packageName !== request.packageName) {
-        throw new Error(canvasText("The target changed while AI was working. Run the canvas again.", "Микроконтроллер или корпус изменился. Запустите обработку снова."));
+        throw new Error("The target changed while AI was working. Run the canvas again.");
       }
       if (!["canvas", "project"].includes(data.kind) || data.baseRevision !== baseRevision ||
           data.canvas?.schemaVersion !== 2 || data.canvas.revision !== baseRevision + 1 ||
@@ -7925,7 +7999,7 @@
         locale: data.canvas.locale,
         expectedRevision: baseRevision,
       });
-      reportProjectCanvasMessage("assistant", data.message || canvasText("Canvas updated.", "Холст обновлён."));
+      reportProjectCanvasMessage("assistant", data.message || "Canvas updated.");
     } catch (error) {
       reportProjectCanvasMessage("system", error?.message || "The canvas request could not be completed.");
     } finally {
@@ -8619,6 +8693,7 @@
     }
 
     current = name;
+    activateCurrentProjectCanvas();
     if (editor) {
       editor.setOption("readOnly", false);
       editor.setOption("mode", getEditorModeForFile(name));
@@ -8761,6 +8836,7 @@
     }
     if (deletedCurrent) {
       current = getVisibleWorkspaceFileNames()[0] || null;
+      activateCurrentProjectCanvas({ savePrevious: false });
     }
     persistState();
     if (!current) {
@@ -9036,182 +9112,11 @@
     });
   }
 
-  function getSelectDisplayText(select) {
-    if (!select) return "";
-    const selected = select.selectedOptions && select.selectedOptions[0];
-    return selected ? selected.textContent.trim() : "";
-  }
-
-  function updateCustomSelectIntrinsicWidth(custom) {
-    const label = custom?.querySelector(".custom-select-value");
-    if (!custom || !label) return;
-    custom.style.removeProperty("--custom-select-width");
-    const textWidth = Math.ceil(label.scrollWidth);
-    custom.style.setProperty(
-      "--custom-select-width",
-      `${Math.max(72, textWidth + 58)}px`
-    );
-  }
-
-  function renderCustomSelectOptions(select, custom) {
-    const list = custom.querySelector(".custom-select-list");
-    const label = custom.querySelector(".custom-select-value");
-    if (!list || !label) return;
-
-    list.innerHTML = "";
-    label.textContent = getSelectDisplayText(select) || "Select MCU";
-    updateCustomSelectIntrinsicWidth(custom);
-
-    const addOption = (option) => {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "custom-select-option";
-      item.dataset.value = option.value;
-      item.setAttribute("role", "option");
-      item.setAttribute("aria-selected", String(option.value === select.value));
-      item.textContent = option.textContent.trim();
-
-      item.addEventListener("click", (event) => {
-        event.stopPropagation();
-        if (select.value !== option.value) {
-          select.value = option.value;
-          select.dispatchEvent(new Event("change", { bubbles: true }));
-        } else {
-          updateCustomSelect(select, custom);
-        }
-        closeCustomSelect(custom);
-      });
-
-      list.appendChild(item);
-    };
-
-    for (const child of Array.from(select.children)) {
-      if (child.tagName === "OPTGROUP") {
-        const group = document.createElement("div");
-        group.className = "custom-select-group";
-
-        const groupLabel = document.createElement("div");
-        groupLabel.className = "custom-select-group-label";
-        groupLabel.textContent = child.label || "";
-        group.appendChild(groupLabel);
-        list.appendChild(group);
-
-        for (const option of Array.from(child.children)) {
-          addOption(option);
-        }
-      } else if (child.tagName === "OPTION") {
-        addOption(child);
-      }
-    }
-  }
-
-  function updateCustomSelect(select, custom) {
-    if (!select || !custom) return;
-    const trigger = custom.querySelector(".custom-select-trigger");
-    if (trigger) trigger.disabled = !!select.disabled;
-    custom.classList.toggle("is-disabled", !!select.disabled);
-    custom.setAttribute("aria-disabled", String(!!select.disabled));
-    renderCustomSelectOptions(select, custom);
-    if (select.disabled) closeCustomSelect(custom);
-  }
-
-  function closeCustomSelect(custom) {
-    if (!custom) return;
-    custom.classList.remove("is-open");
-    const trigger = custom.querySelector(".custom-select-trigger");
-    if (trigger) trigger.setAttribute("aria-expanded", "false");
-  }
-
-  function openCustomSelect(select, custom) {
-    if (!select || !custom || select.disabled) return;
-    updateCustomSelect(select, custom);
-    custom.classList.add("is-open");
-    const trigger = custom.querySelector(".custom-select-trigger");
-    if (trigger) trigger.setAttribute("aria-expanded", "true");
-
-    requestAnimationFrame(() => {
-      const active = custom.querySelector('.custom-select-option[aria-selected="true"]');
-      active && active.scrollIntoView({ block: "nearest" });
-    });
-  }
-
-  function initCustomSelect(select) {
-    if (!select || select.dataset.customized === "true") return;
-
-    select.dataset.customized = "true";
-    select.classList.add("native-select-hidden");
-    select.tabIndex = -1;
-    select.setAttribute("aria-hidden", "true");
-
-    const custom = document.createElement("div");
-    custom.className = "custom-select";
-    custom.setAttribute("aria-hidden", "false");
-
-    const trigger = document.createElement("button");
-    trigger.type = "button";
-    trigger.className = "custom-select-trigger";
-    trigger.setAttribute("aria-haspopup", "listbox");
-    trigger.setAttribute("aria-expanded", "false");
-    const accessibleLabel =
-      select.getAttribute("aria-label") ||
-      select.labels?.[0]?.textContent?.trim() ||
-      "Select option";
-    trigger.setAttribute("aria-label", accessibleLabel);
-
-    const value = document.createElement("span");
-    value.className = "custom-select-value";
-    trigger.appendChild(value);
-
-    const menu = document.createElement("div");
-    menu.className = "custom-select-menu";
-
-    const list = document.createElement("div");
-    list.className = "custom-select-list";
-    list.setAttribute("role", "listbox");
-    if (select.id) {
-      list.id = `${select.id}CustomListbox`;
-      trigger.setAttribute("aria-controls", list.id);
-    }
-    menu.appendChild(list);
-
-    custom.appendChild(trigger);
-    custom.appendChild(menu);
-    select.insertAdjacentElement("afterend", custom);
-
-    trigger.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (custom.classList.contains("is-open")) {
-        closeCustomSelect(custom);
-      } else {
-        openCustomSelect(select, custom);
-      }
-    });
-
-    trigger.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        openCustomSelect(select, custom);
-      }
-    });
-
-    custom.addEventListener("click", (event) => event.stopPropagation());
-    select.addEventListener("change", () => updateCustomSelect(select, custom));
-
-    const observer = new MutationObserver(() => updateCustomSelect(select, custom));
-    observer.observe(select, {
-      attributes: true,
-      childList: true,
-      subtree: true,
-      attributeFilter: ["disabled", "label", "selected", "value"],
-    });
-
-    document.addEventListener("click", () => closeCustomSelect(custom));
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closeCustomSelect(custom);
-    });
-
-    updateCustomSelect(select, custom);
-  }
+  const {
+    initSelect: initCustomSelect,
+    updateSelect: updateCustomSelect,
+    refreshSelectWidth: updateCustomSelectIntrinsicWidth,
+  } = window.UartDebugControls;
 
   function bindUI() {
       const newBtn = $("newBtn");
@@ -9245,6 +9150,7 @@
       const projectAiSignOutBtn = $("projectAiSignOutBtn");
 
     initCustomSelect(mcuSelect);
+    initCustomSelect($("projectPackageSelect"));
     initCustomSelect(documentationLocaleSelect);
     bindOutlinerDropZone();
     bindFileListResizer();
@@ -9281,6 +9187,16 @@
         }
       });
     fileAddCloseBtn && fileAddCloseBtn.addEventListener("click", closeAddFileModal);
+    $("createEmptyProjectCard")?.addEventListener("click", () => {
+      try {
+        createEmptyProject();
+      } catch (error) {
+        void showSiteAlert(
+          `Project could not be created.\n${error.message || String(error)}`,
+          "New project"
+        );
+      }
+    });
     createNewGroupCard &&
       createNewGroupCard.addEventListener("click", () => {
         closeAddFileModal();
@@ -9423,20 +9339,12 @@
       }
       closeFileContextMenu();
     });
-    // Close context menu on Escape
+    // Dialogs share focus containment and dismiss only the topmost open surface.
     document.addEventListener("keydown", (e) => {
-      if (trapProjectAiAccountFocus(e)) return;
+      if (e.defaultPrevented || trapWorkspaceModalFocus(e)) return;
       if (e.key === "Escape") {
-        if (projectAiAccountModal && !projectAiAccountModal.hidden) {
-          closeProjectAiAccountModal();
-          return;
-        }
-        if (siteDialog && !siteDialog.hidden) {
-          resolveSiteDialog(false);
-          return;
-        }
-        if (updiOptionsModal && !updiOptionsModal.hidden) {
-          closeMoreOptions();
+        if (dismissTopWorkspaceModal()) {
+          e.preventDefault();
           return;
         }
         if (inlineFileEdit) {
@@ -9444,7 +9352,6 @@
           return;
         }
         closeFileContextMenu();
-        closeAddFileModal();
       }
     });
 

@@ -1,0 +1,88 @@
+/* Shared visual foundations for the home page, tools, and documents. */
+:root {
+  color-scheme: dark;
+  --ui-bg: #222f3c;
+  --ui-surface: rgba(39, 174, 96, 0.14);
+  --ui-surface-strong: rgba(39, 174, 96, 0.3);
+  --ui-surface-connected: rgba(39, 174, 96, 0.5);
+  --ui-surface-deep: #17232e;
+  --ui-surface-dark: #1b2834;
+  --ui-window-bg: rgba(23, 35, 46, 0.72);
+  --ui-surface-overlay: rgba(23, 35, 46, 0.88);
+  --ui-surface-hover: rgba(23, 35, 46, 0.96);
+  --ui-surface-solid: rgba(23, 35, 46, 0.94);
+  --ui-border: rgba(129, 159, 141, 0.24);
+  --ui-border-hover: #37c35d;
+  --ui-border-active: rgba(70, 255, 120, 0.42);
+  --ui-accent: #46ff78;
+  --ui-text: #c8ffdd;
+  --ui-text-soft: #9fcbb0;
+  --ui-text-muted: #78a189;
+  --ui-link: #91d5aa;
+  --ui-danger: #e85f5c;
+  --ui-warning: #f2a444;
+  --ui-radius: 15px;
+  --ui-radius-small: 8px;
+  --ui-control-height: 44px;
+  --ui-control-gap: 8px;
+  --ui-control-radius: 12px;
+  --ui-control-bg: rgba(23, 35, 46, 0.68);
+  --ui-control-border: rgba(129, 159, 141, 0.34);
+  --ui-shadow: 0 20px 60px rgba(7, 13, 20, 0.26);
+  --ui-shadow-raised: 0 22px 64px rgba(7, 13, 20, 0.34);
+  --ui-font: Inter, Arial, Helvetica, sans-serif;
+  --ui-font-mono: Consolas, "Courier New", monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  font-family: var(--ui-font);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+::selection {
+  background: rgba(70, 255, 120, 0.32);
+  color: var(--ui-text);
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 3px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.ui-document-link {
+  color: var(--ui-link-color, var(--ui-link));
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.ui-document-link:hover,
+.ui-document-link:focus-visible {
+  color: var(--ui-text);
+}

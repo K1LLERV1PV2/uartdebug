@@ -47,7 +47,7 @@ function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
     `  window.__avrFrontendTestHooks = { ${functionNames.join(", ")} };\n${marker}`
   );
 
-  vm.runInNewContext(instrumented, {
+  const sandbox = {
     window: fakeWindow,
     document: fakeDocument,
     CodeMirror: overrides.CodeMirror || { registerHelper() {} },
@@ -57,7 +57,10 @@ function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
     Set,
     TextDecoder,
     URL,
-  });
+    localStorage: fakeWindow.localStorage,
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../public/ui-controls.js"), "utf8"), sandbox);
+  vm.runInNewContext(instrumented, sandbox);
   return fakeWindow.__avrFrontendTestHooks;
 }
 
@@ -205,7 +208,7 @@ test("exposes the mini-project bridge before DOMContentLoaded", () => {
     "utf8"
   );
 
-  vm.runInNewContext(source, {
+  const sandbox = {
     window: fakeWindow,
     document: fakeDocument,
     CodeMirror: { registerHelper() {} },
@@ -214,7 +217,9 @@ test("exposes the mini-project bridge before DOMContentLoaded", () => {
     Map,
     Set,
     URL,
-  });
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../public/ui-controls.js"), "utf8"), sandbox);
+  vm.runInNewContext(source, sandbox);
 
   const bridge = fakeWindow.UartDebugAvrMiniProjects;
   assert.ok(bridge);
@@ -284,6 +289,169 @@ test("infers language again after a manual canvas edit while preserving answers 
   assert.equal(canvas.revision, 7);
   assert.equal(canvas.target.packageName, "SOIC-14");
   assert.equal(canvas.annotations[0].answer, "1 секунда");
+});
+
+function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
+  const { document } = parseHTML('<html><body><span id="projectInstructionSaveState"></span></body></html>');
+  const hooks = loadAvrFrontendFunctionHooks([
+    "createEmptyProject", "installMiniProjectDefinition", "updateMiniProjectInstance",
+    "selectFile", "getProjectInstructionSnapshot", "getProjectAiAccountFilesSnapshot",
+    "getProjectAiAccountDocumentSnapshot", "applyProjectAiAccountDocument",
+    "restoreProjectInstruction", "loadState", "persistState", "persistProjectInstruction",
+    "assertProjectAiInstructionIsFresh", "canvasScope() { return projectInstructionScopeEpoch; }",
+    `prepare() {
+      resetHexArtifact = updateCompilePanelState = renderOutliner =
+        refreshDocumentationPane = scheduleDocumentationMarkerRefresh =
+        scheduleMarkdownLivePreview = updateEditorFileWatermark = closeAddFileModal = () => {};
+    }`,
+    `editCanvas(markdown) {
+      updateProjectInstructionFromUser(markdown, createMarkdownAuthorship(markdown, "human"));
+      persistProjectInstruction({ immediate: true, recover: true });
+    }`,
+  ], {
+    document,
+    window: {
+      localStorage: {
+        getItem: (key) => storage.get(key) ?? null,
+        setItem: options.setItem || ((key, value) => storage.set(key, String(value))),
+        removeItem: (key) => storage.delete(key),
+      },
+      requestAnimationFrame: () => 1,
+      setTimeout: options.setTimeout || (() => 1),
+      clearTimeout: options.clearTimeout || (() => {}),
+    },
+  });
+  hooks.prepare();
+  return { hooks, storage, document };
+}
+
+test("new projects have empty canvases and project switches restore each saved draft", () => {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  hooks.editCanvas("Loose-file draft");
+  const first = hooks.createEmptyProject();
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
+  assert.equal(first.files.some((file) => file.role === "specification"), false);
+  assert.match(first.files.find((file) => file.role === "source").content, /int main\(void\)/);
+  hooks.editCanvas("First project's requirements");
+  const second = hooks.createEmptyProject();
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
+  hooks.editCanvas("Second project's requirements");
+  hooks.selectFile(first.files.find((file) => file.role === "source").name);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "First project's requirements");
+  const snapshot = hooks.getProjectAiAccountFilesSnapshot();
+  assert.equal(snapshot.miniProjects[second.instanceId].canvas.markdown, "Second project's requirements");
+  assert.equal(hooks.getProjectAiAccountDocumentSnapshot("instruction").markdown, "Loose-file draft");
+
+  const reloaded = loadCanvasLifecycleHooks(storage).hooks;
+  reloaded.loadState();
+  reloaded.restoreProjectInstruction();
+  assert.equal(reloaded.getProjectInstructionSnapshot().markdown, "First project's requirements");
+  reloaded.selectFile(second.files.find((file) => file.role === "source").name);
+  assert.equal(reloaded.getProjectInstructionSnapshot().markdown, "Second project's requirements");
+});
+
+test("tutorial imports start blank while AI creation and updates retain their canvas", () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  const template = {
+    schemaVersion: 1, id: "tutorial-fixture", title: "Tutorial fixture", defaultLocale: "en",
+    files: [
+      { role: "source", name: "fixture.c", content: "int main(void) { for (;;) {} }" },
+      { role: "guide", name: "fixture.md", locale: "en", content: "# Tutorial" },
+    ],
+  };
+  hooks.editCanvas("Existing draft");
+  const tutorial = hooks.installMiniProjectDefinition(template, { origin: "builtin" });
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
+  hooks.editCanvas("Add a timer");
+  hooks.updateMiniProjectInstance(tutorial.instanceId, template, { origin: "ai" });
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Add a timer");
+  hooks.installMiniProjectDefinition(template, { origin: "ai" });
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Add a timer");
+});
+
+test("account project canvases survive round trips independently of the loose-file canvas", () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  hooks.createEmptyProject();
+  hooks.editCanvas("Project requirements");
+  const accountFiles = hooks.getProjectAiAccountFilesSnapshot();
+  hooks.createEmptyProject();
+  hooks.editCanvas("Other requirements");
+  assert.equal(hooks.applyProjectAiAccountDocument("files", accountFiles), true);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Project requirements");
+  assert.equal(hooks.applyProjectAiAccountDocument("instruction", {
+    schemaVersion: 2, revision: 3, markdown: "Cloud loose-file draft", annotations: [],
+  }), true);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Project requirements");
+  assert.equal(hooks.getProjectAiAccountDocumentSnapshot("instruction").markdown, "Cloud loose-file draft");
+});
+
+test("migrates the former shared canvas to the active legacy project without copying it to new projects", () => {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  const legacy = hooks.createEmptyProject();
+  const files = hooks.getProjectAiAccountFilesSnapshot();
+  delete files.miniProjects[legacy.instanceId].canvas;
+  storage.set("ud_avr_programming_state_v2", JSON.stringify(files));
+  storage.set("ud_avr_ai_project_instruction_v2", JSON.stringify({
+    schemaVersion: 2, revision: 9, markdown: "Existing requirements", annotations: [],
+  }));
+  const migrated = loadCanvasLifecycleHooks(storage).hooks;
+  migrated.loadState();
+  migrated.restoreProjectInstruction();
+  assert.equal(migrated.getProjectInstructionSnapshot().markdown, "Existing requirements");
+  migrated.createEmptyProject();
+  assert.equal(migrated.getProjectInstructionSnapshot().markdown, "");
+  migrated.selectFile(legacy.files.find((file) => file.role === "source").name);
+  assert.equal(migrated.getProjectInstructionSnapshot().markdown, "Existing requirements");
+});
+
+test("rejects delayed AI responses after switching away and back to an unchanged canvas", () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  const first = hooks.createEmptyProject();
+  hooks.editCanvas("First draft");
+  const request = { canvas: hooks.getProjectInstructionSnapshot() };
+  const requestScope = hooks.canvasScope();
+  hooks.createEmptyProject();
+  hooks.selectFile(first.files.find((file) => file.role === "source").name);
+  assert.equal(hooks.getProjectInstructionSnapshot().revision, request.canvas.revision);
+  assert.throws(() => hooks.assertProjectAiInstructionIsFresh(request, requestScope), /active project changed/i);
+  assert.equal(hooks.assertProjectAiInstructionIsFresh(request, hooks.canvasScope()), request.canvas.revision);
+});
+
+test("switching projects preserves failed-save warnings and retries the original project", () => {
+  const storage = new Map();
+  const timers = new Map();
+  let timerId = 0;
+  let failWrites = false;
+  const { hooks, document } = loadCanvasLifecycleHooks(storage, {
+    setItem(key, value) {
+      if (failWrites && key === "ud_avr_programming_state_v2") throw new Error("Storage quota");
+      storage.set(key, String(value));
+    },
+    setTimeout(callback) { timers.set(++timerId, callback); return timerId; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  const first = hooks.createEmptyProject();
+  const second = hooks.createEmptyProject();
+  hooks.selectFile(first.files.find((file) => file.role === "source").name);
+  failWrites = true;
+  hooks.editCanvas("Unsaved first project draft");
+  hooks.selectFile(second.files.find((file) => file.role === "source").name);
+  assert.match(document.getElementById("projectInstructionSaveState").textContent, /Save failed/);
+  assert.ok(timers.size > 0, "The previous project's retry must survive switching");
+  failWrites = false;
+  for (const [id, callback] of [...timers]) { timers.delete(id); callback(); }
+  const saved = JSON.parse(storage.get("ud_avr_programming_state_v2"));
+  assert.equal(saved.miniProjects[first.instanceId].canvas.markdown, "Unsaved first project draft");
+  assert.equal(document.getElementById("projectInstructionSaveState").textContent, "");
+});
+
+test("restoring a workspace keeps an unreadable loose-canvas warning visible", () => {
+  const { hooks, storage, document } = loadCanvasLifecycleHooks();
+  hooks.createEmptyProject();
+  storage.set("ud_avr_ai_project_instruction_v2", "unreadable");
+  hooks.restoreProjectInstruction();
+  assert.match(document.getElementById("projectInstructionSaveState").textContent, /unreadable/);
+  assert.equal(storage.get("ud_avr_ai_project_instruction_v2"), "unreadable");
 });
 
 test("sends only the canvas and selected target without chat history or skill refs", () => {
@@ -746,16 +914,14 @@ test("keeps Google AI account controls in an accessible account modal", () => {
   assert.ok(openStart >= 0 && closeStart > openStart && renderStart > closeStart);
   const openSource = source.slice(openStart, closeStart);
   const closeSource = source.slice(closeStart, renderStart);
-  assert.match(openSource, /modal\.hidden = false/);
+  assert.match(openSource, /openWorkspaceModal\(modal, \{/);
   assert.match(openSource, /trigger\.setAttribute\("aria-expanded", "true"\)/);
   assert.match(
     openSource,
-    /const focusTarget = signIn && !signIn\.hidden \? signIn : card/
+    /return signIn && !signIn\.hidden \? signIn : card/
   );
-  assert.match(openSource, /focusTarget\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(closeSource, /modal\.hidden = true/);
+  assert.match(closeSource, /closeWorkspaceModal\(modal, \{ restoreFocus \}\)/);
   assert.match(closeSource, /trigger\.setAttribute\("aria-expanded", "false"\)/);
-  assert.match(closeSource, /trigger\.focus\(\{ preventScroll: true \}\)/);
   assert.match(
     source,
     /projectAiAccountBtn &&[\s\S]*?projectAiAccountBtn\.addEventListener\("click", openProjectAiAccountModal\)/
@@ -770,12 +936,12 @@ test("keeps Google AI account controls in an accessible account modal", () => {
   );
   assert.match(
     source,
-    /if \(e\.key === "Escape"\) \{[\s\S]*?if \(projectAiAccountModal && !projectAiAccountModal\.hidden\) \{\s*closeProjectAiAccountModal\(\);\s*return;/
+    /if \(e\.key === "Escape"\) \{\s*if \(dismissTopWorkspaceModal\(\)\)/
   );
-  assert.match(source, /function trapProjectAiAccountFocus\(event\)/);
+  assert.match(source, /trapModalFocus: trapWorkspaceModalFocus/);
   assert.match(
     source,
-    /document\.addEventListener\("keydown", \(e\) => \{\s*if \(trapProjectAiAccountFocus\(e\)\) return;/
+    /document\.addEventListener\("keydown", \(e\) => \{\s*if \(e\.defaultPrevented \|\| trapWorkspaceModalFocus\(e\)\) return;/
   );
   assert.match(
     source,
@@ -1340,6 +1506,7 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
 
 test("publishes legal pages and links them to Google sign-in", () => {
   const index = fs.readFileSync(path.join(__dirname, "../public/index.html"), "utf8");
+  const homeCss = fs.readFileSync(path.join(__dirname, "../public/home.css"), "utf8");
   const avr = fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8");
   const privacy = fs.readFileSync(
     path.join(__dirname, "../public/privacy.html"),
@@ -1377,11 +1544,11 @@ test("publishes legal pages and links them to Google sign-in", () => {
     /aria-label="Contacts"[\s\S]*?href="mailto:uartdebug@gmail\.com"[\s\S]*?href="https:\/\/github\.com\/K1LLERV1PV2\/uartdebug\/issues"/
   );
   assert.match(
-    index,
+    homeCss,
     /body\s*\{[\s\S]*?display:\s*flex;[\s\S]*?min-height:\s*100vh;[\s\S]*?flex-direction:\s*column;/
   );
   assert.match(
-    index,
+    homeCss,
     /\.home-footer\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;/
   );
 });
@@ -1422,28 +1589,33 @@ test("deploy verifies legal page content rather than accepting an SPA fallback",
   assert.match(workflow, /\. "\$\{deploy_helpers\}"/);
 });
 
-test("deploy revisions AVR script and stylesheet URLs for returning browsers", () => {
-  const stampScript = fs.readFileSync(
+test("deploy revisions shared and page assets together on every public route", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-build-stamp-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const publicRoot = path.join(root, "public");
+  fs.mkdirSync(publicRoot);
+  const actualPublic = path.join(__dirname, "../public");
+  for (const file of fs.readdirSync(actualPublic).filter((name) => name.endsWith(".html") || ["sw.js", "manifest.webmanifest"].includes(name))) {
+    fs.copyFileSync(path.join(actualPublic, file), path.join(publicRoot, file));
+  }
+  const result = childProcess.spawnSync(process.platform === "win32" ? "python" : "python3", [
     path.join(__dirname, "../.github/scripts/stamp_frontend_build.py"),
-    "utf8"
-  );
-
-  assert.match(
-    stampScript,
-    /revisioned_page_assets\s*=\s*\[[\s\S]*?"AVR-Programming\.css"[\s\S]*?"AVR-Programming\.js"[\s\S]*?"vendor\/uartdebug-markdown\.js"/
-  );
-  assert.match(
-    stampScript,
-    /\(\?P<prefix>\\b\(\?:href\|src\)/
-  );
-  assert.match(
-    stampScript,
-    /for asset_url, pattern, replacement in revisioned_page_asset_patterns:[\s\S]*?pattern\.subn\(replacement, html_text\)/
-  );
-  assert.match(
-    stampScript,
-    /if count != 1[\s\S]*?Expected exactly one HTML reference for each revisioned page asset/
-  );
+  ], { cwd: root, env: { ...process.env, FRONTEND_BUILD_ID: "shared-ui-test" }, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+  for (const page of ["index.html", "avr.html", "uart.html", "privacy.html", "terms.html"]) {
+    const html = fs.readFileSync(path.join(publicRoot, page), "utf8");
+    assert.match(html, /ui-theme\.css\?v=shared-ui-test/);
+    for (const reference of html.matchAll(/(?:src|href)=["']([^"']+\.(?:js|css))(?:\?v=([^"']+))?["']/g)) {
+      if (reference[1].includes("vendor/") && !reference[1].includes("uartdebug-markdown")) continue;
+      if (reference[1].includes("updi-test")) continue;
+      assert.equal(reference[2], "shared-ui-test", `${page}: ${reference[1]}`);
+    }
+  }
+  const worker = fs.readFileSync(path.join(publicRoot, "sw.js"), "utf8");
+  assert.match(worker, /uartdebug-shell-shared-ui-test/);
+  for (const asset of ["/home.css", "/ui-theme.css", "/ui-controls.css", "/ui-controls.js"]) {
+    assert.ok(worker.includes(JSON.stringify(asset)), `${asset} missing from offline shell`);
+  }
 });
 
 test("renames a mini-project display name without renaming its linked files", () => {

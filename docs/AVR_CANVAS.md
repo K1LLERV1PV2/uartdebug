@@ -1,6 +1,6 @@
 # Shared AVR specification canvas
 
-The AVR page uses a single specification canvas. A visitor writes requirements
+The AVR page displays the active project's specification canvas. A visitor writes requirements
 in their language, selects the exact MCU/package and presses Process. The agent
 either edits the requirements and adds anchored questions, or returns a complete
 C/Markdown/YAML project. There is no active chat or selectable `skillRefs` catalog.
@@ -19,12 +19,18 @@ C/Markdown/YAML project. There is no active chat or selectable `skillRefs` catal
   requirements and returns it explicitly. C comments, guide, descriptions and
   annotations use that language. A manual requirements edit clears the inferred
   language so the visitor can switch languages without an extra setting.
+  Interface controls and status labels remain English regardless of that language.
 - Model JSON is validated against `avr-canvas-contract.js`. Its resource spec
   has a device/package, actual clock frequency, allocated GPIO/UART/timer
   resources, header names and descriptions. The server serializes YAML from
   this object; there is no independently generated private `_AI.md` copy.
-- C, Markdown and YAML are ordinary project files. The canvas remains a separate
-  account snapshot using the existing `instruction` storage route. Legacy chat
+- C, Markdown and YAML are ordinary project files. Each mini-project owns its
+  canvas in the existing local/cloud `files` snapshot. Loose files keep a separate
+  draft using the `instruction` storage route. Add file offers an Empty project
+  with minimal C and Markdown; empty and tutorial projects start with a blank
+  canvas. Switching projects restores their saved requirements, annotations and
+  target. Responses started before a project switch are rejected. The former
+  shared canvas is retained for the active legacy project on first load. Legacy chat
   snapshots and old private drafts are preserved for data compatibility and
   are not read by the new agent.
 
@@ -83,6 +89,11 @@ datasheet/errata roots, checks local excerpts and a 30-day cache, and permits at
 most two external section requests. Redirects, other hosts, URL parameters,
 oversized pages and non-HTML responses are rejected. Retrieval can be disabled
 with `AI_EXTERNAL_DOCUMENTATION_ENABLED=0`.
+
+Manufacturer CDN errors can prevent direct HTML retrieval even when the official
+section exists. Normal generation uses the pinned local bundle, not a live website.
+The bundle currently contains six factual HTML digests and an errata provenance
+entry; it is not a full offline mirror of the datasheet or silicon errata.
 
 Returned text is reference data. It cannot override the server instructions and
 does not automatically become a reviewed recipe. Incomplete knowledge produces

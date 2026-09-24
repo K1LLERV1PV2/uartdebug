@@ -1832,7 +1832,7 @@ test("canvas v2 and a public YAML specification survive account synchronization"
     schemaVersion: 2,
     files: { "blink.c": "int main(void) {}", "blink.ru.md": "# Мигание", "blink.yaml": 'schemaVersion: 1\nlanguage: "ru"\n' },
     fileGroups: { "blink.yaml": { groupId: "blink", role: "specification" } },
-    miniProjects: { blink: { source: "blink.c", guide: "blink.ru.md", specification: "blink.yaml" } },
+    miniProjects: { blink: { source: "blink.c", guide: "blink.ru.md", specification: "blink.yaml", canvas } },
     current: "blink.yaml",
   };
   for (const [type, data] of [["instruction", canvas], ["files", files]]) {
