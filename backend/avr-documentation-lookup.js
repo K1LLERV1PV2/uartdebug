@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const path = require("node:path");
 const fs = require("node:fs/promises");
+const { parse } = require("parse5");
 
 // Restrict retrieval to the pilot device's full datasheet and silicon errata.
 // New device families must register their reviewed official roots explicitly.
@@ -60,57 +61,82 @@ function checkedUrl(value, roots) {
   return url.href;
 }
 
-function decodeHtml(text) {
-  return text
-    .replace(/&#(x[0-9a-f]+|[0-9]+);/gi, (_, code) => {
-      const value =
-        code[0].toLowerCase() === "x"
-          ? parseInt(code.slice(1), 16)
-          : Number(code);
-      return value > 0 && value <= 0x10ffff ? String.fromCodePoint(value) : "";
-    })
-    .replace(
-      /&(amp|lt|gt|quot|apos|nbsp);/g,
-      (_, key) =>
-        ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " })[key],
-    );
-}
-
 function extractReference(html, url, roots) {
-  const title = decodeHtml(
-    /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] || "Microchip reference",
-  );
+  const document = parse(html);
+  const ignored = new Set(["script", "style", "nav", "footer"]);
+  const block = new Set([
+    "p",
+    "div",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "tr",
+    "li",
+    "section",
+  ]);
+  const nodes = [];
+  // Walk iteratively so unusually nested references cannot overflow our stack.
+  const pending = [document];
+  while (pending.length) {
+    const node = pending.pop();
+    nodes.push(node);
+    // Navigation may contain the only index links; ignore it for body text,
+    // but retain its official section links for bounded discovery.
+    for (const child of (node.childNodes || []).slice().reverse())
+      pending.push(child);
+  }
+  function plainText(root) {
+    const chunks = [],
+      work = [{ node: root, close: false }];
+    while (work.length) {
+      const { node, close } = work.pop();
+      if (ignored.has(node.tagName)) continue;
+      if (close) {
+        if (node.tagName === "td" || node.tagName === "th") chunks.push(" | ");
+        else if (block.has(node.tagName)) chunks.push("\n");
+      } else if (node.nodeName === "#text") chunks.push(node.value);
+      else {
+        if (node.tagName === "br") chunks.push("\n");
+        work.push({ node, close: true });
+        for (const child of (node.childNodes || []).slice().reverse())
+          work.push({ node: child, close: false });
+      }
+    }
+    return chunks
+      .join("")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n\s*\n/g, "\n")
+      .trim();
+  }
+  const title =
+    plainText(
+      nodes.find((node) => node.tagName === "title") || { childNodes: [] },
+    ) || "Microchip reference";
   const links = [];
-  for (const match of html.matchAll(
-    /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
-  )) {
+  for (const node of nodes) {
+    if (node.tagName !== "a") continue;
+    const attribute = node.attrs?.find(
+      (attribute) => attribute.name === "href",
+    );
+    if (!attribute) continue;
     try {
-      const href = checkedUrl(new URL(decodeHtml(match[1]), url).href, roots);
-      const label = decodeHtml(match[2].replace(/<[^>]*>/g, " "))
-        .replace(/\s+/g, " ")
-        .trim();
+      const href = checkedUrl(new URL(attribute.value, url).href, roots);
+      const label = plainText(node).replace(/\s+/g, " ").trim();
       if (label && !links.some((link) => link.url === href))
         links.push({ title: label, url: href });
     } catch {
       /* Outside the reviewed corpus. */
     }
+    if (links.length === 250) break;
   }
-  const main = /<main\b[^>]*>([\s\S]*?)<\/main>/i.exec(html)?.[1] || html;
-  const text = decodeHtml(
-    main
-      .replace(/<(script|style|nav|footer)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
-      .replace(/<\/(?:p|div|h[1-6]|tr|li|section)>/gi, "\n")
-      .replace(/<\/(?:td|th)>/gi, " | ")
-      .replace(/<br\s*\/?\s*>/gi, "\n")
-      .replace(/<[^>]*>/g, " "),
-  )
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n\s*\n/g, "\n")
-    .trim();
+  const main = nodes.find((node) => node.tagName === "main") || document;
   return {
     title: title.slice(0, 300),
-    text: text.slice(0, 180000),
-    links: links.slice(0, 250),
+    text: plainText(main).slice(0, 180000),
+    links,
   };
 }
 

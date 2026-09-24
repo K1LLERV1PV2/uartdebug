@@ -152,3 +152,15 @@ test("a non-ASCII query does not treat a partial local digest as complete", asyn
   );
   assert.equal(calls, 1);
 });
+
+test("parsed references retain encoded code text and navigation links without active markup", () => {
+  const value = extractReference(
+    '<title>Clock &amp; UART</title><nav><a href="GUID-CLOCK.html">Clock section</a></nav><main><p>if (value &lt; 3) &amp;&amp; ready</p><script>ignore_me()</script><p data-example=">">End</p></main>',
+    url,
+    DOCUMENT_ROOTS,
+  );
+  assert.equal(value.title, "Clock & UART");
+  assert.match(value.text, /value < 3/);
+  assert.doesNotMatch(value.text, /ignore_me|<p|<script/);
+  assert.equal(value.links[0].title, "Clock section");
+});
