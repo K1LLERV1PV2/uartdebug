@@ -40,7 +40,7 @@ test("serves safe AI status metadata and health from a separate server", async (
         accessRequired: false,
         ready: false,
         model: "gpt-5.6-terra",
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
   };
@@ -64,119 +64,51 @@ test("serves safe AI status metadata and health from a separate server", async (
   assert.equal(body.accessRequired, false);
   assert.equal(body.model, "gpt-5.6-terra");
   assert.equal(body.rules.packageId, "rules-v1");
+  assert.equal(body.knowledge.corpusVersion, "pilot-v1");
   assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
 });
 
-test("serves only allowlisted versioned AI skills and rejects unsafe Markdown", async (t) => {
-  let calls = 0;
-  const aiService = {
-    async getSkills() {
-      calls += 1;
-      if (calls > 1) {
-        return {
-          schemaVersion: 1,
-          catalogVersion: "2026.08.25.1",
-          locale: "ru",
-          digest: "b".repeat(64),
-          skills: [
-            {
-              id: "unsafe",
-              version: "1.0.0",
-              title: "Unsafe",
-              summary: "Unsafe Markdown",
-              markdown: "# Unsafe\n\n<script>alert(1)</script>\n",
-            },
-          ],
-        };
-      }
-      return {
-        schemaVersion: 1,
-        catalogVersion: "2026.08.25.1",
-        locale: "ru",
-        count: 999,
-        digest: "a".repeat(64),
-        privateMiniProjectRefs: [{ id: "private-draft" }],
-        skills: [
-          {
-            id: "initialization",
-            version: "1.0.0",
-            title: "Инициализация",
-            summary: "Настройка периферии.",
-            markdown: "# Инициализация\n\nНастроить периферию.\n",
-            file: "C:\\private\\initialization.md",
-            sha256: "c".repeat(64),
-            aiSpecRef: { id: "private-draft" },
-          },
-        ],
-      };
-    },
-  };
+test("retired chat generation and public skill routes return 404 without invoking services", async (t) => {
+  const unexpected = () => { throw new Error("A retired route invoked a service."); };
   const server = createAiHttpServer({
     environment: {},
-    aiService,
-    accessService: {},
+    aiService: { authorizeAccessToken: unexpected, getStatus: unexpected, getSkills: unexpected, respond: unexpected, generate: unexpected, processCanvas: unexpected },
+    accessService: { authorizeAiRequest: unexpected },
     log: { info() {}, warn() {} },
   });
   const baseUrl = await listen(server);
   t.after(() => close(server));
-
-  const response = await fetch(`${baseUrl}/api/avr/ai/skills`);
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("cache-control"), "no-store");
-  const body = await response.json();
-  assert.equal(body.ok, true);
-  assert.equal(body.count, 1);
-  assert.equal(body.privateMiniProjectRefs, undefined);
-  assert.deepEqual(Object.keys(body.skills[0]).sort(), [
-    "id",
-    "markdown",
-    "summary",
-    "title",
-    "version",
-  ]);
-  assert.equal(JSON.stringify(body).includes("private-draft"), false);
-  assert.equal(JSON.stringify(body).includes("C:\\private"), false);
-
-  const unsafe = await fetch(`${baseUrl}/api/avr/ai/skills`);
-  assert.equal(unsafe.status, 503);
-  assert.equal((await unsafe.json()).code, "skill_catalog_invalid");
+  for (const [route, method] of [["respond", "POST"], ["generate", "POST"], ["skills", "GET"]]) {
+    const response = await fetch(`${baseUrl}/api/avr/ai/${route}`, { method, headers: { Origin: baseUrl } });
+    assert.equal(response.status, 404);
+    assert.equal((await response.json()).code, "not_found");
+  }
 });
 
-test("serves an intentionally empty public AI skill catalog", async (t) => {
-  const aiService = {
-    async getSkills() {
-      return {
-        schemaVersion: 1,
-        catalogVersion: "2026.08.25.2",
-        locale: "ru",
-        digest: "d".repeat(64),
-        skills: [],
-      };
-    },
-  };
+test("missing local knowledge fails preflight before any paid access reservation", async (t) => {
+  let authorizations = 0;
+  let generations = 0;
   const server = createAiHttpServer({
     environment: {},
-    aiService,
-    accessService: {},
+    aiService: {
+      authorizeAccessToken: () => true,
+      validateRequestInput() {},
+      getStatus: async () => ({ ok: false, enabled: true, configured: true, rules: { packageId: "canvas-v2" }, knowledge: null, knowledgeError: "knowledge_invalid" }),
+      processCanvas: async () => { generations += 1; },
+    },
+    accessService: { authorizeAiRequest: async () => { authorizations += 1; } },
     log: { info() {}, warn() {} },
   });
   const baseUrl = await listen(server);
   t.after(() => close(server));
-
-  const response = await fetch(`${baseUrl}/api/avr/ai/skills`);
-  assert.equal(response.status, 200);
-  const body = await response.json();
-  assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
-  delete body.requestId;
-  assert.deepEqual(body, {
-    ok: true,
-    schemaVersion: 1,
-    catalogVersion: "2026.08.25.2",
-    locale: "ru",
-    count: 0,
-    digest: "d".repeat(64),
-    skills: [],
+  const response = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
+    method: "POST", headers: { Origin: baseUrl, "Content-Type": "application/json" },
+    body: JSON.stringify({ canvas: { schemaVersion: 2, revision: 0, locale: "en", markdown: "Blink PA3", annotations: [] } }),
   });
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "knowledge_invalid");
+  assert.equal(authorizations, 0);
+  assert.equal(generations, 0);
 });
 
 test("redirects a failed Google callback back to the AVR assistant", async (t) => {
@@ -223,10 +155,10 @@ test("requires JSON and does not apply legacy request or daily quotas", async (t
         configured: true,
         accessRequired: false,
         accessConfigured: false,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
-    async generate() {
+    async processCanvas() {
       generateCalls += 1;
       return { ok: true };
     },
@@ -242,7 +174,7 @@ test("requires JSON and does not apply legacy request or daily quotas", async (t
   const baseUrl = await listen(server);
   t.after(() => close(server));
 
-  const wrongType = await fetch(`${baseUrl}/api/avr/ai/generate`, {
+  const wrongType = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: {
       "Content-Type": "text/plain",
@@ -252,7 +184,7 @@ test("requires JSON and does not apply legacy request or daily quotas", async (t
   });
   assert.equal(wrongType.status, 415);
 
-  const invalidJson = await fetch(`${baseUrl}/api/avr/ai/generate`, {
+  const invalidJson = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -263,7 +195,7 @@ test("requires JSON and does not apply legacy request or daily quotas", async (t
   assert.equal(invalidJson.status, 400);
   assert.equal(generateCalls, 0);
 
-  const validJson = await fetch(`${baseUrl}/api/avr/ai/generate`, {
+  const validJson = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -274,7 +206,7 @@ test("requires JSON and does not apply legacy request or daily quotas", async (t
   assert.equal(validJson.status, 200);
   assert.equal(generateCalls, 1);
 
-  const secondValidJson = await fetch(`${baseUrl}/api/avr/ai/generate`, {
+  const secondValidJson = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -298,10 +230,10 @@ test("supports opt-in owner access and returns 413 without resetting an oversize
         configured: true,
         accessRequired: true,
         accessConfigured: true,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
-    async generate() {
+    async processCanvas() {
       return { ok: true };
     },
   };
@@ -313,14 +245,14 @@ test("supports opt-in owner access and returns 413 without resetting an oversize
   const baseUrl = await listen(server);
   t.after(() => close(server));
 
-  const unauthorized = await fetch(`${baseUrl}/api/avr/ai/generate`, {
+  const unauthorized = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({ prompt: "Blink" }),
   });
   assert.equal(unauthorized.status, 401);
 
-  const oversized = await fetch(`${baseUrl}/api/avr/ai/generate`, {
+  const oversized = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -350,10 +282,10 @@ test("keeps the concurrency safeguard without limiting sequential requests", asy
         enabled: true,
         configured: true,
         accessRequired: false,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
-    async respond() {
+    async processCanvas() {
       calls += 1;
       if (calls === 1) {
         await new Promise((resolve) => {
@@ -377,7 +309,7 @@ test("keeps the concurrency safeguard without limiting sequential requests", asy
   t.after(() => close(server));
 
   const post = (prompt) =>
-    fetch(`${baseUrl}/api/avr/ai/respond`, {
+    fetch(`${baseUrl}/api/avr/ai/canvas`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -403,7 +335,15 @@ test("keeps the concurrency safeguard without limiting sequential requests", asy
   assert.equal(calls, 2);
 });
 
-test("handles a conversational AI response through the HTTP boundary", async (t) => {
+test("passes the complete canvas and its clarification through the HTTP boundary", async (t) => {
+  const canvas = {
+    schemaVersion: 2, revision: 2, locale: "en", markdown: "# Processes\n\nUse TCA0.\n",
+    annotations: [], target: { mcu: "attiny1624", packageName: "SOIC-14" },
+  };
+  const annotation = {
+    id: "period-question", kind: "question", anchor: { quote: "Use TCA0.", line: 3 },
+    message: "What timer period is required?", status: "open", answer: "",
+  };
   const aiService = {
     authorizeAccessToken(token) {
       return token === "";
@@ -415,21 +355,17 @@ test("handles a conversational AI response through the HTTP boundary", async (t)
         configured: true,
         accessRequired: false,
         accessConfigured: false,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
-    async respond(body) {
-      assert.equal(body.prompt, "What is TCA0?");
-      assert.deepEqual(body.instructionDocument, {
-        schemaVersion: 1,
-        revision: 2,
-        markdown: "# Processes\n\nUse TCA0.\n",
-        skillRefs: [{ id: "sampling-1s", version: "1.0.0" }],
-      });
+    async processCanvas(body) {
+      assert.deepEqual(body.canvas, canvas);
+      assert.equal(body.mcu, "attiny1624");
+      assert.equal(body.packageName, "SOIC-14");
       return {
         ok: true,
-        kind: "answer",
-        message: "TCA0 is a 16-bit timer/counter.",
+        action: "clarify", canvas: { ...canvas, annotations: [annotation] }, project: null,
+        message: "Specify the timer period on the canvas.",
       };
     },
   };
@@ -443,7 +379,7 @@ test("handles a conversational AI response through the HTTP boundary", async (t)
 
   const response = await new Promise((resolve, reject) => {
     const request = http.request(
-      `${baseUrl}/api/avr/ai/respond`,
+      `${baseUrl}/api/avr/ai/canvas`,
       {
         method: "POST",
         headers: {
@@ -456,13 +392,7 @@ test("handles a conversational AI response through the HTTP boundary", async (t)
     request.on("error", reject);
     request.end(
       JSON.stringify({
-        prompt: "What is TCA0?",
-        instructionDocument: {
-          schemaVersion: 1,
-          revision: 2,
-          markdown: "# Processes\n\nUse TCA0.\n",
-          skillRefs: [{ id: "sampling-1s", version: "1.0.0" }],
-        },
+        canvas, mcu: "attiny1624", packageName: "SOIC-14",
       })
     );
   });
@@ -471,8 +401,10 @@ test("handles a conversational AI response through the HTTP boundary", async (t)
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 
   assert.equal(response.statusCode, 200);
-  assert.equal(body.kind, "answer");
-  assert.equal(body.message, "TCA0 is a 16-bit timer/counter.");
+  assert.equal(body.action, "clarify");
+  assert.deepEqual(body.canvas, { ...canvas, annotations: [annotation] });
+  assert.equal(body.project, null);
+  assert.equal(body.message, "Specify the timer period on the canvas.");
   assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
 });
 
@@ -505,11 +437,11 @@ test("streams progress and terminal result or error events as NDJSON", async (t)
         configured: true,
         accessRequired: false,
         accessConfigured: false,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
         compilerVerification: { enabled: true, ready: true },
       };
     },
-    async respond(body, context) {
+    async processCanvas(body, context) {
       calls += 1;
       assert.equal(context.compilerReady, true);
       await context.onProgress({
@@ -567,7 +499,7 @@ test("streams progress and terminal result or error events as NDJSON", async (t)
   t.after(() => close(server));
 
   const post = async (prompt) => {
-    const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+    const response = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
       method: "POST",
       headers: {
         Accept: "application/x-ndjson",
@@ -728,10 +660,10 @@ test("routes Google access endpoints and records metering without exposing it", 
         enabled: true,
         configured: true,
         accessRequired: false,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
-    async respond(body, context) {
+    async processCanvas(body, context) {
       assert.equal(body.prompt, "Meter this");
       assert.match(context.requestId, /^[a-f0-9-]{36}$/i);
       assert.equal(context.safetyIdentifier, "ud_user_deadbeef");
@@ -794,7 +726,7 @@ test("routes Google access endpoints and records metering without exposing it", 
   assert.equal(logout.status, 200);
   assert.equal((await logout.json()).authenticated, false);
 
-  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+  const response = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({ prompt: "Meter this" }),
@@ -872,10 +804,10 @@ test("records provider usage when a paid AI response fails validation", async (t
         enabled: true,
         configured: true,
         accessRequired: false,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
-    async respond(_body, context) {
+    async processCanvas(_body, context) {
       context.markProviderCalled();
       const error = new AiServiceError(
         502,
@@ -905,7 +837,7 @@ test("records provider usage when a paid AI response fails validation", async (t
   const baseUrl = await listen(server);
   t.after(() => close(server));
 
-  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+  const response = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({ prompt: "Return an invalid response" }),
@@ -932,7 +864,7 @@ test("rate limits only the technical Google OAuth start endpoint", async (t) => 
       return true;
     },
     async getStatus() {
-      return { ok: true, enabled: true, configured: true, rules: {} };
+      return { ok: true, enabled: true, configured: true, rules: {}, knowledge: { corpusVersion: "pilot-v1" } };
     },
   };
   const server = createAiHttpServer({
@@ -975,7 +907,7 @@ test("caps Google OAuth starts globally without calling the access service", asy
       return true;
     },
     async getStatus() {
-      return { ok: true, enabled: true, configured: true, rules: {} };
+      return { ok: true, enabled: true, configured: true, rules: {}, knowledge: { corpusVersion: "pilot-v1" } };
     },
   };
   const server = createAiHttpServer({
@@ -1027,10 +959,10 @@ test("passes an explicit provider rejection to reservation cleanup", async (t) =
         enabled: true,
         configured: true,
         accessRequired: false,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
-    async respond(_body, context) {
+    async processCanvas(_body, context) {
       await context.markProviderCalled();
       const error = new AiServiceError(
         429,
@@ -1050,7 +982,7 @@ test("passes an explicit provider rejection to reservation cleanup", async (t) =
   const baseUrl = await listen(server);
   t.after(() => close(server));
 
-  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+  const response = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({ prompt: "Retry later" }),
@@ -1095,10 +1027,10 @@ test("does not release metered provider work when a later call is rejected", asy
         enabled: true,
         configured: true,
         accessRequired: false,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
-    async respond(_body, context) {
+    async processCanvas(_body, context) {
       await context.markProviderCalled();
       const error = new AiServiceError(
         429,
@@ -1133,7 +1065,7 @@ test("does not release metered provider work when a later call is rejected", asy
   const baseUrl = await listen(server);
   t.after(() => close(server));
 
-  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+  const response = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({ prompt: "Repair it" }),
@@ -1177,10 +1109,10 @@ test("leaves an uncertain repair reservation unresolved instead of partially set
         enabled: true,
         configured: true,
         accessRequired: false,
-        rules: { packageId: "rules-v1" },
+        rules: { packageId: "rules-v1" }, knowledge: { corpusVersion: "pilot-v1" },
       };
     },
-    async respond(_body, context) {
+    async processCanvas(_body, context) {
       await context.markProviderCalled();
       const error = new AiServiceError(
         502,
@@ -1215,7 +1147,7 @@ test("leaves an uncertain repair reservation unresolved instead of partially set
   const baseUrl = await listen(server);
   t.after(() => close(server));
 
-  const response = await fetch(`${baseUrl}/api/avr/ai/respond`, {
+  const response = await fetch(`${baseUrl}/api/avr/ai/canvas`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Origin: baseUrl },
     body: JSON.stringify({ prompt: "Repair it" }),

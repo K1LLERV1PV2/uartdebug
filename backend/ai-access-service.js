@@ -5,8 +5,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { OAuth2Client } = require("google-auth-library");
+const { normalizeCanvas } = require("./avr-canvas-contract");
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const DEVICE_COOKIE = "__Host-ud_device";
 const SESSION_COOKIE = "__Host-ud_session";
 const INSTALLATION_SECRET_HEADER = "x-uartdebug-installation";
@@ -14,7 +15,7 @@ const ACCOUNT_WORKSPACE_TYPES = Object.freeze(["chats", "files", "instruction"])
 const ACCOUNT_WORKSPACE_SCHEMA_VERSIONS = Object.freeze({
   chats: 1,
   files: 2,
-  instruction: 1,
+  instruction: 2,
 });
 const WORKSPACE_AUTHORSHIP_VALUES = new Set(["original", "human", "ai"]);
 const MAX_WORKSPACE_AUTHORSHIP_LINES = 20_000;
@@ -335,7 +336,7 @@ class AiAccessService {
     this._transaction(() => {
       const existing = this.database
         .prepare(
-          `SELECT revision, created_at
+          `SELECT revision, schema_version, created_at
              FROM account_workspace_snapshots
             WHERE account_hash = ? AND data_type = ?`
         )
@@ -346,6 +347,13 @@ class AiAccessService {
           409,
           "account_data_revision_conflict",
           "The account workspace changed in another session. Reload it before saving again."
+        );
+      }
+      if (existing && input.schemaVersion < Number(existing.schema_version)) {
+        throw new AiAccessError(
+          409,
+          "account_data_schema_downgrade",
+          "This workspace uses a newer canvas format. Refresh the application before saving again."
         );
       }
 
@@ -2436,7 +2444,8 @@ function normalizeAccountWorkspaceData(dataType, rawData) {
     );
   }
   const schemaVersion = Number(rawData.schemaVersion);
-  if (schemaVersion !== ACCOUNT_WORKSPACE_SCHEMA_VERSIONS[dataType]) {
+  if (schemaVersion !== ACCOUNT_WORKSPACE_SCHEMA_VERSIONS[dataType] &&
+      !(dataType === "instruction" && schemaVersion === 1)) {
     throw new AiAccessError(
       400,
       "invalid_account_data_schema",
@@ -2652,6 +2661,21 @@ function validateAccountFiles(data) {
 }
 
 function validateAccountInstruction(data) {
+  if (data.schemaVersion === 2) {
+    const allowedKeys = new Set([
+      "schemaVersion", "revision", "markdown", "locale", "annotations", "target", "authorship",
+    ]);
+    if (Object.keys(data).some((key) => !allowedKeys.has(key))) {
+      throwInvalidAccountData("The canvas structure contains unsupported fields.");
+    }
+    try {
+      normalizeCanvas(data);
+    } catch (error) {
+      throwInvalidAccountData(error.message);
+    }
+    return;
+  }
+  // Existing accounts keep their schema-1 snapshots until the browser migrates them.
   const allowedKeys = new Set([
     "schemaVersion",
     "revision",
@@ -2936,6 +2960,12 @@ function migrateDatabase(database) {
 
         PRAGMA user_version = 2;
       `);
+    }
+    if (version < 3) {
+      // Tables are unchanged, but schema-2 backends cannot read canvas-v2
+      // instruction payloads. Mark this capability before any new writes so
+      // the deployment rollback guard rejects incompatible older code.
+      database.exec("PRAGMA user_version = 3;");
     }
     database.exec("COMMIT");
   } catch (error) {

@@ -14,11 +14,6 @@
     "ud_avr_ai_project_instruction_v1";
   const STORAGE_PROJECT_AI_COLUMN_WIDTH =
     "ud_avr_ai_column_width_v1";
-  const STORAGE_PROJECT_AI_STACK_SPLIT =
-    "ud_avr_ai_stack_split_v1";
-  const STORAGE_PROJECT_AI_CHATS = "ud_avr_ai_chats_v1";
-  const STORAGE_PROJECT_AI_CHATS_RECOVERY =
-    "ud_avr_ai_chats_recovery_v1";
   const STORAGE_PROJECT_AI_ACCOUNT_SYNC = "ud_avr_ai_account_sync_v1";
   const STORAGE_PROJECT_AI_LOCAL_DIRTY =
     "ud_avr_ai_local_dirty_v1";
@@ -33,15 +28,6 @@
   const PROJECT_AI_LOGOUT_URL = "/api/avr/ai/auth/logout";
   const PROJECT_AI_ACCOUNT_WORKSPACE_URL =
     "/api/avr/ai/account/workspace";
-  const PROJECT_AI_REQUEST_TARGET_BYTES = 768 * 1024;
-  const PROJECT_AI_MAX_CHATS = 100;
-  const PROJECT_AI_CHAT_TITLE_LENGTH = 52;
-  const PROJECT_AI_PROMPT_MAX_LENGTH = 6000;
-  const PROJECT_AI_PROMPT_MIN_HEIGHT = 76;
-  const PROJECT_AI_PROMPT_MAX_HEIGHT = 190;
-  const PROJECT_AI_PROMPT_COMPACT_MIN_HEIGHT = 42;
-  const PROJECT_AI_PROMPT_COMPACT_MAX_HEIGHT = 110;
-  const PROJECT_AI_MESSAGE_EDIT_MIN_HEIGHT = 108;
   const MARKDOWN_AUTHORSHIP_SCHEMA_VERSION = 1;
   const MARKDOWN_AUTHORSHIP_VALUES = new Set(["original", "human", "ai"]);
   const LEGACY_STORAGE_KEY = "ud_c_canvas_files_v1";
@@ -62,8 +48,6 @@
   const WORKSPACE_RESIZER_TOTAL_WIDTH = 42;
   const PROJECT_AI_COLUMN_DEFAULT_WIDTH = 318;
   const PROJECT_AI_COLUMN_MIN_WIDTH = 238;
-  const PROJECT_AI_STACK_MIN_HEIGHT = 190;
-  const PROJECT_AI_STACK_RESIZER_HEIGHT = 14;
   const DEVICE_PANEL_EXPANDED_HEIGHT = 112;
   const DEVICE_PANEL_COMPACT_HEIGHT = 54;
   const DEVICE_PANEL_COLLAPSED_HEIGHT = 0;
@@ -72,22 +56,6 @@
   const MINI_PROJECT_INSTALLED_EVENT = "ud-avr-mini-project-installed";
   const MINI_PROJECT_READY_EVENT = "ud-avr-mini-projects-ready";
   const DEFAULT_PROJECT_INSTRUCTION = "";
-  const LEGACY_DEFAULT_PROJECT_INSTRUCTION = [
-    "# Инициализация",
-    "",
-    "# Процессы",
-    "",
-    "## Фоновый процесс",
-    "",
-    "Цикл while(1).",
-    "",
-    "## Дискретизация по времени 1 сек.",
-    "",
-    "## Реакция на кнопку",
-    "",
-    "## Выдача по UART",
-    "",
-  ].join("\n");
   const LEGACY_BUILTIN_MINI_PROJECT_IDS = new Set([
     "minimum",
     "cpu-clock",
@@ -143,13 +111,13 @@
   let documentationEditSaveTimer = null;
   let projectAiColumnWidth = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
   let projectAiColumnPreferredWidth = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
-  let projectAiInstructionHeight = 0;
-  let projectAiInstructionPreferredHeight = 0;
   let projectInstructionDocument = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: 0,
     markdown: DEFAULT_PROJECT_INSTRUCTION,
-    skillRefs: [],
+    locale: "",
+    annotations: [],
+    target: { mcu: "", packageName: "" },
     authorship: {
       schemaVersion: MARKDOWN_AUTHORSHIP_SCHEMA_VERSION,
       lines: ["original"],
@@ -164,21 +132,11 @@
   let projectInstructionEditorSyncing = false;
   let projectInstructionCompositionActive = false;
   const markdownLiveEditors = new Map();
-  let projectAiSelectionQuote = null;
-  let projectAiPromptQuotes = [];
+  let canvasAnnotationWidgets = [];
+  let canvasSupportedDevices = [];
   let devicePanelState = "expanded";
   let devicePanelHeight = DEVICE_PANEL_EXPANDED_HEIGHT;
   let devicePanelTransitionTimer = null;
-  let projectAiChats = {
-    schemaVersion: 1,
-    activeChatId: "",
-    chats: [],
-  };
-  let projectAiConversation = [];
-  let projectAiChatRenameId = "";
-  let projectAiPendingChatPointerAction = null;
-  let projectAiChatRenameRenderPending = false;
-  let projectAiChatsSaveTimer = null;
   let projectAiAccountFilesSaveTimer = null;
   let projectAiAccountInstructionSaveTimer = null;
   let projectAiAccountWorkspacePromise = null;
@@ -190,20 +148,18 @@
   let projectAiAccountSync = {
     ready: false,
     accountKey: "",
-    revisions: { chats: 0, files: 0, instruction: 0 },
-    dirty: { chats: false, files: false, instruction: false },
-    saving: { chats: false, files: false, instruction: false },
-    conflicts: { chats: false, files: false, instruction: false },
-    mutations: { chats: 0, files: 0, instruction: 0 },
-    retries: { chats: 0, files: 0, instruction: 0 },
+    revisions: { files: 0, instruction: 0 },
+    dirty: { files: false, instruction: false },
+    saving: { files: false, instruction: false },
+    conflicts: { files: false, instruction: false },
+    mutations: { files: 0, instruction: 0 },
+    retries: { files: 0, instruction: 0 },
   };
   let projectAiLocalDirty = {
-    chats: false,
     files: false,
     instruction: false,
   };
   let projectAiRequestInFlight = false;
-  let projectAiRestorePromptFocus = false;
   let projectAiAuthSession = null;
   let projectAiAuthSessionPromise = null;
   let projectAiAuthRequestEpoch = 0;
@@ -225,6 +181,8 @@
     "asm",
     "txt",
     "md",
+    "yaml",
+    "yml",
     "hex",
     "ihex",
   ]);
@@ -1540,6 +1498,7 @@
     if (
       activeLink &&
       activeLink.role !== miniProjectCore.ROLES.SOURCE &&
+      activeLink.role !== miniProjectCore.ROLES.SPECIFICATION &&
       hasFile(activeLink.project.files?.source)
     ) {
       current = activeLink.project.files.source;
@@ -2143,8 +2102,9 @@
       source: "text/x-c",
       guide: "text/markdown",
       aiSpec: "text/markdown",
+      specification: "application/yaml",
     };
-    const projectFiles = ["source", "aiSpec"].flatMap((role) => {
+    const projectFiles = ["source", "specification", "aiSpec"].flatMap((role) => {
       const name = project.files?.[role];
       if (!name || !hasFile(name)) return [];
       return [
@@ -2211,6 +2171,7 @@
       definition.files.source,
       ...(definition.guides || []),
       definition.files.aiSpec,
+      definition.files.specification,
     ].filter(Boolean);
     const seenDefinitionFiles = new Set();
     const pendingFiles = definitionFiles
@@ -2441,6 +2402,24 @@
         replacementAuthor
       );
 
+      if (definition.files.specification) {
+        const spec = definition.files.specification;
+        const specName = project.files.specification && hasFile(project.files.specification)
+          ? project.files.specification : uniqueReservedFileName(spec.name, new Set());
+        const previousSpec = files[specName] || "";
+        files[specName] = spec.content;
+        fileAuthorship[specName] = mergeMarkdownAuthorshipForReplacement(previousSpec, spec.content, fileAuthorship[specName], replacementAuthor);
+        project.files.specification = specName;
+        project.mediaTypes.specification = "application/yaml";
+      }
+      if (generatedGuide.locale && guide.locale !== generatedGuide.locale) {
+        delete project.guides[guide.locale];
+        guide.locale = generatedGuide.locale;
+        guide.label = generatedGuide.label || generatedGuide.locale;
+        project.guides[guide.locale] = guide;
+        project.selectedLocale = guide.locale;
+        project.defaultLocale = guide.locale;
+      }
       project.title = definition.title || project.title;
       project.summary = definition.summary;
       project.version = definition.version ?? project.version;
@@ -2939,9 +2918,6 @@
       localStorage.setItem(STORAGE_OUTLINER_WIDTH, String(outlinerPreferredWidth));
       localStorage.setItem(STORAGE_DOCUMENTATION_WIDTH, String(documentationPreferredWidth));
       localStorage.setItem(STORAGE_PROJECT_AI_COLUMN_WIDTH, String(projectAiColumnPreferredWidth));
-      if (projectAiInstructionPreferredHeight > 0) {
-        localStorage.setItem(STORAGE_PROJECT_AI_STACK_SPLIT, String(projectAiInstructionPreferredHeight));
-      }
     } catch (error) {
       console.warn("Failed to persist workspace layout:", error);
     }
@@ -2954,7 +2930,6 @@
       editor?.refresh();
       documentationEditor?.refresh();
       projectInstructionEditor?.refresh();
-      constrainProjectAiComposer();
       fitEditorFileWatermark();
     });
   }
@@ -2991,7 +2966,7 @@
       const container = getCanvasSplitContainer();
       container?.classList.remove("is-outliner-compact", "is-project-ai-compact", "is-documentation-compact");
     }
-    applyProjectAiStackHeight(projectAiInstructionPreferredHeight);
+
     refreshWorkspaceEditors();
   }
 
@@ -3027,7 +3002,6 @@
     outlinerPreferredWidth = snapWorkspacePanelSize(read(STORAGE_OUTLINER_WIDTH, OUTLINER_DEFAULT_WIDTH), specs[0]);
     projectAiColumnPreferredWidth = snapWorkspacePanelSize(read(STORAGE_PROJECT_AI_COLUMN_WIDTH, PROJECT_AI_COLUMN_DEFAULT_WIDTH), specs[1]);
     documentationPreferredWidth = snapWorkspacePanelSize(read(STORAGE_DOCUMENTATION_WIDTH, DOCUMENTATION_DEFAULT_WIDTH), specs[3]);
-    projectAiInstructionPreferredHeight = read(STORAGE_PROJECT_AI_STACK_SPLIT, 0);
     fitWorkspaceToViewport();
   }
 
@@ -3130,67 +3104,12 @@
     return document.querySelector(".project-ai-layout");
   }
 
-  function getProjectAiStackLimits() {
-    const available = Math.max(0, Math.round(getProjectAiLayout()?.getBoundingClientRect().height || 0) - PROJECT_AI_STACK_RESIZER_HEIGHT);
-    const panel = document.querySelector(".project-ai-chat-panel");
-    const style = panel && window.getComputedStyle(panel);
-    const outerHeight = element => {
-      if (!element) return 0;
-      const css = window.getComputedStyle(element);
-      return element.getBoundingClientRect().height +
-        (parseFloat(css.marginTop) || 0) + (parseFloat(css.marginBottom) || 0);
-    };
-    const chrome = ["paddingTop", "paddingBottom", "borderTopWidth", "borderBottomWidth"]
-      .reduce((sum, key) => sum + (parseFloat(style?.[key]) || 0), 0);
-    const chatMinimum = Math.max(PROJECT_AI_STACK_MIN_HEIGHT, Math.ceil(
-      chrome + outerHeight(panel?.querySelector(".avr-action-strip")) +
-        outerHeight($("projectAiForm")) + 48
-    ));
-    const minimum = Math.min(PROJECT_AI_STACK_MIN_HEIGHT, Math.floor(available / 3));
-    const maximum = Math.max(minimum, available - chatMinimum);
-    return { available, minimum, maximum };
-  }
 
-  function applyProjectAiStackHeight(requested = projectAiInstructionPreferredHeight) {
-    const layout = getProjectAiLayout();
-    if (!layout) return;
-    const { available, minimum, maximum } = getProjectAiStackLimits();
-    const value = Number(requested) > 0 ? Number(requested) : available / 2;
-    projectAiInstructionHeight = Math.round(Math.max(minimum, Math.min(maximum, value)));
-    layout.style.setProperty("--project-ai-instruction-height", `${projectAiInstructionHeight}px`);
-    layout.style.setProperty("--project-ai-chat-height", `${available - projectAiInstructionHeight}px`);
-    const handle = $("projectAiChatResizer");
-    handle?.setAttribute("aria-valuemin", String(minimum));
-    handle?.setAttribute("aria-valuemax", String(maximum));
-    handle?.setAttribute("aria-valuenow", String(projectAiInstructionHeight));
-    handle?.setAttribute("aria-valuetext", "Instruction and chat split");
-    refreshWorkspaceEditors();
-  }
+
+
 
   function bindProjectAiResizers() {
     bindWorkspaceColumnResizer("projectAiColumnResizer", 1);
-    const remember = () => {
-      projectAiInstructionPreferredHeight = projectAiInstructionHeight;
-      persistWorkspaceLayout();
-    };
-    bindSplitResizer($("projectAiChatResizer"), {
-      axis: "y",
-      start: () => projectAiInstructionHeight,
-      move: (delta, height) => applyProjectAiStackHeight(height + delta),
-      finish: remember,
-      key: event => {
-        const { minimum, maximum } = getProjectAiStackLimits();
-        let requested = projectAiInstructionHeight;
-        if (event.key === "ArrowUp") requested -= event.shiftKey ? 48 : 24;
-        else if (event.key === "ArrowDown") requested += event.shiftKey ? 48 : 24;
-        else if (event.key === "Home") requested = minimum;
-        else if (event.key === "End") requested = maximum;
-        else return;
-        event.preventDefault();
-        applyProjectAiStackHeight(requested);
-        remember();
-      },
-    });
   }
 
   function bindWorkspaceResizeObserver() {
@@ -3233,6 +3152,7 @@
     if (["hex", "ihex"].includes(ext)) return "hex";
     if (ext === "txt") return "txt";
     if (ext === "md") return "md";
+    if (["yaml", "yml"].includes(ext)) return "yaml";
     return "file";
   }
 
@@ -3244,6 +3164,7 @@
     if (kind === "hex") return "HEX";
     if (kind === "txt") return "TXT";
     if (kind === "md") return "MD";
+    if (kind === "yaml") return "YML";
     return "F";
   }
 
@@ -4348,7 +4269,7 @@
   function isHiddenMiniProjectFile(fileName) {
     const linkedProject = getMiniProjectForFile(fileName);
     return !!(
-      linkedProject && linkedProject.role !== miniProjectCore.ROLES.SOURCE
+      linkedProject && [miniProjectCore.ROLES.GUIDE, miniProjectCore.ROLES.AI_SPEC].includes(linkedProject.role)
     );
   }
 
@@ -4856,40 +4777,47 @@
     );
   }
 
-  function normalizeInstructionSkillRefs(value) {
+
+
+  function normalizeCanvasAnnotations(value) {
     if (!Array.isArray(value)) return [];
-    const seen = new Set();
-    const refs = [];
-    for (const rawRef of value) {
-      const id = String(rawRef?.id || "").trim();
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      refs.push({
+    const ids = new Set();
+    return value.slice(0, 100).flatMap((annotation) => {
+      const id = String(annotation?.id || "");
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(id) || ids.has(id)) return [];
+      ids.add(id);
+      const line = Number(annotation.anchor?.line);
+      return [{
         id,
-        version: String(rawRef?.version || "").trim(),
-      });
-    }
-    return refs;
+        kind: ["question", "information", "error"].includes(annotation.kind)
+          ? annotation.kind : "question",
+        anchor: {
+          quote: String(annotation.anchor?.quote || ""),
+          line: Number.isSafeInteger(line) && line >= 1 ? line : null,
+        },
+        message: String(annotation.message || ""),
+        status: annotation.status === "resolved" ? "resolved" : "open",
+        answer: String(annotation.answer || ""),
+      }];
+    });
   }
 
   function normalizeProjectInstructionDocument(value) {
     const source = value && typeof value === "object" ? value : {};
     const revision = Number(source.revision);
+    const markdown = typeof source.markdown === "string"
+      ? source.markdown : DEFAULT_PROJECT_INSTRUCTION;
     return {
-      schemaVersion: 1,
-      revision:
-        Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
-      markdown:
-        typeof source.markdown === "string"
-          ? source.markdown
-          : DEFAULT_PROJECT_INSTRUCTION,
-      skillRefs: normalizeInstructionSkillRefs(source.skillRefs),
-      authorship: normalizeMarkdownAuthorship(
-        source.authorship,
-        typeof source.markdown === "string"
-          ? source.markdown
-          : DEFAULT_PROJECT_INSTRUCTION
-      ),
+      schemaVersion: 2,
+      revision: Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
+      markdown,
+      locale: typeof source.locale === "string" ? source.locale : "",
+      annotations: normalizeCanvasAnnotations(source.annotations),
+      ...(source.target && typeof source.target === "object" ? { target: {
+        mcu: String(source.target.mcu || ""),
+        packageName: String(source.target.packageName || ""),
+      } } : {}),
+      authorship: normalizeMarkdownAuthorship(source.authorship, markdown),
     };
   }
 
@@ -4899,7 +4827,7 @@
       !parsed ||
       typeof parsed !== "object" ||
       Array.isArray(parsed) ||
-      parsed.schemaVersion !== 1 ||
+      ![1, 2].includes(parsed.schemaVersion) ||
       !Number.isSafeInteger(parsed.revision) ||
       parsed.revision < 0 ||
       typeof parsed.markdown !== "string"
@@ -4909,22 +4837,201 @@
     return normalizeProjectInstructionDocument(parsed);
   }
 
-  function getProjectInstructionSnapshot({ forRequest = false } = {}) {
-    const skillRefs = normalizeInstructionSkillRefs(
-      projectInstructionDocument.skillRefs
-    );
+  function getProjectInstructionSnapshot() {
+    return normalizeProjectInstructionDocument(projectInstructionDocument);
+  }
+
+  function canvasText(english, russian) {
+    return /[\u0400-\u04ff]/u.test(projectInstructionDocument.markdown) ? russian : english;
+  }
+
+  function reportProjectCanvasMessage(kind, message) {
+    const status = $("projectCanvasStatus");
+    if (!status) return;
+    status.textContent = String(message || "");
+    status.hidden = !status.textContent;
+    status.classList.toggle("is-error", kind === "system");
+  }
+
+  function getCanvasTarget() {
+    const select = $("mcuSelect");
+    let mcu = String(select?.value || projectInstructionDocument.target?.mcu || "");
+    if (mcu === "auto") {
+      const bridge = window[AVR_UPDI_BRIDGE_KEY] || window[LEGACY_UPDI_BRIDGE_KEY];
+      mcu = String(bridge?.getDetectedTargetKey?.() || "");
+    }
     return {
-      schemaVersion: 1,
-      revision: projectInstructionDocument.revision,
-      markdown: projectInstructionDocument.markdown,
-      skillRefs: skillRefs.map((skillRef) => ({
-        ...skillRef,
-      })),
-      authorship: normalizeMarkdownAuthorship(
-        projectInstructionDocument.authorship,
-        projectInstructionDocument.markdown
-      ),
+      mcu,
+      packageName: String($("projectPackageSelect")?.value || ""),
     };
+  }
+
+  function syncCanvasTargetControls(restore = false) {
+    const select = $("projectPackageSelect");
+    if (!select) return;
+    const mcuSelect = $("mcuSelect");
+    const savedTarget = projectInstructionDocument.target;
+    if (restore && savedTarget?.mcu && mcuSelect &&
+        [...mcuSelect.options].some((option) => option.value === savedTarget.mcu)) {
+      mcuSelect.value = savedTarget.mcu;
+      const custom = mcuSelect.nextElementSibling;
+      if (custom?.classList.contains("custom-select")) updateCustomSelect(mcuSelect, custom);
+    }
+    const target = getCanvasTarget();
+    const device = canvasSupportedDevices.find((item) => item.mcu === target.mcu);
+    const selectedPackage = restore && savedTarget?.mcu === target.mcu
+      ? savedTarget.packageName : select.value;
+    const previousMcu = select.dataset.mcu;
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = !target.mcu
+      ? canvasText("Select or detect an MCU", "Выберите или определите МК")
+      : device
+        ? canvasText("Choose package", "Выберите корпус")
+        : canvasText("MCU is outside the pilot", "МК вне пилотного набора");
+    select.replaceChildren(placeholder);
+    for (const packageName of device?.packages || []) {
+      const option = document.createElement("option");
+      option.value = packageName;
+      option.textContent = packageName;
+      select.appendChild(option);
+    }
+    if ((restore || !previousMcu || previousMcu === target.mcu) && device?.packages.includes(selectedPackage)) {
+      select.value = selectedPackage;
+    }
+    select.dataset.mcu = target.mcu;
+    select.disabled = !device;
+  }
+
+  function saveCanvasTarget() {
+    const target = getCanvasTarget();
+    const previous = projectInstructionDocument.target;
+    if (previous?.mcu === target.mcu && previous?.packageName === target.packageName) return;
+    projectInstructionDocument = { ...projectInstructionDocument, target,
+      revision: projectInstructionDocument.revision + 1 };
+    persistProjectInstruction({ recover: true });
+  }
+
+  function bindCanvasTargetControls() {
+    setProjectAiFormBusy(false);
+    $("mcuSelect")?.addEventListener("change", () => {
+      syncCanvasTargetControls();
+      saveCanvasTarget();
+    });
+    $("projectPackageSelect")?.addEventListener("change", saveCanvasTarget);
+    // Knowledge availability is separate from account/credit availability.
+    void fetch("/api/avr/ai/status", { headers: { Accept: "application/json" }, credentials: "same-origin" })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("Knowledge is unavailable")))
+      .then((status) => {
+        canvasSupportedDevices = (status.knowledge?.devices || []).filter((device) =>
+          typeof device?.mcu === "string" && Array.isArray(device.packages))
+          .map((device) => ({ ...device, mcu: device.mcu.toLowerCase() }));
+        syncCanvasTargetControls(true);
+        if (!canvasSupportedDevices.length) {
+          reportProjectCanvasMessage("system", canvasText("The AVR knowledge pack is unavailable. Your canvas remains saved.", "База AVR недоступна. Холст сохранён."));
+        }
+      })
+      .catch(() => {
+        syncCanvasTargetControls();
+        reportProjectCanvasMessage("system", canvasText("AI is unavailable. You can keep editing the canvas.", "ИИ недоступен. Можно продолжать редактировать холст."));
+      });
+    syncCanvasTargetControls();
+  }
+
+  function resolveCanvasAnnotationLine(annotation, markdown) {
+    const quote = String(annotation.anchor?.quote || "");
+    const preferred = Number(annotation.anchor?.line) - 1;
+    const lines = markdown.split("\n");
+    const preferredOffset = quote && preferred >= 0
+      ? lines.slice(preferred).join("\n").indexOf(quote) : -1;
+    if (preferredOffset >= 0 && preferredOffset < (lines[preferred]?.length || 0)) return preferred;
+    const offset = quote ? markdown.indexOf(quote) : -1;
+    return offset >= 0 ? markdown.slice(0, offset).split("\n").length - 1 : null;
+  }
+
+  function updateCanvasAnnotation(id, changes) {
+    projectInstructionDocument = {
+      ...projectInstructionDocument,
+      revision: projectInstructionDocument.revision + 1,
+      annotations: projectInstructionDocument.annotations.map((annotation) =>
+        annotation.id === id ? { ...annotation, ...changes } : annotation),
+    };
+    persistProjectInstruction({ recover: true });
+  }
+
+  function createCanvasAnnotationElement(annotation, anchored) {
+    const card = document.createElement("section");
+    card.className = `canvas-annotation is-${annotation.kind} is-${annotation.status}`;
+    card.dataset.annotationId = annotation.id;
+    card.dataset.annotationStatus = annotation.status;
+    const heading = document.createElement("div");
+    heading.className = "canvas-annotation-heading";
+    const title = document.createElement("strong");
+    title.textContent = annotation.kind === "question" ? canvasText("Question", "Вопрос")
+      : annotation.kind === "error" ? canvasText("Needs attention", "Требует внимания")
+        : canvasText("Note", "Замечание");
+    const state = document.createElement("span");
+    state.textContent = annotation.status === "resolved" ? canvasText("Resolved", "Решено") : canvasText("Open", "Открыто");
+    heading.append(title, state);
+    const quote = document.createElement("blockquote");
+    quote.textContent = annotation.anchor.quote;
+    quote.title = anchored ? canvasText("Linked canvas text", "Связанный текст холста") : canvasText("The linked text was moved or removed", "Связанный текст перемещён или удалён");
+    const message = document.createElement("p");
+    message.textContent = annotation.message;
+    card.append(heading, quote, message);
+    if (!anchored) {
+      const moved = document.createElement("small");
+      moved.textContent = canvasText("Linked text changed; AI will relocate this note on the next run.", "Связанный текст изменён; ИИ уточнит привязку при следующем запуске.");
+      card.appendChild(moved);
+    }
+    const answerLabel = document.createElement("label");
+    answerLabel.textContent = canvasText("Your answer", "Ваш ответ");
+    const answer = document.createElement("textarea");
+    answer.rows = 2;
+    answer.maxLength = 8000;
+    answer.value = annotation.answer;
+    answer.setAttribute("aria-label", `${answerLabel.textContent}: ${annotation.message}`);
+    answerLabel.appendChild(answer);
+    card.appendChild(answerLabel);
+    const resolvedLabel = document.createElement("label");
+    resolvedLabel.className = "canvas-annotation-resolved";
+    const resolved = document.createElement("input");
+    resolved.type = "checkbox";
+    resolved.checked = annotation.status === "resolved";
+    resolved.disabled = annotation.kind === "question" && !answer.value.trim();
+    resolvedLabel.append(resolved, document.createTextNode(canvasText("Resolved", "Решено")));
+    answer.addEventListener("input", () => {
+      const changes = { answer: answer.value };
+      if (annotation.kind === "question" && !answer.value.trim()) {
+        changes.status = "open";
+        resolved.checked = false;
+      }
+      resolved.disabled = annotation.kind === "question" && !answer.value.trim();
+      updateCanvasAnnotation(annotation.id, changes);
+    });
+    resolved.addEventListener("change", () => {
+      updateCanvasAnnotation(annotation.id, { status: resolved.checked ? "resolved" : "open" });
+      renderCanvasAnnotations();
+    });
+    card.appendChild(resolvedLabel);
+    return card;
+  }
+
+  function renderCanvasAnnotations() {
+    for (const widget of canvasAnnotationWidgets) widget.clear();
+    canvasAnnotationWidgets = [];
+    const fallback = $("projectCanvasAnnotationsFallback");
+    fallback?.replaceChildren();
+    for (const annotation of projectInstructionDocument.annotations || []) {
+      const line = resolveCanvasAnnotationLine(annotation, projectInstructionDocument.markdown);
+      const card = createCanvasAnnotationElement(annotation, line !== null);
+      if (projectInstructionEditor?.addLineWidget && line !== null) {
+        canvasAnnotationWidgets.push(projectInstructionEditor.addLineWidget(line, card, {
+          coverGutter: false, noHScroll: true, handleMouseEvents: false,
+        }));
+      } else fallback?.appendChild(card);
+    }
+    if (fallback) fallback.hidden = !fallback.childElementCount;
   }
 
   function setProjectInstructionSaveState(message = "", { error = false } = {}) {
@@ -4947,18 +5054,7 @@
         );
         if (legacyStored !== null) {
           const legacyDocument = parseStoredProjectInstruction(legacyStored);
-          projectInstructionDocument =
-            legacyDocument.markdown === LEGACY_DEFAULT_PROJECT_INSTRUCTION
-              ? {
-                  ...legacyDocument,
-                  markdown: DEFAULT_PROJECT_INSTRUCTION,
-                  skillRefs: [],
-                  authorship: normalizeMarkdownAuthorship(
-                    null,
-                    DEFAULT_PROJECT_INSTRUCTION
-                  ),
-                }
-              : legacyDocument;
+          projectInstructionDocument = legacyDocument;
           try {
             window.localStorage.setItem(
               STORAGE_PROJECT_INSTRUCTION,
@@ -5855,52 +5951,39 @@
 
   function applyProjectInstructionMarkdown(
     markdown,
-    { skillRefs, expectedRevision = null, focus = false } = {}
+    { annotations, locale, expectedRevision = null, focus = false } = {}
   ) {
-    if (typeof markdown !== "string") {
-      throw new TypeError("The project instruction must be Markdown text.");
+    if (typeof markdown !== "string") throw new TypeError("The canvas must be Markdown text.");
+    if (expectedRevision !== null && projectInstructionDocument.revision !== expectedRevision) {
+      throw new Error("The canvas changed while AI was working. Your newer edits were preserved.");
     }
-    if (
-      expectedRevision !== null &&
-      projectInstructionDocument.revision !== expectedRevision
-    ) {
-      throw new Error(
-        "The instruction changed while the AI was responding. Your newer edits were preserved."
-      );
-    }
-
-    const previousMarkdown = projectInstructionDocument.markdown;
-    projectInstructionDocument = {
-      schemaVersion: 1,
-      revision: projectInstructionDocument.revision + 1,
+    const previous = projectInstructionDocument;
+    projectInstructionDocument = normalizeProjectInstructionDocument({
+      ...previous,
+      revision: previous.revision + 1,
       markdown,
-      skillRefs:
-        skillRefs === undefined
-          ? projectInstructionDocument.skillRefs
-          : normalizeInstructionSkillRefs(skillRefs),
+      locale: locale === undefined ? previous.locale : locale,
+      annotations: annotations === undefined ? previous.annotations : annotations,
       authorship: mergeMarkdownAuthorshipForReplacement(
-        previousMarkdown,
-        markdown,
-        projectInstructionDocument.authorship,
-        "ai"
+        previous.markdown, markdown, previous.authorship, "ai"
       ),
-    };
-    setProjectInstructionEditorValue(projectInstructionDocument.markdown);
+    });
+    setProjectInstructionEditorValue(markdown);
     scheduleProjectInstructionPreview();
+    renderCanvasAnnotations();
     persistProjectInstruction({ recover: true });
-    if (focus) {
-      projectInstructionEditor?.focus();
-      if (!projectInstructionEditor) {
-        $("projectInstructionEditor")?.focus({ preventScroll: true });
-      }
-    }
+    if (focus) projectInstructionEditor?.focus();
   }
 
-  function getCompatibleInstructionSkillRefs(
-    markdown,
-    refs = projectInstructionDocument.skillRefs
-  ) {
-    return normalizeInstructionSkillRefs(refs);
+  function updateProjectInstructionFromUser(markdown, authorship) {
+    projectInstructionDocument = {
+      ...projectInstructionDocument,
+      revision: projectInstructionDocument.revision + 1,
+      markdown,
+      // A manual edit may switch the requirements language. Infer it on the next run.
+      locale: "",
+      authorship,
+    };
   }
 
   function bindProjectInstructionWorkspace() {
@@ -5940,10 +6023,6 @@
         getContextKey: () => "project-instruction",
         resolveImageUrl: (href) => resolveDocumentationImageUrl(href, null),
       });
-      bindCodeMirrorQuoteSurface(
-        projectInstructionEditor,
-        "Project instruction"
-      );
 
       const inputField = projectInstructionEditor.getInputField();
       inputField.setAttribute("aria-label", "Project instruction Markdown");
@@ -5970,21 +6049,16 @@
         if (projectInstructionEditorSyncing) return;
         const previousMarkdown = projectInstructionDocument.markdown;
         const markdown = cm.getValue();
-        projectInstructionDocument = {
-          ...projectInstructionDocument,
-          revision: projectInstructionDocument.revision + 1,
-          markdown,
-          authorship: updateMarkdownAuthorshipForChange(
+        updateProjectInstructionFromUser(markdown,
+          updateMarkdownAuthorshipForChange(
             projectInstructionDocument.authorship,
             previousMarkdown,
             change,
             "human"
-          ),
-          skillRefs: normalizeInstructionSkillRefs(
-            projectInstructionDocument.skillRefs
-          ),
-        };
+          )
+        );
         scheduleProjectInstructionPreview();
+        renderCanvasAnnotations();
         persistProjectInstruction({ recover: true });
       });
       projectInstructionEditor.on(
@@ -6006,25 +6080,22 @@
       editorElement.value = projectInstructionDocument.markdown;
       editorElement.addEventListener("input", () => {
         const previousMarkdown = projectInstructionDocument.markdown;
-        projectInstructionDocument = {
-          ...projectInstructionDocument,
-          revision: projectInstructionDocument.revision + 1,
-          markdown: editorElement.value,
-          authorship: createMarkdownAuthorship(
+        updateProjectInstructionFromUser(editorElement.value,
+          createMarkdownAuthorship(
             editorElement.value,
             previousMarkdown === editorElement.value ? "original" : "human"
-          ),
-          skillRefs: normalizeInstructionSkillRefs(
-            projectInstructionDocument.skillRefs
-          ),
-        };
+          )
+        );
+        renderCanvasAnnotations();
         persistProjectInstruction({ recover: true });
       });
     }
 
     renderProjectInstructionPreview();
+    renderCanvasAnnotations();
     window.UartDebugAvrAiWorkspace = Object.freeze({
       getInstruction: getProjectInstructionSnapshot,
+      processCanvas: submitProjectCanvas,
       setInstruction(markdown, options = {}) {
         applyProjectInstructionMarkdown(markdown, options);
         return getProjectInstructionSnapshot();
@@ -6032,1079 +6103,12 @@
     });
   }
 
-  function createProjectAiRecordId(prefix) {
-    const normalizedPrefix = String(prefix || "item").replace(/[^a-z0-9-]/gi, "");
-    const randomId = window.crypto?.randomUUID?.() ||
-      `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    return `${normalizedPrefix}-${randomId}`;
-  }
-
-  function createEmptyProjectAiChat() {
-    const now = Date.now();
-    return {
-      id: createProjectAiRecordId("chat"),
-      title: "New chat",
-      titleSource: "auto",
-      titleLocked: false,
-      createdAt: now,
-      updatedAt: now,
-      messages: [],
-    };
-  }
-
-  function normalizeProjectAiMessage(rawMessage) {
-    const role = String(rawMessage?.role || "");
-    const content = String(rawMessage?.content || "").trim();
-    if (!content || !["user", "assistant"].includes(role)) return null;
-    const createdAt = Number(rawMessage?.createdAt);
-    const editedAt = Number(rawMessage?.editedAt);
-    return {
-      id:
-        String(rawMessage?.id || "").trim() ||
-        createProjectAiRecordId("message"),
-      role,
-      content,
-      title: String(rawMessage?.title || "").trim().slice(0, 120),
-      createdAt:
-        Number.isSafeInteger(createdAt) && createdAt > 0
-          ? createdAt
-          : Date.now(),
-      ...(Number.isSafeInteger(editedAt) && editedAt >= createdAt
-        ? { editedAt }
-        : {}),
-    };
-  }
-
-  function normalizeProjectAiChat(rawChat) {
-    if (!rawChat || typeof rawChat !== "object" || Array.isArray(rawChat)) {
-      return null;
-    }
-    const createdAt = Number(rawChat.createdAt);
-    const updatedAt = Number(rawChat.updatedAt);
-    const messages = [];
-    for (const rawMessage of Array.isArray(rawChat.messages)
-      ? rawChat.messages
-      : []) {
-      const message = normalizeProjectAiMessage(rawMessage);
-      if (message) messages.push(message);
-    }
-    const title = String(rawChat.title || "").trim();
-    return {
-      id:
-        String(rawChat.id || "").trim() || createProjectAiRecordId("chat"),
-      title: (title || "New chat").slice(0, PROJECT_AI_CHAT_TITLE_LENGTH),
-      titleSource:
-        rawChat.titleSource === "manual" ? "manual" : "auto",
-      titleLocked:
-        rawChat.titleLocked === true || rawChat.titleSource === "manual",
-      createdAt:
-        Number.isSafeInteger(createdAt) && createdAt > 0
-          ? createdAt
-          : Date.now(),
-      updatedAt:
-        Number.isSafeInteger(updatedAt) && updatedAt > 0
-          ? updatedAt
-          : Date.now(),
-      messages,
-    };
-  }
-
-  function normalizeProjectAiChats(rawValue) {
-    const source =
-      rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)
-        ? rawValue
-        : {};
-    const chats = [];
-    const seen = new Set();
-    for (const rawChat of Array.isArray(source.chats) ? source.chats : []) {
-      const chat = normalizeProjectAiChat(rawChat);
-      if (!chat || seen.has(chat.id)) continue;
-      seen.add(chat.id);
-      chats.push(chat);
-      if (chats.length >= PROJECT_AI_MAX_CHATS) break;
-    }
-    if (!chats.length) chats.push(createEmptyProjectAiChat());
-    const requestedActiveId = String(source.activeChatId || "");
-    return {
-      schemaVersion: 1,
-      activeChatId: chats.some((chat) => chat.id === requestedActiveId)
-        ? requestedActiveId
-        : chats[0].id,
-      chats,
-    };
-  }
-
-  function getActiveProjectAiChat() {
-    let active = projectAiChats.chats.find(
-      (chat) => chat.id === projectAiChats.activeChatId
-    );
-    if (!active) {
-      active = projectAiChats.chats[0] || createEmptyProjectAiChat();
-      if (!projectAiChats.chats.length) projectAiChats.chats.push(active);
-      projectAiChats.activeChatId = active.id;
-    }
-    projectAiConversation = active.messages;
-    return active;
-  }
-
-  function getProjectAiChatsSnapshot() {
-    return normalizeProjectAiChats(projectAiChats);
-  }
-
-  function restoreProjectAiChats() {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_PROJECT_AI_CHATS);
-      projectAiChats = normalizeProjectAiChats(raw ? JSON.parse(raw) : null);
-    } catch {
-      projectAiChats = normalizeProjectAiChats(null);
-      console.warn("The stored AI chats could not be read.");
-    }
-    getActiveProjectAiChat();
-  }
-
-  function persistProjectAiChats(
-    { syncAccount = true, renderList = true } = {}
-  ) {
-    try {
-      window.localStorage.setItem(
-        STORAGE_PROJECT_AI_CHATS,
-        JSON.stringify(getProjectAiChatsSnapshot())
-      );
-    } catch (error) {
-      console.warn("The AI chats could not be saved locally:", error);
-    }
-    if (renderList) renderProjectAiChatList();
-    if (
-      syncAccount &&
-      projectAiBootComplete &&
-      !projectAiAccountWorkspaceApplying
-    ) {
-      markProjectAiAccountDocumentDirty("chats");
-    }
-  }
-
-  function deriveProjectAiChatTitle(message) {
-    const singleLine = String(message || "")
-      .replace(/```[\s\S]*?```/g, " ")
-      .replace(/[#>*_`~\[\]()]/g, " ")
-      .replace(/\s+/g, " ")
-      .replace(/^(?:please|could you|can you|нужно|пожалуйста)\s+/i, "")
-      .trim();
-    if (!singleLine) return "New chat";
-    const shortTitle = singleLine.split(" ").slice(0, 7).join(" ");
-    if (shortTitle.length <= PROJECT_AI_CHAT_TITLE_LENGTH) return shortTitle;
-    return `${shortTitle.slice(0, PROJECT_AI_CHAT_TITLE_LENGTH - 1).trim()}…`;
-  }
-
-  function recordProjectAiMessage(kind, message, title = "") {
-    if (!["user", "assistant"].includes(kind)) return null;
-    const chat = getActiveProjectAiChat();
-    const normalized = normalizeProjectAiMessage({
-      id: createProjectAiRecordId("message"),
-      role: kind,
-      content: message,
-      title,
-      createdAt: Date.now(),
-    });
-    if (!normalized) return null;
-    chat.messages.push(normalized);
-    if (kind === "user" && chat.title === "New chat") {
-      chat.title = deriveProjectAiChatTitle(normalized.content);
-      chat.titleSource = "auto";
-      chat.titleLocked = false;
-    }
-    chat.updatedAt = Date.now();
-    projectAiConversation = chat.messages;
-    persistProjectAiChats();
-    return normalized;
-  }
-
-  function createProjectAiMessageActionIcon(kind) {
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 24 24");
-    svg.setAttribute("aria-hidden", "true");
-    svg.setAttribute("focusable", "false");
-    if (kind === "edit") {
-      const path = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "path"
-      );
-      path.setAttribute(
-        "d",
-        "M4.75 16.75V19.25H7.25L17.8 8.7L15.3 6.2L4.75 16.75ZM14.6 6.9L17.1 9.4M14.9 6.6L16.25 5.25C16.8 4.7 17.7 4.7 18.25 5.25L18.75 5.75C19.3 6.3 19.3 7.2 18.75 7.75L17.4 9.1"
-      );
-      path.setAttribute("fill", "none");
-      path.setAttribute("stroke", "currentColor");
-      path.setAttribute("stroke-width", "1.7");
-      path.setAttribute("stroke-linecap", "round");
-      path.setAttribute("stroke-linejoin", "round");
-      svg.appendChild(path);
-      return svg;
-    }
-
-    const back = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "rect"
-    );
-    back.setAttribute("x", "8");
-    back.setAttribute("y", "8");
-    back.setAttribute("width", "10");
-    back.setAttribute("height", "11");
-    back.setAttribute("rx", "2");
-    const front = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "path"
-    );
-    front.setAttribute("d", "M15 8V7A2 2 0 0 0 13 5H7A2 2 0 0 0 5 7V14A2 2 0 0 0 7 16H8");
-    for (const element of [back, front]) {
-      element.setAttribute("fill", "none");
-      element.setAttribute("stroke", "currentColor");
-      element.setAttribute("stroke-width", "1.7");
-      element.setAttribute("stroke-linecap", "round");
-      element.setAttribute("stroke-linejoin", "round");
-    }
-    svg.append(back, front);
-    return svg;
-  }
-
-  function createProjectAiMessageAction(kind, messageId) {
-    const button = document.createElement("button");
-    const label = kind === "edit" ? "Edit message" : "Copy message";
-    button.type = "button";
-    button.className = `project-ai-message-action is-${kind}`;
-    button.setAttribute("aria-label", label);
-    button.title = label;
-    if (kind === "edit") button.dataset.editMessageId = messageId;
-    else button.dataset.copyMessageId = messageId;
-    button.appendChild(createProjectAiMessageActionIcon(kind));
-    return button;
-  }
-
-  function renderProjectAiMessageElement(
-    kind,
-    message,
-    title = "",
-    record = null
-  ) {
-    const history = $("projectAiHistory");
-    if (!history) return null;
-
-    const article = document.createElement("article");
-    article.className = `project-ai-message is-${kind}`;
-    if (record?.id) article.dataset.messageId = record.id;
-    else article.dataset.aiTransient = "true";
-
-    const bubble = document.createElement("div");
-    bubble.className = "project-ai-message-bubble";
-
-    const speaker = document.createElement("span");
-    speaker.className = "sr-only";
-    speaker.textContent =
-      kind === "user"
-        ? "You"
-        : kind === "assistant"
-          ? "AI assistant"
-          : "System";
-    bubble.appendChild(speaker);
-
-    if (title) {
-      const heading = document.createElement("strong");
-      heading.textContent = title;
-      bubble.appendChild(heading);
-    }
-
-    if (kind === "assistant") {
-      const markdown = document.createElement("div");
-      markdown.className =
-        "project-ai-message-markdown project-documentation-content";
-      renderMarkdownInto(markdown, message, null, { allowImages: false });
-      bubble.appendChild(markdown);
-    } else {
-      const paragraph = document.createElement("p");
-      paragraph.textContent = String(message || "");
-      bubble.appendChild(paragraph);
-    }
-    if (record?.editedAt) {
-      const edited = document.createElement("span");
-      edited.className = "project-ai-message-edited";
-      edited.textContent = "Edited";
-      bubble.appendChild(edited);
-    }
-    article.appendChild(bubble);
-    if (record?.id && ["user", "assistant"].includes(kind)) {
-      const actions = document.createElement("div");
-      actions.className = "project-ai-message-actions";
-      if (kind === "user") {
-        actions.appendChild(createProjectAiMessageAction("edit", record.id));
-      }
-      actions.appendChild(createProjectAiMessageAction("copy", record.id));
-      article.appendChild(actions);
-    }
-    history.appendChild(article);
-    history.scrollTop = history.scrollHeight;
-    return article;
-  }
-
-  function appendProjectAiMessage(kind, message, title = "") {
-    const record = recordProjectAiMessage(kind, message, title);
-    const article = renderProjectAiMessageElement(
-      kind,
-      message,
-      title,
-      record
-    );
-    return article;
-  }
-
-  function renderProjectAiHistory() {
-    const history = $("projectAiHistory");
-    if (!history) return;
-    history.replaceChildren();
-    const chat = getActiveProjectAiChat();
-    if (!chat.messages.length) {
-      renderProjectAiMessageElement(
-        "assistant",
-        "Ask an AVR question, refine the instruction, or explicitly request a new or updated mini-project."
-      );
-      return;
-    }
-    for (const message of chat.messages) {
-      renderProjectAiMessageElement(
-        message.role,
-        message.content,
-        message.title,
-        message
-      );
-    }
-  }
-
-  function findProjectAiMessage(messageId) {
-    const chat = getActiveProjectAiChat();
-    const index = chat.messages.findIndex(
-      (message) => message.id === String(messageId || "")
-    );
-    return index >= 0 ? { chat, message: chat.messages[index], index } : null;
-  }
-
-  async function copyTextToClipboard(text) {
-    const value = String(text || "");
-    if (navigator.clipboard?.writeText && window.isSecureContext) {
-      await navigator.clipboard.writeText(value);
-      return;
-    }
-    const fallback = document.createElement("textarea");
-    fallback.value = value;
-    fallback.setAttribute("readonly", "");
-    fallback.style.position = "fixed";
-    fallback.style.opacity = "0";
-    document.body.appendChild(fallback);
-    fallback.select();
-    const copied = document.execCommand?.("copy");
-    fallback.remove();
-    if (!copied) throw new Error("Clipboard access is unavailable.");
-  }
-
-  async function copyProjectAiMessage(messageId, button = null) {
-    const found = findProjectAiMessage(messageId);
-    if (!found) return;
-    try {
-      await copyTextToClipboard(found.message.content);
-      if (button) {
-        const previousLabel = button.getAttribute("aria-label") || "Copy message";
-        const previousTitle = button.title;
-        button.classList.add("is-copied");
-        button.setAttribute("aria-label", "Copied");
-        button.title = "Copied";
-        window.setTimeout(() => {
-          if (!button.isConnected) return;
-          button.classList.remove("is-copied");
-          button.setAttribute("aria-label", previousLabel);
-          button.title = previousTitle;
-        }, 1200);
-      }
-    } catch (error) {
-      appendProjectAiMessage(
-        "system",
-        error?.message || "The message could not be copied."
-      );
-    }
-  }
-
-  function truncateProjectAiMessageBranchForEdit(found, content, editedAt) {
-    if (
-      !found?.chat ||
-      !Array.isArray(found.chat.messages) ||
-      found.message?.role !== "user" ||
-      !Number.isSafeInteger(found.index) ||
-      found.index < 0 ||
-      found.chat.messages[found.index] !== found.message
-    ) {
-      return null;
-    }
-    const timestamp =
-      Number.isSafeInteger(editedAt) && editedAt > 0 ? editedAt : Date.now();
-    const editedMessage = {
-      ...found.message,
-      content: String(content || "").trim(),
-      editedAt: timestamp,
-    };
-    found.chat.messages.splice(found.index);
-    found.chat.updatedAt = timestamp;
-    projectAiConversation = found.chat.messages;
-    return editedMessage;
-  }
-
-  function beginProjectAiMessageEdit(messageId) {
-    if (projectAiRequestInFlight) return;
-    const found = findProjectAiMessage(messageId);
-    if (!found || found.message.role !== "user") return;
-    const article = document.querySelector(
-      `.project-ai-message[data-message-id="${CSS.escape(found.message.id)}"]`
-    );
-    if (!article || article.classList.contains("is-editing")) return;
-    article.classList.add("is-editing");
-    const bubble = article.querySelector(".project-ai-message-bubble");
-    const actions = article.querySelector(".project-ai-message-actions");
-    const editButton = actions?.querySelector("[data-edit-message-id]") || null;
-    if (!bubble) return;
-    bubble.hidden = true;
-    if (actions) actions.hidden = true;
-    const form = document.createElement("form");
-    form.className = "project-ai-message-edit-form";
-    const textarea = document.createElement("textarea");
-    textarea.value = found.message.content;
-    textarea.rows = 1;
-    textarea.setAttribute("aria-label", "Edit message");
-    const controls = document.createElement("div");
-    controls.className = "project-ai-message-edit-controls";
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "connect-btn secondary-btn";
-    cancel.textContent = "Cancel";
-    const save = document.createElement("button");
-    save.type = "submit";
-    save.className = "connect-btn";
-    save.textContent = "Send";
-    controls.append(cancel, save);
-    form.append(textarea, controls);
-    article.appendChild(form);
-    autoSizeTextarea(textarea, {
-      minHeight: PROJECT_AI_MESSAGE_EDIT_MIN_HEIGHT,
-    });
-
-    const close = () => {
-      form.remove();
-      bubble.hidden = false;
-      if (actions) actions.hidden = false;
-      article.classList.remove("is-editing");
-      editButton?.focus({ preventScroll: true });
-    };
-    cancel.addEventListener("click", close);
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const content = textarea.value.trim();
-      if (!content) {
-        textarea.focus();
-        return;
-      }
-      const editedAt = Date.now();
-      if (
-        found.index === 0 &&
-        !found.chat.titleLocked &&
-        found.chat.titleSource !== "manual"
-      ) {
-        found.chat.title = deriveProjectAiChatTitle(content);
-        found.chat.titleSource = "auto";
-      }
-      const editedMessage = truncateProjectAiMessageBranchForEdit(
-        found,
-        content,
-        editedAt
-      );
-      if (!editedMessage) return;
-      void submitProjectAiRequest(content, {
-        existingUserMessage: editedMessage,
-        clearPromptOnSuccess: false,
-      });
-    });
-    textarea.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        close();
-      }
-    });
-    textarea.addEventListener("input", () =>
-      autoSizeTextarea(textarea, {
-        minHeight: PROJECT_AI_MESSAGE_EDIT_MIN_HEIGHT,
-      })
-    );
-    textarea.focus({ preventScroll: true });
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  }
-
-  function applyProjectAiChatTitle(rawTitle) {
-    const title = String(rawTitle || "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, PROJECT_AI_CHAT_TITLE_LENGTH);
-    if (!title) return false;
-    const chat = getActiveProjectAiChat();
-    if (chat.titleLocked || chat.titleSource === "manual") return false;
-    chat.title = title;
-    chat.titleSource = "auto";
-    chat.updatedAt = Date.now();
-    persistProjectAiChats();
-    return true;
-  }
-
-  function autoSizeTextarea(
-    textarea,
-    { minHeight = 0, maxHeight = Number.POSITIVE_INFINITY } = {}
-  ) {
-    if (!textarea) return 0;
-    textarea.style.height = "auto";
-    const borderChrome = Math.max(
-      0,
-      Number(textarea.offsetHeight || 0) - Number(textarea.clientHeight || 0)
-    );
-    const naturalHeight = Math.max(
-      minHeight,
-      Number(textarea.scrollHeight || 0) + borderChrome
-    );
-    const nextHeight = Math.min(naturalHeight, maxHeight);
-    textarea.style.height = `${Math.ceil(nextHeight)}px`;
-    textarea.style.overflowY = naturalHeight > maxHeight ? "auto" : "hidden";
-    return nextHeight;
-  }
-
-  function getProjectAiPromptHeightLimits() {
-    const compact = window.matchMedia?.(
-      "(max-height: 520px) and (min-width: 990px)"
-    )?.matches;
-    return compact
-      ? {
-          minHeight: PROJECT_AI_PROMPT_COMPACT_MIN_HEIGHT,
-          maxHeight: PROJECT_AI_PROMPT_COMPACT_MAX_HEIGHT,
-        }
-      : {
-          minHeight: PROJECT_AI_PROMPT_MIN_HEIGHT,
-          maxHeight: PROJECT_AI_PROMPT_MAX_HEIGHT,
-        };
-  }
-
-  function resizeProjectAiPrompt() {
-    const prompt = $("projectAiPrompt");
-    if (!prompt) return;
-    prompt.style.minHeight = "";
-    prompt.style.maxHeight = "";
-    autoSizeTextarea(prompt, getProjectAiPromptHeightLimits());
-    // Keep the composer and some history visible when the prompt grows.
-    applyProjectAiStackHeight(projectAiInstructionPreferredHeight);
-    constrainProjectAiComposer();
-  }
-
-  function constrainProjectAiComposer() {
-    const prompt = $("projectAiPrompt");
-    const view = $("projectAiView");
-    const form = $("projectAiForm");
-    if (!prompt || !view || !form || !view.clientHeight) return;
-    const footer = form.querySelector(".project-ai-form-footer");
-    const gap = parseFloat(window.getComputedStyle(form).marginTop) || 0;
-    const budget = Math.max(28, view.clientHeight - gap -
-      (footer?.getBoundingClientRect().height || 0) - 50);
-    const limits = getProjectAiPromptHeightLimits();
-    const minimum = Math.min(limits.minHeight, budget);
-    const quotes = $("projectAiPromptQuotes");
-    if (quotes) quotes.style.maxHeight = `${Math.max(0, Math.min(164, budget - minimum))}px`;
-    const quoteHeight = quotes?.getBoundingClientRect().height || 0;
-    const maximum = Math.max(minimum, Math.min(limits.maxHeight, budget - quoteHeight));
-    prompt.style.minHeight = `${minimum}px`;
-    prompt.style.maxHeight = `${maximum}px`;
-    autoSizeTextarea(prompt, { minHeight: minimum, maxHeight: maximum });
-  }
-
-  function getProjectAiQuoteDisplayText(value) {
-    const lines = String(value || "")
-      .replace(/\r\n?/g, "\n")
-      .split("\n")
-      .map((line) =>
-        line
-          .replace(/^ {0,3}>+[\t ]?/, "")
-          .replace(/^ {0,3}#{1,6}[\t ]+/, "")
-          .replace(/^\s*(?:[-*+] |\d+[.)] )/, "")
-          .replace(/^\s*(?:\*\*|__)(.*)(?:\*\*|__)\s*$/, "$1")
-          .trimEnd()
-      );
-    const display = lines.join("\n").trim();
-    return display || String(value || "").trim();
-  }
-
-  function removeProjectAiPromptQuote(quoteId) {
-    projectAiPromptQuotes = projectAiPromptQuotes.filter(
-      (quote) => quote.id !== quoteId
-    );
-    renderProjectAiPromptQuotes();
-    const prompt = $("projectAiPrompt");
-    prompt?.setCustomValidity("");
-    prompt?.focus({ preventScroll: true });
-  }
-
-  function renderProjectAiPromptQuotes() {
-    const container = $("projectAiPromptQuotes");
-    if (!container) return;
-    const fragment = document.createDocumentFragment();
-    for (const quote of projectAiPromptQuotes) {
-      const card = document.createElement("div");
-      card.className = "project-ai-prompt-quote";
-      const text = document.createElement("strong");
-      text.textContent = quote.displayText;
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "project-ai-prompt-quote-remove";
-      remove.setAttribute("aria-label", "Remove quoted context");
-      remove.title = "Remove quote";
-      remove.textContent = "×";
-      remove.addEventListener("click", () =>
-        removeProjectAiPromptQuote(quote.id)
-      );
-      card.append(text, remove);
-      fragment.appendChild(card);
-    }
-    container.replaceChildren(fragment);
-    container.hidden = projectAiPromptQuotes.length === 0;
-    resizeProjectAiPrompt();
-  }
-
-  function serializeProjectAiPromptRequest(
-    promptValue = "",
-    quotes = projectAiPromptQuotes
-  ) {
-    const quotedContext = quotes.map((quote) => {
-      const source = String(quote.source || "Selected text")
-        .replace(/[\r\n]+/g, " ")
-        .trim();
-      return [
-        "[Uart Debug quoted context]",
-        `Source: ${source}`,
-        "Content:",
-        String(quote.rawText || "").trim(),
-        "[/Uart Debug quoted context]",
-      ].join("\n");
-    });
-    const prompt = String(promptValue || "").trim();
-    return [...quotedContext, prompt].filter(Boolean).join("\n\n").trim();
-  }
-
-  function getProjectAiPromptDisplayRequest(promptValue = "") {
-    const quotedText = projectAiPromptQuotes.map((quote) => quote.displayText);
-    const prompt = String(promptValue || "").trim();
-    return [...quotedText, prompt].filter(Boolean).join("\n\n").trim();
-  }
-
-  function setProjectAiPromptValue(value, { quotes = [] } = {}) {
-    const prompt = $("projectAiPrompt");
-    if (!prompt) return;
-    prompt.value = String(value || "");
-    projectAiPromptQuotes = Array.isArray(quotes) ? quotes : [];
-    prompt.setCustomValidity("");
-    renderProjectAiPromptQuotes();
-    resizeProjectAiPrompt();
-  }
-
-  function getProjectAiSelectionQuoteButton() {
-    let button = $("projectAiSelectionQuoteBtn");
-    if (button) return button;
-    button = document.createElement("button");
-    button.id = "projectAiSelectionQuoteBtn";
-    button.className = "project-ai-selection-quote";
-    button.type = "button";
-    button.textContent = "Quote in AI";
-    button.hidden = true;
-    button.setAttribute("aria-label", "Quote selected text in AI chat");
-    button.addEventListener("pointerdown", (event) => event.preventDefault());
-    button.addEventListener("click", insertProjectAiSelectionQuote);
-    document.body.appendChild(button);
-    return button;
-  }
-
-  function hideProjectAiSelectionQuote() {
-    const button = $("projectAiSelectionQuoteBtn");
-    if (button) button.hidden = true;
-    projectAiSelectionQuote = null;
-  }
-
-  function showProjectAiSelectionQuote(selection, rect) {
-    const text = String(selection?.text || "").trim();
-    if (!text || text.length > 16 * 1024 || !rect) {
-      hideProjectAiSelectionQuote();
-      return;
-    }
-    projectAiSelectionQuote = { ...selection, text };
-    const button = getProjectAiSelectionQuoteButton();
-    button.hidden = false;
-    const left = Math.min(
-      window.innerWidth - button.offsetWidth - 10,
-      Math.max(10, rect.left + Math.min(rect.width || 0, 32))
-    );
-    const top = Math.min(
-      window.innerHeight - button.offsetHeight - 10,
-      Math.max(10, rect.bottom + 8)
-    );
-    button.style.left = `${Math.round(left)}px`;
-    button.style.top = `${Math.round(top)}px`;
-  }
-
-  function insertProjectAiSelectionQuote() {
-    const selection = projectAiSelectionQuote;
-    const prompt = $("projectAiPrompt");
-    if (!selection || !prompt) return;
-    const source = String(selection.label || "Selected text").trim();
-    const rawText = String(selection.text || "").replace(/\r\n?/g, "\n");
-    const quote = {
-      id: createProjectAiRecordId("quote"),
-      source,
-      rawText,
-      displayText: getProjectAiQuoteDisplayText(rawText),
-    };
-    const nextQuotes = [...projectAiPromptQuotes, quote];
-    const serialized = serializeProjectAiPromptRequest(
-      prompt.value,
-      nextQuotes
-    );
-    if (serialized.length > PROJECT_AI_PROMPT_MAX_LENGTH) {
-      prompt.setCustomValidity(
-        "The message and quoted context must not exceed 6000 characters."
-      );
-      prompt.reportValidity();
-      return;
-    }
-    setProjectAiPromptValue(prompt.value, { quotes: nextQuotes });
-    hideProjectAiSelectionQuote();
-    window.setTimeout(() => {
-      prompt.focus({ preventScroll: true });
-      prompt.setSelectionRange(prompt.value.length, prompt.value.length);
-    }, 0);
-  }
-
-  function showCodeMirrorSelectionQuote(codeMirror, label) {
-    const text = codeMirror?.getSelection?.() || "";
-    if (!text.trim()) {
-      hideProjectAiSelectionQuote();
-      return;
-    }
-    const from = codeMirror.getCursor("from");
-    const to = codeMirror.getCursor("to");
-    const coords = codeMirror.cursorCoords(to, "window");
-    showProjectAiSelectionQuote(
-      {
-        text,
-        label: typeof label === "function" ? label() : label,
-        from: codeMirror.indexFromPos(from),
-        to: codeMirror.indexFromPos(to),
-      },
-      {
-        left: coords.left,
-        bottom: coords.bottom,
-        width: Math.max(0, coords.right - coords.left),
-      }
-    );
-  }
-
-  function bindCodeMirrorQuoteSurface(codeMirror, label) {
-    const wrapper = codeMirror?.getWrapperElement?.();
-    if (!wrapper || wrapper.dataset.aiQuoteBound === "true") return;
-    wrapper.dataset.aiQuoteBound = "true";
-    const show = () =>
-      window.setTimeout(() => showCodeMirrorSelectionQuote(codeMirror, label), 0);
-    const showFocusedSelection = () => {
-      if (
-        typeof codeMirror.hasFocus !== "function" ||
-        codeMirror.hasFocus()
-      ) {
-        show();
-      }
-    };
-    wrapper.addEventListener("mouseup", show);
-    codeMirror.on?.("cursorActivity", showFocusedSelection);
-    wrapper.addEventListener("keyup", (event) => {
-      if (
-        event.shiftKey ||
-        ((event.ctrlKey || event.metaKey) &&
-          String(event.key || "").toLowerCase() === "a") ||
-        ["Shift", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(
-          event.key
-        )
-      ) {
-        showFocusedSelection();
-      }
-    });
-  }
-
-  function showDomSelectionQuote(container, label) {
-    const selection = window.getSelection?.();
-    if (!selection || selection.isCollapsed || !selection.rangeCount) {
-      hideProjectAiSelectionQuote();
-      return;
-    }
-    const range = selection.getRangeAt(0);
-    if (!container.contains(range.commonAncestorContainer)) return;
-    const commonElement =
-      range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
-        ? range.commonAncestorContainer
-        : range.commonAncestorContainer.parentElement;
-    const article = commonElement?.closest?.(".project-ai-message") || null;
-    const sourceLabel =
-      typeof label === "function" ? label(article) : String(label || "");
-    showProjectAiSelectionQuote(
-      { text: selection.toString(), label: sourceLabel },
-      range.getBoundingClientRect()
-    );
-  }
-
-  function showProjectAiHistorySelectionQuote(history) {
-    if (!history) return;
-    showDomSelectionQuote(history, (article) => {
-      const found = findProjectAiMessage(article?.dataset.messageId || "");
-      return found?.message.role === "user"
-        ? "Chat — your message"
-        : "Chat — AI response";
-    });
-  }
-
-  function closeProjectAiChatsMenu({ restoreFocus = false } = {}) {
-    const menu = $("projectAiChatsMenu");
-    const trigger = $("projectAiChatsBtn");
-    if (!menu || !trigger) return;
-    menu.hidden = true;
-    trigger.setAttribute("aria-expanded", "false");
-    if (restoreFocus) trigger.focus({ preventScroll: true });
-  }
-
-  function openProjectAiChatsMenu() {
-    const menu = $("projectAiChatsMenu");
-    const trigger = $("projectAiChatsBtn");
-    if (!menu || !trigger || projectAiRequestInFlight) return;
-    renderProjectAiChatList();
-    menu.hidden = false;
-    trigger.setAttribute("aria-expanded", "true");
-    requestAnimationFrame(() => {
-      menu
-        .querySelector('[role="menuitem"][aria-current="true"]')
-        ?.focus({ preventScroll: true });
-    });
-  }
-
-  function toggleProjectAiChatsMenu() {
-    const menu = $("projectAiChatsMenu");
-    if (!menu) return;
-    if (menu.hidden) openProjectAiChatsMenu();
-    else closeProjectAiChatsMenu();
-  }
-
-  function getProjectAiChatAction(target) {
-    const rename = target?.closest?.("[data-rename-chat-id]");
-    if (rename) {
-      return { type: "rename", chatId: rename.dataset.renameChatId || "" };
-    }
-    const select = target?.closest?.("[data-chat-id]");
-    if (select) {
-      return { type: "select", chatId: select.dataset.chatId || "" };
-    }
-    const remove = target?.closest?.("[data-delete-chat-id]");
-    if (remove) {
-      return { type: "delete", chatId: remove.dataset.deleteChatId || "" };
-    }
-    return null;
-  }
-
-  function runProjectAiChatAction(action) {
-    if (!action?.chatId) return;
-    if (action.type === "rename") {
-      beginProjectAiChatRename(action.chatId);
-    } else if (action.type === "select") {
-      selectProjectAiChat(action.chatId);
-    } else if (action.type === "delete") {
-      void deleteProjectAiChat(action.chatId);
-    }
-  }
-
-  function flushProjectAiChatRenameRender() {
-    if (
-      !projectAiChatRenameRenderPending ||
-      projectAiPendingChatPointerAction
-    ) {
-      return;
-    }
-    projectAiChatRenameRenderPending = false;
-    if (!projectAiChatRenameId) renderProjectAiChatList();
-  }
-
-  function renderProjectAiChatList() {
-    const list = $("projectAiChatList");
-    if (!list) return;
-    list.replaceChildren();
-    const sortedChats = [...projectAiChats.chats].sort(
-      (left, right) => right.updatedAt - left.updatedAt
-    );
-    for (const chat of sortedChats) {
-      const row = document.createElement("div");
-      row.className = "project-ai-chat-list-item";
-      row.classList.toggle("is-active", chat.id === projectAiChats.activeChatId);
-
-      const select = document.createElement("button");
-      select.type = "button";
-      select.className = "project-ai-chat-select";
-      select.dataset.chatId = chat.id;
-      select.setAttribute("role", "menuitem");
-      select.setAttribute(
-        "aria-current",
-        String(chat.id === projectAiChats.activeChatId)
-      );
-      select.textContent = chat.title || "New chat";
-      select.title = select.textContent;
-
-      const rename = document.createElement("button");
-      rename.type = "button";
-      rename.className = "project-ai-chat-rename";
-      rename.dataset.renameChatId = chat.id;
-      rename.setAttribute("role", "menuitem");
-      rename.setAttribute("aria-label", `Rename chat ${select.textContent}`);
-      rename.textContent = "Rename";
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "project-ai-chat-delete";
-      remove.dataset.deleteChatId = chat.id;
-      remove.setAttribute("role", "menuitem");
-      remove.setAttribute("aria-label", `Delete chat ${select.textContent}`);
-      remove.textContent = "×";
-
-      if (projectAiChatRenameId === chat.id) {
-        const input = document.createElement("input");
-        input.className = "project-ai-chat-rename-input";
-        input.value = chat.title || "New chat";
-        input.maxLength = PROJECT_AI_CHAT_TITLE_LENGTH;
-        input.setAttribute("aria-label", "Chat name");
-        let renameCommitted = false;
-        const saveRename = ({ deferRender = false } = {}) => {
-          if (renameCommitted) return;
-          const title = input.value.replace(/\s+/g, " ").trim();
-          if (!title) {
-            input.focus();
-            return;
-          }
-          renameCommitted = true;
-          chat.title = title.slice(0, PROJECT_AI_CHAT_TITLE_LENGTH);
-          chat.titleSource = "manual";
-          chat.titleLocked = true;
-          chat.updatedAt = Date.now();
-          projectAiChatRenameId = "";
-          persistProjectAiChats({ renderList: !deferRender });
-          if (deferRender) {
-            projectAiChatRenameRenderPending = true;
-            flushProjectAiChatRenameRender();
-          }
-        };
-        input.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            saveRename();
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            projectAiChatRenameId = "";
-            renderProjectAiChatList();
-          }
-        });
-        input.addEventListener("blur", () => saveRename({ deferRender: true }));
-        row.append(input, rename, remove);
-        window.requestAnimationFrame(() => {
-          input.focus({ preventScroll: true });
-          input.select();
-        });
-      } else {
-        row.append(select, rename, remove);
-      }
-      list.appendChild(row);
-    }
-  }
-
-  function beginProjectAiChatRename(chatId) {
-    if (projectAiRequestInFlight) return;
-    const chat = projectAiChats.chats.find(
-      (candidate) => candidate.id === String(chatId || "")
-    );
-    if (!chat) return;
-    projectAiChatRenameId = chat.id;
-    renderProjectAiChatList();
-  }
-
-  function selectProjectAiChat(chatId) {
-    if (projectAiRequestInFlight) return;
-    const chat = projectAiChats.chats.find((candidate) => candidate.id === chatId);
-    if (!chat) return;
-    projectAiChatRenameId = "";
-    projectAiChats.activeChatId = chat.id;
-    projectAiConversation = chat.messages;
-    persistProjectAiChats();
-    renderProjectAiHistory();
-    closeProjectAiChatsMenu();
-    $("projectAiPrompt")?.focus({ preventScroll: true });
-  }
-
-  function createProjectAiChat() {
-    if (projectAiRequestInFlight) return;
-    if (projectAiChats.chats.length >= PROJECT_AI_MAX_CHATS) {
-      closeProjectAiChatsMenu();
-      appendProjectAiMessage(
-        "system",
-        `The chat limit of ${PROJECT_AI_MAX_CHATS} has been reached. Delete an older chat first.`
-      );
-      return;
-    }
-    const chat = createEmptyProjectAiChat();
-    projectAiChatRenameId = "";
-    projectAiChats.chats.push(chat);
-    projectAiChats.activeChatId = chat.id;
-    projectAiConversation = chat.messages;
-    persistProjectAiChats();
-    renderProjectAiHistory();
-    closeProjectAiChatsMenu();
-    $("projectAiPrompt")?.focus({ preventScroll: true });
-  }
-
-  async function deleteProjectAiChat(chatId) {
-    if (projectAiRequestInFlight) return;
-    const chat = projectAiChats.chats.find((candidate) => candidate.id === chatId);
-    if (!chat) return;
-    closeProjectAiChatsMenu();
-    const confirmed = await showSiteConfirm({
-      title: "Delete chat",
-      message: `Delete “${chat.title || "New chat"}”? This removes its saved account copy too.`,
-      confirmText: "Delete chat",
-      cancelText: "Cancel",
-      danger: true,
-    });
-    if (!confirmed) return;
-    projectAiChats.chats = projectAiChats.chats.filter(
-      (candidate) => candidate.id !== chatId
-    );
-    if (!projectAiChats.chats.length) {
-      projectAiChats.chats.push(createEmptyProjectAiChat());
-    }
-    if (!projectAiChats.chats.some((candidate) => candidate.id === projectAiChats.activeChatId)) {
-      projectAiChats.activeChatId = projectAiChats.chats[0].id;
-    }
-    projectAiConversation = getActiveProjectAiChat().messages;
-    persistProjectAiChats();
-    renderProjectAiHistory();
-  }
-
   function readStoredProjectAiAccountSync() {
     try {
       const parsed = JSON.parse(
         window.localStorage.getItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC) || "null"
       );
-      if (!parsed || parsed.schemaVersion !== 1 || !parsed.accountKey) {
+      if (!parsed || ![1, 2].includes(parsed.schemaVersion) || !parsed.accountKey) {
         return null;
       }
       return parsed;
@@ -7118,12 +6122,11 @@
       const stored = JSON.parse(
         window.localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY) || "null"
       );
-      for (const kind of ["chats", "files", "instruction"]) {
+      for (const kind of ["files", "instruction"]) {
         projectAiLocalDirty[kind] = stored?.dirty?.[kind] === true;
       }
     } catch {
       projectAiLocalDirty = {
-        chats: true,
         files: true,
         instruction: true,
       };
@@ -7146,7 +6149,7 @@
   }
 
   function setProjectAiLocalDirty(kind, dirty) {
-    if (!["chats", "files", "instruction"].includes(kind)) return;
+    if (!["files", "instruction"].includes(kind)) return;
     projectAiLocalDirty[kind] = dirty === true;
     persistProjectAiLocalDirtyState();
   }
@@ -7155,7 +6158,7 @@
     const stored = readStoredProjectAiAccountSync();
     if (!stored) return;
     projectAiAccountSync.accountKey = String(stored.accountKey || "");
-    for (const kind of ["chats", "files", "instruction"]) {
+    for (const kind of ["files", "instruction"]) {
       const revision = Number(stored.revisions?.[kind]);
       projectAiAccountSync.revisions[kind] =
         Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
@@ -7228,7 +6231,6 @@
   }
 
   function getProjectAiAccountDocumentSnapshot(kind) {
-    if (kind === "chats") return getProjectAiChatsSnapshot();
     if (kind === "files") return getProjectAiAccountFilesSnapshot();
     if (kind === "instruction") return getProjectInstructionSnapshot();
     throw new TypeError(`Unsupported account document: ${kind}`);
@@ -7238,9 +6240,7 @@
     try {
       const localData = getProjectAiAccountDocumentSnapshot(kind);
       const normalizedRemote =
-        kind === "chats"
-          ? normalizeProjectAiChats(remoteData)
-          : kind === "instruction"
+        kind === "instruction"
             ? normalizeProjectInstructionDocument(remoteData)
             : normalizeProjectAiAccountFilesSnapshot(remoteData);
       return JSON.stringify(localData) === JSON.stringify(normalizedRemote);
@@ -7250,7 +6250,6 @@
   }
 
   function getEmptyProjectAiAccountDocument(kind) {
-    if (kind === "chats") return normalizeProjectAiChats(null);
     if (kind === "files") {
       return {
         schemaVersion: 2,
@@ -7274,12 +6273,13 @@
     data,
     sourceAccountKey = projectAiAccountSync.accountKey
   ) {
+    if (kind !== "files" && kind !== "instruction") {
+      throw new TypeError(`Unsupported account document: ${kind}`);
+    }
     const storageKeyBase =
       kind === "files"
         ? STORAGE_PROJECT_AI_FILES_RECOVERY
-        : kind === "instruction"
-          ? STORAGE_PROJECT_AI_INSTRUCTION_RECOVERY
-          : STORAGE_PROJECT_AI_CHATS_RECOVERY;
+        : STORAGE_PROJECT_AI_INSTRUCTION_RECOVERY;
     const recoveryScope =
       String(sourceAccountKey || "browser-local")
         .replace(/[^A-Za-z0-9_-]/g, "")
@@ -7389,22 +6389,7 @@
   function applyProjectAiAccountDocument(kind, data) {
     projectAiAccountWorkspaceApplying = true;
     try {
-      if (kind === "chats") {
-        const nextChats = normalizeProjectAiChats(data);
-        try {
-          window.localStorage.setItem(
-            STORAGE_PROJECT_AI_CHATS,
-            JSON.stringify(nextChats)
-          );
-        } catch (error) {
-          console.warn("The cloud AI chats could not be saved locally:", error);
-          return false;
-        }
-        projectAiChats = nextChats;
-        projectAiConversation = getActiveProjectAiChat().messages;
-        renderProjectAiChatList();
-        renderProjectAiHistory();
-      } else if (kind === "files") {
+      if (kind === "files") {
         if (!applyProjectAiAccountFilesSnapshot(data)) return false;
       } else if (kind === "instruction") {
         const nextInstruction = normalizeProjectInstructionDocument(data);
@@ -7429,6 +6414,8 @@
         setProjectInstructionEditorValue(projectInstructionDocument.markdown);
         scheduleProjectInstructionPreview();
         setProjectInstructionSaveState();
+        renderCanvasAnnotations();
+        syncCanvasTargetControls(true);
       } else {
         return false;
       }
@@ -7454,38 +6441,20 @@
   }
 
   function scheduleProjectAiAccountDocumentSave(kind, delay = 700) {
-    if (!projectAiAccountSync.ready || projectAiAccountSync.conflicts[kind]) {
-      return;
-    }
-    const timerName =
-      kind === "chats"
-        ? "projectAiChatsSaveTimer"
-        : kind === "files"
-          ? "projectAiAccountFilesSaveTimer"
-          : "projectAiAccountInstructionSaveTimer";
-    const currentTimer =
-      kind === "chats"
-        ? projectAiChatsSaveTimer
-        : kind === "files"
-          ? projectAiAccountFilesSaveTimer
-          : projectAiAccountInstructionSaveTimer;
+    if (!projectAiAccountSync.ready || projectAiAccountSync.conflicts[kind]) return;
+    const currentTimer = kind === "files" ? projectAiAccountFilesSaveTimer : projectAiAccountInstructionSaveTimer;
     if (currentTimer) window.clearTimeout(currentTimer);
     const timer = window.setTimeout(() => {
-      if (kind === "chats") projectAiChatsSaveTimer = null;
-      else if (kind === "files") projectAiAccountFilesSaveTimer = null;
+      if (kind === "files") projectAiAccountFilesSaveTimer = null;
       else projectAiAccountInstructionSaveTimer = null;
       void saveProjectAiAccountDocument(kind);
     }, delay);
-    if (timerName === "projectAiChatsSaveTimer") projectAiChatsSaveTimer = timer;
-    else if (timerName === "projectAiAccountFilesSaveTimer") {
-      projectAiAccountFilesSaveTimer = timer;
-    } else {
-      projectAiAccountInstructionSaveTimer = timer;
-    }
+    if (kind === "files") projectAiAccountFilesSaveTimer = timer;
+    else projectAiAccountInstructionSaveTimer = timer;
   }
 
   function markProjectAiAccountDocumentDirty(kind) {
-    if (!["chats", "files", "instruction"].includes(kind)) return;
+    if (!["files", "instruction"].includes(kind)) return;
     projectAiAccountSync.dirty[kind] = true;
     projectAiAccountSync.mutations[kind] += 1;
     setProjectAiLocalDirty(kind, true);
@@ -7494,9 +6463,6 @@
   }
 
   function getProjectAiAccountConflictMessage(kind) {
-    if (kind === "chats") {
-      return "Chats changed in another tab or device. The local copy was kept and cloud saving was paused to avoid overwriting it.";
-    }
     if (kind === "instruction") {
       return "Project instruction changed in another tab or device. The local copy was kept and cloud saving was paused to avoid overwriting it.";
     }
@@ -7552,7 +6518,7 @@
         response.status === 409 &&
         result?.code === "account_workspace_account_mismatch"
       ) {
-        appendProjectAiMessage(
+        reportProjectCanvasMessage(
           "system",
           `The local ${getProjectAiAccountDocumentLabel(kind)} copy remains saved because the Google account changed in another tab. Cloud sync will reconnect to the current account before saving.`
         );
@@ -7565,7 +6531,7 @@
       if (response.status === 409) {
         projectAiAccountSync.conflicts[kind] = true;
         persistProjectAiAccountSyncState();
-        appendProjectAiMessage(
+        reportProjectCanvasMessage(
           "system",
           `${getProjectAiAccountConflictMessage(kind)} Reload the page to choose which copy to use.`
         );
@@ -7580,7 +6546,7 @@
       if ([400, 413, 415].includes(response.status)) {
         projectAiAccountSync.dirty[kind] = false;
         persistProjectAiAccountSyncState();
-        appendProjectAiMessage(
+        reportProjectCanvasMessage(
           "system",
           getProjectAiAccountSaveFailureMessage(kind, result, response.status)
         );
@@ -7653,27 +6619,20 @@
     }
     projectAiAccountWorkspaceRetryCount = 0;
     for (const timer of [
-      projectAiChatsSaveTimer,
       projectAiAccountFilesSaveTimer,
       projectAiAccountInstructionSaveTimer,
     ]) {
       if (timer) window.clearTimeout(timer);
     }
-    projectAiChatsSaveTimer = null;
     projectAiAccountFilesSaveTimer = null;
     projectAiAccountInstructionSaveTimer = null;
-    for (const kind of ["chats", "files", "instruction"]) {
+    for (const kind of ["files", "instruction"]) {
       projectAiAccountSync.saving[kind] = false;
       projectAiAccountSync.retries[kind] = 0;
     }
   }
 
   function hasMeaningfulProjectAiLocalDocument(kind) {
-    if (kind === "chats") {
-      return getProjectAiChatsSnapshot().chats.some(
-        (chat) => Array.isArray(chat.messages) && chat.messages.length > 0
-      );
-    }
     if (kind === "files") {
       const snapshot = getProjectAiAccountFilesSnapshot();
       const fileEntries = Object.entries(snapshot.files || {});
@@ -7689,14 +6648,13 @@
       const snapshot = getProjectInstructionSnapshot();
       return (
         String(snapshot.markdown || "").trim().length > 0 ||
-        (Array.isArray(snapshot.skillRefs) && snapshot.skillRefs.length > 0)
+        (Array.isArray(snapshot.annotations) && snapshot.annotations.length > 0)
       );
     }
     return false;
   }
 
   function getProjectAiAccountDocumentLabel(kind) {
-    if (kind === "chats") return "AI chats";
     if (kind === "instruction") return "Project instruction";
     return "AVR files";
   }
@@ -7714,7 +6672,7 @@
     };
     resetProjectAiAccountWorkspaceRuntime();
     renderProjectAiAuthSession(projectAiAuthSession);
-    appendProjectAiMessage("system", message);
+    reportProjectCanvasMessage("system", message);
     setProjectAiAccountStatus(message, "error");
   }
 
@@ -7750,7 +6708,7 @@
   function pauseProjectAiAccountDocumentForRecoveryFailure(kind) {
     projectAiAccountSync.dirty[kind] = false;
     projectAiAccountSync.conflicts[kind] = true;
-    appendProjectAiMessage(
+    reportProjectCanvasMessage(
       "system",
       `The local ${getProjectAiAccountDocumentLabel(kind)} copy was not replaced because the browser could not safely persist both the local recovery and cloud copies. Free some browser storage and reload to choose again.`
     );
@@ -7796,7 +6754,7 @@
         String(stored?.accountKey || "").trim() || "browser-local";
 
       if (!sameAccount) {
-        for (const kind of ["chats", "files", "instruction"]) {
+        for (const kind of ["files", "instruction"]) {
           projectAiAccountSync.revisions[kind] = 0;
           projectAiAccountSync.dirty[kind] = false;
           projectAiAccountSync.conflicts[kind] = true;
@@ -7806,20 +6764,20 @@
           projectAiAccountSync.accountKey = String(stored?.accountKey || "");
           const message =
             "The Google account workspace was not opened because the browser could not safely record the account transition. Local data was not changed. Free some browser storage and reload.";
-          appendProjectAiMessage("system", message);
+          reportProjectCanvasMessage("system", message);
           setProjectAiAccountStatus(message, "error");
           return null;
         }
       }
 
       const remoteDocuments = Object.fromEntries(
-        ["chats", "files", "instruction"].map((kind) => [
+        ["files", "instruction"].map((kind) => [
           kind,
           normalizeProjectAiRemoteDocument(documents[kind]),
         ])
       );
       const missingImportCandidates = differentKnownAccount
-        ? ["chats", "files", "instruction"].filter(
+        ? ["files", "instruction"].filter(
             (kind) =>
               remoteDocuments[kind].revision === 0 &&
               remoteDocuments[kind].data === null &&
@@ -7840,7 +6798,7 @@
 
       const pendingConflicts = [];
 
-      for (const kind of ["chats", "files", "instruction"]) {
+      for (const kind of ["files", "instruction"]) {
         const remote = remoteDocuments[kind];
         const storedRevision = sameAccount ? Number(stored.revisions?.[kind]) : 0;
         const mutationChangedDuringRequest =
@@ -8022,7 +6980,7 @@
         });
         if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
         if (!useCloud) {
-          appendProjectAiMessage(
+          reportProjectCanvasMessage(
             "system",
             `Cloud sync is paused for ${label}. Nothing was overwritten. Reload the page when you are ready to choose again.`
           );
@@ -8054,7 +7012,7 @@
         projectAiAccountWorkspaceRetryTimer = null;
       }
       projectAiAccountWorkspaceRetryCount = 0;
-      const pausedKinds = ["chats", "files", "instruction"].filter(
+      const pausedKinds = ["files", "instruction"].filter(
         (kind) => projectAiAccountSync.conflicts[kind]
       );
       if (pausedKinds.length) {
@@ -8068,7 +7026,7 @@
         setProjectAiAccountStatus("Account workspace synchronized.", "success");
       }
       persistProjectAiAccountSyncState();
-      for (const kind of ["chats", "files", "instruction"]) {
+      for (const kind of ["files", "instruction"]) {
         if (projectAiAccountSync.dirty[kind]) {
           scheduleProjectAiAccountDocumentSave(kind, 60);
         }
@@ -8103,46 +7061,18 @@
   }
 
   function appendProjectAiThinking() {
-    const history = $("projectAiHistory");
-    if (!history) return null;
-
-    const article = document.createElement("article");
-    article.className = "project-ai-message is-assistant is-thinking";
-    article.dataset.aiTransient = "true";
-    article.setAttribute("role", "status");
-
+    const status = $("projectCanvasStatus");
+    if (!status) return null;
+    status.hidden = false;
+    status.classList.remove("is-error");
+    status.replaceChildren();
+    const indicator = document.createElement("div");
     const label = document.createElement("span");
     label.className = "project-ai-thinking-stage";
-    label.textContent = "Analyzing the request";
-
-    const dots = document.createElement("span");
-    dots.className = "project-ai-thinking-dots";
-    dots.setAttribute("aria-hidden", "true");
-    dots.append(
-      document.createElement("span"),
-      document.createElement("span"),
-      document.createElement("span")
-    );
-
-    const phases = [
-      "Preparing the relevant project context",
-      "Waiting for the model response",
-    ];
-    let phaseIndex = 0;
-    article._phaseTimer = window.setInterval(() => {
-      if (!article.isConnected || phaseIndex >= phases.length) {
-        window.clearInterval(article._phaseTimer);
-        article._phaseTimer = null;
-        return;
-      }
-      label.textContent = phases[phaseIndex];
-      phaseIndex += 1;
-    }, 2400);
-
-    article.append(label, dots);
-    history.appendChild(article);
-    history.scrollTop = history.scrollHeight;
-    return article;
+    label.textContent = canvasText("Analyzing the canvas…", "Анализ холста…");
+    indicator.appendChild(label);
+    status.appendChild(indicator);
+    return indicator;
   }
 
   function removeProjectAiThinking(indicator) {
@@ -8219,8 +7149,6 @@
               : "Working on the project";
     }
     indicator.querySelector(".project-ai-thinking-dots")?.remove();
-    const history = $("projectAiHistory");
-    if (history) history.scrollTop = history.scrollHeight;
   }
 
   async function readProjectAiApiResponse(response, onProgress) {
@@ -8625,7 +7553,7 @@
             session?.authenticated === true
               ? "Signed in with Google."
               : "Google sign-in could not be restored. Please try again.";
-          appendProjectAiMessage(
+          reportProjectCanvasMessage(
             "system",
             message
           );
@@ -8637,7 +7565,7 @@
         .catch(() => {
           const message =
             "Google sign-in completed, but the session could not be checked. Please reload the page.";
-          appendProjectAiMessage("system", message);
+          reportProjectCanvasMessage("system", message);
           setProjectAiAccountStatus(message, "error");
         });
       return;
@@ -8661,7 +7589,7 @@
     const message =
       messages[authReturn.code] ||
       "Google sign-in could not be completed. Please try again.";
-    appendProjectAiMessage("system", message);
+    reportProjectCanvasMessage("system", message);
     setProjectAiAccountStatus(message, "error");
   }
 
@@ -8674,7 +7602,7 @@
       if (session.configured !== true) {
         const message =
           "Google access for Uart Debug AI is not configured yet.";
-        appendProjectAiMessage("system", message);
+        reportProjectCanvasMessage("system", message);
         setProjectAiAccountStatus(message, "error");
         return;
       }
@@ -8711,7 +7639,7 @@
     } catch (error) {
       const message =
         error?.message || "AI access could not be checked. Try again.";
-      appendProjectAiMessage("system", message);
+      reportProjectCanvasMessage("system", message);
       setProjectAiAccountStatus(message, "error");
     } finally {
       setProjectAiAuthPending(false);
@@ -8760,12 +7688,12 @@
       } catch {
         const message =
           "Signed out, but the account status could not be refreshed. You can safely try again later.";
-        appendProjectAiMessage("system", message);
+        reportProjectCanvasMessage("system", message);
         setProjectAiAccountStatus(message, "error");
       }
     } catch (error) {
       const message = error?.message || "Could not sign out. Try again.";
-      appendProjectAiMessage("system", message);
+      reportProjectCanvasMessage("system", message);
       setProjectAiAccountStatus(message, "error");
     } finally {
       setProjectAiAuthPending(false);
@@ -8779,34 +7707,14 @@
 
   function setProjectAiFormBusy(busy) {
     projectAiRequestInFlight = !!busy;
-    const form = $("projectAiForm");
-    const chatsButton = $("projectAiChatsBtn");
-    if (chatsButton) chatsButton.disabled = !!busy;
-    if (busy) closeProjectAiChatsMenu();
-    if (!form) return;
-    const prompt = $("projectAiPrompt");
-    if (busy) {
-      projectAiRestorePromptFocus = form.contains(document.activeElement);
+    const button = $("projectCanvasRunBtn");
+    if (button) {
+      button.disabled = !!busy;
+      button.textContent = busy
+        ? canvasText("Working…", "Выполнение…")
+        : canvasText("Process canvas", "Обработать холст");
     }
-    for (const control of form.elements) {
-      if (control === prompt) {
-        control.readOnly = !!busy;
-        control.setAttribute("aria-readonly", String(!!busy));
-      } else {
-        control.disabled = !!busy;
-      }
-    }
-    form.setAttribute("aria-busy", String(!!busy));
-    if (!busy) {
-      const activeElement = document.activeElement;
-      const shouldRestoreFocus =
-        projectAiRestorePromptFocus &&
-        (!activeElement ||
-          activeElement === document.body ||
-          form.contains(activeElement));
-      projectAiRestorePromptFocus = false;
-      if (shouldRestoreFocus) prompt?.focus({ preventScroll: true });
-    }
+    $("projectCanvasForm")?.setAttribute("aria-busy", String(!!busy));
   }
 
   function getProjectAiJsonByteLength(value) {
@@ -8817,118 +7725,34 @@
     }
   }
 
-  function selectProjectAiConversation(payload) {
-    const selected = [];
-    payload.conversation = selected;
-    let end = projectAiConversation.length;
 
-    while (end > 0) {
-      let start = end - 1;
-      if (
-        projectAiConversation[start]?.role === "assistant" &&
-        start > 0 &&
-        projectAiConversation[start - 1]?.role === "user"
-      ) {
-        start -= 1;
-      }
-      const added = [];
-      for (let index = start; index < end; index += 1) {
-        const message = projectAiConversation[index];
-        added.push({
-          role: message.role,
-          content: message.content,
-        });
-      }
-      selected.unshift(...added);
-      if (
-        getProjectAiJsonByteLength(payload) >
-        PROJECT_AI_REQUEST_TARGET_BYTES
-      ) {
-        selected.splice(0, added.length);
-        break;
-      }
-      end = start;
-    }
 
-    return selected;
-  }
-
-  function getProjectAiRequestPayload(prompt) {
-    const mcuSelect = $("mcuSelect");
-    const localeSelect = $("documentationLocaleSelect");
+  function getProjectAiRequestPayload() {
     const linkedProject = getMiniProjectForFile(current);
-    const publicProject = linkedProject
-      ? getPublicMiniProjectInstance(linkedProject.instanceId)
-      : null;
-    const documentation = getDocumentationContext(current);
-    const sourceEntry = publicProject?.files?.find(
-      (file) => file.role === miniProjectCore.ROLES.SOURCE
-    );
-    const guideEntry = publicProject?.files?.find(
-      (file) =>
-        file.role === miniProjectCore.ROLES.GUIDE &&
-        file.name === documentation.guideFile
-    );
-    const currentProject = publicProject
-      ? {
-          instanceId: String(publicProject.instanceId || ""),
-          id: String(publicProject.id || ""),
-          title: String(publicProject.title || ""),
-          displayName: String(
-            publicProject.displayName || publicProject.title || ""
-          ),
-          sourceName: String(sourceEntry?.name || ""),
-          guideName: String(guideEntry?.name || documentation.guideFile || ""),
-          guideLocale: String(
-            guideEntry?.locale || publicProject.selectedLocale || ""
-          ),
-          source: sourceEntry?.name
-            ? getLiveFileContent(sourceEntry.name)
-            : "",
-          sourceAuthorship: sourceEntry?.name
-            ? getFileAuthorship(sourceEntry.name)
-            : null,
-          guide:
-            documentation.guideFile && hasFile(documentation.guideFile)
-              ? getLiveFileContent(documentation.guideFile)
-              : "",
-          guideAuthorship:
-            documentation.guideFile && hasFile(documentation.guideFile)
-              ? getFileAuthorship(documentation.guideFile)
-              : null,
-          aiSpecRef:
-            typeof publicProject.aiSpecRef?.id === "string" &&
-            publicProject.aiSpecRef.id.trim()
-              ? { id: publicProject.aiSpecRef.id.trim() }
-              : null,
-        }
-      : null;
-    const selectedMcu = String(mcuSelect?.value || "auto");
-    const updiBridge =
-      window[AVR_UPDI_BRIDGE_KEY] || window[LEGACY_UPDI_BRIDGE_KEY] || null;
-    const detectedMcu =
-      selectedMcu === "auto" &&
-      typeof updiBridge?.getDetectedTargetKey === "function"
-        ? String(updiBridge.getDetectedTargetKey() || "").trim()
-        : "";
-    const payload = {
-      prompt: String(prompt || "").trim(),
-      mcu: selectedMcu,
-      ...(detectedMcu ? { detectedMcu } : {}),
-      locale: String(
-        localeSelect?.value ||
-          publicProject?.selectedLocale ||
-          document.documentElement.lang ||
-          navigator.language ||
-          "en"
-      ),
-      conversation: [],
-      instructionDocument: getProjectInstructionSnapshot({ forRequest: true }),
-    };
-    if (currentProject?.instanceId) {
-      payload.currentProject = currentProject;
+    const project = linkedProject ? getPublicMiniProjectInstance(linkedProject.instanceId) : null;
+    const source = project?.files.find((file) => file.role === "source");
+    const guide = project?.files.find((file) => file.role === "guide" && file.locale === project.selectedLocale)
+      || project?.files.find((file) => file.role === "guide");
+    const specification = project?.files.find((file) => file.role === "specification");
+    const target = getCanvasTarget();
+    const payload = { canvas: { ...getProjectInstructionSnapshot(), target }, ...target };
+    if (project && source && guide) {
+      payload.currentProject = {
+        instanceId: project.instanceId,
+        id: project.id,
+        title: project.title,
+        displayName: project.displayName,
+        sourceName: source.name,
+        guideName: guide.name,
+        guideLocale: guide.locale || project.selectedLocale || "en",
+        source: source.content,
+        guide: guide.content,
+        sourceAuthorship: getFileAuthorship(source.name),
+        guideAuthorship: getFileAuthorship(guide.name),
+        ...(specification ? { specification: { name: specification.name, content: specification.content } } : {}),
+        ...(project.aiSpecRef?.id ? { aiSpecRef: { id: project.aiSpecRef.id } } : {}),
+      };
     }
-    selectProjectAiConversation(payload);
     return payload;
   }
 
@@ -8953,11 +7777,12 @@
       liveSource?.name === snapshot.sourceName &&
       liveGuide?.name === snapshot.guideName &&
       getLiveFileContent(snapshot.sourceName) === snapshot.source &&
-      getLiveFileContent(snapshot.guideName) === snapshot.guide;
+      getLiveFileContent(snapshot.guideName) === snapshot.guide &&
+      (!snapshot.specification || getLiveFileContent(snapshot.specification.name) === snapshot.specification.content);
     if (unchanged) return;
 
     throw new Error(
-      /[\u0400-\u04ff]/u.test(String(requestPayload?.prompt || ""))
+      /[\u0400-\u04ff]/u.test(String(requestPayload?.canvas?.markdown || ""))
         ? "Текущий мини-проект изменился, пока ИИ готовил ответ. Новые локальные правки не были перезаписаны. Отправьте запрос ещё раз."
         : "The current mini-project changed while the AI was responding. Newer local edits were not overwritten. Submit the request again."
     );
@@ -8965,7 +7790,7 @@
 
   function assertProjectAiInstructionIsFresh(requestPayload) {
     const expectedRevision = Number(
-      requestPayload?.instructionDocument?.revision
+      requestPayload?.canvas?.revision
     );
     if (
       Number.isSafeInteger(expectedRevision) &&
@@ -8974,7 +7799,7 @@
       return expectedRevision;
     }
     throw new Error(
-      /[\u0400-\u04ff]/u.test(String(requestPayload?.prompt || ""))
+      /[\u0400-\u04ff]/u.test(String(requestPayload?.canvas?.markdown || ""))
         ? "Инструкция изменилась, пока ИИ готовил ответ. Ваши более новые правки сохранены. Отправьте запрос ещё раз."
         : "The instruction changed while the AI was responding. Your newer edits were preserved. Submit the request again."
     );
@@ -9001,12 +7826,14 @@
             file.mediaType = "text/markdown";
           } else if (role === miniProjectCore.ROLES.SOURCE) {
             file.mediaType = "text/x-c";
+          } else if (role === miniProjectCore.ROLES.SPECIFICATION) {
+            file.mediaType = "application/yaml";
           }
           return file;
         })
       : [];
     const displayName = String(
-      project.displayName || project.name || project.id || "AI mini-project"
+      project.displayName || project.title || project.name || project.id || "AI mini-project"
     ).trim();
 
     const definition = {
@@ -9031,253 +7858,88 @@
     return definition;
   }
 
-  function appendExistingProjectAiUserMessage(rawMessage) {
-    const message = normalizeProjectAiMessage(rawMessage);
-    if (!message || message.role !== "user") {
-      throw new TypeError("The edited user message is invalid.");
-    }
-    const chat = getActiveProjectAiChat();
-    chat.messages.push(message);
-    chat.updatedAt = Math.max(Date.now(), message.editedAt || message.createdAt);
-    projectAiConversation = chat.messages;
-    persistProjectAiChats();
-    renderProjectAiHistory();
-    return message;
-  }
 
-  async function submitProjectAiRequest(
-    rawRequest,
-    {
-      aiRequest = rawRequest,
-      existingUserMessage = null,
-      clearPromptOnSuccess = true,
-    } = {}
-  ) {
-    if (projectAiRequestInFlight) return false;
-    const prompt = $("projectAiPrompt");
-    const request = String(rawRequest || "").trim();
-    const requestForAi = String(aiRequest || "").trim();
-    if (!request || !requestForAi) {
-      prompt?.focus({ preventScroll: true });
-      return false;
-    }
 
-    const requestPayload = getProjectAiRequestPayload(requestForAi);
-    if (existingUserMessage) {
-      appendExistingProjectAiUserMessage(existingUserMessage);
-    } else {
-      appendProjectAiMessage("user", request);
+  async function submitProjectCanvas() {
+    if (projectAiRequestInFlight) return;
+    const request = getProjectAiRequestPayload();
+    if (!request.canvas.markdown.trim()) {
+      reportProjectCanvasMessage("system", canvasText("Describe your project on the canvas first.", "Сначала опишите проект на холсте."));
+      projectInstructionEditor?.focus();
+      return;
     }
-    let thinkingIndicator = appendProjectAiThinking();
-    let quotaUpdatedFromResponse = false;
+    if (!request.mcu || request.mcu === "auto" || !request.packageName) {
+      reportProjectCanvasMessage("system", canvasText("Choose the target MCU and chip package first.", "Выберите микроконтроллер и корпус."));
+      $("projectPackageSelect")?.focus();
+      return;
+    }
+    const accountEpoch = projectAiAccountWorkspaceEpoch;
+    const authEpoch = projectAiAuthRequestEpoch;
+    let quotaUpdated = false;
+    let indicator = appendProjectAiThinking();
     setProjectAiFormBusy(true);
-
     try {
-      const response = await fetch("/api/avr/ai/respond", {
+      const response = await fetch("/api/avr/ai/canvas", {
         method: "POST",
-        headers: {
-          Accept: "application/x-ndjson, application/json",
-          "Content-Type": "application/json",
-        },
+        headers: { Accept: "application/x-ndjson, application/json", "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify(requestPayload),
+        body: JSON.stringify(request),
       });
-      const apiResponse = await readProjectAiApiResponse(response, (progress) =>
-        renderProjectAiThinkingProgress(thinkingIndicator, progress)
-      );
-      const data = apiResponse.data;
-      const responseStatus = apiResponse.status;
-      if (data?.quota) {
-        updateProjectAiQuota(data.quota);
-        quotaUpdatedFromResponse = true;
+      const result = await readProjectAiApiResponse(response, (progress) => renderProjectAiThinkingProgress(indicator, progress));
+      const data = result.data;
+      if (data?.quota) { updateProjectAiQuota(data.quota); quotaUpdated = true; }
+      if (result.status < 200 || result.status >= 300 || data?.ok !== true) {
+        throw new Error(String(data?.message || data?.error?.message || `Canvas request failed (${result.status}).`));
       }
-      if (data?.progress) {
-        renderProjectAiThinkingProgress(
-          thinkingIndicator,
-          data.progress,
-          data.verification
-        );
-        if (!apiResponse.streamed) {
-          await new Promise((resolve) => window.setTimeout(resolve, 700));
-        }
+      if (accountEpoch !== projectAiAccountWorkspaceEpoch || authEpoch !== projectAiAuthRequestEpoch) {
+        throw new Error(canvasText("The account changed while AI was working. No changes were applied.", "Аккаунт изменился во время работы ИИ. Изменения не применены."));
       }
-      removeProjectAiThinking(thinkingIndicator);
-      thinkingIndicator = null;
-
-      if (responseStatus < 200 || responseStatus >= 300 || data?.ok !== true) {
-        const errorCode = String(data?.code || data?.error?.code || "");
-        const apiKeyMissing =
-          errorCode === "api_key_not_configured" ||
-          (responseStatus === 503 &&
-            /api key is not configured/i.test(String(data?.message || "")));
-        if (
-          errorCode === "free_quota_exhausted" &&
-          responseStatus === 429 &&
-          projectAiAuthSession?.quota
-        ) {
-          updateProjectAiQuota({
-            ...projectAiAuthSession.quota,
-            remaining: 0,
-          });
-          quotaUpdatedFromResponse = true;
-        }
-        const message =
-          errorCode === "google_sign_in_required" && responseStatus === 401
-            ? "Sign in with Google to use Uart Debug AI."
-            : errorCode === "free_quota_exhausted" && responseStatus === 429
-              ? "The free AI Credits for this browser installation are exhausted. More access is not available yet."
-              : apiKeyMissing
-                ? "API key is not configured"
-                : String(
-                    data?.error?.message ||
-                      data?.error ||
-                      data?.message ||
-                      `AI request failed (${responseStatus}).`
-                  );
-        appendProjectAiMessage("system", message);
-        return;
+      const baseRevision = assertProjectAiInstructionIsFresh(request);
+      const target = getCanvasTarget();
+      if (target.mcu !== request.mcu || target.packageName !== request.packageName) {
+        throw new Error(canvasText("The target changed while AI was working. Run the canvas again.", "Микроконтроллер или корпус изменился. Запустите обработку снова."));
       }
-
-      applyProjectAiChatTitle(data.chatTitle);
-
-      if (data.kind === "answer") {
-        const answer = String(data.message || "").trim();
-        if (!answer) {
-          throw new Error("The AI response did not include an answer.");
-        }
-        appendProjectAiMessage("assistant", answer);
-        if (clearPromptOnSuccess && prompt) setProjectAiPromptValue("");
-        return;
+      if (!["canvas", "project"].includes(data.kind) || data.baseRevision !== baseRevision ||
+          data.canvas?.schemaVersion !== 2 || data.canvas.revision !== baseRevision + 1 ||
+          typeof data.canvas.markdown !== "string" || !Array.isArray(data.canvas.annotations)) {
+        throw new Error("The server returned an incompatible canvas revision.");
       }
-
-      if (data.kind === "instruction") {
-        const expectedRevision = assertProjectAiInstructionIsFresh(
-          requestPayload
-        );
-        const responseInstruction =
-          data.instructionDocument &&
-          typeof data.instructionDocument === "object"
-            ? data.instructionDocument
-            : {};
-        const baseRevision =
-          data.baseRevision ?? responseInstruction.baseRevision;
-        const schemaVersion = responseInstruction.schemaVersion;
-        const responseRevision = responseInstruction.revision;
-        if (
-          !Number.isSafeInteger(baseRevision) ||
-          baseRevision !== expectedRevision ||
-          schemaVersion !== 1 ||
-          !Number.isSafeInteger(responseRevision) ||
-          responseRevision !== baseRevision + 1
-        ) {
-          throw new Error(
-            "The AI returned an incompatible instruction revision. Nothing was overwritten."
-          );
+      if (data.kind === "project") {
+        const definition = normalizeGeneratedAiProject(data.project);
+        if (!definition.files.some((file) => file.role === "specification")) {
+          throw new Error("The project response is missing its YAML specification.");
         }
-        const revisedMarkdown =
-          responseInstruction.markdown ?? data.instructionMarkdown;
-        if (typeof revisedMarkdown !== "string") {
-          throw new Error(
-            "The AI response did not include a Markdown instruction."
-          );
-        }
-        if (!revisedMarkdown.trim()) {
-          throw new Error(
-            "The AI response did not include the revised instruction."
-          );
-        }
-        applyProjectInstructionMarkdown(revisedMarkdown, {
-          skillRefs: responseInstruction.skillRefs,
-          expectedRevision,
-        });
-        const instructionMessage =
-          String(data.message || "").trim() ||
-          "I revised the Markdown instruction. Review it before asking me to create or update the project.";
-        appendProjectAiMessage("assistant", instructionMessage);
-        if (clearPromptOnSuccess && prompt) setProjectAiPromptValue("");
-        return;
-      }
-
-      if (data.kind !== "project" && !data.project) {
-        throw new Error(
-          "The AI response did not include an answer, instruction, or project."
-        );
-      }
-      assertProjectAiInstructionIsFresh(requestPayload);
-      const definition = normalizeGeneratedAiProject(data.project);
-      const operation = String(data.operation || "");
-      let savedProject = null;
-      if (operation === "update") {
-        const expectedTarget = String(
-          requestPayload.currentProject?.instanceId || ""
-        );
-        const responseTarget = String(data.targetInstanceId || "");
-        if (!expectedTarget || responseTarget !== expectedTarget) {
-          throw new Error(
-            "The AI response did not match the current mini-project. Nothing was changed."
-          );
-        }
-        assertProjectAiUpdateIsFresh(requestPayload);
-        savedProject = await window.UartDebugAvrMiniProjects.updateInstance(
-          expectedTarget,
-          definition,
-          { origin: "ai" }
-        );
-      } else if (operation === "create") {
-        savedProject = await window.UartDebugAvrMiniProjects.install(
-          definition,
-          {
-            origin: "ai",
+        if (data.operation === "update") {
+          const instanceId = request.currentProject?.instanceId;
+          if (!instanceId || (data.targetInstanceId && data.targetInstanceId !== instanceId)) {
+            throw new Error("The response did not match the current mini-project.");
           }
-        );
-      } else {
-        throw new Error("The AI response did not specify a project action.");
+          assertProjectAiUpdateIsFresh(request);
+          await window.UartDebugAvrMiniProjects.updateInstance(instanceId, definition, { origin: "ai" });
+        } else if (data.operation === "create") {
+          await window.UartDebugAvrMiniProjects.install(definition, { origin: "ai" });
+        } else throw new Error("The response did not specify a project action.");
       }
-      const projectMessage =
-        String(data.message || "").trim() ||
-        (operation === "update"
-          ? "The current source and guide were updated in their local editable copies."
-          : "The generated source and guide were installed as local editable copies.");
-      appendProjectAiMessage(
-        "assistant",
-        projectMessage,
-        savedProject?.displayName || definition.displayName
-      );
-      if (clearPromptOnSuccess && prompt) setProjectAiPromptValue("");
+      applyProjectInstructionMarkdown(data.canvas.markdown, {
+        annotations: data.canvas.annotations,
+        locale: data.canvas.locale,
+        expectedRevision: baseRevision,
+      });
+      reportProjectCanvasMessage("assistant", data.message || canvasText("Canvas updated.", "Холст обновлён."));
     } catch (error) {
-      removeProjectAiThinking(thinkingIndicator);
-      thinkingIndicator = null;
-      const message = error?.message || "The AI request could not be completed.";
-      appendProjectAiMessage("system", message);
+      reportProjectCanvasMessage("system", error?.message || "The canvas request could not be completed.");
     } finally {
-      removeProjectAiThinking(thinkingIndicator);
+      removeProjectAiThinking(indicator);
       setProjectAiFormBusy(false);
-      if (
-        projectAiAuthSession?.mode === "google" &&
-        !quotaUpdatedFromResponse
-      ) {
+      if (projectAiAuthSession?.mode === "google" && !quotaUpdated) {
         void fetchProjectAiAuthSession().catch(() => {});
       }
     }
   }
 
-  function handleProjectAiSubmit(event) {
+  function handleProjectCanvasSubmit(event) {
     event.preventDefault();
-    const prompt = $("projectAiPrompt");
-    const visiblePrompt = prompt?.value || "";
-    const requestForAi = serializeProjectAiPromptRequest(visiblePrompt);
-    if (requestForAi.length > PROJECT_AI_PROMPT_MAX_LENGTH) {
-      prompt?.setCustomValidity(
-        "The message and quoted context must not exceed 6000 characters."
-      );
-      prompt?.reportValidity();
-      prompt?.focus({ preventScroll: true });
-      return;
-    }
-    prompt?.setCustomValidity("");
-    void submitProjectAiRequest(getProjectAiPromptDisplayRequest(visiblePrompt), {
-      aiRequest: requestForAi,
-    });
+    void submitProjectCanvas();
   }
 
   function getDevicePanelHeightForState(state) {
@@ -9304,7 +7966,7 @@
   }
 
   function refreshWorkspaceAfterDevicePanelResize() {
-    applyProjectAiStackHeight(projectAiInstructionPreferredHeight);
+
     refreshWorkspaceEditors();
   }
 
@@ -9642,10 +8304,6 @@
       },
       resolveImageUrl: (href) =>
         resolveDocumentationImageUrl(href, getDocumentationContext(current)),
-    });
-    bindCodeMirrorQuoteSurface(documentationEditor, () => {
-      const guideFile = editorElement.dataset.guideFile || "Project guide";
-      return `Project guide — ${guideFile}`;
     });
     input.addEventListener("compositionstart", () =>
       setMarkdownLiveComposition("documentation", true)
@@ -10134,7 +8792,8 @@
 
   function downloadFile(name) {
     if (!name || !hasFile(name)) return;
-    const blob = new Blob([files[name]], { type: "text/x-c" });
+    const type = /\.ya?ml$/i.test(name) ? "application/yaml" : /\.md$/i.test(name) ? "text/markdown" : "text/plain";
+    const blob = new Blob([getLiveFileContent(name)], { type: `${type};charset=utf-8` });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = name;
@@ -10145,15 +8804,7 @@
   }
 
   function downloadCurrent() {
-    if (!current || !hasFile(current)) return;
-    const blob = new Blob([files[current]], { type: "text/x-c" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = current;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(a.href);
+    downloadFile(current);
   }
 
   function updateToolbarState() {
@@ -10301,7 +8952,6 @@
       resolveImageUrl: (href) =>
         resolveDocumentationImageUrl(href, getDocumentationContext(current)),
     });
-    bindCodeMirrorQuoteSurface(editor, () => `Editor — ${current || "file"}`);
     bindDocumentationMarkerNavigation();
     editor.on("inputRead", function (cm, change) {
       if (!isCFileName(current)) return;
@@ -10588,13 +9238,6 @@
       const mcuSelect = $("mcuSelect");
       const documentationLocaleSelect = $("documentationLocaleSelect");
       const documentationEditToggle = $("documentationEditToggle");
-      const projectAiForm = $("projectAiForm");
-      const projectAiPrompt = $("projectAiPrompt");
-      const projectAiHistory = $("projectAiHistory");
-      const projectAiChatsBtn = $("projectAiChatsBtn");
-      const projectAiChatsMenu = $("projectAiChatsMenu");
-      const projectAiNewChatBtn = $("projectAiNewChatBtn");
-      const projectAiChatList = $("projectAiChatList");
       const projectAiAccountBtn = $("projectAiAccountBtn");
       const projectAiAccountModal = $("projectAiAccountModal");
       const projectAiAccountCloseBtn = $("projectAiAccountCloseBtn");
@@ -10689,69 +9332,8 @@
       documentationEditToggle.addEventListener("click", () => {
         setDocumentationEditMode(!documentationEditMode);
       });
-    projectAiForm &&
-      projectAiForm.addEventListener("submit", handleProjectAiSubmit);
-    projectAiChatsBtn &&
-      projectAiChatsBtn.addEventListener("click", (event) => {
-        event.stopPropagation();
-        toggleProjectAiChatsMenu();
-      });
-    projectAiChatsMenu &&
-      projectAiChatsMenu.addEventListener("click", (event) => {
-        event.stopPropagation();
-      });
-    projectAiNewChatBtn &&
-      projectAiNewChatBtn.addEventListener("click", createProjectAiChat);
-    projectAiChatList &&
-      projectAiChatList.addEventListener("pointerdown", (event) => {
-        projectAiPendingChatPointerAction = getProjectAiChatAction(event.target);
-      });
-    projectAiChatList &&
-      projectAiChatList.addEventListener("pointercancel", () => {
-        projectAiPendingChatPointerAction = null;
-        flushProjectAiChatRenameRender();
-      });
-    projectAiChatList &&
-      projectAiChatList.addEventListener("click", (event) => {
-        const action =
-          projectAiPendingChatPointerAction ||
-          getProjectAiChatAction(event.target);
-        projectAiPendingChatPointerAction = null;
-        runProjectAiChatAction(action);
-        flushProjectAiChatRenameRender();
-      });
-    projectAiHistory &&
-      projectAiHistory.addEventListener("click", (event) => {
-        const copy = event.target.closest("[data-copy-message-id]");
-        if (copy) {
-          void copyProjectAiMessage(copy.dataset.copyMessageId || "", copy);
-          return;
-        }
-        const edit = event.target.closest("[data-edit-message-id]");
-        if (edit) beginProjectAiMessageEdit(edit.dataset.editMessageId || "");
-      });
-    projectAiHistory &&
-      projectAiHistory.addEventListener("mouseup", () =>
-        window.setTimeout(
-          () => showProjectAiHistorySelectionQuote(projectAiHistory),
-          0
-        )
-      );
-    projectAiHistory &&
-      document.addEventListener("selectionchange", () => {
-        const selection = window.getSelection?.();
-        const anchorNode = selection?.anchorNode || null;
-        const focusNode = selection?.focusNode || null;
-        if (
-          (anchorNode && projectAiHistory.contains(anchorNode)) ||
-          (focusNode && projectAiHistory.contains(focusNode))
-        ) {
-          window.setTimeout(
-            () => showProjectAiHistorySelectionQuote(projectAiHistory),
-            0
-          );
-        }
-      });
+    $("projectCanvasForm")?.addEventListener("submit", handleProjectCanvasSubmit);
+    bindCanvasTargetControls();
     projectAiAccountBtn &&
       projectAiAccountBtn.addEventListener("click", openProjectAiAccountModal);
     projectAiAccountCloseBtn &&
@@ -10769,27 +9351,6 @@
       projectAiSignInBtn.addEventListener("click", handleProjectAiSignIn);
     projectAiSignOutBtn &&
       projectAiSignOutBtn.addEventListener("click", handleProjectAiSignOut);
-    projectAiPrompt &&
-      projectAiPrompt.addEventListener("input", () => {
-        projectAiPrompt.setCustomValidity("");
-        resizeProjectAiPrompt();
-      });
-    projectAiPrompt &&
-      projectAiPrompt.addEventListener("keydown", (event) => {
-        if (
-          event.key !== "Enter" ||
-          event.shiftKey ||
-          event.isComposing ||
-          projectAiRequestInFlight
-        ) {
-          return;
-        }
-        event.preventDefault();
-        projectAiForm?.requestSubmit();
-      });
-    window.addEventListener("resize", resizeProjectAiPrompt);
-    renderProjectAiPromptQuotes();
-    resizeProjectAiPrompt();
     fileAddModal &&
       fileAddModal.addEventListener("click", (event) => {
         const target = event.target;
@@ -10855,9 +9416,6 @@
 
     // Close context menu on click outside of it / trigger
     document.addEventListener("click", (e) => {
-      if (!e.target.closest?.(".project-ai-chats")) {
-        closeProjectAiChatsMenu();
-      }
       const menu = $("fileContextMenu");
       if (!menu || menu.style.display !== "block") return;
       if (menu.contains(e.target) || e.target.closest(".file-menu-btn")) {
@@ -10865,27 +9423,10 @@
       }
       closeFileContextMenu();
     });
-    document.addEventListener("pointerdown", (event) => {
-      if (event.target.closest?.("#projectAiSelectionQuoteBtn")) return;
-      if (!event.target.closest?.(".CodeMirror, #projectAiHistory")) {
-        hideProjectAiSelectionQuote();
-      }
-    });
-    document.addEventListener("pointerup", () => {
-      window.setTimeout(() => {
-        projectAiPendingChatPointerAction = null;
-        flushProjectAiChatRenameRender();
-      }, 0);
-    });
-
     // Close context menu on Escape
     document.addEventListener("keydown", (e) => {
       if (trapProjectAiAccountFocus(e)) return;
       if (e.key === "Escape") {
-        if (projectAiChatsMenu && !projectAiChatsMenu.hidden) {
-          closeProjectAiChatsMenu({ restoreFocus: true });
-          return;
-        }
         if (projectAiAccountModal && !projectAiAccountModal.hidden) {
           closeProjectAiAccountModal();
           return;
@@ -11449,7 +9990,6 @@
 
   function boot() {
     loadState();
-    restoreProjectAiChats();
     restoreProjectAiLocalDirtyState();
     restoreProjectAiAccountSyncState();
     restoreProjectInstruction();
@@ -11463,11 +10003,9 @@
     setMoreOptionsExpanded(false);
     restoreDevicePanelState();
     bindUI();
-    renderProjectAiHistory();
-    renderProjectAiChatList();
     void renderBuiltInMiniProjectCards();
     if (projectAiAuthReturn) {
-      window.setTimeout(() => $("projectAiPrompt")?.focus({ preventScroll: true }), 0);
+      window.setTimeout(() => projectInstructionEditor?.focus(), 0);
     }
     initEditor();
     renderProjectAiAuthReturn(projectAiAuthReturn);

@@ -166,6 +166,21 @@ async function expectCode(input, code, options) {
   );
 }
 
+test("imports a C, localized guide, and public YAML bundle without legacy AI Markdown", async () => {
+  const yaml = "schemaVersion: 1\nlanguage: ru\ndescription: Светодиод\n";
+  const parsed = await archive.parseMiniProjectArchive(makeZip([
+    { name: "blink/blink.c", content: "int main(void) {}", method: 0 },
+    { name: "blink/blink_help(ru).md", content: "# Светодиод\n\nМигает один раз в секунду.\n", method: 0 },
+    { name: "blink/blink.yaml", content: yaml, method: 0 },
+  ]));
+  const normalized = miniProjectCore.normalizeDefinition(parsed);
+  assert.equal(normalized.files.specification.content, yaml);
+  assert.equal(normalized.files.specification.role, "specification");
+  assert.equal(normalized.files.specification.mediaType, "application/yaml");
+  assert.equal(normalized.defaultLocale, "ru");
+  assert.equal(normalized.files.aiSpec, undefined);
+});
+
 test("exports the browser UMD global", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../public/avr-mini-project-archive.js"),

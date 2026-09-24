@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="uart.css?v=20260709-terminal-polish-v3" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260919-simple-resizers-v1"
+      href="AVR-Programming.css?v=20260924-canvas-v1"
     />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
 
@@ -129,102 +129,11 @@
                     data-tooltip-disabled
                   ></div>
 
-                  <div
-                    class="project-ai-layout"
-                    aria-label="AI project workspace"
-                  >
-                    <section
-                      class="project-instruction-panel avr-session-panel"
-                      aria-labelledby="projectInstructionTitle"
-                    >
-                      <h2 class="sr-only" id="projectInstructionTitle">
-                        Project instruction
-                      </h2>
-                      <span
-                        class="project-instruction-save-state"
-                        id="projectInstructionSaveState"
-                        role="status"
-                        aria-live="polite"
-                        hidden
-                      ></span>
-
-                      <div class="project-instruction-workspace">
-                        <div
-                          class="project-instruction-live-editor scroll-frame"
-                          id="projectInstructionDropZone"
-                        >
-                          <label class="sr-only" for="projectInstructionEditor">
-                            Project instruction Markdown
-                          </label>
-                          <textarea
-                            id="projectInstructionEditor"
-                            spellcheck="true"
-                          ></textarea>
-                        </div>
-                      </div>
-                    </section>
-
-                    <div
-                      class="split-resizer project-ai-resizer project-ai-chat-resizer"
-                      id="projectAiChatResizer"
-                      role="separator"
-                      tabindex="0"
-                      aria-label="Resize project instruction and AI chat"
-                      aria-orientation="horizontal"
-                      aria-controls="projectInstructionDropZone projectAiView"
-                      data-tooltip-disabled
-                    ></div>
-
-                    <section
-                      class="project-ai-chat-panel avr-session-panel"
-                      aria-labelledby="projectAiTitle"
-                    >
-                    <div
-                      class="avr-action-strip project-ai-action-strip avr-session-header"
-                    >
-                      <h2 class="sr-only" id="projectAiTitle">
-                        Uart Debug AI conversation
-                      </h2>
-                      <div class="project-ai-toolbar" id="projectAiHeader">
-                        <div class="project-ai-chats">
-                          <button
-                            class="project-ai-chats-trigger"
-                            id="projectAiChatsBtn"
-                            type="button"
-                            aria-label="Open chats"
-                            aria-haspopup="menu"
-                            aria-controls="projectAiChatsMenu"
-                            aria-expanded="false"
-                          >
-                            <span aria-hidden="true"></span>
-                            <span aria-hidden="true"></span>
-                            <span aria-hidden="true"></span>
-                          </button>
-
-                          <div
-                            class="project-ai-chats-menu"
-                            id="projectAiChatsMenu"
-                            role="menu"
-                            aria-label="AI chats"
-                            hidden
-                          >
-                            <div class="project-ai-chats-menu-header">
-                              <strong>Chats</strong>
-                              <button
-                                class="project-ai-new-chat"
-                                id="projectAiNewChatBtn"
-                                type="button"
-                              >
-                                New chat
-                              </button>
-                            </div>
-                            <div
-                              class="project-ai-chat-list"
-                              id="projectAiChatList"
-                            ></div>
-                          </div>
-                        </div>
-
+                  <div class="project-ai-layout" aria-label="AI project canvas">
+                    <section class="project-instruction-panel avr-session-panel" aria-labelledby="projectInstructionTitle">
+                      <div class="avr-action-strip project-ai-action-strip avr-session-header">
+                        <h2 class="sr-only" id="projectInstructionTitle">Project canvas</h2>
+                        <div class="project-ai-toolbar" id="projectAiHeader">
                         <div
                           class="project-ai-budget"
                           id="projectAiBudget"
@@ -281,61 +190,26 @@
                             ></span>
                           </button>
                         </div>
-                      </div>
-                    </div>
 
-                    <div
-                      class="project-ai-view"
-                      id="projectAiView"
-                      role="region"
-                      aria-labelledby="projectAiTitle"
-                    >
-                      <section
-                        class="project-ai-workspace scroll-frame"
-                        id="projectAiWorkspace"
-                        aria-label="AI project conversation"
-                      >
-                        <div
-                          class="project-ai-history"
-                          id="projectAiHistory"
-                          role="log"
-                          aria-live="polite"
-                          aria-relevant="additions"
-                        ></div>
-                      </section>
-
-                      <form class="project-ai-form" id="projectAiForm">
-                        <div class="project-ai-composer scroll-frame">
-                          <label class="sr-only" for="projectAiPrompt">
-                            Message
-                          </label>
-                          <div class="project-ai-prompt-field">
-                            <div
-                              class="project-ai-prompt-quotes"
-                              id="projectAiPromptQuotes"
-                              aria-label="Quoted context"
-                              hidden
-                            ></div>
-                            <textarea
-                              id="projectAiPrompt"
-                              rows="3"
-                              maxlength="6000"
-                              placeholder="Ask, revise the instruction, or request a project"
-                              spellcheck="true"
-                            ></textarea>
-                          </div>
-                          <div class="project-ai-form-footer">
-                            <button
-                              class="connect-btn"
-                              id="projectAiSubmitBtn"
-                              type="submit"
-                            >
-                              Send
-                            </button>
-                          </div>
                         </div>
+                      </div>
+                      <form class="project-canvas-controls" id="projectCanvasForm">
+                        <label for="projectPackageSelect">Chip package</label>
+                        <select id="projectPackageSelect" required>
+                          <option value="">Choose package</option>
+                        </select>
+                        <button class="connect-btn" id="projectCanvasRunBtn" type="submit">Process canvas</button>
                       </form>
-                    </div>
+                      <p class="project-canvas-hint" id="projectCanvasHint">Describe your project in your language. AI will clarify this canvas or build the project.</p>
+                      <span class="project-instruction-save-state" id="projectInstructionSaveState" role="status" aria-live="polite" hidden></span>
+                      <div class="project-instruction-workspace">
+                        <div class="project-instruction-live-editor scroll-frame" id="projectInstructionDropZone">
+                          <label class="sr-only" for="projectInstructionEditor">Project canvas Markdown</label>
+                          <textarea id="projectInstructionEditor" spellcheck="true" aria-describedby="projectCanvasHint"></textarea>
+                        </div>
+                      </div>
+                      <div id="projectCanvasAnnotationsFallback" class="project-canvas-annotations" hidden></div>
+                      <div class="project-canvas-status" id="projectCanvasStatus" role="status" aria-live="polite" hidden></div>
                     </section>
                   </div>
 
@@ -346,7 +220,7 @@
                     tabindex="0"
                     aria-label="Resize AI workspace"
                     aria-orientation="vertical"
-                    aria-controls="projectInstructionTitle projectAiView"
+                    aria-controls="projectInstructionTitle"
                     data-tooltip-disabled
                   ></div>
 
@@ -513,7 +387,7 @@
           <input
             id="fileUploadInput"
             type="file"
-            accept=".c,.h,.cpp,.cc,.hpp,.ino,.s,.S,.asm,.txt,.md,.hex,.ihex,.zip,application/zip"
+            accept=".c,.h,.cpp,.cc,.hpp,.ino,.s,.S,.asm,.txt,.md,.yaml,.yml,.hex,.ihex,.zip,application/zip"
             hidden
           />
 
@@ -859,11 +733,11 @@
       </div>
     </main>
     <script defer src="ui-tooltips.js?v=20260723-pane-optout-v1"></script>
-    <script defer src="avr-mini-projects.js?v=20260821-mini-projects-v1"></script>
-    <script defer src="avr-mini-project-archive.js?v=20260821-localized-zip-v1"></script>
+    <script defer src="avr-mini-projects.js?v=20260924-canvas-v1"></script>
+    <script defer src="avr-mini-project-archive.js?v=20260924-canvas-v1"></script>
     <script
       defer
-      src="AVR-Programming.js?v=20260919-simple-resizers-v1"
+      src="AVR-Programming.js?v=20260924-canvas-v1"
     ></script>
     <script defer src="updi-test.js?v=20260709-terminal-avr-sync-v1"></script>
   </body>

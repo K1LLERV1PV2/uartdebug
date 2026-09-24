@@ -16,7 +16,7 @@
 
       <article class="legal-document">
         <h1>Privacy Policy</h1>
-        <p class="legal-effective">Effective August 26, 2026</p>
+        <p class="legal-effective">Effective September 24, 2026</p>
 
         <p class="legal-callout">
           Uart Debug is an experimental browser-based AVR and UART tool. This
@@ -48,20 +48,21 @@
           </li>
           <li>
             <strong>Browser-local project data.</strong> Without Google sign-in,
-            AVR working files and AI chat state remain in the browser and are not
-            written to an account record. Interface preferences remain local. The
-            reviewed Project instruction remains in browser local storage for
-            unsigned and offline use.
+            AVR working files and the project canvas remain in the browser and
+            are not written to an account record. The canvas includes requirements,
+            questions, answers, and the selected device. Interface preferences
+            remain local. Canvas storage also supports unsigned and offline use.
           </li>
           <li>
             <strong>Signed-in workspace synchronization.</strong> After Google
-            sign-in, Uart Debug may store AI chat history, a complete snapshot of
-            the AVR file workspace, and the reviewed Project instruction in
+            sign-in, Uart Debug may store a complete snapshot of
+            the AVR file workspace and the project canvas in
             account-scoped SQLite. The file snapshot can contain file names, file
-            contents, guide edits, grouping, and the file-list state needed to
-            restore the workspace. The Project instruction is a third independent
-            snapshot; it is not attached to a chat and does not change when chats
-            are switched. Writes are bounded and independently revisioned; stale
+            contents, C source, YAML specifications, guide edits, grouping, and
+            the file-list state needed to restore the workspace. The canvas is
+            stored separately. Chat history saved by earlier versions may remain
+            in the account records, but the canvas workflow does not use it as AI
+            context. Writes are bounded and independently revisioned; stale
             revisions are rejected rather than silently replacing newer account
             data. Before a cloud copy replaces browser-local data, the browser may
             keep a bounded local recovery copy for conflict and account-switch
@@ -70,14 +71,21 @@
           </li>
           <li>
             <strong>AI requests.</strong> Account synchronization by itself does
-            not send chat or workspace data to Google or OpenAI. When you
-            explicitly submit an AI request, your message and the context selected
-            for that request—such as the current conversation, MCU, project source
-            and guide, and Project instruction—are sent to OpenAI to answer or
+            not send canvas or workspace data to Google or OpenAI. When you
+            explicitly process the canvas, its requirements, annotations and
+            answers, selected MCU and package, and any current project source,
+            YAML specification and guide are sent to OpenAI to clarify or
             generate requested project material. A stable pseudonymous browser safety identifier
             and a per-request ID are also sent for abuse
             prevention and operational tracing. Google identifiers, email, and
             authentication cookies are not included.
+          </li>
+          <li>
+            <strong>Official documentation lookup.</strong> If local technical
+            references are insufficient, the server may request a public
+            documentation page from Microchip. These requests use the page URL;
+            the canvas, project files, and account identifiers are not sent to
+            Microchip. Retrieved public references may be cached on our server.
           </li>
           <li>
             <strong>Usage and security records.</strong> The service records
@@ -96,7 +104,7 @@
         <h2>Why we use it</h2>
         <p>
           We process this information to provide the requested tools, authenticate
-          users, restore signed-in chats and AVR workspaces, allocate and account
+          users, restore signed-in canvases and AVR workspaces, allocate and account
           for AI Credits, keep project updates consistent, secure the service,
           investigate failures, and prevent abuse.
         </p>
@@ -107,7 +115,7 @@
           API storage disabled for application responses; OpenAI may retain limited
           data for abuse monitoring under its API data controls. Google provides
           authentication. Google does not receive the synchronized AVR workspace,
-          AI chat history, or Project instruction from Uart Debug. These providers
+          canvas, or retained legacy chat history from Uart Debug. These providers
           process data under their own terms and privacy commitments.
         </p>
         <p>
@@ -123,10 +131,10 @@
           <li>Browser installation cookies expire after up to 400 days.</li>
           <li>Operational web and service logs are normally kept up to 14 days.</li>
           <li>
-            Server-side AI draft specifications become eligible for automated
-            cleanup about 30 days after their last write. Cleanup runs with later
-            draft activity, so deletion may occur after that point rather than at
-            an exact deadline.
+            The canvas workflow does not create separate private server-side AI
+            draft specifications. Legacy draft files from earlier versions may
+            remain until operator cleanup or a handled data request; the current
+            workflow does not run the earlier draft cleanup process.
           </li>
           <li>
             Pseudonymous account, device, and AI Credit ledger records are retained
@@ -134,8 +142,8 @@
             Automated expiry for these records is still under development.
           </li>
           <li>
-            Signed-in chat history, the latest AVR workspace snapshot, and the
-            latest Project-instruction snapshot are retained with the account data
+            Retained legacy chat history, the latest AVR workspace snapshot, and
+            the latest canvas snapshot are retained with the account data
             until replaced or removed through an operator-handled data request.
             Automatic expiry and a self-service deletion/export interface are not
             currently available.

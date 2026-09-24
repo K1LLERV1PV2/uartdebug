@@ -11,7 +11,7 @@ const {
   createAiAccessService,
 } = require("./ai-access-service");
 
-const AI_SERVER_VERSION = "20260826-compiler-verification-v1";
+const AI_SERVER_VERSION = "20260924-canvas-v2";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -21,9 +21,6 @@ const DEFAULT_AUTH_START_MAX_PER_IP = 10;
 const DEFAULT_AUTH_START_MAX_GLOBAL = 1000;
 const DEFAULT_WORKSPACE_WRITE_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_WORKSPACE_WRITES_PER_ACCOUNT = 1200;
-const MAX_PUBLIC_SKILLS = 64;
-const MAX_PUBLIC_SKILL_MARKDOWN_BYTES = 64 * 1024;
-const MAX_PUBLIC_SKILL_PACK_BYTES = 512 * 1024;
 const ACCOUNT_WORKSPACE_BODY_LIMITS = Object.freeze({
   chats: 1024 * 1024 + 64 * 1024,
   files: 4 * 1024 * 1024 + 64 * 1024,
@@ -134,35 +131,6 @@ function createAiHttpServer(options = {}) {
 
     if (req.method === "GET" && requestUrl.pathname === "/health") {
       return sendText(res, 200, `ok ${AI_SERVER_VERSION}\n`);
-    }
-
-    if (
-      req.method === "GET" &&
-      requestUrl.pathname === "/api/avr/ai/skills"
-    ) {
-      try {
-        if (typeof aiService.getSkills !== "function") {
-          throw new AiServiceError(
-            503,
-            "skill_catalog_unavailable",
-            "The AI skill catalog is unavailable."
-          );
-        }
-        const catalog = normalizePublicSkillCatalog(await aiService.getSkills());
-        return sendJson(res, 200, {
-          ok: true,
-          ...catalog,
-          requestId,
-        });
-      } catch (error) {
-        const normalized = normalizeServiceError(error);
-        return sendJson(res, normalized.status, {
-          ok: false,
-          code: normalized.code,
-          message: normalized.message,
-          requestId,
-        });
-      }
     }
 
     if (
@@ -377,9 +345,7 @@ function createAiHttpServer(options = {}) {
 
     if (
       req.method === "POST" &&
-      ["/api/avr/ai/respond", "/api/avr/ai/generate"].includes(
-        requestUrl.pathname
-      )
+      requestUrl.pathname === "/api/avr/ai/canvas"
     ) {
       if (
         requireBrowserOrigin &&
@@ -434,8 +400,7 @@ function createAiHttpServer(options = {}) {
       }
 
       try {
-        const validateInput =
-          aiService.validateRequestInput || aiService.validateGenerationInput;
+        const validateInput = aiService.validateRequestInput;
         if (typeof validateInput === "function") {
           validateInput.call(aiService, requestBody);
         }
@@ -467,6 +432,13 @@ function createAiHttpServer(options = {}) {
             503,
             status.rulesError || "rules_unavailable",
             "The active AI rules are unavailable."
+          );
+        }
+        if (!status.knowledge) {
+          throw new AiServiceError(
+            503,
+            status.knowledgeError || "knowledge_unavailable",
+            "The local AVR knowledge base is unavailable."
           );
         }
         if (
@@ -520,8 +492,8 @@ function createAiHttpServer(options = {}) {
       let usageRecorded = false;
       let ndjsonStarted = false;
       try {
-        const respond = aiService.respond || aiService.generate;
-        if (typeof respond !== "function") {
+        const processCanvas = aiService.processCanvas;
+        if (typeof processCanvas !== "function") {
           throw new AiServiceError(
             503,
             "ai_unavailable",
@@ -532,7 +504,7 @@ function createAiHttpServer(options = {}) {
           beginNdjson(res);
           ndjsonStarted = true;
         }
-        const result = await respond.call(aiService, requestBody, {
+        const result = await processCanvas.call(aiService, requestBody, {
           requestId,
           safetyIdentifier: accessContext?.safetyIdentifier || "",
           compilerReady:
@@ -905,99 +877,6 @@ function normalizeServiceError(error) {
     code: "internal_error",
     message: "Internal AI service error.",
   };
-}
-
-function normalizePublicSkillCatalog(rawCatalog) {
-  if (
-    !rawCatalog ||
-    typeof rawCatalog !== "object" ||
-    Array.isArray(rawCatalog) ||
-    Number(rawCatalog.schemaVersion) !== 1 ||
-    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(
-      String(rawCatalog.catalogVersion || "")
-    ) ||
-    !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(
-      String(rawCatalog.locale || "")
-    ) ||
-    !/^[a-f0-9]{64}$/.test(String(rawCatalog.digest || "")) ||
-    !Array.isArray(rawCatalog.skills) ||
-    rawCatalog.skills.length > MAX_PUBLIC_SKILLS
-  ) {
-    throw new AiServiceError(
-      503,
-      "skill_catalog_invalid",
-      "The AI skill catalog is invalid."
-    );
-  }
-
-  const ids = new Set();
-  let totalMarkdownBytes = 0;
-  const skills = rawCatalog.skills.map((rawSkill) => {
-    if (!rawSkill || typeof rawSkill !== "object" || Array.isArray(rawSkill)) {
-      throwInvalidPublicSkillCatalog();
-    }
-    const id = String(rawSkill.id || "").trim();
-    const version = String(rawSkill.version || "").trim();
-    const title = normalizePublicSkillText(rawSkill.title, 96);
-    const summary = normalizePublicSkillText(rawSkill.summary, 300);
-    if (
-      !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ||
-      ids.has(id) ||
-      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(version) ||
-      typeof rawSkill.markdown !== "string"
-    ) {
-      throwInvalidPublicSkillCatalog();
-    }
-    const markdown = rawSkill.markdown.replace(/\r\n?/g, "\n");
-    const markdownBytes = Buffer.byteLength(markdown, "utf8");
-    if (
-      !markdown.trim() ||
-      markdown.includes("\u0000") ||
-      markdownBytes > MAX_PUBLIC_SKILL_MARKDOWN_BYTES ||
-      !/^#{1,6}[ \t]+\S/m.test(markdown) ||
-      /<(?:script|style|iframe|object|embed|link|meta|img|svg)\b/i.test(
-        markdown
-      ) ||
-      /(?:javascript|data):/i.test(markdown)
-    ) {
-      throwInvalidPublicSkillCatalog();
-    }
-    totalMarkdownBytes += markdownBytes;
-    if (totalMarkdownBytes > MAX_PUBLIC_SKILL_PACK_BYTES) {
-      throwInvalidPublicSkillCatalog();
-    }
-    ids.add(id);
-    return { id, version, title, summary, markdown };
-  });
-
-  return {
-    schemaVersion: 1,
-    catalogVersion: String(rawCatalog.catalogVersion),
-    locale: String(rawCatalog.locale),
-    count: skills.length,
-    digest: String(rawCatalog.digest),
-    skills,
-  };
-}
-
-function normalizePublicSkillText(value, maxBytes) {
-  if (
-    typeof value !== "string" ||
-    !value.trim() ||
-    value.includes("\u0000") ||
-    Buffer.byteLength(value, "utf8") > maxBytes
-  ) {
-    throwInvalidPublicSkillCatalog();
-  }
-  return value.trim();
-}
-
-function throwInvalidPublicSkillCatalog() {
-  throw new AiServiceError(
-    503,
-    "skill_catalog_invalid",
-    "The AI skill catalog is invalid."
-  );
 }
 
 function normalizeAccessError(error) {

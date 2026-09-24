@@ -57,6 +57,19 @@ test("extracts card copy only from the first paragraph under the exact H2", () =
   );
 });
 
+test("keeps the public YAML specification distinct from legacy private AI Markdown", () => {
+  const yaml = "schemaVersion: 1\nlanguage: ru\ndescription: Мигать светодиодом\n";
+  const definition = core.normalizeDefinition({ schemaVersion: 1, id: "blink",
+    files: [{ role: "source", name: "blink.c", content: "int main(void) {}" },
+      { role: "guide", name: "blink_help.md", locale: "ru", content: "# Светодиод" },
+      { role: "specification", name: "blink.yaml", content: yaml }] });
+  assert.equal(definition.files.specification.content, yaml);
+  assert.equal(definition.files.specification.mediaType, "application/yaml");
+  assert.equal(definition.files.aiSpec, undefined);
+  assert.equal(core.inferFileRole("blink.yml"), "specification");
+  assert.equal(core.inferFileRole("blink_AI.md"), "aiSpec");
+});
+
 test("normalizes a legacy one-file mini-project", () => {
   const definition = core.normalizeDefinition({
     id: "minimum",

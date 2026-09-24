@@ -582,7 +582,7 @@
         classified.source.push({ ...file, relativePath, baseName });
       } else if (/_help[^/]*\.md$/i.test(baseName)) {
         classified.guide.push({ ...file, relativePath, baseName });
-      } else if (/_ai[^/]*\.md$/i.test(baseName)) {
+      } else if (/_ai[^/]*\.md$/i.test(baseName) || /\.ya?ml$/i.test(baseName)) {
         classified.aiSpec.push({ ...file, relativePath, baseName });
       } else {
         const extension = extensionOf(lowerPath);
@@ -607,7 +607,7 @@
         "Mini-project archive must contain at least one _help Markdown file."
       );
     }
-    requireExactlyOne(classified.aiSpec, "_AI Markdown");
+    requireExactlyOne(classified.aiSpec, "YAML specification or legacy _AI Markdown");
 
     const sourceEntry = classified.source[0];
     const guideEntries = classified.guide;
@@ -650,7 +650,7 @@
     if (new Set(logicalNames).size !== 1) {
       fail(
         "MISMATCHED_PROJECT_FILES",
-        "The .c, _help.md, and _AI.md files do not share one logical project name."
+        "The source, help, and specification files do not share one logical project name."
       );
     }
 
@@ -678,7 +678,10 @@
       decodedGuides[0];
     const summary = miniProjectCore.extractShortProjectDescription(
       defaultGuide.content
-    );
+    ) || (/\.ya?ml$/i.test(aiEntry.baseName)
+      ? defaultGuide.content.split(/\n\s*\n/).find((paragraph) =>
+          paragraph.trim() && !/^\s*(?:#|!\[|```)/.test(paragraph))?.trim().slice(0, 1000) || sourceLogicalName
+      : "");
     if (!summary) {
       fail(
         "INVALID_PROJECT",
@@ -710,11 +713,11 @@
           mediaType: "text/x-c",
         },
         guide: guideFiles.length === 1 ? guideFiles[0] : guideFiles,
-        aiSpec: {
-          role: "aiSpec",
+        [/\.ya?ml$/i.test(aiEntry.baseName) ? "specification" : "aiSpec"]: {
+          role: /\.ya?ml$/i.test(aiEntry.baseName) ? "specification" : "aiSpec",
           name: aiEntry.baseName,
           content: aiText,
-          mediaType: "text/markdown",
+          mediaType: /\.ya?ml$/i.test(aiEntry.baseName) ? "application/yaml" : "text/markdown",
         },
       },
       assets,

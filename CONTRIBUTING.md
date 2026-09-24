@@ -34,18 +34,17 @@ Open `http://localhost:8000`. The static server covers browser-only behavior. Co
 
 ## Adding an AVR mini-project
 
-Each project needs synchronized source, human-guide, and AI roles:
+Generated projects use C, localized Markdown and YAML resource specifications. Built-in tutorials retain their existing source/guide catalogs and historical AI notes for traceability.
 
-1. Add the `.c` source and localized `_help(...).md` guides under `public/avr-mini-projects/<project-id>/`.
-2. Add the `_AI_....md` reference under `backend/ai/mini-projects/<project-id>/`.
-3. Keep the logical project name and version aligned across the three roles.
-4. Put the card copy in the first paragraph below the exact `## Short Project Description` heading in the default guide.
-5. Make every `//#` through `//######` source marker match a human-guide heading.
-6. Add public assets to `public/avr-mini-projects/catalog.json` and `public/sw.js`.
-7. Add the AI reference and its SHA-256 to `backend/ai/mini-projects/catalog.json`.
-8. Run the full test suite.
+1. Add readable C and localized guides under `public/avr-mini-projects/<project-id>/`.
+2. Keep every `//#` heading synchronized with its guide heading and keep versions aligned.
+3. Put card copy under `## Short Project Description` in the default guide.
+4. Add public assets to `public/avr-mini-projects/catalog.json` and `public/sw.js`.
+5. Extract reusable mechanisms into the versioned backend knowledge recipes. Cite exact official HTML/DFP versions, resource constraints, and the tutorial source digest. Do not add a second private generated-project specification.
+6. Add meaningful resource/calculation regressions and compile representative compositions with the supported XC8/DFP toolchain. Record compiler success separately from physical hardware testing.
+7. Rebuild the knowledge manifest after intentional source changes and run the full test suite. See [AVR_CANVAS.md](docs/AVR_CANVAS.md).
 
-Do not add real secrets, credentials, or private user data to any of the three files. Images must have redistribution rights compatible with the repository owner's eventual project license.
+Do not add secrets or user data. Images need suitable redistribution rights. Preserve legacy tutorial AI files when updating their corresponding tutorial; their catalog hashes are checked by tests.
 
 ## Tests and checks
 

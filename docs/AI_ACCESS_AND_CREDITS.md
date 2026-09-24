@@ -79,65 +79,61 @@ Before enabling required sign-in in production:
 Google's console labels can change; the security properties above are the
 configuration requirements, regardless of where Google places them in its UI.
 
-## Account-scoped chat, AVR workspace, and instruction storage
+## Account-scoped AVR workspace and canvas storage
 
-Google sign-in also provides the account boundary for optional server-side
-continuity. While a valid Uart Debug session exists, the service may store three
-revisioned documents for that account in the access SQLite database:
+Google sign-in provides the account boundary for optional server-side
+continuity. While a valid Uart Debug session exists, the service stores two
+active revisioned documents for that account in the access SQLite database:
 
-- AI chat history, including the messages and chat-list state needed to reopen
-  the account's conversations;
-- one complete AVR file-workspace snapshot, including file names and contents,
-  file groups, current-file state, and the mini-project metadata needed to
-  reconstruct the file list;
-- one Project-instruction snapshot containing the reviewed Markdown instruction
-  and its document state.
+- one complete AVR file-workspace snapshot, including C source, YAML
+  specifications, guides, file names, groups, current-file state and mini-project
+  metadata needed to reconstruct the file list;
+- one project canvas containing requirements, locale, selected MCU/package,
+  anchored annotations, user answers and document revision.
+
+Chat history saved by earlier releases remains in its separate `chats` record.
+Its storage route is retained for compatibility, but the current browser does
+not present chats or send their history as AI context. The canvas continues to
+use the account route named `instruction`; schema 2 replaces `skillRefs` with
+annotations, locale and target. Legacy schema-1 instructions can be read and
+migrated. Once a schema-2 canvas is saved, a legacy client cannot downgrade it:
+the server returns `account_data_schema_downgrade` instead of losing annotations.
 
 The server derives the account from the authenticated session. A client-supplied
 account ID must never select another account's data. Without Google sign-in,
-these documents are not written to an account record: the AVR workspace, chat
-state, and Project instruction remain browser-local.
-
-The Project instruction has a separate lifecycle from both other account
-documents. It is not attached to any chat, and selecting, creating, or deleting
-a chat must not select or replace an instruction. The browser also keeps it in
+the workspace and canvas remain browser-local. The canvas is kept in
 `localStorage` for unsigned and offline use. Interface preferences and Web
 Serial traffic remain excluded from account synchronization.
 
-Account documents are bounded before storage. The service validates their JSON
-shape and limits aggregate bytes, collection sizes, individual names/messages,
-and file contents so synchronization cannot bypass the normal HTTP and database
-resource limits. The current chat snapshot ceiling is 1 MiB, with at most 100
-chats and 128 KiB per message; there is no separate fixed conversation-message
-count, because the aggregate byte ceiling is the technical bound. The file
-snapshot ceiling is 4 MiB, with at most 256 files, 256 file
-groups, and 128 mini-project records. The account workspace endpoint accepts up
-to 256 KiB for the Project-instruction snapshot; the AI request path applies its
-own validation and may impose a stricter instruction limit. Each successful
-write advances the separate server revision for `chats`, `files`, or
-`instruction` and must be based on the revision last read by that client. A
-stale revision is a conflict, not permission to overwrite: the client must
-reload the newer document and let the user retry or choose which state to keep.
-Every write also echoes the last-read pseudonymous `accountKey`; a mismatch with
-the freshly authenticated session is rejected before persistence so a stale tab
-cannot cross an account switch. This is optimistic concurrency, not real-time
-collaborative merging.
+Account documents are bounded before storage. The file snapshot ceiling is
+4 MiB, with at most 256 files, 256 file groups and 128 mini-project records.
+The account canvas snapshot is limited to 256 KiB, including at most 128 KiB
+of requirements text and 100 annotations. Preserved legacy chat snapshots keep
+their 1 MiB aggregate ceiling, up to 100 chats and 128 KiB per message.
+The AI request path validates canvas and project fields independently.
+
+Each successful write advances its document's server revision and must use the
+revision last read by that client. A stale revision is a conflict, not permission
+to overwrite. Every write also echoes the last-read pseudonymous `accountKey`;
+a mismatch with the authenticated session is rejected before persistence so a
+stale tab cannot cross an account switch. This is optimistic concurrency, not
+real-time merging of simultaneous edits.
 
 Before replacing a browser-local document with a cloud copy, the client keeps a
-local recovery snapshot. Recovery storage is bounded to the latest copy for an
-account scope and at most three account-scoped copies for each of `chats`,
-`files`, and `instruction`. An account transition must be recorded durably before
-any local document is replaced; if browser storage rejects that marker or a
-recovery copy, synchronization pauses without uploading the previous account's
-data.
+bounded local recovery snapshot for `files` or `instruction`. An account
+transition must be recorded durably before local documents are replaced; if
+browser storage rejects that marker or a recovery copy, synchronization pauses
+without uploading the previous account's data.
 
-Synchronization is a Uart Debug storage operation. It does not send workspace,
-chat, or instruction content to Google or OpenAI. Google receives only the normal
-OAuth/OIDC traffic described above. OpenAI receives project files, conversation
-text, or the Project instruction only when the user explicitly submits an AI
-request and that data is selected as context for the request. Sign-out prevents
-later authenticated synchronization but does not itself delete the account's
-existing server copy.
+Synchronization is a Uart Debug storage operation. It does not send workspace
+or canvas content to Google or OpenAI. Google receives only OAuth/OIDC traffic.
+When the user explicitly processes the canvas, OpenAI receives the current
+requirements, questions and answers, selected hardware, and any current project
+C, YAML and guide. Local recipes and device facts are selected by the backend.
+For missing facts the backend may retrieve an allowed public Microchip HTML
+section; these requests do not send the canvas or account data to Microchip.
+Sign-out prevents later authenticated synchronization but does not itself delete
+the account's existing server copy.
 
 ## Free-access rule
 
@@ -257,16 +253,18 @@ cryptocurrency.
 The access database belongs at
 `/var/lib/uartdebug-ai/data/ai-access.sqlite`, outside versioned releases. It may
 contain HMAC-derived Google account IDs, masked account display metadata,
-installation HMACs, sessions, grants, reservations, ledger rows, account chat
+installation HMACs, sessions, grants, reservations, ledger rows, retained legacy chat
 history, the latest account-scoped AVR file-workspace snapshot, and the separate
-latest Project-instruction snapshot.
+latest canvas snapshot.
 It must not contain the Google client secret, Google tokens that are no longer
 needed, raw installation tokens, or the OpenAI API key.
 
-The systemd service grants write access only to the draft and data directories.
+The systemd service grants write access only to the documentation-cache and data directories.
 OAuth credentials and the identity/session secrets are root-owned systemd
 credentials. Database backups are sensitive and need the same access controls,
-retention rules, encryption, and restore tests as the live database.
+retention rules, encryption, and restore tests as the live database. SQLite schema
+3 marks canvas-capable storage; migration preserves existing rows, and rollback
+to older code requires its matching verified database backup.
 
 There is currently no self-service account-data export or deletion UI. Signing
 out, clearing browser storage, or revoking the OAuth connection does not delete

@@ -24,10 +24,8 @@ Environment=AI_ACCESS_MIN_OUTPUT_TOKENS=8000
 Environment=AI_AUTH_START_WINDOW_MS=600000
 Environment=AI_AUTH_START_MAX_PER_IP=10
 Environment=AI_AUTH_START_MAX_GLOBAL=1000
-Environment=AI_RULE_PACK_ROOT=/var/lib/uartdebug-ai/rule-packs
-Environment=AI_DRAFTS_DIR=/var/lib/uartdebug-ai/drafts
-Environment=AI_DRAFT_TTL_HOURS=720
-Environment=AI_MAX_DRAFTS=100
+Environment=AI_DOCUMENTATION_CACHE_DIR=/var/lib/uartdebug-ai/documentation
+Environment=AI_EXTERNAL_DOCUMENTATION_ENABLED=1
 Environment=AI_MAX_CONCURRENT=1
 Environment=AI_COMPILE_VERIFY_ENABLED=1
 Environment=AI_COMPILE_URL=http://127.0.0.1:8082/api/avr/compile
@@ -60,7 +58,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/uartdebug-ai/drafts /var/lib/uartdebug-ai/data
+ReadWritePaths=/var/lib/uartdebug-ai/documentation /var/lib/uartdebug-ai/data
 ProtectClock=true
 ProtectControlGroups=true
 ProtectHostname=true

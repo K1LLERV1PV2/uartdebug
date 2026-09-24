@@ -7,7 +7,7 @@ Browser-based tools for working with UART connections and tinyAVR microcontrolle
 Uart Debug combines two related tools in one installable web app:
 
 - **UART Terminal** communicates directly with a serial adapter through the Web Serial API.
-- **AVR Programming** provides a browser editor, guided mini-projects, server-side XC8 compilation, and UPDI flashing. Its optional AI assistant can answer AVR questions and create or update mini-project drafts.
+- **AVR Programming** provides a browser editor, guided mini-projects, server-side XC8 compilation, and UPDI flashing. Its optional AI assistant works on a shared specification canvas and creates or updates synchronized C, YAML and documentation files.
 
 The repository is under active development. Hardware access requires a browser that implements Web Serial and a secure context (`https://` or `localhost`).
 
@@ -26,7 +26,7 @@ The repository is under active development. Hardware access requires a browser t
 ### AVR Programming
 
 - Edit C source and related project files in a CodeMirror workspace. Markdown
-  files, project guides, Project instruction, and AI replies share one safe
+  files, project guides, and the specification canvas share one safe
   CommonMark/GFM parser and live-rendering behavior.
 - Keep working copies in the browser, organize files into groups, and, after
   Google sign-in, synchronize the AVR file workspace with the signed-in
@@ -36,10 +36,11 @@ The repository is under active development. Hardware access requires a browser t
 - Follow `//# Heading` through `//###### Heading` comment links from C code to matching guide sections.
 - Compile supported tinyAVR projects with Microchip XC8 on the compiler service.
 - Detect a supported chip and flash Intel HEX over UPDI from the browser.
-- Ask the AVR assistant ordinary questions, revise a reviewable Markdown project instruction, create a new mini-project, or update the currently open mini-project.
+- Write requirements in your language on a shared canvas. The Process button asks necessary questions beside the text or generates the current project.
 - Verify AI-created or updated source with the server-side AVR compiler and let
   the assistant repair compiler errors before returning the project.
-- Build that instruction manually or from versioned drag-and-drop blocks, with an immediate formatted preview.
+- Keep anchored questions, answers, selected MCU/package and requirements together. Generated YAML describes resource allocation and is editable/exportable alongside C and Markdown.
+- Use a prepared local knowledge bundle for ATtiny1624/1626/1627. Other compiler-supported devices remain available for manual programming.
 
 ## Browser and hardware requirements
 
@@ -56,23 +57,13 @@ Editing, guides, and imported files work without connected hardware. Compilation
 The old README described the entire project as client-only. That is true for serial communication, but not for every AVR feature:
 
 - UART and UPDI bytes travel directly between the browser and the serial port selected in the browser permission prompt.
-- Without Google sign-in, AVR working copies remain in browser storage and AI
-  chat state is not written to an account record. After sign-in, Uart Debug may
-  also store AI chat history, the complete AVR file-workspace snapshot, and the
-  Project instruction in account-scoped SQLite so they can be restored for that
-  account. These are three independent snapshots: the Project instruction is
-  not part of a chat and does not change when the active chat changes.
-- Account chat, file-workspace, and Project-instruction writes are size- and
-  structure-bounded and use independent revisions. A client must resolve a
-  stale-revision conflict instead of silently overwriting a newer server copy.
-- Compiling sends the selected source and linked project files to the Uart Debug compiler service. The service builds in a temporary directory and removes it after the request.
-- Synchronizing signed-in chat or workspace state does not send it to Google or
-  OpenAI. When the user explicitly submits an AI request, Uart Debug sends the
-  prompt and the context selected for that request—including relevant
-  conversation, MCU, project files and reviewed Markdown instruction—to the AI
-  service and configured OpenAI API. The API request uses `store: false`.
+- Without Google sign-in, working files and the canvas remain in browser storage. After sign-in they synchronize as two independently revisioned account snapshots. Existing legacy chat records are preserved; the canvas UI does not use them.
+- Stale-revision and account-identity checks prevent a delayed AI or synchronization response from replacing newer edits.
+- Compiling sends source and linked project files to the compiler service, which removes temporary build files after the request.
+- Account synchronization does not send the workspace to Google or OpenAI. Pressing Process sends the current canvas, annotations, selected target and current project files to the configured OpenAI Responses API with `store: false`.
+- An optional documentation tool retrieves only registered official Microchip HTML sections when a necessary fact is missing. It uses local excerpts/cache first, limits external retrieval to two sections per operation, and caches fetched references for 30 days. It does not send the canvas to Microchip.
 - When enabled, the Google access layer identifies a signed-in account by Google's verified `sub` claim and a “device” only as a best-effort browser installation. It does not collect or prove a hardware identifier.
-- When the assistant creates or updates a project, the default server configuration makes the generated AI specification eligible for cleanup after 30 days and keeps at most 100 drafts. Cleanup runs during later draft activity. Source and human-guide copies are returned to the browser.
+- Generated C, guide and YAML files return to the browser and use ordinary file-workspace persistence. New projects do not create server-side private AI drafts. Legacy drafts remain on disk but are not read by the canvas agent.
 - Before those generated project files are returned, the AI service submits the
   source to the loopback-only compiler service for the resolved target MCU and
   can make up to two compiler-guided repair attempts.
@@ -98,8 +89,9 @@ flowchart LR
   Nginx --> Compiler[compile-server.js :8082]
   Compiler --> Toolchain[XC8 + DFP + avr-objcopy]
   Nginx --> AI[ai-server.js :8083]
-  Rules[Versioned rules and AI references] --> AI
-  Skills[Versioned instruction blocks] --> AI
+  Rules[Canvas rules] --> AI
+  Knowledge[Local DFP facts and reviewed recipes] --> AI
+  AI -->|missing fact only| Docs[Official Microchip HTML cache]
   AI --> AccessDB[Account-scoped SQLite]
   AI --> OpenAI[OpenAI Responses API]
   AI -->|verify generated source| Compiler
@@ -109,33 +101,19 @@ The compiler and AI services bind to loopback by default. nginx is the public sa
 
 ## AVR mini-project format
 
-A mini-project has three synchronized roles:
+Generated projects contain three synchronized file roles:
 
-1. **Source** — a `.c` file with code and minimal inline commentary.
-2. **Human guide** — one or more `_help...md` files, optionally differentiated by locale, plus optional raster images.
-3. **AI specification** — an `_AI_<version>.md` file used by the server when the assistant reasons about or derives projects.
+1. **Source** — a standalone XC8 `.c` file.
+2. **Guide** — a Markdown explanation in the user's language, with headings matching `//#` source markers.
+3. **Specification** — a `.yaml` file serialized by the server from a validated resource specification.
 
-The public source and human guides live under [`public/avr-mini-projects`](public/avr-mini-projects). AI references live under [`backend/ai/mini-projects`](backend/ai/mini-projects) and are not served as static browser assets, although they remain visible in this public source repository.
+The built-in educational mini-projects under [public/avr-mini-projects](public/avr-mini-projects) remain available as examples. Their historical AI notes under [backend/ai/mini-projects](backend/ai/mini-projects) are source material for the reviewed recipes; they are not appended to every request. Their catalogs remain for tutorial integrity and legacy imports.
 
-The two catalogs keep the browser and server views synchronized:
+New reusable coding knowledge belongs in the versioned [knowledge bundle](backend/ai/knowledge), with official-source provenance, precise device coverage, tests and truthful verification evidence. See [the canvas architecture](docs/AVR_CANVAS.md) for the contract and expansion process.
 
-- [`public/avr-mini-projects/catalog.json`](public/avr-mini-projects/catalog.json) lists source files, localized guides, and asset locations.
-- [`backend/ai/mini-projects/catalog.json`](backend/ai/mini-projects/catalog.json) lists AI files and verifies them with SHA-256 hashes.
+The first paragraph below `## Short Project Description` in a built-in guide becomes its Add file description. Add its public assets to [public/sw.js](public/sw.js). Built-in projects are copied into the browser workspace before editing.
 
-The first paragraph below the exact `## Short Project Description` heading in the default human guide becomes the Add file card description. New public mini-project assets must also be added to the service-worker app shell in [`public/sw.js`](public/sw.js).
-
-Built-in projects are copied into the browser workspace before editing; repository originals are not modified by the page.
-
-The separate AI workspace keeps a revisioned Project instruction in browser
-`localStorage` for unsigned and offline use. After Google sign-in, it is also
-synchronized as its own account-scoped snapshot with a revision independent of
-both chats and files; switching chats does not switch the instruction. Its
-allowlisted instruction-block catalog lives under
-[`backend/ai/skills`](backend/ai/skills), may intentionally be empty, and can
-later publish Markdown blocks verified by version and SHA-256 without changing
-the browser/API contract. Private mini-project AI references are not returned by
-that endpoint. An AI instruction edit must target the exact revision the user
-submitted, so a delayed response cannot overwrite newer manual changes.
+The canvas uses schema 2 and retains independent local/account revisions. Schema-1 instructions migrate without losing their text. Old `skillRefs` have no active role. Delayed processing responses cannot overwrite a newer canvas revision.
 
 ## Local development
 
@@ -158,7 +136,7 @@ Start the compiler service after installing XC8 and `avr-objcopy`:
 npm run start:compiler --prefix backend
 ```
 
-It listens on `127.0.0.1:8082` by default. Tool paths can be overridden with `XC8_CC`, `XC8_DFP`, and `AVR_OBJCOPY`. Expensive compile starts are protected independently of chat credits: by default each client may start 12 compiles and the service may start 120 compiles total per 60-second process window, with at most two compiles running simultaneously. Operators can tune this with `COMPILE_RATE_LIMIT_WINDOW_MS`, `COMPILE_RATE_LIMIT_MAX_PER_CLIENT`, `COMPILE_RATE_LIMIT_MAX_GLOBAL`, and `COMPILE_MAX_CONCURRENT`.
+It listens on `127.0.0.1:8082` by default. Tool paths can be overridden with `XC8_CC`, `XC8_DFP`, and `AVR_OBJCOPY`. Expensive compile starts are protected independently of AI credits: by default each client may start 12 compiles and the service may start 120 compiles total per 60-second process window, with at most two compiles running simultaneously. Operators can tune this with `COMPILE_RATE_LIMIT_WINDOW_MS`, `COMPILE_RATE_LIMIT_MAX_PER_CLIENT`, `COMPILE_RATE_LIMIT_MAX_GLOBAL`, and `COMPILE_MAX_CONCURRENT`.
 
 The AI service is optional:
 
@@ -191,7 +169,7 @@ Production setup is intentionally not a copy-and-paste local quick start: it als
 | Path | Purpose |
 | --- | --- |
 | `public/` | Static PWA, UART terminal, AVR editor/programmer, mini-project source and guides, vendored browser libraries |
-| `backend/` | Compiler service, AI service, versioned rules, AI references, instruction blocks, and deployment files |
+| `backend/` | Compiler service, AI service, canvas contracts, local AVR knowledge, tutorial references, and deployment files |
 | `frontend/markdown-runtime/` | Source, tests, and deterministic build for the vendored CommonMark/GFM browser runtime |
 | `docs/` | Product architecture decisions, access/credit design, and explicit limitations |
 | `tests/` | Node test suite |
