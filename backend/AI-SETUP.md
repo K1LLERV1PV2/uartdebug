@@ -239,7 +239,7 @@ The pilot knowledge release is stored under:
 
 ```text
 backend/ai/canvas-rules.md
-backend/ai/knowledge/attiny162x/1.0.0/
+backend/ai/knowledge/attiny162x/1.1.0/
 ```
 
 The manifest records source provenance, versioned device facts, recipe paths and
@@ -249,13 +249,20 @@ language, without attaching the complete tutorials. The pilot covers ATtiny1624/
 packages listed in status metadata; unsupported hardware yields a canvas issue.
 Do not interpret the pilot as support for every AVR or every peripheral.
 
-When a necessary fact is missing, the model may call `read_avr_documentation`
-with an official section URL, a search term and an explanation of the gap.
-The server checks local text and cache first, permits at most two external HTML
-requests per generation, and restricts URLs to the registered Microchip
-datasheet/errata roots. Redirects are rejected; timeout and byte ceilings apply.
-The tool reads sections rather than offering general web search. Downloaded
-references are not automatically promoted into approved recipes.
+The bundle includes complete original PDFs (575 datasheet + 16 errata pages)
+and the DFP archive, their extracted local corpus, full pilot register metadata
+and separately reviewed facts. The deployment must preserve `reference/raw/`:
+hash verification intentionally fails if originals are missing or modified.
+
+When a necessary fact is missing from the prompt, `read_avr_documentation`
+supports local `catalog`, `search`, `read` and `registers` operations. Only an
+explicit `external` operation after an unrestricted search across all local
+documents for the same query and
+an explanation of the remaining gap can access the website. There are at most
+ten documentation steps and two external HTML requests per generation. External
+URLs are restricted to registered Microchip datasheet/errata roots; redirects,
+timeouts and oversized responses are rejected. No general web search is offered.
+Reference extraction is not automatically promoted into approved recipes.
 
 Production reference cache:
 

@@ -24,5 +24,10 @@
 *.webp binary
 *.woff binary
 *.woff2 binary
+*.pdf binary
+*.atpack binary
 
 public/vendor/** linguist-vendored
+backend/ai/knowledge/**/reference/raw/** linguist-vendored
+backend/ai/knowledge/**/reference/corpus.json linguist-generated
+backend/ai/knowledge/**/reference/dfp-registers.json linguist-generated

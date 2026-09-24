@@ -156,7 +156,9 @@ test("status advertises local target/packages and no legacy skill catalog", asyn
   assert.equal(status.ready, true);
   assert.equal(status.contract, "uartdebug-canvas/v1");
   assert.equal(status.knowledge.devices.length, 3);
-  assert.equal(status.rules.packageId, "uartdebug-canvas-2026-09-24.1");
+  assert.equal(status.rules.packageId, "uartdebug-canvas-2026-09-24.2");
+  assert.equal(status.knowledge.referenceDocuments.length, 2);
+  assert.ok(status.knowledge.reviewedErrataCount > 0);
   assert.equal(s.getSkills, undefined);
   assert.equal(
     (await service({ environment: {} }).getStatus()).configured,
@@ -285,6 +287,24 @@ test("resource conflicts, clock mismatch and unsafe W1C writes are blocked befor
     );
     assert.equal(compileCalls, 0);
   }
+});
+test("full reference access does not permit undeclared unsupported peripheral code", async () => {
+  for (const extra of ["void sample(void) { ADC0.CTRLA = 1; }", "void sleep_timer(void) { RTC.CTRLA = 1; }"]) {
+    const data = generated();
+    data.project.source.content += extra;
+    let compileCalls = 0;
+    await assert.rejects(service({
+      environment: { ...environment, AI_COMPILE_VERIFY_ENABLED: "1" },
+      compileHealthFetch: async () => health(),
+      compileFetch: async () => { compileCalls++; return compile(); },
+      fetch: async () => response(envelope(data)),
+    }).processCanvas(input()), (error) => error.code === "unsupported_peripheral_access");
+    assert.equal(compileCalls, 0);
+  }
+  const data = generated();
+  data.project.source.content += '\n/* ADC0.CTRLA is reference text. */\n// RTC.CTRLA is not accessed.\nstatic const char *note = "SPI0.CTRLA / TWI0.CTRLA";\nvoid clock_setup(void) { CPU.CCP = 0xD8; CLKCTRL.MCLKCTRLB = 0; PORTMUX.USARTROUTEA = 0; }\n';
+  const result = await service({ fetch: async () => response(envelope(data)) }).processCanvas(input());
+  assert.equal(result.kind, "project", "literals, comments and supported clock/route setup remain permitted");
 });
 test("compiler readiness is required before any paid call", async () => {
   let calls = 0;
@@ -425,7 +445,7 @@ test("repair extends the reservation and retains earlier usage when the next cal
   );
   assert.equal(extension, 1);
 });
-test("documentation function results continue Responses with prior output and same budget accounting", async () => {
+test("local corpus search/read/register steps continue Responses with provenance and budget accounting without internet", async () => {
   let calls = 0,
     web = 0;
   const requests = [];
@@ -438,20 +458,24 @@ test("documentation function results continue Responses with prior output and sa
     fetch: async (_url, r) => {
       requests.push(JSON.parse(r.body));
       calls++;
+      const outputs = requests.at(-1).input.filter((item) => item.type === "function_call_output");
+      const previous = outputs.length ? JSON.parse(outputs.at(-1).output) : null;
+      if (previous) assert.equal(previous.ok, true, JSON.stringify(previous));
+      const argumentsByStep = [
+        { operation: "search", query: "ADC SAMPDUR", documentId: "datasheet", sectionId: "", page: 0, url: "", gap: "" },
+        { operation: "read", query: "ADC SAMPDUR", documentId: "datasheet", sectionId: "", page: previous?.results?.[0]?.page || 1, url: "", gap: "" },
+        { operation: "registers", query: "ADC_REFSEL", documentId: "", sectionId: "ADC", page: 0, url: "", gap: "" },
+      ];
       return response(
-        calls === 1
+        calls <= 3
           ? {
               ...envelope(null),
               output: [
                 {
                   type: "function_call",
                   name: "read_avr_documentation",
-                  call_id: "call-doc",
-                  arguments: JSON.stringify({
-                    url: DOCUMENT_ROOTS[0] + "index.html",
-                    query: "USART BAUD",
-                    gap: "Need the missing register details for this mode.",
-                  }),
+                  call_id: `call-doc-${calls}`,
+                  arguments: JSON.stringify(argumentsByStep[calls - 1]),
                 },
               ],
             }
@@ -461,12 +485,15 @@ test("documentation function results continue Responses with prior output and sa
   });
   const result = await s.processCanvas(input());
   assert.equal(result.kind, "canvas");
-  assert.equal(result._metering.usage.totalTokens, 300);
+  assert.equal(result._metering.usage.totalTokens, 600);
   assert.equal(web, 0);
+  assert.equal(calls, 4, "local retrieval is not restricted by the two-network-request limit");
+  assert.ok(result.references.some((reference) => reference.documentId === "datasheet" && reference.page > 1 && reference.revision && reference.reviewStatus === "machine-extracted-reference"));
+  assert.ok(result.references.some((reference) => reference.atdfMember && reference.digestScope === "downloaded-pack-bytes"));
   assert.ok(
     requests[1].input.some(
       (item) =>
-        item.type === "function_call_output" && item.call_id === "call-doc",
+        item.type === "function_call_output" && item.call_id === "call-doc-1",
     ),
   );
 });

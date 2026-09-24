@@ -39,15 +39,20 @@ test("the pinned bundle contains only explicit device/package coverage and exact
   assert.ok(Object.isFrozen(knowledge.devices[0].uart));
 });
 
-test("curated HTML digests are local, hashed and distinguished from downloaded source bytes", () => {
-  for (const document of knowledge.localDocuments) {
-    assert.match(document.url, /^https:\/\/onlinedocs\.microchip\.com\//);
-    assert.equal(document.sha256, crypto.createHash("sha256").update(document.text).digest("hex"));
-    assert.equal(document.rawSourceSha256, null);
-    const source = knowledge.sources.find((item) => item.id === document.sourceId);
-    assert.equal(source.digestScope, "curated-local-digest-not-raw-html");
+test("complete local PDF references retain every page and raw source provenance without duplicate HTML digests", () => {
+  assert.deepEqual(knowledge.localDocuments, []);
+  assert.equal(knowledge.corpus.documents.length, 2);
+  for (const document of knowledge.corpus.documents) {
+    const file = fs.readFileSync(path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.1.0", document.sourceFile));
+    assert.equal(document.sha256, crypto.createHash("sha256").update(file).digest("hex"));
+    assert.equal(document.pages.length, document.pageCount);
+    assert.deepEqual(document.pages.map((page) => page.page), Array.from({ length: document.pageCount }, (_, i) => i + 1));
+    assert.ok(document.sections.length > 0);
+    assert.equal(knowledge.sources.find((source) => source.id === document.sourceId).sha256, document.sha256);
   }
-  assert.equal(knowledge.sources.find((source) => source.id === "attiny162x-errata").verification, "revision-provenance-only");
+  assert.ok(knowledge.corpus.documents.find((document) => document.id === "datasheet").pageCount > 500);
+  assert.ok(knowledge.reviewedFacts.facts.some((fact) => fact.kind === "erratum" && fact.verification === "reviewed-against-pdf"));
+  assert.ok(knowledge.dfpRegisters.devices.every((device) => device.modules.length > 10));
   assert.equal(new Set(knowledge.recipes.flatMap((recipe) => recipe.lineage)).size, 10);
 });
 
@@ -57,7 +62,10 @@ test("all pilot recipes are available independent of the user's language", () =>
     assert.equal(result.supported, true);
     assert.equal(result.manifest.recipeIds.length, 7);
     assert.ok(result.manifest.recipeIds.includes("avr-uart-tx-interrupt"));
-    assert.ok(result.context.length < 18000, "pilot context should stay bounded");
+    assert.ok(result.context.length < 65000, "context contains recipes, catalog and reviewed errata, not every PDF page");
+    assert.match(result.context, /Local reference catalog/);
+    assert.match(result.context, /search hit does not prove/);
+    for (const fact of knowledge.reviewedFacts.facts.filter((fact) => fact.kind === "erratum")) assert.ok(result.context.includes(fact.id));
   }
   assert.ok(knowledge.recipes.every((recipe) => recipe.description.length > 15));
 });
@@ -155,7 +163,7 @@ test("unsupported clocks/peripherals are gaps, not silently accepted recipes", (
 });
 
 test("recorded compiler evidence is tied to exact fixture bytes, targets and service version", () => {
-  const evidencePath = path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.0.0/compiler-evidence.json");
+  const evidencePath = path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.1.0/compiler-evidence.json");
   const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
   const fixture = fs.readFileSync(path.join(__dirname, "../scripts/avr-knowledge/fixtures", evidence.fixture));
   assert.equal(crypto.createHash("sha256").update(fixture).digest("hex"), evidence.sourceSha256);

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "retrievedAt": "2026-09-24",
+  "sources": [
+    {
+      "id": "datasheet-ds40002234b",
+      "documentId": "datasheet",
+      "kind": "pdf",
+      "title": "ATtiny1624/1626/1627 Datasheet",
+      "revision": "DS40002234B (2021)",
+      "url": "https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/ATtiny1624-26-27-DataSheet-DS40002234B.pdf",
+      "file": "reference/raw/DS40002234B.pdf",
+      "sha256": "b3e94e9fef6425405905f5241f9535c9b274c1247b4b7a8ea631921fcf458782",
+      "bytes": 7035214,
+      "pageCount": 575,
+      "digestScope": "original-downloaded-file-bytes",
+      "verification": "official-pdf-original",
+      "license": "Microchip copyright and terms are retained in the original PDF; not covered by the application license."
+    },
+    {
+      "id": "errata-ds80000902f",
+      "documentId": "errata",
+      "kind": "pdf",
+      "title": "ATtiny1624/1626/1627 Silicon Errata and Data Sheet Clarification",
+      "revision": "DS80000902F (2026)",
+      "url": "https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/Errata/ATtiny1624-26-27-SilConErrataClarif-DS80000902.pdf",
+      "file": "reference/raw/DS80000902F.pdf",
+      "sha256": "36dfcc2a15e9dcb1103f58f0857c21e5f17292f5276803bed2524ebc0f7733db",
+      "bytes": 318085,
+      "pageCount": 16,
+      "digestScope": "original-downloaded-file-bytes",
+      "verification": "official-pdf-original",
+      "license": "Microchip copyright and terms are retained in the original PDF; not covered by the application license."
+    },
+    {
+      "id": "microchip-attiny-dfp-3.4.278",
+      "kind": "dfp",
+      "title": "Microchip ATtiny Device Family Pack",
+      "revision": "3.4.278",
+      "url": "https://packs.download.microchip.com/Microchip.ATtiny_DFP.3.4.278.atpack",
+      "file": "reference/raw/Microchip.ATtiny_DFP.3.4.278.atpack",
+      "sha256": "41f09d5825abaa764c9000f4488f8ba3fab152afe6229b359de4a5efe9a21eda",
+      "bytes": 33433639,
+      "digestScope": "original-downloaded-file-bytes",
+      "verification": "extracted-official-atdf-and-xc8-header",
+      "license": "Original component licenses are preserved inside the archive; extracted ATDF/header license is in MICROCHIP-LICENSE.txt."
+    }
+  ]
+}

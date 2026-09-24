@@ -38,7 +38,6 @@ required=(
   "${stage}/package.json"
   "${stage}/package-lock.json"
   "${stage}/ai/canvas-rules.md"
-  "${stage}/ai/knowledge/attiny162x/1.0.0/manifest.json"
   "${stage}/deploy/uartdebug-ai.service"
   "${stage}/deploy/nginx-avr-ai-location.conf"
   "${stage}/deploy/nginx-avr-ai-oauth-callback-location.conf"

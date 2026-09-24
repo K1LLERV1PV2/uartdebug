@@ -63,10 +63,12 @@ jobs:
           for script in backend/deploy/*.sh; do bash -n "$script"; done
 
       - name: Verify local AVR knowledge manifest
-        run: node scripts/avr-knowledge/build-manifest.js --verify
+        run: |
+          node scripts/avr-knowledge/build-manifest.js --verify
+          python3 scripts/avr-knowledge/snapshot.py --verify
 
       - name: Check deployment helper syntax
-        run: python3 -m py_compile .github/scripts/stamp_frontend_build.py scripts/avr-knowledge/snapshot.py scripts/avr-knowledge/compare-installed.py
+        run: python3 -m py_compile .github/scripts/stamp_frontend_build.py scripts/avr-knowledge/snapshot.py scripts/avr-knowledge/compare-installed.py scripts/avr-knowledge/extract-reference.py
 
       - name: Check generated diff hygiene
         run: git diff --check
