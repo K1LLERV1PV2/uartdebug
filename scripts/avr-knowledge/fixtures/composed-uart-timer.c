@@ -1,6 +1,9 @@
 /* Compile regression, not a hardware certification or a complete board project.
  * OSC20M / 1; PB0 status LED; USART0 PB2/PB3 DRE TX + polling RX;
  * USART1 PA1/PA2 polling + printf. All pins exist on all three pilot MCUs.
+ * Board prerequisites: OSC20M fuse selects 20 MHz; VDD = 4.5..5.5 V and
+ * ambient temperature = -40..85 C (DS40002234B p476). This fixture does not
+ * program fuses or measure the board. OSCLOCK remains disabled.
  */
 #define F_CPU 20000000UL
 #include <xc.h>
@@ -52,6 +55,7 @@ static void peripherals_init(void)
     PORTA.OUTSET = PIN1_bm;
     PORTA.DIRSET = PIN1_bm;
     PORTA.DIRCLR = PIN2_bm;
+    /* Active, push-pull 8N1: SFDEN and ODME remain zero (DS80000902F p5). */
     USART0.CTRLB = USART_RXMODE_NORMAL_gc | USART_TXEN_bm | USART_RXEN_bm;
     USART1.CTRLB = USART_RXMODE_NORMAL_gc | USART_TXEN_bm | USART_RXEN_bm;
 

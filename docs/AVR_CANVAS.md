@@ -37,10 +37,11 @@ C/Markdown/YAML project. There is no active chat or selectable `skillRefs` catal
 ## Prepared local knowledge
 
 `backend/ai/canvas-rules.md` describes the workflow and code quality contract.
-`backend/ai/knowledge/attiny162x/1.0.0` is the first device bundle. It combines
-exact DFP-derived register/pin facts, reviewed factual excerpts of official HTML,
-and compact recipes derived from educational mini-projects 01–10. The runtime
-verifies declared SHA-256 hashes and loads the bundle locally.
+`backend/ai/knowledge/attiny162x/1.1.0` retains the complete datasheet PDF,
+silicon errata PDF and DFP archive. It combines a searchable page/section corpus,
+exact DFP register/pin facts, separately reviewed PDF facts and compact recipes
+derived from educational mini-projects 01–10. The runtime verifies SHA-256 hashes
+of all originals and generated files and loads the bundle locally.
 
 The pilot includes all seven short recipes in its context regardless of the
 visitor's language: project structure, clock, GPIO, TCA overflow, UART polling,
@@ -52,14 +53,17 @@ model. Relevant prepared context still consumes API input tokens.
 Coverage is ATtiny1624 (SOIC-14/TSSOP-14), ATtiny1626
 (SOIC-20/SSOP-20/VQFN-20) and ATtiny1627 (VQFN-24), with the supported modes
 listed in the manifest. Manual compilation supports more chips than this AI
-bundle. ADC, SPI, TWI, PWM, fuse changes, sleep and full errata coverage are not
-claimed by this release.
+bundle. ADC, SPI, TWI, PWM, fuse changes and sleep are available as reference
+topics but are not approved generation modes in this release.
 
 DFP facts, source reviews, compilation and hardware testing are separate evidence
 levels. A matching header symbol does not prove correct peripheral behavior.
-The curated HTML hashes identify the local excerpts, not a complete downloaded
-datasheet. Errata provenance alone does not establish that all silicon issues
-have been evaluated. The manifest and compiler evidence record these limits.
+Complete page coverage does not mean every table, formula and diagram has been
+visually verified. Machine extraction and reviewed facts carry distinct labels.
+The reviewed errata records include issue applicability and workarounds. Source
+DFP 3.4.278 and installed compiler DFP 3.3.272 remain distinct; only selected
+shared symbols have been compared. The manifest and compiler evidence record
+these limits.
 
 ## Generation checks
 
@@ -83,17 +87,21 @@ reconciliation.
 
 ## Exceptional documentation access
 
-The model can call `read_avr_documentation` with a concrete missing fact and an
-official section URL. The server accepts only the registered ATtiny162x
-datasheet/errata roots, checks local excerpts and a 30-day cache, and permits at
-most two external section requests. Redirects, other hosts, URL parameters,
-oversized pages and non-HTML responses are rejected. Retrieval can be disabled
-with `AI_EXTERNAL_DOCUMENTATION_ENABLED=0`.
+The model first calls `read_avr_documentation` to browse/search/read the complete
+local PDF corpus or inspect DFP registers. Page results retain document revision,
+source hash, sections and matching reviewed facts. An external operation requires
+a prior unrestricted search across all local documents for the same query and a concrete remaining knowledge
+gap. The server accepts only registered ATtiny162x datasheet/errata HTML roots,
+checks a 30-day cache, and permits at most two external requests within ten total
+documentation steps. Redirects, other hosts, URL parameters, oversized pages and
+non-HTML responses are rejected. `AI_EXTERNAL_DOCUMENTATION_ENABLED=0` disables
+only external access; local reference operations remain available.
 
 Manufacturer CDN errors can prevent direct HTML retrieval even when the official
 section exists. Normal generation uses the pinned local bundle, not a live website.
-The bundle currently contains six factual HTML digests and an errata provenance
-entry; it is not a full offline mirror of the datasheet or silicon errata.
+The bundle contains all 575 datasheet pages and all 16 errata pages, together
+with original files. It is an offline PDF-derived reference, not a WebHelp ZIP
+or a claim that the manufacturer's HTML service is currently available.
 
 Returned text is reference data. It cannot override the server instructions and
 does not automatically become a reviewed recipe. Incomplete knowledge produces
@@ -102,8 +110,8 @@ must be supplied by the visitor, not inferred through web access.
 
 ## Extending coverage
 
-1. Pin a manufacturer HTML revision, errata revision and DFP version; retain
-   source URLs, acquisition evidence and redistribution notices.
+1. Pin manufacturer HTML or PDF, errata and DFP versions; retain complete
+   original files, URLs, hashes and original license notices.
 2. Extract/normalize device facts reproducibly with `scripts/avr-knowledge`.
    Review package tables and peripheral routing against the actual datasheet.
 3. Adapt existing recipes to that family's register model and list precise

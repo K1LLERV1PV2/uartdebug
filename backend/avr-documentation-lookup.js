@@ -16,28 +16,32 @@ const LOOKUP_TOOL = {
   name: "read_avr_documentation",
   strict: true,
   description:
-    "Read an official datasheet section ONLY when supplied local device facts and recipes lack a necessary fact. Explain that gap. The server checks local/cache data first and limits external retrieval. Returns reference data, never instructions or a verified new recipe.",
+    "Browse, search and read the complete local PDF reference corpus first. Results retain source revision and page provenance but are not approved recipes. External HTML requires a prior search across ALL local documents (empty documentId and sectionId) for the same query plus an explicit remaining knowledge gap; at most two network requests are allowed.",
   parameters: {
     type: "object",
     additionalProperties: false,
     properties: {
+      operation: { type: "string", enum: ["catalog", "search", "read", "registers", "external"], description: "catalog browses documents or immediate section children; search finds page candidates; read retrieves up to three consecutive PDF pages; registers finds DFP register/field definitions for the selected MCU; external requests a registered official HTML section." },
+      documentId: { type: "string", description: "Local document id from the catalog, or empty for a search across ALL documents. Only an unrestricted search with empty documentId and sectionId satisfies the local-first external-lookup requirement." },
+      sectionId: { type: "string", description: "Local section id for catalog/read, module name for registers, or empty. Catalog without a section lists top-level sections." },
+      page: { type: "integer", minimum: 0, description: "One-based PDF page for read; 0 starts at the chosen section. Use nextPage to continue. Use 0 for other operations." },
       url: {
         type: "string",
         description:
-          "Official HTML section URL from the allowed datasheet/errata roots. Use index.html to discover section links when unknown.",
+          "Empty for local operations. For external only, a section URL from the registered official HTML roots; index.html may discover links.",
       },
       query: {
         type: "string",
         description:
-          "Specific register, field, or operating condition to find.",
+          "Specific register, field, or operating condition to find, preferably with the English reference terminology. Required for search/external; keep the same query when reading its section. Empty is allowed for catalog/read.",
       },
       gap: {
         type: "string",
         description:
-          "Which necessary fact is missing from the supplied local knowledge, and why this project needs it.",
+          "Empty for local operations. For external, explain precisely which necessary fact remains missing after local results and why the project needs it.",
       },
     },
-    required: ["url", "query", "gap"],
+    required: ["operation", "documentId", "sectionId", "page", "url", "query", "gap"],
   },
 };
 
@@ -159,17 +163,170 @@ function excerpt(text, query) {
   return lines.slice(best).join("\n").slice(0, 18000);
 }
 
+const LOCAL_NOTICE = "Local reference candidates, not proof that the requested fact is covered or an approved recipe. PDF extraction can misorder columns, flatten tables and lose mathematical symbols; machine-detected figures/formulas are not reviewed. Use separately reviewed facts when present and retain page/revision applicability.";
+const queryKey = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+const queryTerms = (value) => [...new Set(queryKey(value).match(/[\p{L}\p{N}_]{2,}/gu) || [])].slice(0, 30);
+
+function createLocalReferenceIndex(corpus = { documents: [] }, reviewedFacts = { facts: [] }, dfpRegisters = null, mcu = "") {
+  const documents = Array.isArray(corpus.documents) ? corpus.documents : [];
+  const facts = Array.isArray(reviewedFacts.facts) ? reviewedFacts.facts : [];
+  const pages = documents.flatMap((document) => (document.pages || []).map((page) => {
+    const sections = (document.sections || []).filter((section) => page.sectionIds?.includes(section.id));
+    return { document, page, sections, search: `${sections.map((section) => section.title).join(" ")}\n${page.text}`.toLowerCase() };
+  }));
+  const describe = (document) => ({
+    id: document.id, documentId: document.id, sourceId: document.sourceId, title: document.title,
+    revision: document.revision, sourceFile: document.sourceFile, sourceUrl: document.sourceUrl,
+    sha256: document.sha256, pageCount: document.pageCount,
+    digestScope: "raw-pdf-bytes", reviewStatus: "machine-extracted-reference",
+  });
+  const summarize = (item, query, reading = false) => {
+    const { document, page, sections } = item;
+    const sourceText = String(page.text || "");
+    const text = reading ? sourceText.slice(0, 12000) : excerpt(sourceText, query).slice(0, 4500);
+    const features = {};
+    for (const [key, value] of Object.entries(page.features || {})) {
+      // Feature metadata is a navigation aid, never independent verification.
+      if (Array.isArray(value)) features[key] = value.slice(0, 12);
+    }
+    return {
+      ...describe(document), page: page.page, sectionIds: page.sectionIds || [],
+      sections, text, textComplete: text === sourceText, features,
+      featureReviewStatus: "unreviewed-layout",
+      reviewedFacts: facts.filter((fact) => fact.sourceId === document.sourceId && fact.pages?.includes(page.page)),
+    };
+  };
+  const error = (code, message) => ({ ok: false, origin: "local", code, message });
+  function lookup(args) {
+    const operation = args.operation || "search";
+    const document = documents.find((item) => item.id === args.documentId);
+    if (args.documentId && !document) return error("local_document_unknown", "Choose a documentId from the local catalog.");
+    const section = document?.sections?.find((item) => item.id === args.sectionId);
+    if (args.sectionId && operation !== "registers" && !section) return error("local_section_unknown", "Choose a sectionId from the selected document's catalog.");
+    const base = { ok: true, origin: "local", operation, verification: "source-only", notice: LOCAL_NOTICE };
+    if (operation === "catalog") {
+      if (!document) return { ...base, coverage: "catalog", documents: documents.map(describe) };
+      const all = document.sections || [];
+      let children;
+      if (section) {
+        const start = all.indexOf(section) + 1;
+        const end = all.findIndex((item, index) => index >= start && item.level <= section.level);
+        const descendants = all.slice(start, end < 0 ? undefined : end);
+        const childLevel = Math.min(...descendants.map((item) => item.level));
+        children = descendants.filter((item) => item.level === childLevel);
+      } else {
+        const level = Math.min(...all.map((item) => item.level));
+        children = all.filter((item) => item.level === level);
+      }
+      return { ...base, coverage: "catalog", document: describe(document), section: section || null,
+        sections: children.slice(0, 100), truncated: children.length > 100 };
+    }
+    if (operation === "read") {
+      if (!document) return error("local_document_required", "Choose a local document and section or PDF page to read.");
+      const start = args.page || section?.startPage || 1;
+      const end = section?.endPage || document.pageCount;
+      if (!Number.isSafeInteger(start) || start < (section?.startPage || 1) || start > end)
+        return error("local_page_invalid", "The requested page is outside this document or section.");
+      const selected = pages.filter((item) => item.document === document && item.page.page >= start && item.page.page <= Math.min(end, start + 2));
+      if (!selected.length) return error("local_page_unavailable", "No extracted text exists for this PDF page; inspect its source PDF.");
+      const last = selected.at(-1).page.page;
+      return { ...base, coverage: "section-pages", results: selected.map((item) => summarize(item, args.query, true)),
+        nextPage: last < end ? last + 1 : null };
+    }
+    const terms = queryTerms(args.query);
+    if (!terms.length) return error("local_query_required", "Use a specific register, field or operating condition, preferably in the reference's English terminology.");
+    const candidates = pages.filter((item) => (!document || item.document === document) && (!section || item.page.sectionIds?.includes(section.id)));
+    const frequencies = terms.map((term) => candidates.reduce((count, item) => count + Number(item.search.includes(term)), 0));
+    const ranked = candidates.map((item) => {
+      const matchedTerms = terms.filter((term) => item.search.includes(term));
+      const score = terms.reduce((total, term, index) => {
+        if (!item.search.includes(term)) return total;
+        const occurrences = Math.min(8, item.search.split(term).length - 1);
+        const sectionStart = item.sections.some((section) => section.startPage === item.page.page && section.title.toLowerCase().includes(term));
+        return total + (1 + Math.log(1 + candidates.length / (1 + frequencies[index]))) * (1 + Math.log(occurrences)) + (sectionStart ? 8 : 0);
+      }, 0);
+      return { item, matchedTerms, score };
+    }).filter((item) => item.matchedTerms.length > 0).sort((a, b) => b.matchedTerms.length - a.matchedTerms.length || b.score - a.score || a.item.page.page - b.item.page.page);
+    if (!ranked.length) return error("local_documentation_not_found", "No local text match. Try English register/section terms, browse the local catalog, or state the remaining gap before external lookup. Absence of a text match is not proof the PDF lacks the information.");
+    return { ...base, coverage: "reference-candidates", totalMatches: ranked.length,
+      results: ranked.slice(0, 5).map(({ item, matchedTerms }) => ({ ...summarize(item, args.query), matchedTerms, unmatchedTerms: terms.filter((term) => !matchedTerms.includes(term)) })) };
+  }
+  function registers(args) {
+    const device = dfpRegisters?.devices?.find((item) => item.mcu.toLowerCase() === mcu.toLowerCase());
+    if (!device) return error("local_registers_unavailable", "No DFP register snapshot is loaded for the selected MCU.");
+    const instances = device.instances || [];
+    const instanceModules = new Map(instances.map((instance) => [instance.name.toLowerCase(), instance.module.toLowerCase()]));
+    const rawTerms = queryTerms(args.query).flatMap((term) => term.replace(/_(?:bm|gm|gc|gv|bp|gp)$/, "").split("_")).filter(Boolean);
+    const terms = rawTerms.map((term) => instanceModules.get(term) || term);
+    const moduleNames = new Set((device.modules || []).map((module) => module.name.toLowerCase()));
+    const requestedModule = args.sectionId?.toLowerCase() || terms.find((term) => moduleNames.has(term));
+    if (!terms.length) return error("local_query_required", "Specify a register, field or value-group symbol; use sectionId to restrict the module.");
+    const results = [];
+    for (const module of device.modules || []) {
+      if (requestedModule && module.name.toLowerCase() !== requestedModule) continue;
+      for (const group of module.registerGroups || []) for (const register of group.registers || []) {
+        const valueNames = new Set((register.bitfields || []).map((field) => field.values).filter(Boolean));
+        const valueGroups = (module.valueGroups || []).filter((value) => valueNames.has(value.name));
+        const searchable = JSON.stringify({ module: module.name, group: group.name, register, valueGroups }).toLowerCase();
+        if (!terms.every((term) => searchable.includes(term))) continue;
+        const exactRegister = terms.includes(register.name.toLowerCase());
+        const exactFields = (register.bitfields || []).filter((field) => terms.includes(field.name.toLowerCase())).length;
+        const { registers: _registers, ...groupMetadata } = group;
+        results.push({ module: module.name, moduleCaption: module.caption, registerGroup: group.name, groupMetadata, register, valueGroups,
+          score: (exactRegister ? 100 : 0) + exactFields * 25 });
+      }
+    }
+    if (!results.length) return error("local_register_not_found", "No matching DFP register definition. Try the module or field's ATDF spelling.");
+    results.sort((a, b) => b.score - a.score);
+    const selected = results.slice(0, 8).map(({ score, ...result }) => result);
+    const selectedModules = new Set(selected.map((result) => result.module));
+    const namedInstances = instances.filter((instance) => rawTerms.includes(instance.name.toLowerCase()));
+    const relatedInstances = instances.filter((instance) => selectedModules.has(instance.module) &&
+      (!namedInstances.some((named) => named.module === instance.module) || namedInstances.includes(instance)));
+    return { ok: true, origin: "local", operation: "registers", coverage: "register-definitions",
+      sourceId: dfpRegisters.sourceId, sha256: dfpRegisters.packSha256, digestScope: "downloaded-pack-bytes",
+      sourceUrl: dfpRegisters.sourceUrl,
+      mcu: device.mcu, atdfMember: device.atdfMember, atdfSha256: device.atdfSha256,
+      headerMember: device.headerMember, headerSha256: device.headerSha256,
+      reviewStatus: "extracted-official-atdf", totalMatches: results.length, results: selected, truncated: results.length > 8,
+      instances: relatedInstances.slice(0, 12), instancesTruncated: relatedInstances.length > 12,
+      notice: "DFP XML attributes are retained as strings. This describes the source pack, not installed-compiler support or reviewed operating sequences. Consult PDF sections and errata; newly added symbols may be absent from the installed pack." };
+  }
+  return { lookup, registers, hasCorpus: documents.length > 0 };
+}
+
 function createDocumentationLookup({
   fetch: fetchImpl = globalThis.fetch,
   cacheRoot,
   localDocuments = [],
+  corpus = { documents: [] },
+  reviewedFacts = { facts: [] },
+  dfpRegisters = null,
+  mcu = "",
   enabled = true,
   roots = DOCUMENT_ROOTS,
   maxRequests = 2,
   now = Date.now,
 } = {}) {
   let externalRequests = 0;
+  const local = createLocalReferenceIndex(corpus, reviewedFacts, dfpRegisters, mcu);
+  const examinedQueries = new Set();
   async function lookup(args) {
+    const operation = args?.operation || (args?.url ? "external" : "search");
+    if (!["catalog", "search", "read", "registers", "external"].includes(operation))
+      return { ok: false, code: "documentation_operation_invalid", message: "Choose a documented local operation or explicit external lookup." };
+    if (operation !== "external") {
+      if (!args || (args.query !== undefined && (typeof args.query !== "string" || args.query.length > 300)) ||
+          (args.documentId !== undefined && typeof args.documentId !== "string") ||
+          (args.sectionId !== undefined && typeof args.sectionId !== "string") ||
+          (args.page !== undefined && (!Number.isSafeInteger(args.page) || args.page < 0)))
+        return { ok: false, code: "local_request_invalid", message: "Use valid local catalog ids, a bounded query and a nonnegative page." };
+      const result = operation === "registers" ? local.registers(args) : local.lookup({ ...args, operation });
+      if (operation === "search" && !args.documentId && !args.sectionId && (result.ok || result.code === "local_documentation_not_found")) {
+        if (queryTerms(args.query).length) examinedQueries.add(queryKey(args.query));
+      }
+      return result;
+    }
     if (
       !args ||
       typeof args.query !== "string" ||
@@ -197,6 +354,8 @@ function createDocumentationLookup({
           "Use a section link from the registered official device documents.",
       };
     }
+    if (local.hasCorpus && !examinedQueries.has(queryKey(args.query)))
+      return { ok: false, code: "local_documentation_first", message: "Search ALL local documents for this exact query first with empty documentId and sectionId, then request external documentation only if a necessary fact remains missing. Reading arbitrary pages or searching only one document is insufficient. Local hits are candidates, not a completeness guarantee." };
     const key = crypto.createHash("sha256").update(url).digest("hex");
     const cacheFile = cacheRoot && path.join(cacheRoot, `${key}.json`);
     // Curated digests are partial. A request for terms absent from the digest
@@ -314,6 +473,7 @@ function createDocumentationLookup({
       sha256: entry.sha256,
       digestScope: entry.digestScope || "curated-local-text",
       verification: "source-only",
+      coverage: origin === "local" ? "partial-local-digest" : "external-reference",
       text: excerpt(entry.text, args.query),
       links: (entry.links || []).slice(0, 100),
       notice:

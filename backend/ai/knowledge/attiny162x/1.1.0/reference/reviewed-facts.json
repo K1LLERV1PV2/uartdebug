@@ -1,0 +1,1083 @@
+{
+  "schemaVersion": 1,
+  "family": "attiny162x",
+  "reviewedOn": "2026-09-24",
+  "reviewMethod": "Text extraction for navigation, followed by rendered PDF inspection of referenced tables, formulas, diagrams and errata pages.",
+  "validationScope": "Source interpretation only. No new peripheral modes approved and no hardware operation or electrical design verified by this review.",
+  "sourceDocuments": [
+    {
+      "sourceId": "datasheet-ds40002234b",
+      "document": "DS40002234B",
+      "pages": 575,
+      "visuallyReviewedPages": [
+        18,
+        33,
+        47,
+        90,
+        93,
+        94,
+        163,
+        165,
+        197,
+        198,
+        209,
+        210,
+        219,
+        293,
+        294,
+        308,
+        311,
+        314,
+        316,
+        318,
+        476
+      ]
+    },
+    {
+      "sourceId": "errata-ds80000902f",
+      "document": "DS80000902F",
+      "pages": 16,
+      "siliconRevision": "E",
+      "siliconIssueCount": 10,
+      "clarificationSectionCount": 5,
+      "visuallyReviewedPages": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    }
+  ],
+  "facts": [
+    {
+      "id": "errata-powerdown-current",
+      "kind": "erratum",
+      "title": "Power-Down leakage on early material",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        3
+      ],
+      "section": "2.2.1",
+      "verification": "reviewed-against-pdf",
+      "text": "Power-Down leakage can exceed the targeted maximum of 1.5 uA on material with date code 2045 (2020 week 45) or older.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "None.",
+      "generationImpact": "Do not promise the 1.5 uA target for affected material. Sleep-current design remains outside approved recipe coverage.",
+      "materialDateCodeMaximum": "2045"
+    },
+    {
+      "id": "errata-osclock-calibration",
+      "kind": "erratum",
+      "title": "OSCLOCK prevents calibration loading",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        3
+      ],
+      "section": "2.2.2",
+      "verification": "reviewed-against-pdf",
+      "text": "OSCLOCK=1 in FUSE.OSCCFG prevents loading oscillator calibration from the signature row, so OSC20M runs uncalibrated.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-clock"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "Do not use OSCLOCK. The documented alternative is CLKCTRL.MCLKLOCK.LOCKEN=1 while OSC20M is the main clock source.",
+      "generationImpact": "Never generate an OSCLOCK fuse write. Do not add the alternative lock by default: it also locks clock selection and prescaler until hardware reset. Resolve the existing fuse/calibration precondition before claiming clock accuracy.",
+      "relatedFactIds": [
+        "clock-source-frequency",
+        "clock-lock"
+      ]
+    },
+    {
+      "id": "errata-adc-sleep",
+      "kind": "erratum",
+      "title": "ADC remains active in sleep",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        3
+      ],
+      "section": "2.3.1",
+      "verification": "reviewed-against-pdf",
+      "text": "LOWLAT=1 in ADCn.CTRLA leaves ADC active in Power-Down or Standby. FREERUN=1 in ADCn.CTRLF continues ADC operation in Standby even with RUNSTDBY=0. In these cases interrupts do not trigger while the device is in Power-Down or Standby.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "None.",
+      "generationImpact": "Do not infer low sleep current or working sleep interrupts from RUNSTDBY=0. ADC and advanced sleep remain outside approved recipe coverage."
+    },
+    {
+      "id": "errata-ccl-lut-reconfiguration",
+      "kind": "erratum",
+      "title": "One LUT cannot be reconfigured while CCL stays enabled",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        4
+      ],
+      "section": "2.4.1",
+      "verification": "reviewed-against-pdf",
+      "text": "Reconfiguring one LUT requires CCL.CTRLA.ENABLE=0 first; this disables every LUT, including those not being changed.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "None beyond the required global disable described in the issue.",
+      "generationImpact": "A future CCL design must account for the interruption of all LUTs. Do not generate independent live LUT reconfiguration; CCL has no approved recipe."
+    },
+    {
+      "id": "errata-nvmctrl-reset",
+      "kind": "erratum",
+      "title": "NVMCTRL.CTRLA initial value may be nonzero",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        4
+      ],
+      "section": "2.5.1",
+      "verification": "reviewed-against-pdf",
+      "text": "NVMCTRL.CTRLA may read nonzero after reset; even reserved bits can read as one.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "Ignore the initial register value.",
+      "generationImpact": "Do not assert a zero reset readback or branch on it as a validity test. NVM and fuse programming remain outside approved recipe coverage."
+    },
+    {
+      "id": "errata-tca-restart-direction",
+      "kind": "erratum",
+      "title": "TCA RESTART resets direction to up",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        4
+      ],
+      "section": "2.6.1",
+      "verification": "reviewed-against-pdf",
+      "text": "In NORMAL (WGMODE=0) or FRQ (WGMODE=1), a RESTART command or Restart event resets the counter direction to its upward-counting default.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-timer"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "None.",
+      "generationImpact": "The approved timer recipe starts from a disabled, explicitly upward-counting normal-mode configuration. Do not use RESTART to preserve or restore downward counting, and do not extend this recipe to live restart."
+    },
+    {
+      "id": "errata-tcb-8bit-access",
+      "kind": "erratum",
+      "title": "TCB 8-bit PWM still needs 16-bit accesses",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        4,
+        5
+      ],
+      "section": "2.7.1",
+      "verification": "reviewed-against-pdf",
+      "text": "In TCB 8-bit PWM (CNTMODE=7), CCMP and CNT low/high bytes behave as 16-bit register pairs and cannot be read or written independently.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-timer"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "Use the data sheet's 16-bit register access protocol.",
+      "generationImpact": "Do not emit independent byte accesses based on the mode's name. TCB/PWM remain outside approved recipe coverage."
+    },
+    {
+      "id": "errata-usart-open-drain",
+      "kind": "erratum",
+      "title": "Open-drain TX must not be configured as output",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        5
+      ],
+      "section": "2.8.1",
+      "verification": "reviewed-against-pdf",
+      "text": "USART TXD configured as a GPIO output can drive high even when open-drain mode is enabled.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-uart-polling",
+        "avr-uart-tx-interrupt"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "When using open-drain mode, configure TXD as input by clearing its PORTx.DIR bit.",
+      "generationImpact": "The approved USART uses ODME=0 and a normal push-pull TX output. Do not apply the open-drain workaround to that configuration; open-drain remains unapproved."
+    },
+    {
+      "id": "errata-usart-active-sfden",
+      "kind": "erratum",
+      "title": "SFDEN can corrupt reception in Active mode",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        5
+      ],
+      "section": "2.8.2",
+      "verification": "reviewed-against-pdf",
+      "text": "With SFDEN=1 in Active mode, reading RXDATA during an incoming frame can clear RXCIF and falsely retrigger start detection at the next falling edge. Reception restarts and data is corrupted; RXSIF stays zero in Active mode, so it gives no warning.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-uart-polling",
+        "avr-printf",
+        "avr-uart-tx-interrupt"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "Keep SFDEN=0 in Active mode. Re-enable before Standby only under a protocol that prevents a new incoming frame during the transition; re-enabling during a frame corrupts data.",
+      "generationImpact": "Explicitly leave SFDEN=0 in all approved USART initialization, including printf and DRE transmit compositions. Standby reception requires a separately reviewed protocol and is not enabled by these recipes."
+    },
+    {
+      "id": "errata-usart-auto-baud",
+      "kind": "erratum",
+      "title": "Invalid auto-baud synchronization disables receiver",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        5,
+        6
+      ],
+      "section": "2.8.3",
+      "verification": "reviewed-against-pdf",
+      "text": "In GENAUTO or LINAUTO, an invalid synchronization frame sets ISFIF and makes the receiver non-functional. Clearing ISFIF alone does not re-enable it.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-uart-polling"
+      ],
+      "category": "silicon-erratum",
+      "siliconRevisions": [
+        "E"
+      ],
+      "applicabilitySource": {
+        "pages": [
+          2
+        ],
+        "section": "1. Silicon Issue Summary"
+      },
+      "workaround": "Disable then re-enable the receiver by writing RXEN=0 followed by RXEN=1.",
+      "generationImpact": "Approved recipes select NORMAL and do not enable auto-baud. A future recovery procedure needs an explicit data-loss and synchronization policy; this erratum alone is not approval of that mode."
+    },
+    {
+      "id": "clarification-evsys-user-mux",
+      "kind": "register-table",
+      "title": "Corrected event user indices",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        8
+      ],
+      "section": "3.1.1",
+      "verification": "reviewed-against-pdf",
+      "text": "The USER register offsets are 0x20 + user ID. TCB0 CAPT/COUNT use IDs 0x10/0x11 and TCB1 CAPT/COUNT use 0x12/0x13. CAPT can be synchronous or asynchronous depending on timer mode; COUNT is synchronous. The value stored in USER selects a channel: zero disconnects, n connects CHANNEL(n-1). A user index is not the channel-selection value.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-timer"
+      ],
+      "category": "datasheet-clarification",
+      "correctedRows": [
+        {
+          "userId": 16,
+          "peripheral": "TCB0",
+          "input": "CAPT",
+          "synchronization": "mode-dependent"
+        },
+        {
+          "userId": 17,
+          "peripheral": "TCB0",
+          "input": "COUNT",
+          "synchronization": "synchronous"
+        },
+        {
+          "userId": 18,
+          "peripheral": "TCB1",
+          "input": "CAPT",
+          "synchronization": "mode-dependent"
+        },
+        {
+          "userId": 19,
+          "peripheral": "TCB1",
+          "input": "COUNT",
+          "synchronization": "synchronous"
+        }
+      ],
+      "generationImpact": "Use this correction in future EVSYS/TCB review; neither receives an approved recipe here."
+    },
+    {
+      "id": "clarification-pin-mux",
+      "kind": "register-table",
+      "title": "PB4 LUT0-OUT is an alternative route",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        9
+      ],
+      "section": "3.2.1, Table 3-1",
+      "verification": "reviewed-against-pdf",
+      "text": "Footnote 4 also applies to PB4 LUT0-OUT: it is an alternative pin location selected through PORTMUX. The table's USART routes are USART0 default PB2 TX/PB3 RX, alternate PA1 TX/PA2 RX; USART1 default PA1 TX/PA2 RX, alternate PC2 TX/PC1 RX. PC pins and the USART1 alternate route are absent on the 14-pin ATtiny1624.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-gpio",
+        "avr-uart-polling"
+      ],
+      "category": "datasheet-clarification",
+      "generationImpact": "Resolve the selected package before allocating routes. The CCL correction does not add a CCL recipe.",
+      "relatedFactIds": [
+        "package-usart-routes"
+      ]
+    },
+    {
+      "id": "clarification-pullup-resistance",
+      "kind": "register-table",
+      "title": "Corrected internal pull-up resistance",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        10
+      ],
+      "section": "3.3.1, Table 33-16",
+      "verification": "reviewed-against-pdf",
+      "text": "The pull-up resistor limits are 20 kOhm minimum, 35 kOhm typical and 60 kOhm maximum. Table conditions are TA=-40..125 C and VDD=1.8..5.5 V unless otherwise specified.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-gpio"
+      ],
+      "category": "datasheet-clarification",
+      "resistanceOhm": {
+        "minimum": 20000,
+        "typical": 35000,
+        "maximum": 60000
+      },
+      "generationImpact": "Do not treat the typical 35 kOhm as a precise resistor, a guaranteed RC timing value or a substitute for reviewing external loading."
+    },
+    {
+      "id": "clarification-spi-timing",
+      "kind": "register-table",
+      "title": "Corrected SPI client timing limits",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        11
+      ],
+      "section": "3.3.2, Table 33-18",
+      "verification": "reviewed-against-pdf",
+      "text": "SPI host SCK maximum is 10 MHz; client SCK maximum is 5 MHz. Client SCK period is at least 6*tCLK_PER and high/low widths are each at least 3*tCLK_PER. Client MOSI setup minimum is 0 ns and hold minimum is 3*tCLK_PER. Client SS setup and hold are listed as typical tCLK_PER, not guaranteed minimum values.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project"
+      ],
+      "category": "datasheet-clarification",
+      "qualification": "All parameters in this table are design guidance only and are not production-tested.",
+      "generationImpact": "Observe both frequency and CLK_PER-dependent timing constraints during future SPI review. SPI remains outside approved recipe coverage."
+    },
+    {
+      "id": "clarification-memory-programming",
+      "kind": "register-table",
+      "title": "Memory programming endurance, retention and timing qualifications",
+      "sourceId": "errata-ds80000902f",
+      "pages": [
+        12
+      ],
+      "section": "3.3.3, Table 33-34",
+      "verification": "reviewed-against-pdf",
+      "text": "EEPROM endurance minimum is 100000 erase/write cycles and flash minimum is 10000, at TA=-40..105 C; endurance is characterized but not production-tested. Retention is typically 40 years at TA=55 C. Chip erase requires VDD between VBODLEVEL0 and VDDMAX because BODLEVEL0 is forced on; erase fails below that threshold.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project"
+      ],
+      "category": "datasheet-clarification",
+      "typicalTimings": {
+        "pageBufferClearCpuCycles": 7,
+        "eepromFullEraseMs": 4,
+        "pageWriteMs": 2,
+        "pageEraseMs": 2,
+        "pageEraseWriteMs": 4,
+        "flashChipEraseMs": 4,
+        "updiChipErase16KbMs": 30
+      },
+      "timingConditions": "Typical values at TA=25 C and VDD=3.0 V unless otherwise specified; not tested and for design guidance only.",
+      "generationImpact": "Do not use typical programming times as guaranteed fixed delays or endurance/retention without their conditions. This clarification does not add NVM, fuse or programmer recipes."
+    },
+    {
+      "id": "clock-ccp",
+      "kind": "constraint",
+      "title": "CCP timing for protected clock writes",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        33,
+        90
+      ],
+      "section": "6.5.6.1; 11.3.5, Table 11-1",
+      "verification": "reviewed-against-pdf",
+      "text": "An IOREG-protected write must follow the appropriate CPU.CCP key within four CPU instructions. CLKCTRL.MCLKCTRLA, MCLKCTRLB and MCLKLOCK use IOREG protection; ordinary separated C assignments do not guarantee the required sequence.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-clock"
+      ],
+      "generationImpact": "Use the selected XC8 _PROTECTED_WRITE mechanism. Interrupt masking alone does not unlock protected registers."
+    },
+    {
+      "id": "clock-source-frequency",
+      "kind": "register-table",
+      "title": "OSC20M source frequency comes from FREQSEL",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        47
+      ],
+      "section": "7.8.2.3",
+      "verification": "reviewed-against-pdf",
+      "text": "FUSE.OSCCFG.FREQSEL=1 selects 16 MHz, 2 selects 20 MHz, and 0/3 are reserved. The documented 0x7E value is factory-programmed fuse data, not a reset value. The OSC20M peripheral name alone does not establish the current fuse selection.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-clock"
+      ],
+      "fieldValues": [
+        {
+          "value": 0,
+          "meaning": "reserved"
+        },
+        {
+          "value": 1,
+          "frequencyHz": 16000000
+        },
+        {
+          "value": 2,
+          "frequencyHz": 20000000
+        },
+        {
+          "value": 3,
+          "meaning": "reserved"
+        }
+      ],
+      "generationImpact": "The current 20 MHz-source recipe requires that source selection as an explicit precondition; do not rewrite fuses. Apply errata-osclock-calibration before relying on oscillator calibration.",
+      "relatedFactIds": [
+        "errata-osclock-calibration"
+      ]
+    },
+    {
+      "id": "clock-prescaler",
+      "kind": "register-table",
+      "title": "Main clock prescaler encodings and reset",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        93
+      ],
+      "section": "11.5.2",
+      "verification": "reviewed-against-pdf",
+      "text": "MCLKCTRLB resets to 0x11, selecting DIV6 with PEN=1. PEN=0 bypasses the divider regardless of PDIV. With PEN=1, PDIV field values 0,1,2,3,4,5,8,9,10,11,12 select divisors 2,4,8,16,32,64,6,10,12,24,48; other values are reserved.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-clock"
+      ],
+      "pdivFieldToDivisor": {
+        "0": 2,
+        "1": 4,
+        "2": 8,
+        "3": 16,
+        "4": 32,
+        "5": 64,
+        "8": 6,
+        "9": 10,
+        "10": 12,
+        "11": 24,
+        "12": 48
+      },
+      "generationImpact": "Use DFP shifted _gc values plus PEN, not unshifted numeric field values. Reset /6 is approximately 3333333 Hz only if the source is configured to 20 MHz."
+    },
+    {
+      "id": "clock-lock",
+      "kind": "constraint",
+      "title": "Main clock lock persists until hardware reset",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        94
+      ],
+      "section": "11.5.3",
+      "verification": "reviewed-against-pdf",
+      "text": "Setting the protected MCLKLOCK.LOCKEN bit locks MCLKCTRLA and MCLKCTRLB until hardware reset. It also locks oscillator calibration when the selected main clock is the relevant internal oscillator.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-clock"
+      ],
+      "generationImpact": "Do not add this lock as a routine workaround. It blocks later clock/prescaler changes; use it only under an explicit reviewed requirement after setup.",
+      "relatedFactIds": [
+        "errata-osclock-calibration"
+      ]
+    },
+    {
+      "id": "clock-safe-frequency",
+      "kind": "diagram",
+      "title": "Supply and temperature bound CPU frequency",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        476
+      ],
+      "section": "33.3, Figures 33-1 and 33-2",
+      "verification": "reviewed-against-pdf",
+      "text": "The safe operating area is below the plotted maximum-frequency envelope. For TA=-40..85 C, the boundary goes through 1.8 V/5 MHz, 2.7 V/10 MHz and 4.5 V/20 MHz, then stays at 20 MHz to 5.5 V. For TA=85..125 C, it runs from 2.7 V/8 MHz to 4.5 V/16 MHz, then stays at 16 MHz to 5.5 V.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-clock"
+      ],
+      "envelopes": [
+        {
+          "temperatureC": [
+            -40,
+            85
+          ],
+          "boundaryPoints": [
+            {
+              "vddV": 1.8,
+              "maximumHz": 5000000
+            },
+            {
+              "vddV": 2.7,
+              "maximumHz": 10000000
+            },
+            {
+              "vddV": 4.5,
+              "maximumHz": 20000000
+            },
+            {
+              "vddV": 5.5,
+              "maximumHz": 20000000
+            }
+          ]
+        },
+        {
+          "temperatureC": [
+            85,
+            125
+          ],
+          "boundaryPoints": [
+            {
+              "vddV": 2.7,
+              "maximumHz": 8000000
+            },
+            {
+              "vddV": 4.5,
+              "maximumHz": 16000000
+            },
+            {
+              "vddV": 5.5,
+              "maximumHz": 16000000
+            }
+          ]
+        }
+      ],
+      "generationImpact": "20 MHz needs the lower-temperature operating region and VDD>=4.5 V. Board voltage/temperature are not checked by the current resource validator; clarify unresolved conditions instead of claiming electrical validation."
+    },
+    {
+      "id": "gpio-w1c",
+      "kind": "constraint",
+      "title": "PORT interrupt flags are write-one-to-clear",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        163
+      ],
+      "section": "17.5.10",
+      "verification": "reviewed-against-pdf",
+      "text": "Writing one to a selected PORTx.INTFLAGS bit clears that pin's flag; writing zero leaves the flag unchanged.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-gpio"
+      ],
+      "generationImpact": "Use a direct selected-mask write. A read-modify-write such as |= can clear other pending flags."
+    },
+    {
+      "id": "gpio-input-control",
+      "kind": "register-table",
+      "title": "Input buffer, interrupt disable and pull-up control",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        165
+      ],
+      "section": "17.5.12",
+      "verification": "reviewed-against-pdf",
+      "text": "PINnCTRL has INVEN at bit 7, PULLUPEN at bit 3 and ISC at bits 2:0. ISC=INTDISABLE (0) disables interrupts while keeping the input buffer enabled. ISC=INPUT_DISABLE (4) disables the digital buffer, so PORTx.IN is not updated for that pin. PULLUPEN acts while the pin is configured as input.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-gpio"
+      ],
+      "generationImpact": "For digital input polling, do not select INPUT_DISABLE. Preserve unrelated PINnCTRL fields when changing one setting."
+    },
+    {
+      "id": "tca-normal-period",
+      "kind": "formula",
+      "title": "Normal upward-counting TCA overflow period",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        197,
+        210
+      ],
+      "section": "21.3.3.1, Figure 21-4; 21.5.2, Table 21-7",
+      "verification": "reviewed-against-pdf",
+      "text": "In SINGLE NORMAL upward counting, the counter includes zero through TOP=PER and overflows to zero on the following tick. Therefore one overflow period contains PER+1 timer clocks.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-timer"
+      ],
+      "derivation": "From the inclusive zero-to-PER count sequence, period_us=(PER+1)*prescaler*1000000/CLK_PER.",
+      "formulas": {
+        "ticks": "round(CLK_PER_Hz * requested_period_us / (prescaler * 1000000))",
+        "per": "ticks - 1",
+        "actualPeriodUs": "(PER + 1) * prescaler * 1000000 / CLK_PER_Hz"
+      },
+      "constraints": {
+        "minimumTicks": 1,
+        "maximumTicks": 65536
+      },
+      "generationImpact": "Round and range-check before narrowing; use BigInt in the calculator or a uint64_t intermediate before multiplication in C. This derivation does not approve FRQ, PWM, split mode or downward counting."
+    },
+    {
+      "id": "tca-clock-and-mode",
+      "kind": "register-table",
+      "title": "TCA divisors and NORMAL mode semantics",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        209,
+        210
+      ],
+      "section": "21.5.1 and 21.5.2, Table 21-7",
+      "verification": "reviewed-against-pdf",
+      "text": "TCA SINGLE clock selection field values 0..7 select divisors 1,2,4,8,16,64,256,1024. WGMODE=0 selects NORMAL with TOP=PER. FRQ uses a different TOP and waveform modes have different update/overflow behavior.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-timer"
+      ],
+      "clockSelectFieldToDivisor": {
+        "0": 1,
+        "1": 2,
+        "2": 4,
+        "3": 8,
+        "4": 16,
+        "5": 64,
+        "6": 256,
+        "7": 1024
+      },
+      "generationImpact": "Match the numeric divisor to TCA_SINGLE_CLKSEL_DIV<n>_gc; division by 32 is not a TCA selection. Explicitly choose SINGLE NORMAL upward counting in the approved recipe."
+    },
+    {
+      "id": "tca-w1c",
+      "kind": "constraint",
+      "title": "TCA interrupt flags need explicit acknowledgement",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        219
+      ],
+      "section": "21.5.11",
+      "verification": "reviewed-against-pdf",
+      "text": "TCA SINGLE OVF and compare flags are not automatically cleared by entering their interrupt handlers; the relevant flag is cleared by writing one.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-timer"
+      ],
+      "generationImpact": "Acknowledge overflow with TCA0.SINGLE.INTFLAGS = TCA_SINGLE_OVF_bm. Do not use |= because it can also acknowledge unrelated pending causes."
+    },
+    {
+      "id": "tca-live-period",
+      "kind": "constraint",
+      "title": "Direct PER changes can stretch a running cycle",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        198
+      ],
+      "section": "21.3.3.3, Figure 21-6",
+      "verification": "reviewed-against-pdf",
+      "text": "An unbuffered PER write takes effect immediately. If a new TOP is below the current CNT, the counter passes the new TOP and reaches MAX before wrapping and matching the new TOP.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-timer"
+      ],
+      "generationImpact": "Initialize PER with the timer disabled. Live updates need a separately reviewed buffered-update procedure; they are not enabled by the static periodic recipe."
+    },
+    {
+      "id": "usart-baud",
+      "kind": "formula",
+      "title": "Fractional asynchronous USART baud value",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        293,
+        294
+      ],
+      "section": "24.3.2.2.1, Table 24-1",
+      "verification": "reviewed-against-pdf",
+      "text": "The asynchronous baud register value is 64*CLK_PER/(S*baud) with no minus one and no extra shift. Actual baud is 64*CLK_PER/(S*BAUD). S is 16 in NORMAL and 8 in CLK2X. The valid register range is 64..65535 and baud must not exceed CLK_PER/S.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-uart-polling",
+        "avr-printf",
+        "avr-uart-tx-interrupt"
+      ],
+      "formulas": {
+        "registerValue": "round(64 * CLK_PER_Hz / (S * requested_baud))",
+        "actualBaud": "64 * CLK_PER_Hz / (S * BAUD)"
+      },
+      "constraints": {
+        "minimumBaudRegister": 64,
+        "maximumBaudRegister": 65535,
+        "maximumRequestedBaud": "CLK_PER_Hz / S"
+      },
+      "rounding": "Round-to-nearest and the validator's 2% divisor-error limit are application policies, not additional silicon specifications.",
+      "generationImpact": "Approved recipes use NORMAL/S=16. Account separately for oscillator and peer error; use wide intermediates and report actual baud. Formula knowledge does not approve CLK2X or synchronous modes."
+    },
+    {
+      "id": "usart-rx-order",
+      "kind": "constraint",
+      "title": "Capture per-frame status before popping 8-bit RX data",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        294,
+        308
+      ],
+      "section": "24.3.2.4 and 24.5.2",
+      "verification": "reviewed-against-pdf",
+      "text": "The receive buffer holds two frames. In the approved 8-bit mode, RXDATAL advances the buffer; read RXDATAH first to capture the oldest frame's BUFOVF/FERR/PERR flags, then RXDATAL. RXDATAH is the buffer-advancing register only in 9-bit low-byte-first mode.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-uart-polling"
+      ],
+      "statusBits": {
+        "RXCIF": 7,
+        "BUFOVF": 6,
+        "FERR": 2,
+        "PERR": 1,
+        "DATA8": 0
+      },
+      "generationImpact": "Do not replace these ordered byte reads with a generic low-byte-first 16-bit read. Explicitly discard or report damaged bytes according to the application; 9-bit modes remain outside the recipe."
+    },
+    {
+      "id": "usart-status",
+      "kind": "register-table",
+      "title": "DRE, TXC and USART flag acknowledgement",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        311
+      ],
+      "section": "24.5.5",
+      "verification": "reviewed-against-pdf",
+      "text": "RXCIF and DREIF are read-only status flags. DREIF means transmit data storage is available, not that the final stop bit has left TXD. TXCIF means the entire frame has shifted out and no new transmit data remain. TXCIF, RXSIF and ISFIF clear by writing one; BDF can also be cleared by writing one. WFB is a separate write control.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-uart-polling",
+        "avr-printf",
+        "avr-uart-tx-interrupt"
+      ],
+      "generationImpact": "Use direct masks for W1C flags. A physical-completion operation must reject stale TXCIF and serialize ownership with transmission; a DRE ISR finishing or printf returning is not line completion."
+    },
+    {
+      "id": "usart-active-8n1",
+      "kind": "register-table",
+      "title": "Explicit normal asynchronous 8N1 initialization",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        314,
+        316
+      ],
+      "section": "24.5.7 and 24.5.8",
+      "verification": "reviewed-against-pdf",
+      "text": "CTRLB contains RXEN, TXEN, SFDEN, ODME and RXMODE. NORMAL is RXMODE=0. CTRLC selects asynchronous operation with CMODE=0, parity disabled with PMODE=0, one transmitted stop bit with SBMODE=0 and eight data bits with CHSIZE=3.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-uart-polling",
+        "avr-printf",
+        "avr-uart-tx-interrupt"
+      ],
+      "generationImpact": "Configure the owned USART while disabled, deliberately choosing normal asynchronous 8N1, SFDEN=0, ODME=0 and requested TX/RX enables. Do not inherit reset assumptions or enable advanced modes implicitly.",
+      "relatedFactIds": [
+        "errata-usart-active-sfden",
+        "errata-usart-open-drain"
+      ]
+    },
+    {
+      "id": "usart-baud-update",
+      "kind": "constraint",
+      "title": "BAUD updates immediately and can corrupt traffic",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        318
+      ],
+      "section": "24.5.10",
+      "verification": "reviewed-against-pdf",
+      "text": "USARTn.BAUD is a 16-bit register pair. Writing it updates the baud-rate prescaler immediately; changing it during ongoing transmit or receive corrupts that traffic.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-uart-polling",
+        "avr-printf",
+        "avr-uart-tx-interrupt"
+      ],
+      "generationImpact": "Set BAUD during disabled initialization. Any runtime retuning requires a separately reviewed quiescence and synchronization protocol."
+    },
+    {
+      "id": "package-usart-routes",
+      "kind": "register-table",
+      "title": "Physical package availability and USART routing",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        18
+      ],
+      "section": "3.1, Table 3-1",
+      "verification": "reviewed-against-pdf",
+      "text": "The package columns map symbolic pins to 14-pin SOIC/TSSOP, 20-pin SOIC/SSOP, 20-pin VQFN and 24-pin VQFN pads. USART0 default is PB2 TX/PB3 RX and alternate is PA1 TX/PA2 RX. USART1 default is PA1 TX/PA2 RX and alternate is PC2 TX/PC1 RX; PC pins are absent on ATtiny1624. All physical-pin columns and these USART routes were compared with the generated devices.json package mappings.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-project",
+        "avr-gpio",
+        "avr-uart-polling",
+        "avr-printf",
+        "avr-uart-tx-interrupt"
+      ],
+      "comparisonMethod": "Visual inspection of the original PDF table and comparison with generated devices.json package facts.",
+      "generationImpact": "Allocate by selected device plus physical package, not by a port's existence alone. Resolve conflicts between default and alternate routes and keep PA0 reserved for UPDI in this pilot.",
+      "relatedFactIds": [
+        "clarification-pin-mux"
+      ]
+    },
+    {
+      "id": "usart-clock-path",
+      "kind": "diagram",
+      "title": "USART clock path starts at CLK_PER in asynchronous mode",
+      "sourceId": "datasheet-ds40002234b",
+      "pages": [
+        293
+      ],
+      "section": "Figure 24-3",
+      "verification": "reviewed-against-pdf",
+      "text": "The diagram feeds CLK_PER into the fractional baud-rate generator controlled by BAUD, which supplies the USART TX/RX clock path. The XCK input is a distinct synchronous clock source; it is not the peripheral-clock value used by the approved asynchronous baud calculation.",
+      "appliesTo": [
+        "ATtiny1624",
+        "ATtiny1626",
+        "ATtiny1627"
+      ],
+      "recipeIds": [
+        "avr-clock",
+        "avr-uart-polling"
+      ],
+      "generationImpact": "Compute the approved asynchronous baud from the configured post-prescaler CLK_PER. Do not substitute the raw OSC20M frequency or an external XCK frequency."
+    }
+  ]
+}

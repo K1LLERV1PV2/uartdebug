@@ -1,0 +1,14 @@
+---
+name: avr-uart-polling
+description: Configure routed 8N1 normal asynchronous USART0/1 and poll TX/RX on ATtiny162x.
+---
+
+Choose the instance, route and physical pins together from devices.json. Apply PORTMUX.USARTROUTEA by preserving the other USART field: (old & ~PORTMUX_USARTn_gm) | selected_route_gc. ATtiny1624 has no USART1 ALT1 route. Initialize with transmitter/receiver disabled; configure route, required TX output/RX input, explicit CTRLC asynchronous 8N1, BAUD and only requested TXEN/RXEN bits. Set RXMODE=NORMAL, SFDEN=0, ODME=0 and MPCM=0 deliberately for this recipe. Do not retune BAUD during traffic: writes take effect immediately. Do not reset an unrelated configuration with an unreviewed whole-register write.
+
+Use calculateUsartBaud: BAUD = round(64 * CLK_PER / (S * baud)), S=16 for this NORMAL recipe. There is no subtraction of one and no additional shift of the calculated register value. Actual baud is 64 * CLK_PER / (S * BAUD). Check baud <= CLK_PER/S and 64 <= BAUD <= 65535. BigInt avoids overflow; a C equivalent needs a uint64_t intermediate before multiplication. The validator's 2% rounding threshold is an application policy, not a silicon guarantee; oscillator and peer error consume additional margin. Knowing the CLK2X formula does not approve that mode for this recipe.
+
+Wait/test USART_DREIF_bm before writing TXDATAL. DRE means a buffer slot is available, not that the final stop bit has left the pin. RX: wait/test RXCIF; for this 8-bit mode capture RXDATAH BEFORE RXDATAL, then inspect BUFOVF/FERR/PERR for that byte. Reading RXDATAL advances the buffer. Document whether invalid bytes are discarded or reported; do not silently ignore errors in a reliability requirement. 9-bit low-byte-first is outside this recipe.
+
+Keep SFDEN disabled in Active mode: Rev. E can falsely restart reception when RXDATA is read during an incoming frame, without an RXSIF warning. Do not enable Standby reception without a separately reviewed transition protocol. The Rev. E open-drain workaround requires TX input only when ODME is enabled; it does not apply to this ordinary push-pull TX output. Auto-baud ISFIF recovery requires receiver disable/re-enable, not just clearing the flag, and remains outside this recipe.
+
+Polling blocks unless implemented as try-read/try-write. No CLK2X, auto-baud, LIN, RS485, open-drain or interrupt RX is covered. Those need extra knowledge and errata review. Sources: DS40002234B section 24.3.2.2.1 and sections 24.5.2/5/7/8/10 (pages 293, 308, 311, 314, 316, 318); DS80000902F sections 2.8.1-3 and 3.2.1 (pages 5-6, 9); DFP route facts. Reviewed facts: usart-baud, usart-rx-order, usart-status, usart-active-8n1, usart-baud-update, errata-usart-open-drain, errata-usart-active-sfden, errata-usart-auto-baud, clarification-pin-mux. Lineage: mini-projects 05/06; their bare byte demos omit receive-error handling.

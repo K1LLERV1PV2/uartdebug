@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 
-const KNOWLEDGE_DIR = path.join(__dirname, "ai/knowledge/attiny162x/1.0.0");
+const KNOWLEDGE_DIR = path.join(__dirname, "ai/knowledge/attiny162x/1.1.0");
 const TIMER_DIVISORS = Object.freeze([1, 2, 4, 8, 16, 64, 256, 1024]);
 const CLOCK_DIVISORS = Object.freeze([1, 2, 4, 6, 8, 10, 12, 16, 24, 32, 48, 64]);
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
@@ -27,20 +27,53 @@ function loadKnowledge() {
   const read = (file) => fs.readFileSync(path.join(KNOWLEDGE_DIR, file), "utf8");
   const manifest = JSON.parse(read("manifest.json"));
   const facts = JSON.parse(read("devices.json"));
-  const documents = JSON.parse(read("documents.json"));
   // Fail closed on an incomplete or accidentally modified released bundle.
   for (const [file, expected] of Object.entries(manifest.files)) {
     if (hash(fs.readFileSync(path.join(KNOWLEDGE_DIR, file))) !== expected) {
       throw new Error(`AVR knowledge integrity mismatch: ${file}`);
     }
   }
-  const localDocuments = documents.map((doc) => ({ ...doc, sha256: hash(doc.text), links: doc.links || [] }));
+  const corpus = JSON.parse(read("reference/corpus.json"));
+  const reviewedFacts = JSON.parse(read("reference/reviewed-facts.json"));
+  const dfpRegisters = JSON.parse(read("reference/dfp-registers.json"));
+  if (corpus.schemaVersion !== 1 || !Array.isArray(corpus.documents) || !corpus.documents.length ||
+      reviewedFacts.schemaVersion !== 1 || !Array.isArray(reviewedFacts.facts) ||
+      dfpRegisters.schemaVersion !== 1 || !Array.isArray(dfpRegisters.devices)) {
+    throw new Error("Invalid AVR reference corpus schema");
+  }
+  for (const document of corpus.documents) {
+    const sectionIds = new Set(document.sections?.map((section) => section.id));
+    if (!integer(document.pageCount) || !Array.isArray(document.pages) || document.pages.length !== document.pageCount ||
+        !Array.isArray(document.sections) || sectionIds.size !== document.sections.length ||
+        document.sections.some((section) => !section.id || typeof section.title !== "string" || !integer(section.level) ||
+          !integer(section.startPage) || !integer(section.endPage) || section.startPage > section.endPage || section.endPage > document.pageCount) ||
+        document.pages.some((page, index) => page.page !== index + 1 || typeof page.text !== "string" ||
+          !Array.isArray(page.sectionIds) || page.sectionIds.some((id) => !sectionIds.has(id))) ||
+        !/^[a-f0-9]{64}$/.test(document.sha256) || manifest.files[document.sourceFile] !== document.sha256) {
+      throw new Error(`Invalid AVR reference page coverage or source digest: ${document.id}`);
+    }
+  }
+  for (const fact of reviewedFacts.facts) {
+    const document = corpus.documents.find((entry) => entry.sourceId === fact.sourceId);
+    if (!document || !Array.isArray(fact.pages) || !fact.pages.length ||
+        fact.pages.some((page) => !integer(page) || page > document.pageCount) ||
+        fact.verification !== "reviewed-against-pdf" || typeof fact.text !== "string") {
+      throw new Error(`Invalid reviewed AVR fact provenance: ${fact.id}`);
+    }
+  }
+  const localDocuments = [];
   const recipes = manifest.recipes.map((recipe) => ({ ...recipe, text: read(recipe.file), sha256: manifest.files[recipe.file] }));
   const sources = manifest.sources.map((source) => ({
     ...source,
-    sha256: source.sha256 || localDocuments.find((doc) => doc.sourceId === source.id)?.sha256 || null,
+    sha256: source.sha256 || null,
   }));
-  cached = deepFreeze({ ...manifest, devices: facts.devices, recipes, sources, localDocuments });
+  const referenceCatalog = corpus.documents.map((document) => ({
+    id: document.id, sourceId: document.sourceId, title: document.title, revision: document.revision,
+    pageCount: document.pageCount, sha256: document.sha256, sourceUrl: document.sourceUrl,
+    sectionCount: document.sections.length,
+    sections: document.sections.filter((section) => section.level === Math.min(...document.sections.map((entry) => entry.level))),
+  }));
+  cached = deepFreeze({ ...manifest, devices: facts.devices, recipes, sources, localDocuments, corpus, reviewedFacts, dfpRegisters, referenceCatalog });
   return cached;
 }
 
@@ -202,7 +235,7 @@ function resolveKnowledge({ mcu, packageName, requirements, recipeIds } = {}) {
   if (selected.has("avr-timer")) selected.add("avr-gpio");
   for (const id of selected) if (!knowledge.recipes.some((recipe) => recipe.id === id)) unsupported.push(`Unknown local recipe: ${String(id).slice(0, 80)}`);
   const recipes = knowledge.recipes.filter((recipe) => selected.has(recipe.id));
-  const sourceIds = new Set(["microchip-attiny-dfp-3.4.278", "attiny162x-errata"]);
+  const sourceIds = new Set(["microchip-attiny-dfp-3.4.278", "datasheet-ds40002234b", "errata-ds80000902f"]);
   for (const recipe of recipes) for (const id of recipe.sourceIds) sourceIds.add(id);
   const sources = knowledge.sources.filter((source) => sourceIds.has(source.id));
   const validation = spec ? validateProjectSpec(spec) : null;
@@ -214,7 +247,7 @@ function resolveKnowledge({ mcu, packageName, requirements, recipeIds } = {}) {
   const manifest = {
     id: knowledge.id, version: knowledge.version, mcu: normalizedMcu, packageName: normalizedPackage,
     recipeIds: recipes.map((recipe) => recipe.id),
-    sources: sources.map(({ id, url, title, sha256, digestScope, verification }) => ({ id, url, title, sha256, digestScope, verification })),
+    sources: sources.map(({ id, url, title, revision, sha256, digestScope, verification }) => ({ id, url, title, revision, sha256, digestScope, verification })),
     verification: knowledge.verification,
   };
   const pinout = device?.pinouts[normalizedPackage];
@@ -228,7 +261,10 @@ function resolveKnowledge({ mcu, packageName, requirements, recipeIds } = {}) {
     "Production compiler evidence uses XC8 3.10 with ATtiny DFP 3.3.272. The source snapshot is DFP 3.4.278; selected shared public constants have matching values. Use the listed _gc/_bm/_gm symbols, not new _gv helper aliases absent from the installed pack.",
     `Device facts: ${JSON.stringify(facts)}`,
     ...recipes.map((recipe) => recipe.text),
-    "Errata coverage: revision provenance and limited references only; do not infer absence of silicon issues. Advanced modes, fuse changes, sleep and unsupported peripherals require explicit missing knowledge and a reviewed source.",
+    `Local reference catalog (one-based PDF pages; use read_avr_documentation catalog/search/read): ${JSON.stringify(knowledge.referenceCatalog)}`,
+    `Reviewed errata from the pinned PDF revision: ${JSON.stringify(knowledge.reviewedFacts.facts.filter((fact) => fact.kind === "erratum"))}`,
+    `Local DFP register modules for the selected MCU (read_avr_documentation registers; query exact register/field names): ${JSON.stringify(knowledge.dfpRegisters.devices.find((entry) => entry.mcu === normalizedMcu)?.modules.map((module) => ({ name: module.name, caption: module.caption })) || [])}`,
+    "All PDF pages are available locally as machine-extracted reference text. A search hit does not prove the required fact is covered; inspect relevant pages, tables and separately reviewed facts. Read the applicable errata before using a peripheral. Full reference availability does not expand generation beyond the reviewed gpio, uart and timer modes. Other modes require reviewed recipes and validator support, not merely a register definition or internet lookup.",
   ];
   if (spec && validation?.valid) {
     const calculations = validation.normalized.resources.flatMap((r) => r.kind === "timer" ? [{ id: r.id, timer: calculateTimerPeriod({ clockHz: spec.clock.hz, periodUs: r.periodUs, prescaler: r.prescaler }) }] : r.kind === "uart" ? [{ id: r.id, uart: calculateUsartBaud({ clockHz: spec.clock.hz, baud: r.baud }) }] : []);

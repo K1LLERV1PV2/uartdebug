@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-09-24T15:53:35.161Z",
+  "fixture": "composed-uart-timer.c",
+  "sourceSha256": "8a6be706ffd5e8f6d14675d79b08b9b886da2b6f66b10af048ce5703bdaaadd3",
+  "scope": "These exact fixture bytes compiled on the recorded XC8 service for these targets. This is not hardware testing or proof that arbitrary compositions compile.",
+  "runs": [
+    {
+      "mcu": "attiny1624",
+      "responseMcu": "attiny1624",
+      "httpStatus": 200,
+      "ok": true,
+      "compileContract": "uartdebug-avr-compile/v1",
+      "compileServerVersion": "20260826-rate-limit-v1",
+      "compiler": "xc8-cc",
+      "optimize": "O1",
+      "hexSha256": "c77ab337a1ede48bab821ac28a284b01b0f4216569136f29ac25f1e8cb363a86",
+      "stdout": "Info: Loading file: /opt/microchip/xc8/v3.10/avr/avr/bin/../lib/ldscripts/avrxmega3.xn\n",
+      "stderr": "XCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\nXCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\n",
+      "stage": null
+    },
+    {
+      "mcu": "attiny1626",
+      "responseMcu": "attiny1626",
+      "httpStatus": 200,
+      "ok": true,
+      "compileContract": "uartdebug-avr-compile/v1",
+      "compileServerVersion": "20260826-rate-limit-v1",
+      "compiler": "xc8-cc",
+      "optimize": "O1",
+      "hexSha256": "c77ab337a1ede48bab821ac28a284b01b0f4216569136f29ac25f1e8cb363a86",
+      "stdout": "Info: Loading file: /opt/microchip/xc8/v3.10/avr/avr/bin/../lib/ldscripts/avrxmega3.xn\n",
+      "stderr": "XCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\nXCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\n",
+      "stage": null
+    },
+    {
+      "mcu": "attiny1627",
+      "responseMcu": "attiny1627",
+      "httpStatus": 200,
+      "ok": true,
+      "compileContract": "uartdebug-avr-compile/v1",
+      "compileServerVersion": "20260826-rate-limit-v1",
+      "compiler": "xc8-cc",
+      "optimize": "O1",
+      "hexSha256": "c77ab337a1ede48bab821ac28a284b01b0f4216569136f29ac25f1e8cb363a86",
+      "stdout": "Info: Loading file: /opt/microchip/xc8/v3.10/avr/avr/bin/../lib/ldscripts/avrxmega3.xn\n",
+      "stderr": "XCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\nXCLM: Failed to elevate privilege - is the XCLM binary setuid-root?\n",
+      "stage": null
+    }
+  ],
+  "environmentObservation": {
+    "compilerVersion": "Microchip MPLAB XC8 C Compiler V3.10; build Aug 13 2025",
+    "method": "Read-only compiler --version, installed .pdsc release metadata, archive/header SHA256 and selected constant-expression comparison after the recorded API builds",
+    "installedDfpVersion": "3.3.272",
+    "installedDfpReleaseDate": "2025-04-30",
+    "installedPdscSha256": "6e0a5baf8d641a35c540766492d7ea9b06c49de36599eb6b20dcc67d6e763b71",
+    "installedPackSha256": "22f05176071c2ff97eaf1dae1838649574e241f7f7f8699c9f9e0a041e76d4f1",
+    "installedHeaderSha256": {
+      "attiny1624": "4a5cfe48dafd0666379abcd94b8ffe25932b5467df09a41833560a7bd55a1e02",
+      "attiny1626": "56ca876fd9969d3cd525258ec9aab00a4c337bb7943b920b65e7eefb95e024ea",
+      "attiny1627": "6faf54f08e1d164d93cba8fee55e633bc0a3679e6d089f2cb2a679a7f04242c9"
+    },
+    "selectedSymbolComparison": {
+      "method": "scripts/avr-knowledge/compare-installed.py; exact expressions or integer values evaluated with a restricted AST",
+      "ATtiny1624": {
+        "sourceSymbols": 133,
+        "sharedSymbols": 95,
+        "identicalExpressions": 57,
+        "equalValueExpressions": 38,
+        "differentValues": 0,
+        "newGvAliasesAbsentFromInstalled": 38
+      },
+      "ATtiny1626": {
+        "sourceSymbols": 135,
+        "sharedSymbols": 96,
+        "identicalExpressions": 57,
+        "equalValueExpressions": 39,
+        "differentValues": 0,
+        "newGvAliasesAbsentFromInstalled": 39
+      },
+      "ATtiny1627": {
+        "sourceSymbols": 135,
+        "sharedSymbols": 96,
+        "identicalExpressions": 57,
+        "equalValueExpressions": 39,
+        "differentValues": 0,
+        "newGvAliasesAbsentFromInstalled": 39
+      }
+    },
+    "dfpQualification": "Installed headers exactly match the server's archived official 3.3.272 pack. Every selected shared public constant/vector expression has the same value or exact expression in 3.4.278. The newer pack adds unshifted *_gv aliases absent from 3.3.272; these remain source facts but are excluded from generation context. No complete header/ABI comparison or compile of every route/mode is claimed; only the recorded fixture has compiler evidence.",
+    "recheckedAt": "2026-09-24T15:45:09.439Z",
+    "recheckMethod": "Compiler --version and SHA256 of installed PDSC, archive and all three XC8 headers unchanged; prior selected-symbol comparison therefore still applies."
+  }
+}
