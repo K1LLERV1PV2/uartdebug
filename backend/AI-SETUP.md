@@ -118,6 +118,34 @@ typical reference-loaded project request to clear the minimum reservation, not
 a permanent quota promise. Recalibrate it from measured median and p95 costs
 before advertising a fixed allowance.
 
+Selected Google accounts can receive unlimited site credits using an operator-owned
+JSON array of their exact `google_accounts.account_hash` values. Set
+`AI_UNLIMITED_ACCOUNT_HASHES_FILE` to the absolute file path in a systemd drop-in,
+then reload systemd and restart the AI service. Keep the file outside the repository
+and release directories, readable by `uartai` but writable only by the operator
+(for example `/etc/uartdebug/access/unlimited-accounts.json`, mode `0640`,
+owner `root:uartai`, parent directory `0750`). No raw Google subject, email,
+cookie or token belongs in this list. Masked email addresses are not unique.
+
+The list is read at startup; an absent setting grants nobody unlimited access,
+and an invalid configured file prevents startup. New accounts are not automatically
+added. Entitlement follows the exact account across devices and existing sessions.
+The API returns `quota.unlimited: true` with null numeric quota fields, and the
+interface displays `Unlimited`. Normal account responses retain numeric limits.
+
+Unlimited usage still has finite per-response output limits, concurrency checks,
+authentication, usage reconciliation and actual provider costs. Actual usage stays
+in the append-only ledger; it does not debit free-credit counters or reserve a
+shared browser's free allowance. The account/device `spent_nano_usd` counters
+therefore describe metered credit consumption, not all provider expenditure;
+use `usage_ledger` for cost reporting. Existing balances and historical charges
+are preserved. Apply entitlement changes only after the affected accounts have
+no active or unresolved reservations, including `needs_reconciliation`. In
+particular, removing an account with an unresolved sponsored reservation would
+make that hold count against its shared devices under the new list. The list
+takes effect at restart. This configuration requires no database
+schema migration and is not included in material exports.
+
 For metered requests, the service first asks OpenAI's input-token endpoint for
 the exact request size, transactionally reserves the input cost plus an output
 allowance, and reduces `max_output_tokens` to the affordable amount. It settles
