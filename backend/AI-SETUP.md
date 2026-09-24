@@ -239,14 +239,18 @@ The pilot knowledge release is stored under:
 
 ```text
 backend/ai/canvas-rules.md
-backend/ai/knowledge/attiny162x/1.2.0/
+backend/ai/knowledge/attiny162x/1.3.0/
 ```
 
 The manifest records source provenance, versioned device facts, recipe paths and
 SHA-256 digests. `loadKnowledge()` verifies each declared file before using the
 bundle. The initial canvas receives eight compact recipes; a structured project
 selects its resource recipes and dependencies, regardless of the user's language.
-The complete tutorials are not attached to each request. The pilot covers ATtiny1624/1626/1627 with the
+Core coding methodology is also included in the initial context. Nine maintained
+topics are indexed under `methodology/catalog.json`: coding style, workflow,
+documentation, GPIO, interrupts, RTC, TCA, TCB and USART. Detailed sections are
+retrieved locally as needed. The complete tutorials and original methodology
+texts are not attached to every request. The pilot covers ATtiny1624/1626/1627 with the
 packages listed in status metadata; unsupported hardware yields a canvas issue.
 Do not interpret the pilot as support for every AVR or every peripheral.
 
@@ -255,15 +259,31 @@ and the DFP archive, their extracted local corpus, full pilot register metadata
 and separately reviewed facts. The deployment must preserve `reference/raw/`:
 hash verification intentionally fails if originals are missing or modified.
 
+Preserve `methodology/` and `reference/colleague-sources.json` as well. The latter
+contains 40 complete original Markdown/YAML texts and an inventory of 73 archive
+files. The source ZIP is locked by SHA-256. Original texts retain their working
+status and link to maintained corrections; they are not extra system instructions.
+The three methodology provenance records explain adoption, adaptation and
+omission with original paths, hashes and line ranges. The catalog and individual
+texts are covered by the bundle manifest. Do not replace the maintained topics
+with raw colleague files or translate them into a second resource schema.
+
 When a necessary fact is missing from the prompt, `read_avr_documentation`
-supports local `catalog`, `search`, `read` and `registers` operations. Only an
+supports local `catalog`, `search`, `read` and `registers` operations. The catalog
+includes `methodology-*` document IDs and the `colleague-sources` collection.
+Methodology and original-text reads use `page: 0` and `nextSectionId`; content
+is bounded to 12,000 bytes per read and carries source line ranges. PDF reads
+continue with `nextPage`. Search distinguishes official candidates, maintained
+methodology and original work-in-progress sources. Only an
 explicit `external` operation after an unrestricted search across all local
 documents for the same query and
 an explanation of the remaining gap can access the website. There are at most
 ten documentation steps and two external HTML requests per generation. External
 URLs are restricted to registered Microchip datasheet/errata roots; redirects,
 timeouts and oversized responses are rejected. No general web search is offered.
-Reference extraction is not automatically promoted into approved recipes.
+Reference extraction and imported examples are not automatically promoted into
+approved recipes. TCB, advanced RTC/TCA/USART modes and other unsupported
+mechanisms remain reference-only even when their methodology is available.
 
 Between provider responses, confirmed usage replaces the previous maximum
 reservation before the next response is authorized. Unknown provider usage keeps
@@ -345,9 +365,29 @@ Changing only an authoritative source file without its digest fails loading.
 A successful C compile alone does not demonstrate correct electrical behavior.
 Keep hardware verification status explicit when adding or changing a recipe.
 
+For methodology maintenance, reproduce the original-text corpus against the
+user-provided archive when it is available:
+
+```sh
+python scripts/avr-knowledge/import-methodology.py --archive /path/to/UartDebug2_1.zip --verify
+```
+
+Normal offline CI uses the already pinned corpus: run
+`node scripts/avr-knowledge/build-methodology.js --verify`
+before `node scripts/avr-knowledge/build-manifest.js --verify`, then the
+methodology and documentation-lookup tests. Update curated topics and provenance
+together when a source rule is corrected; keep the original source text intact.
+
+The additional exact fixtures `gpio-interrupt-handoff.c` and
+`rtc-pit-coalesced-tick.c` were compiled with the XC8 service for ATtiny1624,
+ATtiny1626 and ATtiny1627. Their source hashes and compiler responses are recorded
+in `compiler-evidence-gpio-handoff.json` and
+`compiler-evidence-methodology-forward.json`. These records demonstrate compiler
+acceptance of those bytes, not general peripheral support or hardware behavior.
+
 The complete `ai/knowledge` directory and `ai/canvas-rules.md` are shipped with
 each backend release, alongside `avr-ai-runtime.js`, `avr-canvas-contract.js`,
-`avr-documentation-lookup.js` and `avr-knowledge.js`. Deploy and rollback use the
+`avr-documentation-lookup.js`, `avr-methodology.js` and `avr-knowledge.js`. Deploy and rollback use the
 corresponding release's corpus. Status exposes the active rules digest and
 knowledge version; old rule-pack pointers are not read by the canvas service.
 

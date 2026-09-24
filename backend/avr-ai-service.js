@@ -349,7 +349,7 @@ function createAvrAiService(options = {}) {
       "utf8",
     );
     return {
-      packageId: "uartdebug-canvas-2026-09-24.3",
+      packageId: "uartdebug-canvas-2026-09-24.4",
       digest: hash(prompt),
       prompt,
     };
@@ -371,6 +371,8 @@ function createAvrAiService(options = {}) {
         devices: k.devices.map((d) => ({ mcu: d.mcu, packages: d.packages })),
         referenceDocuments: (k.referenceCatalog || []).map(({ id, revision, pageCount, sectionCount }) => ({ id, revision, pageCount, sectionCount })),
         reviewedErrataCount: k.reviewedFacts?.facts?.filter((fact) => fact.kind === "erratum").length || 0,
+        methodology: (k.methodology?.documents || []).map(({id,title,alwaysIncluded}) => ({id,title,alwaysIncluded})),
+        originalMethodologyCount: k.methodology?.originals?.length || 0,
       };
       ruleData = rules();
     } catch {
@@ -477,6 +479,7 @@ function createAvrAiService(options = {}) {
       corpus: knowledge.corpus,
       reviewedFacts: knowledge.reviewedFacts,
       dfpRegisters: knowledge.dfpRegisters,
+      methodology: knowledge.methodology,
       mcu: selected.manifest.mcu,
       enabled: cfg.externalDocumentationEnabled,
     });
@@ -637,7 +640,7 @@ function createAvrAiService(options = {}) {
             result.ok ? {} : { errorCode: result.code },
           );
           if (result.ok && result.operation !== "catalog") {
-            const items = result.operation === "registers" ? [result] : result.results || [result];
+            const items = result.operation === "registers" ? [result] : [...(result.results || [result]), ...(result.methodologyResults || [])];
             for (const item of items) {
               const reference = {
                 url: item.sourceUrl || item.url,
@@ -645,8 +648,10 @@ function createAvrAiService(options = {}) {
                 sourceId: item.sourceId, documentId: item.documentId, revision: item.revision,
                 page: item.page, sectionIds: item.sectionIds,
                 sha256: item.sha256, origin: result.origin,
-                digestScope: item.digestScope, verification: result.verification || "source-only",
+                digestScope: item.digestScope, verification: item.verification || result.verification || "source-only",
                 reviewStatus: item.reviewStatus, atdfMember: item.atdfMember, atdfSha256: item.atdfSha256,
+                startLine: item.startLine, endLine: item.endLine,
+                sectionTitle: item.sectionTitle, kind: item.kind,
               };
               if (!references.some((previous) => JSON.stringify(previous) === JSON.stringify(reference))) references.push(reference);
             }

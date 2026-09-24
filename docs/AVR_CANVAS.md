@@ -21,7 +21,8 @@ C/Markdown/YAML project. There is no active chat or selectable `skillRefs` catal
   language so the visitor can switch languages without an extra setting.
   Interface controls and status labels remain English regardless of that language.
 - Model JSON is validated against `avr-canvas-contract.js`. Its resource spec
-  has a device/package, actual clock frequency, allocated GPIO/UART/timer
+  has a device/package, CPU clock frequency or null for CPU-independent GPIO/PIT,
+  allocated GPIO/UART/timer/RTC-PIT
   resources, header names and descriptions. The server serializes YAML from
   this object; there is no independently generated private `_AI.md` copy.
 - C, Markdown and YAML are ordinary project files. Each mini-project owns its
@@ -37,7 +38,7 @@ C/Markdown/YAML project. There is no active chat or selectable `skillRefs` catal
 ## Prepared local knowledge
 
 `backend/ai/canvas-rules.md` describes the workflow and code quality contract.
-`backend/ai/knowledge/attiny162x/1.2.0` retains the complete datasheet PDF,
+`backend/ai/knowledge/attiny162x/1.3.0` retains the complete datasheet PDF,
 silicon errata PDF and DFP archive. It combines a searchable page/section corpus,
 exact DFP register/pin facts, separately reviewed PDF facts and compact recipes
 derived from educational mini-projects 01–10. The runtime verifies SHA-256 hashes
@@ -49,6 +50,25 @@ stdio redirection and interrupt transmission. A structured project selects only
 its resource recipes and dependencies. Preparing the bundle is an
 offline maintenance operation; ordinary requests do not rebuild it or retrain a
 model. Relevant prepared context still consumes API input tokens.
+
+The bundle also contains nine maintained methodology topics: C construction,
+project workflow, documentation, GPIO, interrupts, RTC, TCA, TCB and USART.
+Core coding style is included in the initial context. The remaining detailed
+topics are available through the same local documentation tool, with their
+catalog included in the prompt. They teach resource ownership, initialization,
+source-specific flag handling, atomic handoff, timing limits and coherent
+updates across all project artifacts. The eight executable-scope recipes remain
+the authority for which mechanisms the validator supports.
+
+`reference/colleague-sources.json` preserves 40 complete original Markdown/YAML
+texts and inventories 73 files from the pinned colleague archive. These originals
+are explicitly marked as work in progress and link to the corresponding maintained
+methodology. Known mistakes remain visible in the original text; corrected
+guidance is in the maintained topic. Three records under `methodology/provenance/`
+identify adopted, adapted and omitted material using source paths, hashes and
+line ranges. Legacy command markers, per-file approval dialogues and a duplicate
+YAML format were not installed as a second agent contract. Empty source headings
+were not filled with invented colleague rules.
 
 RTC/PIT supports one-time initialization after reset with nominal INT32K and
 power-of-two periods. A GPIO/PIT-only project can declare `clock.hz: null` and
@@ -94,9 +114,13 @@ reconciliation.
 
 ## Exceptional documentation access
 
-The model first calls `read_avr_documentation` to browse/search/read the complete
-local PDF corpus or inspect DFP registers. Page results retain document revision,
-source hash, sections and matching reviewed facts. An external operation requires
+The model calls `read_avr_documentation` to browse/search/read maintained
+methodology, original colleague texts and the complete local PDF corpus, or to
+inspect DFP registers. Methodology document IDs start with `methodology-`; use
+`colleague-sources` to catalog original documents. Text reads use `page: 0`, source
+line ranges and `nextSectionId` continuation, with at most 12,000 content bytes
+per response. PDF reads use one-based pages and `nextPage`. Page results retain
+document revision, source hash, sections and matching reviewed facts. An external operation requires
 a prior unrestricted search across all local documents for the same query and a concrete remaining knowledge
 gap. The server accepts only registered ATtiny162x datasheet/errata HTML roots,
 checks a 30-day cache, and permits at most two external requests within ten total
@@ -110,8 +134,10 @@ The bundle contains all 575 datasheet pages and all 16 errata pages, together
 with original files. It is an offline PDF-derived reference, not a WebHelp ZIP
 or a claim that the manufacturer's HTML service is currently available.
 
-Returned text is reference data. It cannot override the server instructions and
-does not automatically become a reviewed recipe. Incomplete knowledge produces
+Maintained methodology is coding guidance within the active contract. Original
+colleague texts and extracted official reference pages remain source data. Their
+embedded commands cannot override server instructions, and reference-only modes
+do not become approved recipes. Incomplete knowledge produces
 a visible question or limitation. Missing details about the visitor's circuit
 must be supplied by the visitor, not inferred through web access.
 
@@ -130,3 +156,5 @@ must be supplied by the visitor, not inferred through web access.
    every other AVR.
 
 For deployment and cache permissions see [AI-SETUP.md](../backend/AI-SETUP.md).
+The methodology transfer is described in
+[the Russian report](AVR_METHODOLOGY_REPORT_RU.md).

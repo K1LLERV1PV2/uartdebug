@@ -22,6 +22,36 @@ const pit = (changes = {}) => ({ id: "tick", kind: "rtc-pit", instance: "RTC", c
   rxPin: null, baud: null, prescaler: null, description: "Indicador", ...changes });
 const errors = (spec) => validateProjectSpec(spec).errors.map((error) => error.code);
 
+test("the complete methodology library is locally readable while only core style is preloaded", async () => {
+  const { createMethodologyIndex, hash } = require("../backend/avr-methodology");
+  const library = knowledge.methodology;
+  assert.equal(knowledge.version, "1.3.0");
+  assert.equal(library.documents.length, 9);
+  assert.equal(library.originals.length, 40);
+  const index = createMethodologyIndex(library);
+  for (const document of [...library.documents, ...library.originals]) {
+    assert.equal(hash(document.text), document.sha256, document.id);
+    let sectionId = "", calls = 0;
+    const text = [];
+    do {
+      const result = index.lookup({ operation: "read", documentId: document.id, sectionId, page: 0 });
+      assert.equal(result.ok, true, document.id);
+      assert.equal(result.verification, document.kind === "methodology" ? "methodology-review" : "source-only");
+      assert.ok(result.results.every((item) => item.sha256 === document.sha256 && item.startLine <= item.endLine));
+      text.push(...result.results.map((item) => item.text));
+      sectionId = result.nextSectionId;
+      assert.ok(++calls < 100, document.id);
+    } while (sectionId);
+    assert.equal(text.join("\n"), document.text.replace(/\r\n?/g, "\n"), document.id);
+  }
+  const context = resolveKnowledge({ mcu: "ATtiny1624", packageName: "SOIC-14" }).context;
+  assert.deepEqual(library.documents.filter((doc) => doc.alwaysIncluded).map((doc) => doc.id), ["methodology-coding-style"]);
+  const core = library.documents.find((doc) => doc.alwaysIncluded).text;
+  assert.equal(context.split(core).length, 2);
+  assert.ok(library.documents.filter((doc) => !doc.alwaysIncluded).every((doc) => !context.includes(doc.text)));
+  assert.ok(library.originals.every((doc) => !context.includes(doc.text)));
+});
+
 test("the pinned bundle contains only explicit device/package coverage and exact DFP routing", () => {
   assert.deepEqual(knowledge.devices.map(({ mcu, packages }) => ({ mcu, packages })), [
     { mcu: "ATtiny1624", packages: ["SOIC-14", "TSSOP-14"] },
@@ -46,7 +76,7 @@ test("complete local PDF references retain every page and raw source provenance 
   assert.deepEqual(knowledge.localDocuments, []);
   assert.equal(knowledge.corpus.documents.length, 2);
   for (const document of knowledge.corpus.documents) {
-    const file = fs.readFileSync(path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.2.0", document.sourceFile));
+    const file = fs.readFileSync(path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.3.0", document.sourceFile));
     assert.equal(document.sha256, crypto.createHash("sha256").update(file).digest("hex"));
     assert.equal(document.pages.length, document.pageCount);
     assert.deepEqual(document.pages.map((page) => page.page), Array.from({ length: document.pageCount }, (_, i) => i + 1));
@@ -244,7 +274,7 @@ test("unsupported clocks/peripherals are gaps, not silently accepted recipes", (
 });
 
 test("recorded compiler evidence is tied to exact fixture bytes, targets and service version", () => {
-  const evidencePath = path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.2.0/compiler-evidence.json");
+  const evidencePath = path.join(__dirname, "../backend/ai/knowledge/attiny162x/1.3.0/compiler-evidence.json");
   const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
   const fixture = fs.readFileSync(path.join(__dirname, "../scripts/avr-knowledge/fixtures", evidence.fixture));
   assert.equal(crypto.createHash("sha256").update(fixture).digest("hex"), evidence.sourceSha256);

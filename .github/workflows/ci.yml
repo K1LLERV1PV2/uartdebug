@@ -64,11 +64,12 @@ jobs:
 
       - name: Verify local AVR knowledge manifest
         run: |
+          node scripts/avr-knowledge/build-methodology.js --verify
           node scripts/avr-knowledge/build-manifest.js --verify
           python3 scripts/avr-knowledge/snapshot.py --verify
 
       - name: Check deployment helper syntax
-        run: python3 -m py_compile .github/scripts/stamp_frontend_build.py scripts/avr-knowledge/snapshot.py scripts/avr-knowledge/compare-installed.py scripts/avr-knowledge/extract-reference.py
+        run: python3 -m py_compile .github/scripts/stamp_frontend_build.py scripts/avr-knowledge/snapshot.py scripts/avr-knowledge/compare-installed.py scripts/avr-knowledge/extract-reference.py scripts/avr-knowledge/import-methodology.py scripts/avr-knowledge/export-ai-bundle.py
 
       - name: Check generated diff hygiene
         run: git diff --check

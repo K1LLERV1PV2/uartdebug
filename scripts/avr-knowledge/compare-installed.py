@@ -13,7 +13,7 @@ import re
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
-FACTS = ROOT / "backend/ai/knowledge/attiny162x/1.2.0/devices.json"
+FACTS = ROOT / "backend/ai/knowledge/attiny162x/1.3.0/devices.json"
 
 
 def definitions(text):

@@ -190,7 +190,7 @@ test("status advertises local target/packages and no legacy skill catalog", asyn
   assert.equal(status.ready, true);
   assert.equal(status.contract, "uartdebug-canvas/v1");
   assert.equal(status.knowledge.devices.length, 3);
-  assert.equal(status.rules.packageId, "uartdebug-canvas-2026-09-24.3");
+  assert.equal(status.rules.packageId, "uartdebug-canvas-2026-09-24.4");
   assert.equal(status.knowledge.referenceDocuments.length, 2);
   assert.ok(status.knowledge.reviewedErrataCount > 0);
   assert.equal(s.getSkills, undefined);
@@ -559,6 +559,33 @@ test("local corpus search/read/register steps continue Responses with provenance
         item.type === "function_call_output" && item.call_id === "call-doc-1",
     ),
   );
+});
+
+test("canvas requests receive core coding methodology and retrieve detailed source lines locally", async () => {
+  let calls = 0, network = 0;
+  const s = service({
+    documentationFetch: async () => { network++; throw Error("No external documentation expected"); },
+    fetch: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      assert.match(body.instructions, /Core coding methodology \(methodology-coding-style\)/);
+      assert.match(body.instructions, /methodology-interrupts/);
+      if (++calls === 1) return response({ ...envelope(null), output: [{
+        type: "function_call", name: "read_avr_documentation", call_id: "methodology-read",
+        arguments: JSON.stringify({ operation: "read", documentId: "methodology-interrupts", sectionId: "", page: 0, query: "atomic", url: "", gap: "" }),
+      }] });
+      const output = JSON.parse(body.input.find((item) => item.type === "function_call_output").output);
+      assert.equal(output.ok, true);
+      assert.equal(output.verification, "methodology-review");
+      assert.ok(output.results.every((item) => item.startLine > 0 && item.sha256));
+      assert.match(output.results.map((item) => item.text).join("\n"), /ATOMIC_RESTORESTATE/);
+      return response(envelope(generated()));
+    },
+  });
+  const result = await s.processCanvas(input());
+  assert.equal(result.kind, "project");
+  assert.ok(result.references.some((item) => item.documentId === "methodology-interrupts" && item.startLine && item.verification === "methodology-review"));
+  assert.equal(network, 0);
+  assert.equal(calls, 2);
 });
 test("unregistered tool names are rejected without side effects", async () => {
   const s = service({
