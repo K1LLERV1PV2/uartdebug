@@ -95,7 +95,6 @@ const LEGACY_PATHS = new Set([
   "/terminal/",
   "/uart/",
   "/updi-test.html",
-  "/updi-test.js",
 ]);
 
 const CACHEABLE_DESTINATIONS = new Set(["style", "script", "image", "font"]);

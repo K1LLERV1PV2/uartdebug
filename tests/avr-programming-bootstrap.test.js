@@ -1813,7 +1813,6 @@ test("deploy revisions shared and page assets together on every public route", (
     assert.match(html, /ui-theme\.css\?v=shared-ui-test/);
     for (const reference of html.matchAll(/(?:src|href)=["']([^"']+\.(?:js|css))(?:\?v=([^"']+))?["']/g)) {
       if (reference[1].includes("vendor/") && !reference[1].includes("uartdebug-markdown")) continue;
-      if (reference[1].includes("updi-test")) continue;
       assert.equal(reference[2], "shared-ui-test", `${page}: ${reference[1]}`);
     }
   }
