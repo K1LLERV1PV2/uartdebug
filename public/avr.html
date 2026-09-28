@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="ui-controls.css?v=20260924-ui-v1" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260924-canvas-v1"
+      href="AVR-Programming.css?v=20260928-layout-v1"
     />
     <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
 
@@ -46,44 +46,110 @@
             id="avrDeviceSection"
             data-state="expanded"
           >
-            <div
-              class="avr-device-panel-viewport"
-              id="avrDevicePanelViewport"
-            >
-              <div class="avr-device-panel" aria-label="UPDI adapter and chip">
-              <button
-                class="detect-chip-btn"
-                id="detectChipBtn"
-                type="button"
-                aria-label="Detect chip"
-                data-tooltip-disabled
+            <div class="avr-overview-row">
+              <div
+                class="avr-device-panel-viewport"
+                id="avrDevicePanelViewport"
               >
-                <span
-                  class="detect-chip-label detect-chip-default"
-                  data-detect-default
-                >
-                  Disconnected
-                </span>
-                <span
-                  class="detect-chip-label detect-chip-hover"
-                  data-detect-hover
-                >
-                  Click to detect the chip
-                </span>
-              </button>
+                <div class="avr-device-panel" aria-label="UPDI adapter and chip">
+                  <button
+                    class="detect-chip-btn"
+                    id="detectChipBtn"
+                    type="button"
+                    aria-label="Detect chip"
+                    data-tooltip-disabled
+                  >
+                    <span
+                      class="detect-chip-label detect-chip-default"
+                      data-detect-default
+                    >
+                      Disconnected
+                    </span>
+                    <span
+                      class="detect-chip-label detect-chip-hover"
+                      data-detect-hover
+                    >
+                      Click to detect the chip
+                    </span>
+                  </button>
 
-              <div class="avr-status-lines">
-                <span class="avr-status-label">Port:</span>
-                <div class="avr-status-value" id="adapterStatusText">
-                  No port selection
-                </div>
+                  <div class="avr-status-lines">
+                    <span class="avr-status-label">Port:</span>
+                    <div class="avr-status-value" id="adapterStatusText">
+                      No port selection
+                    </div>
 
-                <span class="avr-status-label">Chip:</span>
-                <div class="avr-status-value" id="chipStatusText">
-                  No chip detected
+                    <span class="avr-status-label">Chip:</span>
+                    <div class="avr-status-value" id="chipStatusText">
+                      No chip detected
+                    </div>
+                  </div>
+
                 </div>
               </div>
 
+              <div class="avr-account-panel-viewport" id="avrAccountPanelViewport">
+                <section class="avr-account-panel avr-session-panel" aria-label="AI account and credits">
+                  <div class="project-ai-toolbar" id="projectAiHeader">
+                    <div
+                      class="project-ai-budget"
+                      id="projectAiBudget"
+                      role="progressbar"
+                      aria-label="AI Credits remaining"
+                      aria-valuemin="0"
+                      aria-valuemax="0"
+                      aria-valuenow="0"
+                      hidden
+                    >
+                      <span class="project-ai-budget-label"
+                        >AI Credits</span
+                      >
+                      <div
+                        class="project-ai-budget-track"
+                        aria-hidden="true"
+                      >
+                        <span id="projectAiBudgetFill"></span>
+                      </div>
+                      <output id="projectAiBudgetValue">0 / 0</output>
+                    </div>
+
+                    <div
+                      class="project-ai-auth"
+                      id="projectAiAuth"
+                      role="group"
+                      aria-label="AI access"
+                      hidden
+                    >
+                      <button
+                        class="project-ai-account-trigger"
+                        id="projectAiAccountBtn"
+                        type="button"
+                        aria-label="Open AI account"
+                        aria-haspopup="dialog"
+                        aria-controls="projectAiAccountModal"
+                        aria-expanded="false"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M12 12.25a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 7.5c.55-3.15 3.18-5.25 7-5.25s6.45 2.1 7 5.25"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.7"
+                            stroke-linecap="round"
+                          />
+                        </svg>
+                        <span class="project-ai-account-trigger-label"
+                          >Account</span
+                        >
+                        <span
+                          class="project-ai-account-trigger-status"
+                          aria-hidden="true"
+                        ></span>
+                      </button>
+                    </div>
+
+                  </div>
+                </section>
               </div>
             </div>
 
@@ -93,7 +159,7 @@
               role="separator"
               tabindex="0"
               aria-label="Resize device panel"
-              aria-controls="avrDevicePanelViewport"
+              aria-controls="avrDevicePanelViewport avrAccountPanelViewport"
               aria-orientation="horizontal"
               aria-valuemin="0"
               aria-valuemax="112"
@@ -133,81 +199,8 @@
 
                   <div class="project-ai-layout" aria-label="AI project canvas">
                     <section class="project-instruction-panel avr-session-panel" aria-labelledby="projectInstructionTitle">
-                      <div class="avr-action-strip project-ai-action-strip avr-session-header ui-panel-header">
-                        <h2 class="sr-only" id="projectInstructionTitle">Project canvas</h2>
-                        <div class="project-ai-toolbar" id="projectAiHeader">
-                        <div
-                          class="project-ai-budget"
-                          id="projectAiBudget"
-                          role="progressbar"
-                          aria-label="AI Credits remaining"
-                          aria-valuemin="0"
-                          aria-valuemax="0"
-                          aria-valuenow="0"
-                          hidden
-                        >
-                          <span class="project-ai-budget-label"
-                            >AI Credits</span
-                          >
-                          <div
-                            class="project-ai-budget-track"
-                            aria-hidden="true"
-                          >
-                            <span id="projectAiBudgetFill"></span>
-                          </div>
-                          <output id="projectAiBudgetValue">0 / 0</output>
-                        </div>
-
-                        <div
-                          class="project-ai-auth"
-                          id="projectAiAuth"
-                          role="group"
-                          aria-label="AI access"
-                          hidden
-                        >
-                          <button
-                            class="project-ai-account-trigger"
-                            id="projectAiAccountBtn"
-                            type="button"
-                            aria-label="Open AI account"
-                            aria-haspopup="dialog"
-                            aria-controls="projectAiAccountModal"
-                            aria-expanded="false"
-                          >
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                              <path
-                                d="M12 12.25a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 7.5c.55-3.15 3.18-5.25 7-5.25s6.45 2.1 7 5.25"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="1.7"
-                                stroke-linecap="round"
-                              />
-                            </svg>
-                            <span class="project-ai-account-trigger-label"
-                              >Account</span
-                            >
-                            <span
-                              class="project-ai-account-trigger-status"
-                              aria-hidden="true"
-                            ></span>
-                          </button>
-                        </div>
-
-                        </div>
-                      </div>
-                      <form class="project-canvas-controls" id="projectCanvasForm" novalidate>
-                        <div class="avr-action-strip ui-control-row project-canvas-targets" role="group" aria-label="Project target">
-                          <div class="connection-control">
-                            <select id="projectPackageSelect" aria-label="Chip package" required>
-                              <option value="">Choose package</option>
-                            </select>
-                          </div>
-                          <div class="connection-control">
-                            <select id="mcuSelect" aria-label="Target MCU">
-                              <option value="auto" selected>Auto detect</option>
-                            </select>
-                          </div>
-                        </div>
+                      <h2 class="sr-only" id="projectInstructionTitle">Project canvas</h2>
+                      <form class="project-canvas-controls ui-panel-header" id="projectCanvasForm" novalidate>
                         <button class="connect-btn ui-action" id="projectCanvasRunBtn" type="submit">Process canvas</button>
                       </form>
                       <span class="project-instruction-save-state" id="projectInstructionSaveState" role="status" aria-live="polite" hidden></span>
@@ -235,39 +228,54 @@
 
                   <section
                     class="editor-workspace avr-session-panel"
+                    id="editorWorkspace"
                     aria-label="Code editor"
                   >
                     <div
-                      class="avr-action-strip avr-session-header ui-panel-header"
+                      class="avr-action-strip avr-session-header ui-panel-header editor-action-strip"
                       aria-label="Build and flash controls"
                     >
-                      <button class="connect-btn ui-action" id="compileBtn" type="button">
-                        Compile
-                      </button>
+                      <div class="editor-targets" role="group" aria-label="Project target">
+                        <div class="connection-control editor-target-control">
+                          <select id="mcuSelect" aria-label="Target MCU">
+                            <option value="auto" selected>Auto detect</option>
+                          </select>
+                        </div>
+                        <div class="connection-control editor-target-control">
+                          <select id="projectPackageSelect" aria-label="Chip package" required>
+                            <option value="">Choose package</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="editor-build-actions" role="group" aria-label="Build and flash">
+                        <button class="connect-btn ui-action" id="compileBtn" type="button">
+                          Compile
+                        </button>
 
-                      <button
-                        class="connect-btn ui-action warning-btn"
-                        id="programHexBtn"
-                        data-external-handler="true"
-                        type="button"
-                        aria-label="Flash MCU"
-                      >
-                        Flash MCU
-                      </button>
+                        <button
+                          class="connect-btn ui-action warning-btn"
+                          id="programHexBtn"
+                          data-external-handler="true"
+                          type="button"
+                          aria-label="Flash MCU"
+                        >
+                          Flash MCU
+                        </button>
 
-                      <button
-                        class="connect-btn ui-action secondary-btn"
-                        id="moreOptionsBtn"
-                        type="button"
-                        aria-expanded="false"
-                        aria-controls="canvasUpdiSection"
-                        aria-label="More"
-                      >
-                        More
-                      </button>
+                        <button
+                          class="connect-btn ui-action secondary-btn editor-collapse-toggle"
+                          id="editorCollapseBtn"
+                          type="button"
+                          aria-label="Collapse code editor"
+                          aria-controls="editorContent"
+                          aria-expanded="true"
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                        </button>
+                      </div>
                     </div>
 
-                    <div class="editor-wrap">
+                    <div class="editor-wrap" id="editorContent">
                       <div class="editor-container">
                         <div
                           class="editor-file-watermark"
@@ -624,129 +632,15 @@
           </div>
         </section>
 
-        <div
-          class="site-dialog updi-options-modal"
-          id="canvasUpdiSection"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="updiOptionsTitle"
-          hidden
-        >
-          <div class="site-dialog-card updi-options-card" tabindex="-1">
-            <div class="site-dialog-header updi-options-header ui-dialog-header">
-              <h3 class="editor-title" id="updiOptionsTitle">More options</h3>
-              <button
-                class="site-dialog-close ui-dialog-close"
-                id="updiOptionsCloseBtn"
-                type="button"
-                aria-label="Close"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div class="canvas-updi-scroll updi-options-body">
-              <div class="api-support-warning" id="apiWarning">
-                <strong>Attention:</strong> This page needs a Chromium-based
-                browser with Web Serial API support.
-              </div>
-
-              <div class="updi-layout">
-                <div class="updi-pane">
-                  <div class="avr-action-strip avr-session-header ui-panel-header updi-pane-header">
-                    <div class="updi-pane-heading">
-                      <h3 class="editor-title">Summary</h3>
-                    </div>
-
-                    <div class="updi-pane-actions">
-                      <button
-                        class="connect-btn ui-action secondary-btn"
-                        id="clearHexBtn"
-                        type="button"
-                      >
-                        Clear HEX
-                      </button>
-                    </div>
-                  </div>
-
-                  <div class="scroll-frame updi-pane-body-frame">
-                    <div class="updi-pane-body">
-                      <dl class="summary-grid">
-                        <div>
-                          <dt>Source</dt>
-                          <dd id="summarySource">-</dd>
-                        </div>
-                        <div>
-                          <dt>Bytes</dt>
-                          <dd id="summaryBytes">-</dd>
-                        </div>
-                        <div>
-                          <dt>Segments</dt>
-                          <dd id="summarySegments">-</dd>
-                        </div>
-                        <div>
-                          <dt>Range</dt>
-                          <dd id="summaryRange">-</dd>
-                        </div>
-                        <div>
-                          <dt>Records</dt>
-                          <dd id="summaryRecords">-</dd>
-                        </div>
-                        <div>
-                          <dt>Target</dt>
-                          <dd id="summaryTarget">ATtiny1624</dd>
-                        </div>
-                        <div>
-                          <dt>Signature</dt>
-                          <dd id="summarySignature">-</dd>
-                        </div>
-                        <div>
-                          <dt>Revision</dt>
-                          <dd id="summaryRevision">-</dd>
-                        </div>
-                        <div>
-                          <dt>Serial</dt>
-                          <dd id="summarySerial">-</dd>
-                        </div>
-                      </dl>
-
-                      <div class="sib-box" id="summarySib">SIB: -</div>
-                      <p class="summary-note" id="summaryNote">
-                        Compile a file or upload a valid Intel HEX image to
-                        inspect it.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="updi-pane">
-                  <div class="avr-action-strip avr-session-header ui-panel-header updi-pane-header updi-log-header">
-                    <h3 class="editor-title">UPDI Log</h3>
-                    <button
-                      class="connect-btn ui-action secondary-btn"
-                      id="clearLogBtn"
-                      type="button"
-                    >
-                      Clear Log
-                    </button>
-                  </div>
-                  <div class="scroll-frame probe-log-frame">
-                    <pre class="probe-log" id="probeLog"></pre>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </main>
     <script defer src="ui-tooltips.js?v=20260723-pane-optout-v1"></script>
     <script defer src="ui-controls.js?v=20260924-ui-v1"></script>
-    <script defer src="avr-mini-projects.js?v=20260924-canvas-v1"></script>
-    <script defer src="avr-mini-project-archive.js?v=20260924-canvas-v1"></script>
+    <script defer src="avr-mini-projects.js?v=20260928-layout-v1"></script>
+    <script defer src="avr-mini-project-archive.js?v=20260928-layout-v1"></script>
     <script
       defer
-      src="AVR-Programming.js?v=20260924-canvas-v1"
+      src="AVR-Programming.js?v=20260928-layout-v1"
     ></script>
     <script defer src="updi-test.js?v=20260709-terminal-avr-sync-v1"></script>
   </body>

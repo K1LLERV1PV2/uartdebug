@@ -65,6 +65,7 @@ def main():
     revisioned_page_assets = {
         "AVR-Programming.css": 1,
         "AVR-Programming.js": 1,
+        "updi-test.js": 1,
         "vendor/uartdebug-markdown.js": 1,
         "ui-theme.css": 5,
         "ui-controls.css": 2,

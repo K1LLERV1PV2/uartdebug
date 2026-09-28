@@ -173,7 +173,6 @@ body {
 }
 
 /* Specific styles for UART buttons */
-.uart-section button,
 .connect-btn {
   width: auto !important;
   margin-top: 0 !important;
@@ -1553,7 +1552,7 @@ body.terminal-page .terminal-device-panel {
   display: grid;
   grid-template-columns: 148px minmax(0, max-content) 44px;
   align-items: center;
-  gap: 18px;
+  gap: var(--ui-control-gap);
   min-width: 0;
   min-height: 74px;
   margin: 0;
@@ -1648,7 +1647,7 @@ body.terminal-page .terminal-status-lines {
   justify-self: start;
   width: 575px;
   max-width: 100%;
-  gap: 8px 6px;
+  gap: var(--ui-control-gap);
   align-items: center;
   min-width: 0;
 }
@@ -1747,6 +1746,14 @@ body.terminal-page .terminal-baud-value {
 body.terminal-page .terminal-baud-value::after {
   display: none;
   content: none;
+}
+
+body.terminal-page .terminal-baud-value .custom-select {
+  width: 100%;
+}
+
+body.terminal-page .generator-field .custom-select {
+  width: 100%;
 }
 
 body.terminal-page .sr-only {
@@ -2079,9 +2086,43 @@ body.terminal-page .checkbox-label {
   white-space: nowrap;
 }
 
-body.terminal-page .terminal-header .log-controls,
-body.terminal-page .terminal-header .run-controls {
-  row-gap: 4px;
+body.terminal-page :is(.terminal-actions, .view-toggle, .mode-controls,
+  .data-mode-controls, .log-controls, .run-controls, .radio-group,
+  .oscilloscope-controls) {
+  gap: var(--ui-control-gap);
+}
+
+body.terminal-page .terminal-header :is(.view-toggle, .data-mode-controls) {
+  margin-left: 0;
+  margin-top: 0;
+}
+
+body.terminal-page .terminal-label {
+  margin: 0;
+}
+
+body.terminal-page .terminal-header .radio-group {
+  min-height: var(--ui-control-height-compact);
+  padding: 3px;
+}
+
+body.terminal-page .terminal-header .radio-label-inline {
+  font-size: 12px;
+}
+
+body.terminal-page .terminal-header .radio-label-inline span {
+  padding: 4px 6px;
+}
+
+body.terminal-page .terminal-header .checkbox-label {
+  min-height: var(--ui-control-height-compact);
+  font-size: 12px;
+}
+
+body.terminal-page .terminal-header .loop-interval-input {
+  height: var(--ui-control-height-compact);
+  font-size: 12px;
+  width: 64px;
 }
 
 body.terminal-page .terminal-container,
@@ -2335,6 +2376,8 @@ body.terminal-page .modal-body .connection-control select {
   body.terminal-page .uart-sessions-split[data-terminal-layout="row"],
   body.terminal-page .uart-sessions-split[data-terminal-layout="column"] {
     flex-direction: column;
+    flex: 0 0 auto;
+    gap: 14px;
   }
 
   body.terminal-page .terminal-layout-resizer {
@@ -2343,6 +2386,24 @@ body.terminal-page .modal-body .connection-control select {
 
   body.terminal-page .uart-sessions-split .uart-section {
     min-width: 0;
+    flex: 0 0 auto;
+  }
+
+  body.terminal-page .terminal-wrapper {
+    flex: 0 0 auto;
+  }
+
+  body.terminal-page :is(.terminal-shell, .generator-panel, .oscilloscope-container) {
+    flex: 0 0 auto;
+    height: 350px;
+    min-height: 350px;
+    max-height: 350px;
+  }
+
+  body.terminal-page .terminal-container {
+    height: auto;
+    min-height: 0;
+    max-height: none;
   }
 }
 
