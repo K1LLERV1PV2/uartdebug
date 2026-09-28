@@ -1340,6 +1340,8 @@ body.is-row-resizing * {
 
 .editor-workspace .editor-build-actions > .connect-btn {
   flex: 0 0 auto;
+  min-width: 0;
+  padding-inline: 12px;
 }
 
 .editor-targets,
@@ -1351,6 +1353,7 @@ body.is-row-resizing * {
   max-width: 100%;
 }
 
+.editor-targets,
 .editor-build-actions {
   flex-wrap: wrap;
 }
@@ -1360,35 +1363,14 @@ body.is-row-resizing * {
   max-width: 100%;
 }
 
-.editor-collapse-toggle {
-  min-width: var(--avr-control-height);
-  width: var(--avr-control-height) !important;
-  padding: 0;
-}
-
-.editor-collapse-toggle svg {
-  width: 20px;
-  height: 20px;
-}
-
 .editor-workspace.is-collapsed {
   min-height: 0;
   padding: 8px;
 }
 
-.editor-workspace.is-collapsed .editor-action-strip {
-  justify-content: center;
-  margin: 0;
-}
-
-.editor-workspace.is-collapsed .editor-targets,
-.editor-workspace.is-collapsed .editor-build-actions > :not(.editor-collapse-toggle),
+.editor-workspace.is-collapsed .editor-action-strip,
 .editor-wrap[hidden] {
   display: none !important;
-}
-
-.editor-workspace.is-collapsed .editor-collapse-toggle svg {
-  transform: rotate(180deg);
 }
 
 .canvas-split-container.is-editor-compact .editor-workspace::after {
@@ -1403,9 +1385,21 @@ body.is-row-resizing * {
 }
 
 .avr-account-panel {
+  position: relative;
   height: 100%;
   justify-content: center;
   padding: 14px 16px;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.avr-account-panel:has(.project-ai-account-trigger:hover:not(:disabled)) {
+  border-color: var(--avr-border-hover);
+  background: var(--avr-surface);
+}
+
+.avr-account-panel:has(.project-ai-account-trigger:focus-visible) {
+  outline: 2px solid var(--avr-border-hot);
+  outline-offset: -3px;
 }
 
 .avr-device-section[data-state="compact"] .avr-account-panel {
@@ -1437,14 +1431,30 @@ body.is-row-resizing * {
 }
 
 .project-ai-toolbar {
-  position: relative;
-  display: grid;
-  flex: 1 1 auto;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
   width: 100%;
-  gap: var(--avr-control-gap);
+  gap: 12px;
+}
+
+.avr-device-section[data-state="compact"] .project-ai-toolbar {
+  gap: 4px;
+}
+
+.avr-device-section[data-state="compact"] .project-ai-budget {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.avr-device-section[data-state="compact"] .project-ai-budget output {
+  grid-column: 3;
+}
+
+.avr-device-section[data-state="compact"] .project-ai-budget-track {
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .project-ai-toolbar[hidden] {
@@ -1656,12 +1666,14 @@ body.is-row-resizing * {
 
 .project-ai-auth {
   display: flex;
+  order: -1;
   min-width: 0;
   align-items: center;
-  justify-content: flex-end;
+  gap: var(--avr-control-gap);
   flex: 0 0 auto;
-  grid-column: 2;
-  justify-self: end;
+  min-height: 22px;
+  color: var(--avr-text-soft);
+  font: 700 14px/1.2 var(--ui-font);
 }
 
 .project-ai-auth[hidden],
@@ -1673,44 +1685,47 @@ body.is-row-resizing * {
 }
 
 .project-ai-account-trigger {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
   min-width: 0;
-  height: var(--avr-control-height);
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 0 11px;
-  border: 1px solid rgba(129, 159, 141, 0.3);
-  border-radius: 12px;
-  background: rgba(39, 174, 96, 0.1);
-  color: var(--avr-text-soft);
-  font: 700 14px/1 Inter, Arial, sans-serif;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
   cursor: pointer;
-  transition:
-    background 140ms ease,
-    border-color 140ms ease,
-    color 140ms ease,
-    transform 140ms ease;
 }
 
-.project-ai-account-trigger:hover,
 .project-ai-account-trigger:focus-visible {
-  border-color: var(--avr-border-hover);
-  background: var(--avr-surface-strong);
-  color: var(--avr-text);
   outline: none;
-  transform: translateY(-1px);
 }
 
-.project-ai-account-trigger svg {
-  width: 17px;
-  height: 17px;
+.project-ai-account-trigger:disabled {
+  cursor: wait;
+}
+
+.project-ai-auth > svg {
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
+}
+
+.project-ai-account-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.project-ai-account-chevron {
+  margin-left: auto;
+  color: var(--avr-text-muted);
 }
 
 .project-ai-account-trigger-status {
+  display: none;
   width: 6px;
   height: 6px;
   flex: 0 0 auto;
@@ -1718,18 +1733,13 @@ body.is-row-resizing * {
   background: var(--avr-text-muted);
 }
 
-.project-ai-account-trigger.is-sign-in-required
-  .project-ai-account-trigger-status {
-  background: var(--avr-warning);
-}
-
-.project-ai-account-trigger.is-authenticated
-  .project-ai-account-trigger-status {
+.project-ai-auth:has(.is-authenticated) .project-ai-account-trigger-status {
+  display: block;
   background: var(--avr-border-hot);
   box-shadow: 0 0 0 3px rgba(39, 174, 96, 0.14);
 }
 
-.project-ai-account-trigger.is-unavailable {
+.project-ai-auth:has(.is-unavailable) {
   color: var(--avr-text-muted);
 }
 
@@ -4387,8 +4397,52 @@ body.is-row-resizing * {
     min-height: 680px;
   }
 
-  .project-ai-column-resizer {
+  .canvas-split-container {
+    grid-template-rows: var(--outliner-height, 220px) 14px
+      var(--project-ai-height, 680px) 14px var(--editor-height, 684px) 14px
+      var(--documentation-height, 442px);
+    gap: 0;
+  }
+
+  .canvas-split-container > :is(.outliner, .project-ai-layout, .editor-workspace, .documentation-workspace) {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .canvas-split-container > .split-resizer {
+    display: block;
+    width: 100%;
+    height: 14px;
+    cursor: row-resize;
+  }
+
+  .canvas-split-container.is-outliner-compact .outliner-frame {
     display: none;
+  }
+
+  .canvas-split-container.is-outliner-compact .outliner::after,
+  .canvas-split-container.is-project-ai-compact .project-instruction-panel::before,
+  .canvas-split-container.is-editor-compact .editor-workspace::after,
+  .canvas-split-container.is-documentation-compact .project-documentation-panel::before {
+    position: static;
+    margin: auto;
+    color: var(--avr-text-soft);
+    font: 800 12px/1.22 var(--ui-font);
+    letter-spacing: 0.08em;
+    text-align: center;
+    white-space: normal;
+  }
+
+  .canvas-split-container.is-outliner-compact .outliner::after { content: "Files"; }
+  .canvas-split-container.is-project-ai-compact .project-instruction-panel::before { content: "Canvas"; }
+  .canvas-split-container.is-editor-compact .editor-workspace::after { content: "Code"; }
+  .canvas-split-container.is-documentation-compact .project-documentation-panel::before { content: "Guide"; }
+
+  .canvas-split-container.is-outliner-compact .outliner {
+    border: 1px solid var(--avr-border);
+    border-radius: var(--avr-radius);
+    background: var(--avr-window-bg);
   }
 
   .project-ai-resizer.project-ai-chat-resizer {

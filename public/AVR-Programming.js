@@ -7,6 +7,7 @@
   const STORAGE_MINI_PROJECTS = "ud_avr_programming_mini_projects_v1";
   const STORAGE_OUTLINER_WIDTH = "ud_avr_programming_outliner_width_v1";
   const STORAGE_EDITOR_COLLAPSED = "ud_avr_programming_editor_collapsed_v1";
+  const STORAGE_WORKSPACE_ROW_SIZES = "ud_avr_programming_row_sizes_v1";
   const STORAGE_DOCUMENTATION_WIDTH =
     "ud_avr_programming_documentation_width_v1";
   const STORAGE_PROJECT_INSTRUCTION =
@@ -96,7 +97,7 @@
   let outlinerWidth = OUTLINER_DEFAULT_WIDTH;
   let outlinerPreferredWidth = OUTLINER_DEFAULT_WIDTH;
   let editorCollapsed = false;
-  let editorExpandedWidth = OUTLINER_EDITOR_MIN_WIDTH;
+  let workspaceRowSizes = null;
   let activeSplitResize = null;
   let workspaceEditorRefreshFrame = null;
   let documentationWidth = DOCUMENTATION_DEFAULT_WIDTH;
@@ -2914,6 +2915,63 @@
     return widths;
   }
 
+  function resizeWorkspaceBoundary(start, specs, boundary, delta) {
+    if (!delta) return [...start];
+    const growing = delta > 0 ? boundary : boundary + 1;
+    const shrinking = delta > 0 ? boundary + 1 : boundary;
+    const amount = Math.abs(delta);
+    // A small motion on a closed rail must not immediately reopen it.
+    if (start[growing] === specs[growing].compact &&
+        amount <= WORKSPACE_PANEL_COMPACT_THRESHOLD - specs[growing].compact) return [...start];
+    const sizes = [...start];
+    sizes[shrinking] = snapWorkspacePanelSize(start[shrinking] - amount, specs[shrinking]);
+    const pairTotal = start[growing] + start[shrinking];
+    sizes[growing] = Math.max(specs[growing].min, pairTotal - sizes[shrinking]);
+    let missing = sizes[growing] + sizes[shrinking] - pairTotal;
+    // Two closed neighbors may need space from a farther expanded pane. Never
+    // close that pane implicitly or take more than its spare space.
+    for (const index of [2, 1, 0, 3]) {
+      if (index === growing || index === shrinking || missing <= 0) continue;
+      const borrowed = Math.min(missing, sizes[index] - workspacePanelFloor(sizes[index], specs[index]));
+      sizes[index] -= borrowed;
+      missing -= borrowed;
+    }
+    return missing > 0 ? [...start] : sizes;
+  }
+
+  function getWorkspaceRowSpecs() {
+    return [180, 360, 400, 360].map(min => ({ min, compact: WORKSPACE_PANEL_COMPACT_WIDTH }));
+  }
+
+  function getWorkspaceRowSizes() {
+    return workspaceRowSizes || [220, 680, 684, 442];
+  }
+
+  function getActiveWorkspaceSizes() {
+    return isStackedCanvasLayout() ? getWorkspaceRowSizes() : getWorkspaceWidths();
+  }
+
+  function getActiveWorkspaceSpecs() {
+    return isStackedCanvasLayout() ? getWorkspaceRowSpecs() : getWorkspacePanelSpecs();
+  }
+
+  function renderWorkspaceRows(sizes, { persist = false } = {}) {
+    workspaceRowSizes = [...sizes];
+    const container = getCanvasSplitContainer();
+    for (const [index, name] of ["outliner", "project-ai", "editor", "documentation"].entries()) {
+      container?.style.setProperty(`--${name}-height`, `${sizes[index]}px`);
+    }
+    syncWorkspaceCompactState(sizes);
+    syncSplitResizerAria();
+    if (persist) persistWorkspaceLayout();
+    refreshWorkspaceEditors();
+  }
+
+  function renderActiveWorkspaceSizes(sizes, options) {
+    if (isStackedCanvasLayout()) renderWorkspaceRows(sizes, options);
+    else renderWorkspaceWidths(sizes, options);
+  }
+
   function getDocumentationMinWidth() {
     const strip = document.querySelector(".documentation-action-strip");
     const panel = $("projectDocumentationPane");
@@ -2952,6 +3010,10 @@
   }
 
   function persistWorkspaceLayout() {
+    if (isStackedCanvasLayout()) {
+      try { localStorage.setItem(STORAGE_WORKSPACE_ROW_SIZES, JSON.stringify(getWorkspaceRowSizes())); } catch {}
+      return;
+    }
     outlinerPreferredWidth = outlinerWidth;
     projectAiColumnPreferredWidth = projectAiColumnWidth;
     documentationPreferredWidth = documentationWidth;
@@ -2976,6 +3038,9 @@
       editor?.refresh();
       documentationEditor?.refresh();
       projectInstructionEditor?.refresh();
+      document.querySelectorAll(".canvas-split-container .custom-select").forEach(custom => {
+        if (custom.getClientRects().length) updateCustomSelectIntrinsicWidth(custom);
+      });
       fitEditorFileWatermark();
     });
   }
@@ -2983,23 +3048,15 @@
   function renderWorkspaceWidths(widths, { persist = false } = {}) {
     [outlinerWidth, projectAiColumnWidth, , documentationWidth] = widths;
     editorCollapsed = widths[2] <= WORKSPACE_PANEL_COMPACT_THRESHOLD;
-    if (!editorCollapsed) editorExpandedWidth = widths[2];
     const container = getCanvasSplitContainer();
-    const stacked = isStackedCanvasLayout();
     if (container) {
       for (const [property, value] of [
         ["--outliner-width", outlinerWidth],
         ["--project-ai-width", projectAiColumnWidth],
         ["--documentation-width", documentationWidth],
       ]) container.style.setProperty(property, `${value}px`);
-      for (const [name, value] of [
-        ["is-outliner-compact", outlinerWidth],
-        ["is-project-ai-compact", projectAiColumnWidth],
-        ["is-documentation-compact", documentationWidth],
-        ["is-editor-compact", widths[2]],
-      ]) container.classList.toggle(name, !stacked && value <= WORKSPACE_PANEL_COMPACT_THRESHOLD);
     }
-    syncEditorCollapseState();
+    syncWorkspaceCompactState(widths);
     syncSplitResizerAria();
     if (persist) persistWorkspaceLayout();
     refreshWorkspaceEditors();
@@ -3015,63 +3072,56 @@
         getWorkspacePanelSpecs()
       ));
     } else {
-      const container = getCanvasSplitContainer();
-      container?.classList.remove("is-outliner-compact", "is-project-ai-compact", "is-documentation-compact", "is-editor-compact");
-      syncEditorCollapseState();
+      renderWorkspaceRows(getWorkspaceRowSizes());
     }
 
     refreshWorkspaceEditors();
   }
 
   function resizeWorkspacePanel(index, requested, { persist = true } = {}) {
-    if (isStackedCanvasLayout()) return;
-    renderWorkspaceWidths(
-      resizeWorkspacePanels(getWorkspaceWidths(), getWorkspacePanelSpecs(), index, requested),
+    renderActiveWorkspaceSizes(
+      resizeWorkspacePanels(getActiveWorkspaceSizes(), getActiveWorkspaceSpecs(), index, requested),
       { persist }
     );
   }
 
   function syncEditorCollapseState() {
-    const button = $("editorCollapseBtn");
     const content = $("editorContent");
-    $("editorWorkspace")?.classList.toggle("is-collapsed", editorCollapsed);
-    if (content) content.hidden = editorCollapsed;
-    button?.setAttribute("aria-expanded", String(!editorCollapsed));
-    button?.setAttribute("aria-label", editorCollapsed ? "Expand code editor" : "Collapse code editor");
+    const collapsed = isStackedCanvasLayout()
+      ? getWorkspaceRowSizes()[2] <= WORKSPACE_PANEL_COMPACT_THRESHOLD
+      : editorCollapsed;
+    $("editorWorkspace")?.classList.toggle("is-collapsed", collapsed);
+    if (content) content.hidden = collapsed;
   }
 
-  function toggleEditorCollapsed() {
-    if (isStackedCanvasLayout()) {
-      editorCollapsed = !editorCollapsed;
-      syncEditorCollapseState();
-      persistEditorCollapsed();
-      refreshWorkspaceEditors();
-      return;
+  function syncWorkspaceCompactState(sizes) {
+    const container = getCanvasSplitContainer();
+    for (const [index, name] of ["outliner", "project-ai", "editor", "documentation"].entries()) {
+      container?.classList.toggle(`is-${name}-compact`, sizes[index] <= WORKSPACE_PANEL_COMPACT_THRESHOLD);
     }
-    const widths = getWorkspaceWidths();
-    const specs = getWorkspacePanelSpecs();
-    if (!editorCollapsed) {
-      editorExpandedWidth = widths[2];
-      renderWorkspaceWidths(resizeWorkspacePanels(widths, specs, 2, WORKSPACE_PANEL_COMPACT_WIDTH), { persist: true });
-    } else {
-      const requested = Math.max(OUTLINER_EDITOR_MIN_WIDTH, editorExpandedWidth);
-      // Reopen even when another divider has used the released space.
-      const restored = resizeWorkspacePanels(widths, specs, 2, requested);
-      if (restored[2] === WORKSPACE_PANEL_COMPACT_WIDTH) {
-        widths[2] = requested;
-        renderWorkspaceWidths(fitWorkspaceWidths(widths, getWorkspaceContentWidth(), specs), { persist: true });
-      } else renderWorkspaceWidths(restored, { persist: true });
-    }
+    syncEditorCollapseState();
+  }
+
+  function expandEditorForTargetValidation() {
+    const sizes = getActiveWorkspaceSizes();
+    const specs = getActiveWorkspaceSpecs();
+    if (sizes[2] !== specs[2].compact) return;
+    const restored = resizeWorkspacePanels(sizes, specs, 2, specs[2].min);
+    if (restored[2] === specs[2].compact) {
+      sizes[2] = specs[2].min;
+      renderActiveWorkspaceSizes(fitWorkspaceWidths(sizes,
+        isStackedCanvasLayout() ? sizes.reduce((sum, size) => sum + size, 0) : getWorkspaceContentWidth(), specs), { persist: true });
+    } else renderActiveWorkspaceSizes(restored, { persist: true });
   }
 
   function expandOutlinerForEditing() {
-    if (outlinerWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD) {
+    if (getActiveWorkspaceSizes()[0] <= WORKSPACE_PANEL_COMPACT_THRESHOLD) {
       resizeWorkspacePanel(0, OUTLINER_DEFAULT_WIDTH);
     }
   }
 
   function expandDocumentationForNavigation() {
-    if (documentationWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD) {
+    if (getActiveWorkspaceSizes()[3] <= WORKSPACE_PANEL_COMPACT_THRESHOLD) {
       resizeWorkspacePanel(3, DOCUMENTATION_DEFAULT_WIDTH);
     }
   }
@@ -3089,38 +3139,46 @@
     projectAiColumnPreferredWidth = snapWorkspacePanelSize(read(STORAGE_PROJECT_AI_COLUMN_WIDTH, PROJECT_AI_COLUMN_DEFAULT_WIDTH), specs[1]);
     documentationPreferredWidth = snapWorkspacePanelSize(read(STORAGE_DOCUMENTATION_WIDTH, DOCUMENTATION_DEFAULT_WIDTH), specs[3]);
     try { editorCollapsed = localStorage.getItem(STORAGE_EDITOR_COLLAPSED) === "true"; } catch {}
+    try {
+      const rows = JSON.parse(localStorage.getItem(STORAGE_WORKSPACE_ROW_SIZES));
+      if (Array.isArray(rows) && rows.length === 4 && rows.every(value => Number.isFinite(value) && value >= 0)) {
+        workspaceRowSizes = rows.map((value, index) => snapWorkspacePanelSize(value, getWorkspaceRowSpecs()[index]));
+      }
+    } catch {}
     fitWorkspaceToViewport();
   }
 
   function syncSplitResizerAria() {
-    const widths = getWorkspaceWidths();
-    const specs = getWorkspacePanelSpecs();
+    const widths = getActiveWorkspaceSizes();
+    const specs = getActiveWorkspaceSpecs();
+    const names = ["Files", "Canvas", "Code", "Guide"];
     for (const [id, index] of [
-      ["fileListResizer", 0], ["projectAiColumnResizer", 1], ["documentationResizer", 3],
+      ["fileListResizer", 0], ["projectAiColumnResizer", 1], ["documentationResizer", 2],
     ]) {
       const handle = $(id);
       if (!handle) continue;
       const compact = widths[index] === specs[index].compact;
+      const nextCompact = widths[index + 1] === specs[index + 1].compact;
+      handle.setAttribute("aria-orientation", isStackedCanvasLayout() ? "horizontal" : "vertical");
       handle.setAttribute("aria-valuemin", String(specs[index].compact));
-      handle.setAttribute("aria-valuemax", String(Math.round(getWorkspacePanelMaxWidth(index, widths, specs))));
+      handle.setAttribute("aria-valuemax", String(Math.round(widths[index] + widths[index + 1] - specs[index + 1].compact)));
       handle.setAttribute("aria-valuenow", String(Math.round(widths[index])));
-      handle.setAttribute("aria-valuetext", compact ? "Collapsed" : `${Math.round(widths[index])} pixels`);
-      handle.setAttribute("aria-expanded", String(!compact));
+      handle.setAttribute("aria-valuetext", `${names[index]} ${compact ? "collapsed" : `${Math.round(widths[index])} pixels`}; ${names[index + 1]} ${nextCompact ? "collapsed" : `${Math.round(widths[index + 1])} pixels`}`);
     }
   }
 
-  // Pointer capture, cancellation and cursor feedback are shared by all five handles.
+  // Pointer capture, cancellation and cursor feedback are shared by every separator.
   function bindSplitResizer(handle, { axis, enabled = () => true, start, move, finish, key }) {
     if (!handle) return;
-    const coordinate = event => axis === "x" ? event.clientX : event.clientY;
-    const cursorClass = axis === "x" ? "is-column-resizing" : "is-row-resizing";
+    const currentAxis = () => typeof axis === "function" ? axis() : axis;
+    const coordinate = (event, value = currentAxis()) => value === "x" ? event.clientX : event.clientY;
     const end = event => {
       const session = activeSplitResize;
       if (!session || session.handle !== handle ||
           (event?.pointerId !== undefined && event.pointerId !== session.pointerId)) return;
       activeSplitResize = null;
       handle.classList.remove("is-resizing");
-      document.body.classList.remove(cursorClass);
+      document.body.classList.remove(session.cursorClass);
       if (handle.hasPointerCapture?.(session.pointerId)) handle.releasePointerCapture(session.pointerId);
       finish?.(session.data);
       event?.preventDefault?.();
@@ -3129,9 +3187,10 @@
       if (event.button !== 0 || event.isPrimary === false || activeSplitResize || !enabled()) return;
       event.preventDefault();
       handle.focus({ preventScroll: true });
-      activeSplitResize = {
-        handle, pointerId: event.pointerId, origin: coordinate(event), data: start(event),
-      };
+      const resizeAxis = currentAxis();
+      const cursorClass = resizeAxis === "x" ? "is-column-resizing" : "is-row-resizing";
+      activeSplitResize = { handle, pointerId: event.pointerId, axis: resizeAxis,
+        cursorClass, origin: coordinate(event, resizeAxis), data: start(event) };
       handle.setPointerCapture?.(event.pointerId);
       handle.classList.add("is-resizing");
       document.body.classList.add(cursorClass);
@@ -3140,7 +3199,7 @@
       const session = activeSplitResize;
       if (!session || session.handle !== handle || session.pointerId !== event.pointerId) return;
       event.preventDefault();
-      move(coordinate(event) - session.origin, session.data, event);
+      move(coordinate(event, session.axis) - session.origin, session.data, event);
     });
     for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
       handle.addEventListener(type, end);
@@ -3151,30 +3210,35 @@
     });
   }
 
-  function bindWorkspaceColumnResizer(id, index, direction = 1) {
+  function bindWorkspaceColumnResizer(id, index) {
     bindSplitResizer($(id), {
-      axis: "x",
-      enabled: () => !isStackedCanvasLayout(),
-      start: () => ({ widths: getWorkspaceWidths(), specs: getWorkspacePanelSpecs() }),
-      move: (delta, state) => renderWorkspaceWidths(resizeWorkspacePanels(
-        state.widths, state.specs, index, state.widths[index] + direction * delta
-      )),
-      finish: persistWorkspaceLayout,
+      axis: () => isStackedCanvasLayout() ? "y" : "x",
+      start: () => ({ stacked: isStackedCanvasLayout(), widths: getActiveWorkspaceSizes(), specs: getActiveWorkspaceSpecs() }),
+      move: (delta, state) => {
+        if (state.stacked !== isStackedCanvasLayout()) return;
+        renderActiveWorkspaceSizes(resizeWorkspaceBoundary(state.widths, state.specs, index, delta));
+      },
+      finish: state => {
+        if (state.stacked !== isStackedCanvasLayout()) fitWorkspaceToViewport();
+        else persistWorkspaceLayout();
+      },
       key: event => {
-        const widths = getWorkspaceWidths(), specs = getWorkspacePanelSpecs(), spec = specs[index];
-        let requested = widths[index];
-        if (event.key === "Home") requested = spec.compact;
-        else if (event.key === "End") requested = getWorkspacePanelMaxWidth(index, widths, specs);
-        else if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
-          const step = (event.shiftKey ? 48 : 24) * direction * (event.key === "ArrowRight" ? 1 : -1);
-          requested = step > 0 && widths[index] === spec.compact
-            ? spec.min
-            : step < 0 && widths[index] <= spec.min
-              ? spec.compact
-              : widths[index] + step;
+        const widths = getActiveWorkspaceSizes(), specs = getActiveWorkspaceSpecs();
+        const arrows = isStackedCanvasLayout() ? ["ArrowUp", "ArrowDown"] : ["ArrowLeft", "ArrowRight"];
+        let delta;
+        if (event.key === "Home") delta = specs[index].compact - widths[index];
+        else if (event.key === "End") delta = widths[index + 1] - specs[index + 1].compact;
+        else if (arrows.includes(event.key)) {
+          const direction = event.key === arrows[1] ? 1 : -1;
+          const growing = direction > 0 ? index : index + 1;
+          const shrinking = direction > 0 ? index + 1 : index;
+          const step = widths[growing] === specs[growing].compact ? specs[growing].min - specs[growing].compact
+            : widths[shrinking] <= specs[shrinking].min ? widths[shrinking] - specs[shrinking].compact
+              : event.shiftKey ? 48 : 24;
+          delta = direction * step;
         } else return;
         event.preventDefault();
-        renderWorkspaceWidths(resizeWorkspacePanels(widths, specs, index, requested), { persist: true });
+        renderActiveWorkspaceSizes(resizeWorkspaceBoundary(widths, specs, index, delta), { persist: true });
       },
     });
   }
@@ -3184,7 +3248,7 @@
   }
 
   function bindDocumentationResizer() {
-    bindWorkspaceColumnResizer("documentationResizer", 3, -1);
+    bindWorkspaceColumnResizer("documentationResizer", 2);
   }
 
   function getProjectAiLayout() {
@@ -7455,6 +7519,15 @@
     renderProjectAiQuota(quota);
   }
 
+  function handleProjectAiAccountAction() {
+    if (projectAiAuthSession?.mode === "google" &&
+        projectAiAuthSession.configured === true &&
+        projectAiAuthSession.authenticated !== true) {
+      return handleProjectAiSignIn();
+    }
+    openProjectAiAccountModal();
+  }
+
   function openProjectAiAccountModal() {
     const modal = $("projectAiAccountModal");
     const trigger = $("projectAiAccountBtn");
@@ -7499,6 +7572,7 @@
     const credits = $("projectAiCredits");
     const unavailable = $("projectAiAuthUnavailable");
     const privacyNote = $("projectAiPrivacyNote");
+    const accountLabel = auth?.querySelector(".project-ai-account-trigger-label");
     if (
       !auth ||
       !accountButton ||
@@ -7517,6 +7591,11 @@
       "is-unavailable"
     );
     accountButton.setAttribute("aria-label", "Open AI account");
+    accountButton.setAttribute("aria-haspopup", "dialog");
+    accountButton.setAttribute("aria-controls", "projectAiAccountModal");
+    accountButton.setAttribute("aria-expanded", String(!$("projectAiAccountModal")?.hidden));
+    accountButton.disabled = auth.getAttribute("aria-busy") === "true";
+    if (accountLabel) accountLabel.textContent = "Account";
     signIn.hidden = true;
     signedInSession.hidden = true;
     if (unavailable) unavailable.hidden = true;
@@ -7536,6 +7615,7 @@
     if (session.configured !== true) {
       accountButton.classList.add("is-unavailable");
       accountButton.setAttribute("aria-label", "Open AI account: unavailable");
+      if (accountLabel) accountLabel.textContent = "AI account unavailable";
       if (unavailable) unavailable.hidden = false;
       return;
     }
@@ -7544,8 +7624,12 @@
       accountButton.classList.add("is-sign-in-required");
       accountButton.setAttribute(
         "aria-label",
-        "Open AI account: Google sign-in required"
+        "Continue with Google"
       );
+      accountButton.removeAttribute("aria-haspopup");
+      accountButton.removeAttribute("aria-controls");
+      accountButton.removeAttribute("aria-expanded");
+      if (accountLabel) accountLabel.textContent = "Continue with Google";
       signIn.hidden = false;
       return;
     }
@@ -7553,6 +7637,7 @@
     account.textContent =
       String(session.user?.emailMasked || "").trim() || "Google account";
     account.title = account.textContent;
+    if (accountLabel) accountLabel.textContent = account.textContent;
     accountButton.classList.add("is-authenticated");
     accountButton.setAttribute(
       "aria-label",
@@ -7584,6 +7669,8 @@
     const signIn = $("projectAiSignInBtn");
     const signOut = $("projectAiSignOutBtn");
     if (auth) auth.setAttribute("aria-busy", String(!!pending));
+    const accountButton = $("projectAiAccountBtn");
+    if (accountButton) accountButton.disabled = !!pending;
     if (accountBody) {
       accountBody.setAttribute("aria-busy", String(!!pending));
     }
@@ -7734,6 +7821,7 @@
           "Google access for Uart Debug AI is not configured yet.";
         reportProjectCanvasMessage("system", message);
         setProjectAiAccountStatus(message, "error");
+        openProjectAiAccountModal();
         return;
       }
       if (session.authenticated === true) return;
@@ -7771,6 +7859,7 @@
         error?.message || "AI access could not be checked. Try again.";
       reportProjectCanvasMessage("system", message);
       setProjectAiAccountStatus(message, "error");
+      openProjectAiAccountModal();
     } finally {
       setProjectAiAuthPending(false);
     }
@@ -7998,7 +8087,7 @@
     }
     if (!request.mcu || request.mcu === "auto" || !request.packageName) {
       reportProjectCanvasMessage("system", "Choose the target MCU and chip package first.");
-      if (editorCollapsed) toggleEditorCollapsed();
+      expandEditorForTargetValidation();
       const missingTarget = request.mcu && request.mcu !== "auto" ? $("projectPackageSelect") : $("mcuSelect");
       missingTarget?.nextElementSibling?.querySelector(".custom-select-trigger")?.focus();
       return;
@@ -9214,7 +9303,6 @@
       compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
       detectChipBtn && detectChipBtn.addEventListener("click", handleDetectChip);
       programHexBtn && programHexBtn.addEventListener("click", handleFlashCurrent);
-    $("editorCollapseBtn")?.addEventListener("click", toggleEditorCollapsed);
     fileAddCloseBtn && fileAddCloseBtn.addEventListener("click", closeAddFileModal);
     $("createEmptyProjectCard")?.addEventListener("click", () => {
       try {
@@ -9280,7 +9368,7 @@
     $("projectCanvasForm")?.addEventListener("submit", handleProjectCanvasSubmit);
     bindCanvasTargetControls();
     projectAiAccountBtn &&
-      projectAiAccountBtn.addEventListener("click", openProjectAiAccountModal);
+      projectAiAccountBtn.addEventListener("click", handleProjectAiAccountAction);
     projectAiAccountCloseBtn &&
       projectAiAccountCloseBtn.addEventListener(
         "click",
@@ -9961,7 +10049,9 @@
       })
     );
     projectAiBootComplete = true;
-    void fetchProjectAiAuthSession().catch(() => {});
+    void fetchProjectAiAuthSession().catch(() => {
+      renderProjectAiAuthSession({ mode: "google", configured: false, authenticated: false });
+    });
   }
 
   initMiniProjectBridge();

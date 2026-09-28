@@ -118,7 +118,6 @@
                       id="projectAiAuth"
                       role="group"
                       aria-label="AI access"
-                      hidden
                     >
                       <button
                         class="project-ai-account-trigger"
@@ -128,24 +127,27 @@
                         aria-haspopup="dialog"
                         aria-controls="projectAiAccountModal"
                         aria-expanded="false"
+                        disabled
+                      ></button>
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M12 12.25a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 7.5c.55-3.15 3.18-5.25 7-5.25s6.45 2.1 7 5.25"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.7"
+                          stroke-linecap="round"
+                        />
+                      </svg>
+                      <span class="project-ai-account-trigger-label"
+                        >Checking account…</span
                       >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path
-                            d="M12 12.25a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 7.5c.55-3.15 3.18-5.25 7-5.25s6.45 2.1 7 5.25"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.7"
-                            stroke-linecap="round"
-                          />
-                        </svg>
-                        <span class="project-ai-account-trigger-label"
-                          >Account</span
-                        >
-                        <span
-                          class="project-ai-account-trigger-status"
-                          aria-hidden="true"
-                        ></span>
-                      </button>
+                      <span
+                        class="project-ai-account-trigger-status"
+                        aria-hidden="true"
+                      ></span>
+                      <svg class="project-ai-account-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
                     </div>
 
                   </div>
@@ -192,7 +194,7 @@
                     id="fileListResizer"
                     role="separator"
                     tabindex="0"
-                    aria-label="Resize file list"
+                    aria-label="Resize files and canvas"
                     aria-orientation="vertical"
                     data-tooltip-disabled
                   ></div>
@@ -220,9 +222,9 @@
                     id="projectAiColumnResizer"
                     role="separator"
                     tabindex="0"
-                    aria-label="Resize AI workspace"
+                    aria-label="Resize canvas and code"
                     aria-orientation="vertical"
-                    aria-controls="projectInstructionTitle"
+                    aria-controls="projectInstructionTitle editorWorkspace"
                     data-tooltip-disabled
                   ></div>
 
@@ -261,17 +263,6 @@
                         >
                           Flash MCU
                         </button>
-
-                        <button
-                          class="connect-btn ui-action secondary-btn editor-collapse-toggle"
-                          id="editorCollapseBtn"
-                          type="button"
-                          aria-label="Collapse code editor"
-                          aria-controls="editorContent"
-                          aria-expanded="true"
-                        >
-                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                        </button>
                       </div>
                     </div>
 
@@ -305,9 +296,9 @@
                     id="documentationResizer"
                     role="separator"
                     tabindex="0"
-                    aria-label="Resize project guide"
+                    aria-label="Resize code and guide"
                     aria-orientation="vertical"
-                    aria-controls="projectDocumentationPane"
+                    aria-controls="editorWorkspace projectDocumentationPane"
                     data-tooltip-disabled
                   ></div>
 
