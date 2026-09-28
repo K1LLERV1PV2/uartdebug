@@ -945,7 +945,7 @@ test("keeps Google AI account controls in an accessible account modal", () => {
   assert.match(closeSource, /trigger\.setAttribute\("aria-expanded", "false"\)/);
   assert.match(
     source,
-    /projectAiAccountBtn &&[\s\S]*?projectAiAccountBtn\.addEventListener\("click", openProjectAiAccountModal\)/
+    /projectAiAccountBtn &&[\s\S]*?projectAiAccountBtn\.addEventListener\("click", handleProjectAiAccountAction\)/
   );
   assert.match(
     source,
@@ -1030,6 +1030,11 @@ test("unlimited Google account shows its entitlement without hiding or disabling
     user: { emailMasked: "t***@example.com" },
     quota: { unlimited: true, granted: null, spent: null, reserved: null, remaining: null } };
   hooks.renderProjectAiAuthSession(session);
+  const accountButton = document.getElementById("projectAiAccountBtn");
+  const accountLabel = document.querySelector(".project-ai-account-trigger-label");
+  assert.equal(accountLabel.textContent, "t***@example.com");
+  assert.equal(accountButton.disabled, false);
+  assert.equal(accountButton.getAttribute("aria-haspopup"), "dialog");
   const credits = document.getElementById("projectAiCredits");
   const button = document.getElementById("projectCanvasRunBtn");
   assert.equal(credits.textContent, "Unlimited AI Credits");
@@ -1043,6 +1048,9 @@ test("unlimited Google account shows its entitlement without hiding or disabling
   hooks.renderProjectAiAuthSession({ ...session, quota: { granted: 100, remaining: 1 } });
   assert.equal(credits.textContent, "1 AI Credit remaining");
   hooks.renderProjectAiAuthSession({ ...session, authenticated: false, quota: null });
+  assert.equal(accountLabel.textContent, "Continue with Google");
+  assert.equal(accountButton.getAttribute("aria-label"), "Continue with Google");
+  assert.equal(accountButton.hasAttribute("aria-haspopup"), false);
   assert.equal(credits.hidden, true);
   assert.equal(document.getElementById("projectAiBudget").hidden, true);
 });
@@ -1273,17 +1281,18 @@ test("keeps target controls with code and account controls next to the device wi
   assert.equal(document.querySelector("#projectCanvasForm select"), null);
   assert.equal(document.getElementById("moreOptionsBtn"), null);
   assert.equal(document.getElementById("canvasUpdiSection"), null);
-  assert.equal(code.querySelector("#editorCollapseBtn").getAttribute("aria-controls"), "editorContent");
+  assert.equal(code.querySelector("#editorCollapseBtn"), null);
 });
 
-test("collapses code, restores it after a resize, and persists the state on stacked layouts", () => {
-  const { document } = parseHTML(`<html><body><div class="canvas-split-container"><section id="editorWorkspace"><button id="editorCollapseBtn"></button><div id="editorContent"></div></section></div></body></html>`);
+test("code collapses from either boundary and keeps desktop and stacked layout preferences separate", () => {
+  const { document } = parseHTML(`<html><body><div class="canvas-split-container"><section id="editorWorkspace"><div id="editorContent"></div></section><div id="documentationResizer"></div></div></body></html>`);
   let width = 1564;
   let stacked = false;
   const storage = new Map();
   document.querySelector(".canvas-split-container").getBoundingClientRect = () => ({ width });
   const hooks = loadAvrFrontendFunctionHooks([
-    "restoreWorkspaceLayout", "toggleEditorCollapsed", "fitWorkspaceToViewport", "getWorkspaceWidths",
+    "restoreWorkspaceLayout", "expandEditorForTargetValidation", "fitWorkspaceToViewport", "getWorkspaceWidths", "getWorkspaceRowSizes", "getWorkspaceRowSpecs", "renderWorkspaceRows", "resizeWorkspaceBoundary",
+    "drag(boundary, delta) { renderActiveWorkspaceSizes(resizeWorkspaceBoundary(getActiveWorkspaceSizes(), getActiveWorkspaceSpecs(), boundary, delta), { persist: true }); }",
   ], {
     document,
     window: {
@@ -1293,19 +1302,17 @@ test("collapses code, restores it after a resize, and persists the state on stac
     },
   });
   hooks.restoreWorkspaceLayout();
-  const originalWidths = Array.from(hooks.getWorkspaceWidths());
-  hooks.toggleEditorCollapsed();
+  hooks.drag(1, hooks.getWorkspaceWidths()[2] - 62);
   assert.equal(hooks.getWorkspaceWidths()[2], 62);
   assert.equal(document.getElementById("editorContent").hidden, true);
-  assert.equal(document.getElementById("editorCollapseBtn").getAttribute("aria-expanded"), "false");
-  hooks.toggleEditorCollapsed();
-  assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), originalWidths);
+  hooks.drag(2, 500);
+  assert.ok(hooks.getWorkspaceWidths()[2] >= 500);
   assert.equal(document.getElementById("editorContent").hidden, false);
-  hooks.toggleEditorCollapsed();
+  hooks.drag(2, 62 - hooks.getWorkspaceWidths()[2]);
   width = 1100;
   hooks.fitWorkspaceToViewport();
   assert.equal(hooks.getWorkspaceWidths()[2], 62);
-  hooks.toggleEditorCollapsed();
+  hooks.expandEditorForTargetValidation();
   assert.ok(hooks.getWorkspaceWidths()[2] >= 500);
   assert.equal(Array.from(hooks.getWorkspaceWidths()).reduce((a, b) => a + b), width - 42);
   stacked = true;
@@ -1313,26 +1320,29 @@ test("collapses code, restores it after a resize, and persists the state on stac
   storage.set("ud_avr_ai_column_width_v1", "399");
   storage.set("ud_avr_programming_documentation_width_v1", "333");
   hooks.restoreWorkspaceLayout();
-  hooks.toggleEditorCollapsed();
-  assert.equal(storage.get("ud_avr_programming_editor_collapsed_v1"), "true");
+  hooks.drag(1, hooks.getWorkspaceRowSizes()[2] - 62);
+  assert.equal(JSON.parse(storage.get("ud_avr_programming_row_sizes_v1"))[2], 62);
   assert.equal(storage.get("ud_avr_programming_outliner_width_v1"), "244");
   assert.equal(storage.get("ud_avr_ai_column_width_v1"), "399");
   assert.equal(storage.get("ud_avr_programming_documentation_width_v1"), "333");
   hooks.restoreWorkspaceLayout();
   assert.equal(document.getElementById("editorContent").hidden, true);
-  assert.equal(document.getElementById("editorCollapseBtn").getAttribute("aria-label"), "Expand code editor");
-  hooks.toggleEditorCollapsed();
+  assert.equal(document.getElementById("documentationResizer").getAttribute("aria-orientation"), "horizontal");
+  hooks.drag(2, 400);
   assert.equal(document.getElementById("editorContent").hidden, false);
+  stacked = false;
+  hooks.fitWorkspaceToViewport();
+  assert.equal(document.getElementById("documentationResizer").getAttribute("aria-orientation"), "vertical");
 });
 
 test("canvas target validation expands code and focuses the missing selector", async () => {
   for (const mcu of ["auto", "attiny1624"]) {
-    const { document } = parseHTML(`<html><body><section id="editorWorkspace"><button id="editorCollapseBtn"></button><div id="editorContent"></div><select id="mcuSelect"><option value="${mcu}" selected>MCU</option></select><div><button class="custom-select-trigger" id="mcuTrigger"></button></div><select id="projectPackageSelect"><option value="" selected>Choose package</option></select><div><button class="custom-select-trigger" id="packageTrigger"></button></div></section><div id="projectCanvasStatus"></div></body></html>`);
+    const { document } = parseHTML(`<html><body><section id="editorWorkspace"><div id="editorContent"></div><select id="mcuSelect"><option value="${mcu}" selected>MCU</option></select><div><button class="custom-select-trigger" id="mcuTrigger"></button></div><select id="projectPackageSelect"><option value="" selected>Choose package</option></select><div><button class="custom-select-trigger" id="packageTrigger"></button></div></section><div id="projectCanvasStatus"></div></body></html>`);
     let focused = "";
     for (const id of ["mcuTrigger", "packageTrigger"]) document.getElementById(id).focus = () => { focused = id; };
     const hooks = loadAvrFrontendFunctionHooks([
       "submitProjectCanvas",
-      "prepare() { projectInstructionDocument = normalizeProjectInstructionDocument({ markdown: 'Blink an LED' }); editorCollapsed = true; syncEditorCollapseState(); }",
+      "prepare() { projectInstructionDocument = normalizeProjectInstructionDocument({ markdown: 'Blink an LED' }); renderWorkspaceRows([220, 680, 62, 442]); }",
     ], {
       document,
       window: { matchMedia: () => ({ matches: true }), requestAnimationFrame: () => 1, localStorage: { setItem() {} } },
@@ -1443,6 +1453,45 @@ const workspacePanelSpecs = [
   { min: 500, compact: 62 },
   { min: 267, compact: 62 },
 ];
+
+test("every boundary can collapse and restore the panel on either side", () => {
+  const { resizeWorkspaceBoundary } = loadAvrFrontendFunctionHooks(["resizeWorkspaceBoundary"]);
+  const start = [305, 618, 839, 660];
+  for (const boundary of [0, 1, 2]) {
+    for (const index of [boundary, boundary + 1]) {
+      const sign = index === boundary ? -1 : 1;
+      const closed = Array.from(resizeWorkspaceBoundary(start, workspacePanelSpecs, boundary, sign * (start[index] - 62)));
+      assert.equal(closed[index], 62, `boundary ${boundary} must close panel ${index}`);
+      for (const restoreBoundary of [index - 1, index].filter(value => value >= 0 && value < 3)) {
+        const restored = Array.from(resizeWorkspaceBoundary(closed, workspacePanelSpecs, restoreBoundary,
+          (restoreBoundary === index ? 1 : -1) * workspacePanelSpecs[index].min));
+        assert.ok(restored[index] >= workspacePanelSpecs[index].min, `boundary ${restoreBoundary} must reopen panel ${index}`);
+        assert.equal(restored.reduce((sum, width) => sum + width, 0), start.reduce((sum, width) => sum + width, 0));
+      }
+    }
+  }
+});
+
+test("boundary drags conserve width and never collapse an unrelated pane", () => {
+  const { resizeWorkspaceBoundary, fitWorkspaceWidths } = loadAvrFrontendFunctionHooks(["resizeWorkspaceBoundary", "fitWorkspaceWidths"]);
+  for (const budget of [686, 1000, 1522, 2400]) {
+    for (const preferred of [[305, 318, 500, 360], [62, 62, 500, 62], [305, 700, 62, 360], [62, 62, 62, 62]]) {
+      const start = fitWorkspaceWidths(preferred, budget, workspacePanelSpecs);
+      for (const boundary of [0, 1, 2]) {
+        for (let delta = -budget; delta <= budget; delta += 31) {
+          const sizes = Array.from(resizeWorkspaceBoundary(start, workspacePanelSpecs, boundary, delta));
+          assert.equal(sizes.reduce((sum, size) => sum + size, 0), budget);
+          sizes.forEach((size, index) => {
+            assert.ok(size === 62 || size >= workspacePanelSpecs[index].min, `invalid ${sizes}`);
+            if (index !== boundary && index !== boundary + 1) {
+              assert.equal(size === 62, start[index] === 62, "a different pane must retain its open/closed state");
+            }
+          });
+        }
+      }
+    }
+  }
+});
 
 test("resizes only the adjacent pair and stops at its minimum widths", () => {
   const { resizeWorkspacePanels } = loadAvrFrontendFunctionHooks(["resizeWorkspacePanels"]);
