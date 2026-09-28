@@ -85,20 +85,11 @@ main {
   position: relative;
   z-index: 3;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 1fr;
   align-items: center;
   gap: 18px;
   width: 100%;
   padding: 0 clamp(18px, 4vw, 38px) 16px;
-}
-
-.service-note {
-  max-width: 760px;
-  margin: 0;
-  color: var(--ui-text-soft);
-  font-size: 12px;
-  line-height: 1.5;
-  text-align: left;
 }
 
 .footer-link-groups,
@@ -743,10 +734,6 @@ main {
   .home-footer {
     grid-template-columns: 1fr;
     padding-top: 16px;
-  }
-
-  .service-note {
-    text-align: center;
   }
 
   .footer-link-groups,

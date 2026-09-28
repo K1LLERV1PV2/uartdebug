@@ -21,9 +21,9 @@
 
 .ui-action--compact {
   min-width: 0;
-  height: 24px;
-  padding: 0 8px;
-  font-size: 11px;
+  height: var(--ui-control-height-compact);
+  padding: 0 12px;
+  font-size: 12px;
 }
 
 .ui-action:hover:not(:disabled) {
@@ -92,6 +92,10 @@
 
 :where(.ui-panel-header) {
   flex-wrap: nowrap;
+}
+
+.ui-panel-header--compact {
+  min-height: var(--ui-control-height-compact);
 }
 
 .ui-panel-header > [hidden] {
@@ -213,6 +217,9 @@
 }
 
 .custom-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-control-gap);
   max-height: inherit;
   padding: 6px;
   overflow: auto;
@@ -233,6 +240,7 @@
 
 .custom-select-option {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   width: 100%;
   min-height: 34px;

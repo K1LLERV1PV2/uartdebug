@@ -6,6 +6,7 @@
   const STORAGE_GROUPS = "ud_avr_programming_file_groups_v1";
   const STORAGE_MINI_PROJECTS = "ud_avr_programming_mini_projects_v1";
   const STORAGE_OUTLINER_WIDTH = "ud_avr_programming_outliner_width_v1";
+  const STORAGE_EDITOR_COLLAPSED = "ud_avr_programming_editor_collapsed_v1";
   const STORAGE_DOCUMENTATION_WIDTH =
     "ud_avr_programming_documentation_width_v1";
   const STORAGE_PROJECT_INSTRUCTION =
@@ -94,6 +95,8 @@
   let inlineFileEdit = null;
   let outlinerWidth = OUTLINER_DEFAULT_WIDTH;
   let outlinerPreferredWidth = OUTLINER_DEFAULT_WIDTH;
+  let editorCollapsed = false;
+  let editorExpandedWidth = OUTLINER_EDITOR_MIN_WIDTH;
   let activeSplitResize = null;
   let workspaceEditorRefreshFrame = null;
   let documentationWidth = DOCUMENTATION_DEFAULT_WIDTH;
@@ -519,8 +522,7 @@
       return;
     }
 
-    const el = $("probeLog");
-    if (el) el.textContent = "";
+    setCompileLogText("");
   }
 
   function sanitizeCompilerOutput(text) {
@@ -772,41 +774,6 @@
     });
   }
 
-  function setMoreOptionsExpanded(expanded) {
-    const modal = $("canvasUpdiSection");
-    const btn = $("moreOptionsBtn");
-    if (!modal || !btn) return;
-
-    const isExpanded = !!expanded;
-    const optionsLabel = "More options";
-    btn.setAttribute("aria-expanded", String(isExpanded));
-    btn.setAttribute("aria-label", optionsLabel);
-    btn.textContent = "More";
-    btn.title = isExpanded
-      ? "Advanced UPDI tools are open"
-      : "Show advanced UPDI tools";
-
-    if (isExpanded) {
-      openWorkspaceModal(modal, {
-        trigger: btn,
-        focusTarget: $("updiOptionsCloseBtn"),
-        onClose: closeMoreOptions,
-      });
-    } else {
-      closeWorkspaceModal(modal);
-    }
-  }
-
-  function toggleMoreOptions() {
-    const modal = $("canvasUpdiSection");
-    if (!modal) return;
-    setMoreOptionsExpanded(modal.hidden);
-  }
-
-  function closeMoreOptions() {
-    setMoreOptionsExpanded(false);
-  }
-
   function getCanvasUpdiRuntime() {
     if (typeof window === "undefined") return null;
     return (
@@ -944,15 +911,16 @@
     const btn = $("compileBtn");
     const hasCurrent = !!current;
     const canCompile = hasCurrent && /\.c$/i.test(current);
+    const updiBusy = !!getCanvasUpdiRuntime()?.isBusy?.();
     const buttonLabel = "Compile";
 
     if (btn) {
       btn.textContent = buttonLabel;
       btn.title = buttonLabel;
-      btn.disabled = !canCompile;
+      btn.disabled = !canCompile || updiBusy || setHexStatus._state === "building";
     }
 
-    if (!resetLog) return;
+    if (!resetLog || updiBusy) return;
     setCompileLogText("");
   }
 
@@ -2840,12 +2808,13 @@
     return window.matchMedia?.("(max-width: 1040px)")?.matches || false;
   }
 
-  // Each divider only redistributes space between its two adjacent panels.
+  // Dividers resize adjacent panels; a closed neighbor passes spare width to an
+  // expanded pane so compact panels can be reopened independently.
   function getWorkspacePanelSpecs() {
     return [
       { min: OUTLINER_MIN_EXPANDED_WIDTH, compact: WORKSPACE_PANEL_COMPACT_WIDTH },
       { min: PROJECT_AI_COLUMN_MIN_WIDTH, compact: WORKSPACE_PANEL_COMPACT_WIDTH },
-      { min: OUTLINER_EDITOR_MIN_WIDTH },
+      { min: OUTLINER_EDITOR_MIN_WIDTH, compact: WORKSPACE_PANEL_COMPACT_WIDTH },
       { min: getDocumentationMinWidth(), compact: WORKSPACE_PANEL_COMPACT_WIDTH },
     ];
   }
@@ -2879,12 +2848,15 @@
   }
 
   function getWorkspaceNeighbor(index) {
-    return index === 0 ? 1 : 2;
+    return index === 0 || index === 2 ? 1 : 2;
   }
 
   function getWorkspacePanelMaxWidth(index, widths = getWorkspaceWidths(), specs = getWorkspacePanelSpecs()) {
     const neighbor = getWorkspaceNeighbor(index);
-    return widths[index] + widths[neighbor] - workspacePanelFloor(widths[neighbor], specs[neighbor]);
+    const otherSlack = widths[neighbor] === specs[neighbor].compact
+      ? widths.reduce((sum, width, i) => sum + (i === index || i === neighbor ? 0 : width - workspacePanelFloor(width, specs[i])), 0)
+      : 0;
+    return widths[index] + widths[neighbor] - workspacePanelFloor(widths[neighbor], specs[neighbor]) + otherSlack;
   }
 
   function fitWorkspaceWidths(requested, available, specs) {
@@ -2902,7 +2874,9 @@
       widths[i] = specs[i].compact;
       excess -= released;
     }
-    widths[2] -= excess;
+    // Keep an explicitly collapsed editor compact; the canvas takes spare room.
+    const flexibleIndex = widths[2] === specs[2].compact ? 1 : 2;
+    widths[flexibleIndex] -= excess;
     return widths;
   }
 
@@ -2914,12 +2888,26 @@
       getWorkspacePanelMaxWidth(index, start, specs),
       snapWorkspacePanelSize(requested, specs[index])
     );
+    if (target !== specs[index].compact && target < specs[index].min) return widths;
     let adjacent = total - target;
-    if (adjacent !== specs[neighbor].compact && adjacent < specs[neighbor].min) {
+    if (start[neighbor] === specs[neighbor].compact) {
+      // Keep the neighbor closed and exchange space with expanded panes,
+      // preferring the editor or canvas.
+      const recipients = [2, 1, 0, 3].filter(i => i !== index && i !== neighbor && widths[i] >= specs[i].min);
+      if (!recipients.length) return widths;
+      adjacent = specs[neighbor].compact;
+      let transfer = total - target - adjacent;
+      if (transfer >= 0) widths[recipients[0]] += transfer;
+      else for (const recipient of recipients) {
+        const borrowed = Math.min(-transfer, widths[recipient] - specs[recipient].min);
+        widths[recipient] -= borrowed;
+        transfer += borrowed;
+      }
+    } else if (adjacent !== specs[neighbor].compact && adjacent < specs[neighbor].min) {
       adjacent = snapWorkspacePanelSize(adjacent, specs[neighbor]);
       target = total - adjacent;
     }
-    // A compact panel can reopen only if this pair has enough room for both minima.
+    // A compact panel can reopen only when the available width meets its minimum.
     if (target !== specs[index].compact && target < specs[index].min) return widths;
     widths[index] = target;
     widths[neighbor] = adjacent;
@@ -2971,9 +2959,14 @@
       localStorage.setItem(STORAGE_OUTLINER_WIDTH, String(outlinerPreferredWidth));
       localStorage.setItem(STORAGE_DOCUMENTATION_WIDTH, String(documentationPreferredWidth));
       localStorage.setItem(STORAGE_PROJECT_AI_COLUMN_WIDTH, String(projectAiColumnPreferredWidth));
+      persistEditorCollapsed();
     } catch (error) {
       console.warn("Failed to persist workspace layout:", error);
     }
+  }
+
+  function persistEditorCollapsed() {
+    try { localStorage.setItem(STORAGE_EDITOR_COLLAPSED, String(editorCollapsed)); } catch {}
   }
 
   function refreshWorkspaceEditors() {
@@ -2989,6 +2982,8 @@
 
   function renderWorkspaceWidths(widths, { persist = false } = {}) {
     [outlinerWidth, projectAiColumnWidth, , documentationWidth] = widths;
+    editorCollapsed = widths[2] <= WORKSPACE_PANEL_COMPACT_THRESHOLD;
+    if (!editorCollapsed) editorExpandedWidth = widths[2];
     const container = getCanvasSplitContainer();
     const stacked = isStackedCanvasLayout();
     if (container) {
@@ -3001,8 +2996,10 @@
         ["is-outliner-compact", outlinerWidth],
         ["is-project-ai-compact", projectAiColumnWidth],
         ["is-documentation-compact", documentationWidth],
+        ["is-editor-compact", widths[2]],
       ]) container.classList.toggle(name, !stacked && value <= WORKSPACE_PANEL_COMPACT_THRESHOLD);
     }
+    syncEditorCollapseState();
     syncSplitResizerAria();
     if (persist) persistWorkspaceLayout();
     refreshWorkspaceEditors();
@@ -3011,13 +3008,16 @@
   function fitWorkspaceToViewport() {
     if (!isStackedCanvasLayout()) {
       renderWorkspaceWidths(fitWorkspaceWidths(
-        [outlinerPreferredWidth, projectAiColumnPreferredWidth, OUTLINER_EDITOR_MIN_WIDTH, documentationPreferredWidth],
+        [outlinerPreferredWidth, projectAiColumnPreferredWidth,
+          editorCollapsed ? WORKSPACE_PANEL_COMPACT_WIDTH : OUTLINER_EDITOR_MIN_WIDTH,
+          documentationPreferredWidth],
         getWorkspaceContentWidth(),
         getWorkspacePanelSpecs()
       ));
     } else {
       const container = getCanvasSplitContainer();
-      container?.classList.remove("is-outliner-compact", "is-project-ai-compact", "is-documentation-compact");
+      container?.classList.remove("is-outliner-compact", "is-project-ai-compact", "is-documentation-compact", "is-editor-compact");
+      syncEditorCollapseState();
     }
 
     refreshWorkspaceEditors();
@@ -3029,6 +3029,39 @@
       resizeWorkspacePanels(getWorkspaceWidths(), getWorkspacePanelSpecs(), index, requested),
       { persist }
     );
+  }
+
+  function syncEditorCollapseState() {
+    const button = $("editorCollapseBtn");
+    const content = $("editorContent");
+    $("editorWorkspace")?.classList.toggle("is-collapsed", editorCollapsed);
+    if (content) content.hidden = editorCollapsed;
+    button?.setAttribute("aria-expanded", String(!editorCollapsed));
+    button?.setAttribute("aria-label", editorCollapsed ? "Expand code editor" : "Collapse code editor");
+  }
+
+  function toggleEditorCollapsed() {
+    if (isStackedCanvasLayout()) {
+      editorCollapsed = !editorCollapsed;
+      syncEditorCollapseState();
+      persistEditorCollapsed();
+      refreshWorkspaceEditors();
+      return;
+    }
+    const widths = getWorkspaceWidths();
+    const specs = getWorkspacePanelSpecs();
+    if (!editorCollapsed) {
+      editorExpandedWidth = widths[2];
+      renderWorkspaceWidths(resizeWorkspacePanels(widths, specs, 2, WORKSPACE_PANEL_COMPACT_WIDTH), { persist: true });
+    } else {
+      const requested = Math.max(OUTLINER_EDITOR_MIN_WIDTH, editorExpandedWidth);
+      // Reopen even when another divider has used the released space.
+      const restored = resizeWorkspacePanels(widths, specs, 2, requested);
+      if (restored[2] === WORKSPACE_PANEL_COMPACT_WIDTH) {
+        widths[2] = requested;
+        renderWorkspaceWidths(fitWorkspaceWidths(widths, getWorkspaceContentWidth(), specs), { persist: true });
+      } else renderWorkspaceWidths(restored, { persist: true });
+    }
   }
 
   function expandOutlinerForEditing() {
@@ -3055,6 +3088,7 @@
     outlinerPreferredWidth = snapWorkspacePanelSize(read(STORAGE_OUTLINER_WIDTH, OUTLINER_DEFAULT_WIDTH), specs[0]);
     projectAiColumnPreferredWidth = snapWorkspacePanelSize(read(STORAGE_PROJECT_AI_COLUMN_WIDTH, PROJECT_AI_COLUMN_DEFAULT_WIDTH), specs[1]);
     documentationPreferredWidth = snapWorkspacePanelSize(read(STORAGE_DOCUMENTATION_WIDTH, DOCUMENTATION_DEFAULT_WIDTH), specs[3]);
+    try { editorCollapsed = localStorage.getItem(STORAGE_EDITOR_COLLAPSED) === "true"; } catch {}
     fitWorkspaceToViewport();
   }
 
@@ -7964,7 +7998,8 @@
     }
     if (!request.mcu || request.mcu === "auto" || !request.packageName) {
       reportProjectCanvasMessage("system", "Choose the target MCU and chip package first.");
-      const missingTarget = request.mcu ? $("projectPackageSelect") : $("mcuSelect");
+      if (editorCollapsed) toggleEditorCollapsed();
+      const missingTarget = request.mcu && request.mcu !== "auto" ? $("projectPackageSelect") : $("mcuSelect");
       missingTarget?.nextElementSibling?.querySelector(".custom-select-trigger")?.focus();
       return;
     }
@@ -8082,9 +8117,11 @@
     section.style.setProperty("--device-panel-height", `${devicePanelHeight}px`);
     section.dataset.state = devicePanelState;
     const collapsed = devicePanelState === "collapsed" && devicePanelHeight === 0;
-    viewport.setAttribute("aria-hidden", String(collapsed));
-    if (collapsed) viewport.setAttribute("inert", "");
-    else viewport.removeAttribute("inert");
+    for (const panel of [viewport, $("avrAccountPanelViewport")].filter(Boolean)) {
+      panel.setAttribute("aria-hidden", String(collapsed));
+      if (collapsed) panel.setAttribute("inert", "");
+      else panel.removeAttribute("inert");
+    }
     syncDevicePanelResizerAria();
 
     if (persist) {
@@ -9128,7 +9165,6 @@
       const downloadBtn = $("downloadBtn");
       const compileBtn = $("compileBtn");
       const programHexBtn = $("programHexBtn");
-      const moreOptionsBtn = $("moreOptionsBtn");
       const detectChipBtn = $("detectChipBtn");
       const fileContextMenu = $("fileContextMenu");
       const fileUploadInput = $("fileUploadInput");
@@ -9141,8 +9177,6 @@
       const siteDialogCloseBtn = $("siteDialogCloseBtn");
       const siteDialogCancelBtn = $("siteDialogCancelBtn");
       const siteDialogConfirmBtn = $("siteDialogConfirmBtn");
-      const updiOptionsModal = $("canvasUpdiSection");
-      const updiOptionsCloseBtn = $("updiOptionsCloseBtn");
       const mcuSelect = $("mcuSelect");
       const documentationLocaleSelect = $("documentationLocaleSelect");
       const documentationEditToggle = $("documentationEditToggle");
@@ -9180,15 +9214,7 @@
       compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
       detectChipBtn && detectChipBtn.addEventListener("click", handleDetectChip);
       programHexBtn && programHexBtn.addEventListener("click", handleFlashCurrent);
-      moreOptionsBtn && moreOptionsBtn.addEventListener("click", toggleMoreOptions);
-    updiOptionsCloseBtn &&
-      updiOptionsCloseBtn.addEventListener("click", closeMoreOptions);
-    updiOptionsModal &&
-      updiOptionsModal.addEventListener("click", (event) => {
-        if (event.target === updiOptionsModal) {
-          closeMoreOptions();
-        }
-      });
+    $("editorCollapseBtn")?.addEventListener("click", toggleEditorCollapsed);
     fileAddCloseBtn && fileAddCloseBtn.addEventListener("click", closeAddFileModal);
     $("createEmptyProjectCard")?.addEventListener("click", () => {
       try {
@@ -9415,6 +9441,7 @@
 
     const bridge = {
       getHexArtifact: getUpdiHexArtifact,
+      refreshCompileControls: () => updateCompilePanelState(false),
       isCanvasSerialConnected: () => false,
       getDetectedTargetKey: () => lastDetectedUpdiTargetKey || "",
       setDetectedTargetKey: (targetKey) => {
@@ -9749,6 +9776,7 @@
   }
 
   async function compileCurrentFile() {
+    if (getCanvasUpdiRuntime()?.isBusy?.()) return false;
     const compileFileName = current;
     const btn = $("compileBtn");
     const restoreButton = () => updateCompilePanelState(false);
@@ -9910,7 +9938,6 @@
     if (!current) current = Object.keys(files)[0];
     initUpdiBridge();
 
-    setMoreOptionsExpanded(false);
     restoreDevicePanelState();
     bindUI();
     void renderBuiltInMiniProjectCards();

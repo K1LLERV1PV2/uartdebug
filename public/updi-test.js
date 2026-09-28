@@ -155,11 +155,8 @@
     image: null,
     busy: false,
     busyLabel: "",
-    lastProbeOk: false,
     lastProbeError: "",
-    sibText: "",
     signatureInfo: null,
-    programInfo: null,
     preferredPort: null,
     connectionErrorTarget: "",
     connectionErrorMessage: "",
@@ -281,10 +278,7 @@
     const message = getShortConnectionError(target, error);
     state.connectionErrorTarget = target === "adapter" ? "adapter" : "chip";
     state.connectionErrorMessage = message;
-    state.lastProbeOk = false;
     state.signatureInfo = null;
-    state.programInfo = null;
-    state.sibText = "";
     if (state.connectionErrorTarget === "adapter") {
       state.preferredPort = null;
     }
@@ -582,65 +576,24 @@
   }
 
   function appendLog(message) {
-    const timestamp = new Date().toLocaleTimeString("ru-RU", {
+    if (!els.compileLog) return;
+    const timestamp = new Date().toLocaleTimeString("en-GB", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
     });
-    els.probeLog.textContent += `[${timestamp}] ${message}\n`;
-    els.probeLog.scrollTop = els.probeLog.scrollHeight;
+    if (els.compileLog.textContent && !els.compileLog.textContent.endsWith("\n")) {
+      els.compileLog.textContent += "\n";
+    }
+    els.compileLog.textContent += `[${timestamp}] ${message}\n`;
+    els.compileLog.scrollTop = els.compileLog.scrollHeight;
   }
 
   function clearLog() {
-    els.probeLog.textContent = "";
+    if (els.compileLog) els.compileLog.textContent = "";
   }
 
-  function setStatus(kind, text) {
-    if (!els.probeStatus) return;
-
-    els.probeStatus.classList.remove(
-      "connected",
-      "disconnected",
-      "working",
-      "error"
-    );
-
-    if (kind === "connected") {
-      els.probeStatus.classList.add("connected");
-    } else if (kind === "working") {
-      els.probeStatus.classList.add("working");
-    } else if (kind === "error") {
-      els.probeStatus.classList.add("error");
-    } else {
-      els.probeStatus.classList.add("disconnected");
-    }
-
-    els.probeStatus.textContent = text;
-  }
-
-  function setSummaryNote(text, kind = "") {
-    els.summaryNote.textContent = text;
-    els.summaryNote.classList.remove("ok", "error");
-    if (kind) els.summaryNote.classList.add(kind);
-  }
-
-  function resetSummary() {
-    els.summarySource.textContent = "-";
-    els.summaryBytes.textContent = "-";
-    els.summarySegments.textContent = "-";
-    els.summaryRange.textContent = "-";
-    els.summaryRecords.textContent = "-";
-    els.summaryTarget.textContent = getDisplayTargetLabel();
-    els.summarySignature.textContent = "-";
-    els.summaryRevision.textContent = "-";
-    els.summarySerial.textContent = "-";
-    els.summarySib.textContent = "SIB: -";
-    setSummaryNote(
-      "Compile a file or upload a valid Intel HEX image to inspect it. Auto detect reads the chip signature when compile or flash needs it."
-    );
-  }
-
-  function updateButtons() {
+  function updateView() {
     const canUseSerial = "serial" in navigator && !state.busy;
     const blockedByCanvasSerial = isCanvasSerialConnected();
     const usesExternalProgramHandler =
@@ -651,21 +604,11 @@
       ? "Disconnect UART before using UPDI."
       : "";
 
-    if (els.probeBtn) {
-      els.probeBtn.disabled = !canUseSerial || blockedByCanvasSerial;
-    }
-    if (els.readSignatureBtn) {
-      els.readSignatureBtn.disabled = !canUseSerial || blockedByCanvasSerial;
-    }
     els.programHexBtn.disabled =
       !canUseSerial ||
       blockedByCanvasSerial ||
       (!usesExternalProgramHandler && !state.image);
 
-    if (els.probeBtn) els.probeBtn.title = disabledReason || "Probe UPDI";
-    if (els.readSignatureBtn) {
-      els.readSignatureBtn.title = disabledReason || "Read Signature";
-    }
     if (els.programHexBtn) {
       els.programHexBtn.textContent = programButtonLabel;
       els.programHexBtn.title =
@@ -676,54 +619,6 @@
     }
 
     updateDevicePanelState();
-  }
-
-  function updateView() {
-    els.summaryTarget.textContent = getDisplayTargetLabel();
-    els.summarySource.textContent = state.image
-      ? state.fileName || "firmware.hex"
-      : "-";
-    els.summaryBytes.textContent = state.image ? String(state.image.bytesTotal) : "-";
-    els.summarySegments.textContent = state.image
-      ? String(state.image.segments.length)
-      : "-";
-    els.summaryRange.textContent = state.image
-      ? `${formatHex(state.image.minAddress)} - ${formatHex(
-          state.image.maxAddressExclusive - 1
-        )}`
-      : "-";
-    els.summaryRecords.textContent = state.image
-      ? String(state.image.recordCount)
-      : "-";
-
-    els.summarySignature.textContent = state.signatureInfo
-      ? formatHex(state.signatureInfo.deviceId, 6)
-      : "-";
-    els.summaryRevision.textContent = state.signatureInfo
-      ? state.signatureInfo.revisionText
-      : "-";
-    els.summarySerial.textContent = state.signatureInfo
-      ? state.signatureInfo.serialHex
-      : "-";
-    els.summarySib.textContent = `SIB: ${state.sibText || "-"}`;
-
-    if (state.busy) {
-      setStatus("working", state.busyLabel || "Working...");
-    } else if (state.lastProbeError) {
-      setStatus("error", state.lastProbeError);
-    } else if (state.programInfo) {
-      setStatus("connected", "Flash verified");
-    } else if (state.signatureInfo) {
-      setStatus("connected", "Signature ready");
-    } else if (state.lastProbeOk) {
-      setStatus("connected", "Probe OK");
-    } else if ("serial" in navigator) {
-      setStatus("disconnected", "Target ready");
-    } else {
-      setStatus("error", "Web Serial unavailable");
-    }
-
-    updateButtons();
   }
 
   function buildHexSegments(bytesByAddress) {
@@ -978,7 +873,6 @@
     state.fileName = sourceName || "firmware.hex";
     state.imageSource = sourceKind;
     state.image = image;
-    state.programInfo = null;
     state.lastProbeError = "";
 
     appendLog(
@@ -987,7 +881,6 @@
       }, target ${targetLabel}.`
     );
 
-    setSummaryNote("HEX image parsed and validated.", "ok");
     updateView();
   }
 
@@ -996,52 +889,9 @@
     state.hexText = "";
     state.imageSource = "";
     state.image = null;
-    state.programInfo = null;
     state.lastProbeError = "";
     updateView();
-    setSummaryNote(
-      "HEX image cleared. Compile can regenerate one when needed."
-    );
     if (logMessage) appendLog("HEX state cleared.");
-  }
-
-  function describeSignatureResult(info) {
-    const selectedTarget = getSelectedTargetConfig();
-
-    if (!info.matchedTarget) {
-      return {
-        kind: "error",
-        text: `Unknown device signature ${formatHex(
-          info.deviceId,
-          6
-        )}. Programming is blocked until this chip profile is added.`,
-      };
-    }
-
-    if (!selectedTarget) {
-      return {
-        kind: "ok",
-        text: `Detected ${info.matchedTarget.label} from signature ${formatHex(
-          info.deviceId,
-          6
-        )}.`,
-      };
-    }
-
-    if (selectedTarget.key === info.matchedTarget.key) {
-      return {
-        kind: "ok",
-        text: `Device signature matches ${selectedTarget.label}: ${formatHex(
-          info.deviceId,
-          6
-        )}.`,
-      };
-    }
-
-    return {
-      kind: "error",
-      text: `Detected ${info.matchedTarget.label}, but selected target is ${selectedTarget.label}. Switch target or use Auto detect before programming.`,
-    };
   }
 
   function resolveProgrammingTarget(info, image) {
@@ -1086,10 +936,6 @@
       }
 
       clearHexState(false);
-      setSummaryNote(
-        "Compile a file or upload a HEX image to enable UPDI programming."
-      );
-      updateView();
       return;
     }
 
@@ -1100,15 +946,7 @@
       state.hexText = "";
       state.imageSource = "";
       state.image = null;
-      state.programInfo = null;
       updateView();
-      setSummaryNote(
-        error.message ||
-          (source === "uploaded"
-            ? "Failed to load HEX file."
-            : "Failed to sync compiled HEX from canvas."),
-        "error"
-      );
       appendLog(
         `${
           source === "uploaded" ? "HEX load failed" : "Compiled HEX sync failed"
@@ -1122,10 +960,8 @@
 
     if (source === "uploaded") {
       appendLog(`HEX loaded from file: ${fileName}.`);
-      setSummaryNote("HEX image loaded from file.", "ok");
     } else {
       appendLog(`HEX synced from canvas: ${fileName}.`);
-      setSummaryNote("Compiled HEX synced from the current canvas.", "ok");
     }
   }
 
@@ -1133,13 +969,6 @@
     try {
       loadExternalHexFile(hexText, fileName, source);
     } catch (error) {
-      setSummaryNote(
-        error.message ||
-          (source === "uploaded"
-            ? "Failed to load HEX file."
-            : "Failed to sync compiled HEX from canvas."),
-        "error"
-      );
       appendLog(
         `${source === "uploaded" ? "HEX load failed" : "HEX sync failed"}: ${
           error.message || error
@@ -1558,7 +1387,6 @@
     }
 
     const sib = decodeSib(await updiReadSib(session));
-    state.sibText = sib.raw;
     appendLog(`SIB: ${sib.raw}`);
 
     if (sib.nvm !== "0") {
@@ -1799,6 +1627,9 @@
 
     let session = null;
     let connectionStage = "adapter";
+    const compileButton = $("compileBtn");
+    const compileWasDisabled = compileButton?.disabled;
+    if (compileButton) compileButton.disabled = true;
     state.busy = true;
     state.busyLabel = actionName;
     state.lastProbeError = "";
@@ -1838,12 +1669,10 @@
       connectionStage = "chip";
 
       const result = await handler(session);
-      state.lastProbeOk = true;
       state.lastProbeError = "";
       clearConnectionPanelError();
       return result;
     } catch (error) {
-      state.lastProbeOk = false;
       markConnectionPanelError(connectionStage, error);
       state.lastProbeError = state.connectionErrorMessage || "Connection error";
       appendLog(`${actionName} failed: ${error.message || String(error)}`);
@@ -1863,49 +1692,32 @@
       state.busy = false;
       state.busyLabel = "";
       updateView();
-    }
-  }
-
-  async function probeUpdi() {
-    try {
-      await runUpdiAction("Probing UPDI...", async (session) => {
-        const sib = await handshakeAndReadSib(session);
-        appendLog(
-          `Probe OK: family=${sib.family}, NVM=${sib.nvm}, OCD=${sib.ocd}, OSC=${sib.osc}`
-        );
-        setSummaryNote(
-          "UPDI datalink and SIB read succeeded. No flash write was attempted.",
-          "ok"
-        );
-      });
-    } catch (error) {
-      setSummaryNote(error.message || "UPDI probe failed.", "error");
+      if (compileButton) {
+        const bridge = getCanvasUpdiBridge();
+        if (typeof bridge?.refreshCompileControls === "function") {
+          bridge.refreshCompileControls();
+        } else {
+          compileButton.disabled = compileWasDisabled;
+        }
+      }
     }
   }
 
   async function readSignature(options = {}) {
-    try {
-      return await runUpdiAction("Reading signature...", async (session) => {
-        let progModeEntered = false;
+    return await runUpdiAction("Reading signature...", async (session) => {
+      let progModeEntered = false;
 
-        await handshakeAndReadSib(session);
-        try {
-          await enterNvmProgMode(session);
-          progModeEntered = true;
-          const info = await readDeviceSignatureInfo(session);
-          const description = describeSignatureResult(info);
-
-          setSummaryNote(description.text, description.kind);
-          return info;
-        } finally {
-          if (progModeEntered) {
-            await leaveNvmProgMode(session);
-          }
+      await handshakeAndReadSib(session);
+      try {
+        await enterNvmProgMode(session);
+        progModeEntered = true;
+        return await readDeviceSignatureInfo(session);
+      } finally {
+        if (progModeEntered) {
+          await leaveNvmProgMode(session);
         }
-      }, options);
-    } catch (error) {
-      setSummaryNote(error.message || "Signature read failed.", "error");
-    }
+      }
+    }, options);
   }
 
   async function ensureSignature(options = {}) {
@@ -1921,7 +1733,6 @@
   async function programHex() {
     try {
       const image = requireLoadedImage();
-      state.programInfo = null;
 
       await runUpdiAction("Programming flash...", async (session) => {
         let progModeEntered = false;
@@ -1959,19 +1770,8 @@
             await verifyFlashPage(session, page);
           }
 
-          state.programInfo = {
-            fileName: state.fileName || "firmware.hex",
-            pagesWritten: pages.length,
-            bytesProgrammed: image.bytesTotal,
-            deviceId: info.deviceId,
-          };
-
           appendLog(
             `Flash verified: ${pages.length} page(s), ${image.bytesTotal} byte(s) of payload.`
-          );
-          setSummaryNote(
-            `Flash programmed and verified for ${target.label}: ${pages.length} page(s), ${image.bytesTotal} byte(s).`,
-            "ok"
           );
         } finally {
           if (progModeEntered) {
@@ -1980,41 +1780,21 @@
         }
       });
     } catch (error) {
-      setSummaryNote(error.message || "Flash programming failed.", "error");
+      appendLog(`Flash programming failed: ${error.message || error}`);
+      throw error;
     }
-  }
-
-  function checkSupport() {
-    if (!("serial" in navigator)) {
-      if (els.apiWarning) els.apiWarning.classList.add("show");
-      appendLog("Web Serial API is not available in this browser.");
-      setSummaryNote(
-        "Web Serial API is required for signature read and flash programming.",
-        "error"
-      );
-    } else {
-      appendLog("Web Serial API detected.");
-    }
-    updateButtons();
   }
 
   function bind() {
-    els.clearHexBtn.addEventListener("click", () => clearHexState());
-    els.clearLogBtn.addEventListener("click", clearLog);
-    if (els.probeBtn) {
-      els.probeBtn.addEventListener("click", probeUpdi);
-    }
-    if (els.readSignatureBtn) {
-      els.readSignatureBtn.addEventListener("click", () => readSignature());
-    }
     if (
       els.programHexBtn &&
       !els.programHexBtn.hasAttribute("data-external-handler")
     ) {
-      els.programHexBtn.addEventListener("click", programHex);
+      els.programHexBtn.addEventListener("click", () => {
+        programHex().catch(() => {});
+      });
     }
     els.mcuSelect.addEventListener("change", () => {
-      state.programInfo = null;
       if (state.hexText) {
         try {
           loadHexText(
@@ -2027,10 +1807,7 @@
           state.hexText = "";
           state.imageSource = "";
           state.image = null;
-          state.programInfo = null;
           updateView();
-          setSummaryNote(error.message || "HEX parse failed.", "error");
-          setStatus("error", "HEX invalid");
           appendLog(`Target validation failed: ${error.message || error}`);
         }
       } else {
@@ -2047,62 +1824,22 @@
     updateView();
   }
 
-  function hasRequiredElements() {
-    return !!(
-      els.mcuSelect &&
-      els.programHexBtn &&
-      els.clearLogBtn &&
-      els.clearHexBtn &&
-      els.summarySource &&
-      els.summaryBytes &&
-      els.summarySegments &&
-      els.summaryRange &&
-      els.summaryRecords &&
-      els.summaryTarget &&
-      els.summarySignature &&
-      els.summaryRevision &&
-      els.summarySerial &&
-      els.summarySib &&
-      els.summaryNote &&
-      els.probeLog
-    );
-  }
-
   function boot() {
-    els.apiWarning = $("apiWarning");
-    els.probeStatus = $("probeStatus");
     els.mcuSelect = $("mcuSelect");
-    els.probeBtn = $("probeBtn");
-    els.readSignatureBtn = $("readSignatureBtn");
     els.programHexBtn = $("programHexBtn");
-    els.clearLogBtn = $("clearLogBtn");
-    els.clearHexBtn = $("clearHexBtn");
-    els.summarySource = $("summarySource");
-    els.summaryBytes = $("summaryBytes");
-    els.summarySegments = $("summarySegments");
-    els.summaryRange = $("summaryRange");
-    els.summaryRecords = $("summaryRecords");
-    els.summaryTarget = $("summaryTarget");
-    els.summarySignature = $("summarySignature");
-    els.summaryRevision = $("summaryRevision");
-    els.summarySerial = $("summarySerial");
-    els.summarySib = $("summarySib");
-    els.summaryNote = $("summaryNote");
-    els.probeLog = $("probeLog");
+    els.compileLog = $("compileLog");
 
-    if (!hasRequiredElements()) {
+    if (!els.mcuSelect || !els.programHexBtn) {
       return;
     }
 
     populateTargetOptions();
     bind();
-    resetSummary();
-    checkSupport();
     updateView();
-    appendLog("UPDI test page is ready.");
 
     if (typeof window !== "undefined") {
       const runtime = {
+        isBusy: () => state.busy,
         preparePortPermission: ensureUpdiPortPermission,
         ensureSignature,
         readSignature,

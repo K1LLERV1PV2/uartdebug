@@ -1260,6 +1260,118 @@ test("does not render the obsolete AI context row", () => {
   assert.match(source, /getDetectedTargetKey/);
 });
 
+test("keeps target controls with code and account controls next to the device window", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8");
+  const { document } = parseHTML(html);
+  const code = document.getElementById("editorWorkspace");
+  assert.deepEqual(Array.from(code.querySelectorAll("select"), el => el.id), ["mcuSelect", "projectPackageSelect"]);
+  for (const id of ["projectAiBudget", "projectAiAuth"]) {
+    assert.equal(document.querySelectorAll(`#${id}`).length, 1);
+    assert.ok(document.getElementById("avrAccountPanelViewport").contains(document.getElementById(id)));
+  }
+  assert.equal(document.getElementById("avrDevicePanelViewport").nextElementSibling.id, "avrAccountPanelViewport");
+  assert.equal(document.querySelector("#projectCanvasForm select"), null);
+  assert.equal(document.getElementById("moreOptionsBtn"), null);
+  assert.equal(document.getElementById("canvasUpdiSection"), null);
+  assert.equal(code.querySelector("#editorCollapseBtn").getAttribute("aria-controls"), "editorContent");
+});
+
+test("collapses code, restores it after a resize, and persists the state on stacked layouts", () => {
+  const { document } = parseHTML(`<html><body><div class="canvas-split-container"><section id="editorWorkspace"><button id="editorCollapseBtn"></button><div id="editorContent"></div></section></div></body></html>`);
+  let width = 1564;
+  let stacked = false;
+  const storage = new Map();
+  document.querySelector(".canvas-split-container").getBoundingClientRect = () => ({ width });
+  const hooks = loadAvrFrontendFunctionHooks([
+    "restoreWorkspaceLayout", "toggleEditorCollapsed", "fitWorkspaceToViewport", "getWorkspaceWidths",
+  ], {
+    document,
+    window: {
+      matchMedia: () => ({ matches: stacked }),
+      requestAnimationFrame: () => 1,
+      localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
+    },
+  });
+  hooks.restoreWorkspaceLayout();
+  const originalWidths = Array.from(hooks.getWorkspaceWidths());
+  hooks.toggleEditorCollapsed();
+  assert.equal(hooks.getWorkspaceWidths()[2], 62);
+  assert.equal(document.getElementById("editorContent").hidden, true);
+  assert.equal(document.getElementById("editorCollapseBtn").getAttribute("aria-expanded"), "false");
+  hooks.toggleEditorCollapsed();
+  assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), originalWidths);
+  assert.equal(document.getElementById("editorContent").hidden, false);
+  hooks.toggleEditorCollapsed();
+  width = 1100;
+  hooks.fitWorkspaceToViewport();
+  assert.equal(hooks.getWorkspaceWidths()[2], 62);
+  hooks.toggleEditorCollapsed();
+  assert.ok(hooks.getWorkspaceWidths()[2] >= 500);
+  assert.equal(Array.from(hooks.getWorkspaceWidths()).reduce((a, b) => a + b), width - 42);
+  stacked = true;
+  storage.set("ud_avr_programming_outliner_width_v1", "244");
+  storage.set("ud_avr_ai_column_width_v1", "399");
+  storage.set("ud_avr_programming_documentation_width_v1", "333");
+  hooks.restoreWorkspaceLayout();
+  hooks.toggleEditorCollapsed();
+  assert.equal(storage.get("ud_avr_programming_editor_collapsed_v1"), "true");
+  assert.equal(storage.get("ud_avr_programming_outliner_width_v1"), "244");
+  assert.equal(storage.get("ud_avr_ai_column_width_v1"), "399");
+  assert.equal(storage.get("ud_avr_programming_documentation_width_v1"), "333");
+  hooks.restoreWorkspaceLayout();
+  assert.equal(document.getElementById("editorContent").hidden, true);
+  assert.equal(document.getElementById("editorCollapseBtn").getAttribute("aria-label"), "Expand code editor");
+  hooks.toggleEditorCollapsed();
+  assert.equal(document.getElementById("editorContent").hidden, false);
+});
+
+test("canvas target validation expands code and focuses the missing selector", async () => {
+  for (const mcu of ["auto", "attiny1624"]) {
+    const { document } = parseHTML(`<html><body><section id="editorWorkspace"><button id="editorCollapseBtn"></button><div id="editorContent"></div><select id="mcuSelect"><option value="${mcu}" selected>MCU</option></select><div><button class="custom-select-trigger" id="mcuTrigger"></button></div><select id="projectPackageSelect"><option value="" selected>Choose package</option></select><div><button class="custom-select-trigger" id="packageTrigger"></button></div></section><div id="projectCanvasStatus"></div></body></html>`);
+    let focused = "";
+    for (const id of ["mcuTrigger", "packageTrigger"]) document.getElementById(id).focus = () => { focused = id; };
+    const hooks = loadAvrFrontendFunctionHooks([
+      "submitProjectCanvas",
+      "prepare() { projectInstructionDocument = normalizeProjectInstructionDocument({ markdown: 'Blink an LED' }); editorCollapsed = true; syncEditorCollapseState(); }",
+    ], {
+      document,
+      window: { matchMedia: () => ({ matches: true }), requestAnimationFrame: () => 1, localStorage: { setItem() {} } },
+    });
+    hooks.prepare();
+    await hooks.submitProjectCanvas();
+    assert.equal(document.getElementById("editorContent").hidden, false);
+    assert.equal(focused, mcu === "auto" ? "mcuTrigger" : "packageTrigger");
+    assert.match(document.getElementById("projectCanvasStatus").textContent, /Choose the target MCU/);
+  }
+});
+
+test("compile shortcuts and file changes preserve an active UPDI operation log", async () => {
+  const { document } = parseHTML('<html><body><button id="compileBtn"></button><pre id="compileLog">Writing page 1</pre></body></html>');
+  let busy = true;
+  const runtime = { isBusy: () => busy };
+  const hooks = loadAvrFrontendFunctionHooks([
+    "updateCompilePanelState", "compileCurrentFile", "initUpdiBridge", "setHexStatus",
+    "choose(name) { current = name; files[name] = '// Source'; }",
+  ], { document, window: { __UARTDEBUG_AVR_PROGRAMMING_UPDI__: runtime } });
+  hooks.choose("main.c");
+  hooks.updateCompilePanelState(true);
+  assert.equal(document.getElementById("compileBtn").disabled, true);
+  assert.equal(await hooks.compileCurrentFile(), false);
+  assert.equal(document.getElementById("compileLog").textContent, "Writing page 1");
+  busy = false;
+  hooks.updateCompilePanelState(false);
+  assert.equal(document.getElementById("compileBtn").disabled, false);
+  hooks.setHexStatus("building");
+  hooks.updateCompilePanelState(false);
+  assert.equal(document.getElementById("compileBtn").disabled, true);
+  hooks.setHexStatus("ready");
+  hooks.updateCompilePanelState(false);
+  assert.equal(document.getElementById("compileBtn").disabled, false);
+  hooks.choose("guide.md");
+  hooks.updateCompilePanelState(false);
+  assert.equal(document.getElementById("compileBtn").disabled, true);
+});
+
 test("snaps the guide pane and resolves one shared AVR side-panel budget", () => {
   const css = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.css"),
@@ -1308,7 +1420,7 @@ test("snaps the guide pane and resolves one shared AVR side-panel budget", () =>
   );
   assert.match(
     css,
-    /\.editor-workspace > \.avr-action-strip\s*\{[\s\S]*?flex-wrap:\s*nowrap;[\s\S]*?gap:\s*8px;/
+    /\.editor-workspace > \.editor-action-strip\s*\{[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?gap:\s*var\(--avr-control-gap\);/
   );
   assert.doesNotMatch(source, /OUTLINER_MAX_WIDTH|DOCUMENTATION_MAX_WIDTH/);
   assert.doesNotMatch(
@@ -1328,7 +1440,7 @@ test("snaps the guide pane and resolves one shared AVR side-panel budget", () =>
 const workspacePanelSpecs = [
   { min: 180, compact: 62 },
   { min: 238, compact: 62 },
-  { min: 500 },
+  { min: 500, compact: 62 },
   { min: 267, compact: 62 },
 ];
 
@@ -1347,13 +1459,24 @@ test("resizes only the adjacent pair and stops at its minimum widths", () => {
 test("all side columns snap without intermediate invalid widths and reopen", () => {
   const { resizeWorkspacePanels } = loadAvrFrontendFunctionHooks(["resizeWorkspacePanels"]);
   const start = [305, 318, 539, 360];
-  for (const index of [0, 1, 3]) {
+  for (const index of [0, 1, 2, 3]) {
     assert.equal(resizeWorkspacePanels(start, workspacePanelSpecs, index, 113)[index], workspacePanelSpecs[index].min);
     const collapsed = resizeWorkspacePanels(start, workspacePanelSpecs, index, 112);
     assert.equal(collapsed[index], 62);
     const restored = resizeWorkspacePanels(collapsed, workspacePanelSpecs, index, workspacePanelSpecs[index].min);
     assert.equal(restored[index], workspacePanelSpecs[index].min);
   }
+});
+
+test("a collapsed editor does not prevent collapsing or restoring the neighboring guide", () => {
+  const { resizeWorkspacePanels } = loadAvrFrontendFunctionHooks(["resizeWorkspacePanels"]);
+  const start = [305, 700, 62, 360];
+  const collapsed = Array.from(resizeWorkspacePanels(start, workspacePanelSpecs, 3, 62));
+  assert.deepEqual(collapsed, [305, 998, 62, 62]);
+  assert.equal(collapsed.reduce((a, b) => a + b), start.reduce((a, b) => a + b));
+  // The shared fit used by the restore action can reopen the editor after both close.
+  assert.deepEqual(Array.from(resizeWorkspacePanels(collapsed, workspacePanelSpecs, 2, 500)), [305, 560, 500, 62]);
+  assert.deepEqual(Array.from(resizeWorkspacePanels(collapsed, workspacePanelSpecs, 3, 267)), [305, 793, 62, 267]);
 });
 
 test("workspace resizing conserves space and minima across viewport and drag extremes", () => {
@@ -1368,16 +1491,17 @@ test("workspace resizing conserves space and minima across viewport and drag ext
     ));
   };
   for (const budget of [686, 964, 1000, 1202, 1522, 2200]) {
-    for (const preferred of [[305, 318, 500, 360], [62, 62, 500, 62], [1600, 900, 500, 1500]]) {
+    for (const preferred of [[305, 318, 500, 360], [62, 62, 500, 62], [1600, 900, 500, 1500], [305, 700, 62, 360], [62, 62, 62, 62]]) {
       const start = fitWorkspaceWidths(preferred, budget, workspacePanelSpecs);
       valid(start, budget);
-      for (const index of [0, 1, 3]) {
+      for (const index of [0, 1, 2, 3]) {
         let previous = 0;
         for (let requested = -100; requested <= budget + 400; requested += 7) {
           const widths = resizeWorkspacePanels(start, workspacePanelSpecs, index, requested);
           valid(widths, budget);
           for (let i = 0; i < widths.length; i++) {
-            if (i !== index && i !== (index === 0 ? 1 : 2)) {
+            const neighbor = index === 0 || index === 2 ? 1 : 2;
+            if (i !== index && i !== neighbor && start[neighbor] !== workspacePanelSpecs[neighbor].compact) {
               assert.equal(widths[i], start[i], "a divider must not resize unrelated panels");
             }
           }
@@ -1538,7 +1662,7 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   assert.doesNotMatch(html, /devicePanelHoverToggle|device-panel-toggle-arrow/);
   assert.match(
     css,
-    /\.avr-device-panel-viewport\s*\{[\s\S]*?height:\s*var\(--device-panel-height\);/
+    /\.avr-device-panel-viewport,\s*\.avr-account-panel-viewport\s*\{[\s\S]*?height:\s*var\(--device-panel-height\);/
   );
   assert.match(css, /--device-panel-height:\s*112px;/);
   assert.match(
@@ -1581,7 +1705,8 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   assert.match(source, /DEVICE_PANEL_DRAG_THRESHOLD\s*=\s*48/);
   assert.match(source, /function getAdjacentDevicePanelState\(state, direction\)/);
   assert.match(source, /lostpointercapture/);
-  assert.match(source, /if \(collapsed\) viewport\.setAttribute\("inert", ""\)/);
+  assert.match(source, /\[viewport, \$\("avrAccountPanelViewport"\)\]/);
+  assert.match(source, /if \(collapsed\) panel\.setAttribute\("inert", ""\)/);
   assert.match(source, /restoreDevicePanelState\(\)/);
 });
 
@@ -1615,10 +1740,10 @@ test("publishes legal pages and links them to Google sign-in", () => {
     assert.ok(sw.includes(`"${route}"`), `service worker is missing ${route}`);
   }
   assert.match(sw, /icons\/sign-in-with-google-light\.svg/);
-  assert.match(index, /optional AI assistant[\s\S]*?Google sign-in is required only/);
+  assert.doesNotMatch(index, /service-note/);
   assert.match(
     index,
-    /<\/main>[\s\S]*?<footer class="home-footer">[\s\S]*?<p class="service-note">/
+    /<\/main>[\s\S]*?<footer class="home-footer">[\s\S]*?class="footer-link-groups"/
   );
   assert.match(
     index,
@@ -1630,7 +1755,7 @@ test("publishes legal pages and links them to Google sign-in", () => {
   );
   assert.match(
     homeCss,
-    /\.home-footer\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;/
+    /\.home-footer\s*\{[\s\S]*?grid-template-columns:\s*1fr;/
   );
 });
 

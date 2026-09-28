@@ -64,7 +64,6 @@ const APP_SHELL_ASSETS = [
   "/avr-mini-projects/10_UART1_Interrupt_Transmission/10_UART1_Interrupt_Transmission_help(ru)_1.2.3-a.md",
   "/AVR-Programming.js",
   "/updi-test.js",
-  "/updi-test.css",
   "/vendor/codemirror/5.65.16/codemirror.min.css",
   "/vendor/codemirror/5.65.16/theme/material-darker.min.css",
   "/vendor/codemirror/5.65.16/addon/hint/show-hint.min.css",
@@ -97,7 +96,6 @@ const LEGACY_PATHS = new Set([
   "/uart/",
   "/updi-test.html",
   "/updi-test.js",
-  "/updi-test.css",
 ]);
 
 const CACHEABLE_DESTINATIONS = new Set(["style", "script", "image", "font"]);

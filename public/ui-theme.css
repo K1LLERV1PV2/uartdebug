@@ -24,6 +24,7 @@
   --ui-radius: 15px;
   --ui-radius-small: 8px;
   --ui-control-height: 44px;
+  --ui-control-height-compact: 32px;
   --ui-control-gap: 8px;
   --ui-control-radius: 12px;
   --ui-control-bg: rgba(23, 35, 46, 0.68);
