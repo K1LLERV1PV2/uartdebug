@@ -161,7 +161,7 @@ function cookieValue(response, name) {
   return cookie ? cookie.slice(prefix.length).split(";", 1)[0] : "";
 }
 
-async function signIn(service, oauthClient, { cookie = "", code, sub, email }) {
+async function signIn(service, oauthClient, { cookie = "", code, sub, email, name }) {
   const startResponse = new MockResponse();
   const start = await service.beginGoogleLogin(request(cookie), startResponse);
   assert.equal(startResponse.statusCode, 302);
@@ -169,6 +169,7 @@ async function signIn(service, oauthClient, { cookie = "", code, sub, email }) {
   oauthClient.setIdentity(code, {
     sub,
     email,
+    name,
     email_verified: true,
   });
   const callbackResponse = new MockResponse();
@@ -212,6 +213,7 @@ test("Google login uses state, nonce, PKCE and secure host-only cookies", async 
     code: "first-code",
     sub: "raw-google-subject-123",
     email: "person@example.com",
+    name: "  Давид\n Test  ",
   });
   const startCookie = setCookies(login.startResponse).find((cookie) =>
     cookie.startsWith(`${DEVICE_COOKIE}=`)
@@ -230,6 +232,7 @@ test("Google login uses state, nonce, PKCE and secure host-only cookies", async 
   assert.match(oauthClient.authorizationRequests[0].code_challenge, /^[\w-]{43}$/);
   assert.ok(oauthClient.authorizationRequests[0].nonce);
   assert.ok(oauthClient.authorizationRequests[0].state);
+  assert.deepEqual(oauthClient.authorizationRequests[0].scope, ["openid", "email", "profile"]);
   assert.equal(
     oauthClient.verifyCalls[0].audience,
     "google-client-id.apps.googleusercontent.com"
@@ -237,10 +240,15 @@ test("Google login uses state, nonce, PKCE and secure host-only cookies", async 
   assert.ok(oauthClient.tokenCalls[0].codeVerifier);
 
   const account = service.database
-    .prepare("SELECT account_hash, masked_email FROM google_accounts")
+    .prepare("SELECT account_hash, masked_email, display_name FROM google_accounts")
     .get();
   assert.notEqual(account.account_hash, "raw-google-subject-123");
   assert.equal(account.masked_email, "p***@e***.com");
+  assert.equal(account.display_name, "Давид Test");
+  assert.deepEqual(
+    (await service.getPublicStatus(request(login.cookie), new MockResponse())).user,
+    { displayName: "Давид Test", emailMasked: "p***@e***.com" }
+  );
   const storedSession = service.database
     .prepare("SELECT session_hash FROM auth_sessions")
     .get();
@@ -255,6 +263,43 @@ test("Google login uses state, nonce, PKCE and secure host-only cookies", async 
   });
   assert.doesNotMatch(serializedRows, /raw-(?:id|access|refresh)-token/);
   assert.doesNotMatch(serializedRows, /raw-google-subject-123/);
+});
+
+test("Google profile updates use the verified identity without changing account credits", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const first = await signIn(service, oauthClient, {
+    code: "profile-first", sub: "profile-account", email: "person@example.com", name: "David First",
+  });
+  service.database.exec("UPDATE google_accounts SET spent_nano_usd = 12345;");
+  const before = service.database.prepare("SELECT * FROM google_accounts").get();
+  const second = await signIn(service, oauthClient, {
+    cookie: first.cookie, code: "profile-update", sub: "profile-account",
+    email: "person@example.com", name: "  Давид\u0000  Новое имя  ",
+  });
+  const after = service.database.prepare("SELECT * FROM google_accounts").get();
+  assert.deepEqual({ ...after }, { ...before, display_name: "Давид Новое имя" });
+  assert.equal(service.database.prepare("SELECT COUNT(*) AS n FROM google_accounts").get().n, 1);
+  assert.equal((await service.getPublicStatus(request(second.cookie), new MockResponse())).user.displayName, "Давид Новое имя");
+
+  const missing = await signIn(service, oauthClient, {
+    cookie: second.cookie, code: "profile-omitted", sub: "profile-account", email: "person@example.com",
+  });
+  assert.equal((await service.getPublicStatus(request(missing.cookie), new MockResponse())).user.displayName, "Давид Новое имя");
+});
+
+test("missing or malformed optional Google profile names do not prevent sign-in", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  for (const [index, name] of [undefined, { name: "Object" }, "\u0000\u007f", "я".repeat(257)].entries()) {
+    const login = await signIn(service, oauthClient, {
+      code: `optional-profile-${index}`, sub: `optional-profile-account-${index}`,
+      email: "person@example.com", name,
+    });
+    const status = await service.getPublicStatus(request(login.cookie), new MockResponse());
+    assert.equal(status.authenticated, true);
+    assert.equal(status.user.displayName, "");
+  }
 });
 
 test("Google login returns JSON for same-origin fetch while setting device identity", async (t) => {
@@ -2066,14 +2111,14 @@ test("account workspace validates authentication, schemas, and payload limits", 
   assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.instruction, 256 * 1024);
 });
 
-test("AI access database migrates to schema 3 with canvas-capable account storage", (t) => {
+test("AI access database migrates to schema 4 with canvas storage and Google profile names", (t) => {
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "uartdebug-ai-schema-")
   );
   const databasePath = path.join(temporaryDirectory, "ai-access.sqlite");
   const initial = makeService({ databasePath }).service;
   initial.database.exec(
-    "DROP TABLE account_workspace_snapshots; PRAGMA user_version = 1;"
+    "ALTER TABLE google_accounts DROP COLUMN display_name; DROP TABLE account_workspace_snapshots; PRAGMA user_version = 1;"
   );
   initial.close();
 
@@ -2082,10 +2127,10 @@ test("AI access database migrates to schema 3 with canvas-capable account storag
     service.close();
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   });
-  assert.equal(AI_ACCESS_SCHEMA_VERSION, 3);
+  assert.equal(AI_ACCESS_SCHEMA_VERSION, 4);
   assert.equal(
     Number(service.database.prepare("PRAGMA user_version").get().user_version),
-    3
+    4
   );
   const table = service.database
     .prepare(
@@ -2138,7 +2183,7 @@ test("canvas v2 and a public YAML specification survive account synchronization"
   }), (error) => error.code === "invalid_account_data");
 });
 
-test("schema-2 migration preserves sessions, credits and legacy workspace bytes", async (t) => {
+test("schema-2 migration preserves credits and legacy workspace bytes through profile reauthentication", async (t) => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-canvas-migration-"));
   const databasePath = path.join(temporaryDirectory, "ai-access.sqlite");
   const initial = makeService({ databasePath });
@@ -2150,18 +2195,64 @@ test("schema-2 migration preserves sessions, credits and legacy workspace bytes"
   initial.service.writeAccountWorkspace(context, "instruction", {
     baseRevision: 0, expectedAccountKey: context.accountKey, data: legacyInstruction,
   });
-  initial.service.database.exec("UPDATE google_accounts SET spent_nano_usd = 12345; UPDATE devices SET spent_nano_usd = 12345; PRAGMA user_version = 2;");
+  initial.service.database.exec("UPDATE google_accounts SET spent_nano_usd = 12345; UPDATE devices SET spent_nano_usd = 12345; ALTER TABLE google_accounts DROP COLUMN display_name; PRAGMA user_version = 2;");
   const snapshot = initial.service.database.prepare("SELECT * FROM account_workspace_snapshots").get();
   const account = initial.service.database.prepare("SELECT * FROM google_accounts").get();
   initial.service.close();
-  const migrated = makeService({ databasePath }).service;
+  const { service: migrated, oauthClient } = makeService({ databasePath });
   t.after(() => { migrated.close(); fs.rmSync(temporaryDirectory, { recursive: true, force: true }); });
-  assert.equal(migrated.database.prepare("PRAGMA user_version").get().user_version, 3);
-  const restoredContext = migrated.authenticateAccountWorkspaceRequest(request(login.cookie), new MockResponse());
+  assert.equal(migrated.database.prepare("PRAGMA user_version").get().user_version, 4);
+  const expired = await migrated.getPublicStatus(request(login.cookie), new MockResponse());
+  assert.equal(expired.authenticated, false);
+  assert.deepEqual(migrated.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
+  assert.deepEqual({ ...migrated.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name: "" });
+  const renewed = await signIn(migrated, oauthClient, {
+    cookie: login.cookie, code: "legacy-profile", sub: "legacy-workspace-account",
+    email: "legacy@example.com", name: "Existing User",
+  });
+  const restoredContext = migrated.authenticateAccountWorkspaceRequest(request(renewed.cookie), new MockResponse());
   assert.equal(restoredContext.accountKey, context.accountKey);
   assert.deepEqual(migrated.readAccountWorkspace(restoredContext).documents.instruction.data, legacyInstruction);
   assert.deepEqual(migrated.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
-  assert.deepEqual(migrated.database.prepare("SELECT * FROM google_accounts").get(), account);
+  assert.deepEqual({ ...migrated.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name: "Existing User" });
+});
+
+test("schema-3 profile migration revokes old sessions once and retains account identity and workspace", async (t) => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-profile-migration-"));
+  const databasePath = path.join(temporaryDirectory, "ai-access.sqlite");
+  const initial = makeService({ databasePath });
+  const login = await signIn(initial.service, initial.oauthClient, {
+    code: "old-profile", sub: "existing-profile-account", email: "existing@example.com",
+  });
+  const context = initial.service.authenticateAccountWorkspaceRequest(request(login.cookie), new MockResponse());
+  initial.service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 0, expectedAccountKey: context.accountKey,
+    data: { schemaVersion: 2, revision: 1, markdown: "# Existing project\n", annotations: [] },
+  });
+  initial.service.database.exec("UPDATE google_accounts SET spent_nano_usd = 4321; ALTER TABLE google_accounts DROP COLUMN display_name; PRAGMA user_version = 3;");
+  const account = initial.service.database.prepare("SELECT * FROM google_accounts").get();
+  const snapshot = initial.service.database.prepare("SELECT * FROM account_workspace_snapshots").get();
+  const links = initial.service.database.prepare("SELECT * FROM device_account_links").all();
+  initial.service.close();
+  const upgraded = makeService({ databasePath });
+  assert.equal(upgraded.service.database.prepare("SELECT COUNT(*) AS n FROM auth_sessions").get().n, 0);
+  assert.deepEqual({ ...upgraded.service.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name: "" });
+  assert.deepEqual(upgraded.service.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
+  assert.deepEqual(upgraded.service.database.prepare("SELECT * FROM device_account_links").all(), links);
+  const renewed = await signIn(upgraded.service, upgraded.oauthClient, {
+    cookie: login.cookie, code: "new-profile", sub: "existing-profile-account",
+    email: "existing@example.com", name: "David Profile",
+  });
+  const renewedContext = upgraded.service.authenticateAccountWorkspaceRequest(request(renewed.cookie), new MockResponse());
+  assert.equal(renewedContext.accountKey, context.accountKey);
+  assert.equal(upgraded.service.database.prepare("SELECT COUNT(*) AS n FROM google_accounts").get().n, 1);
+  upgraded.service.close();
+  const reopened = makeService({ databasePath }).service;
+  t.after(() => { reopened.close(); fs.rmSync(temporaryDirectory, { recursive: true, force: true }); });
+  const status = await reopened.getPublicStatus(request(renewed.cookie), new MockResponse());
+  assert.equal(status.authenticated, true);
+  assert.equal(status.user.displayName, "David Profile");
+  assert.deepEqual(reopened.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
 });
 
 test("unlimited account configuration rejects malformed options and missing or invalid private files", () => {

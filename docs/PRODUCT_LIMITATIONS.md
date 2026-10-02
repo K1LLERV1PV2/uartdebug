@@ -78,14 +78,15 @@ cash value, or describe AI Credits as transferable or withdrawable.
 
 ## Privacy and retention
 
-Account identifiers, installation HMACs, IP/risk signals, sessions, usage
-ledgers, retained legacy chats, AVR workspace snapshots, and canvas
+Account identifiers, Google profile names, installation HMACs, IP/risk signals,
+sessions, usage ledgers, retained legacy chats, AVR workspace snapshots, and canvas
 snapshots can be personal or sensitive project data even when account
 identifiers are pseudonymous. Uart
 Debug publishes a privacy notice with the current data flows, contact,
-retention, and request route. Because only a masked email is stored, an operator
-cannot map a plain email to a record without additional verification context. It
-remains an operational responsibility to keep that notice in sync with
+retention, and request route. A profile name is display metadata rather than a
+unique or verified real-world identity. Because only a masked email is stored,
+an operator cannot map a plain email to a record without additional verification
+context. It remains an operational responsibility to keep that notice in sync with
 production and to implement the documented retention periods rather than merely
 describing them. Automated expiry for long-lived account/device, ledger,
 workspace, legacy chat, and canvas records is still deferred and is disclosed in

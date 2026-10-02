@@ -43,6 +43,7 @@
   const OUTLINER_DEFAULT_WIDTH = 305;
   const WORKSPACE_PANEL_COMPACT_WIDTH = 62;
   const WORKSPACE_PANEL_COMPACT_THRESHOLD = 112;
+  const WORKSPACE_PANEL_COLLAPSE_DISTANCE = 48;
   const OUTLINER_MIN_EXPANDED_WIDTH = 180;
   const OUTLINER_EDITOR_MIN_WIDTH = 500;
   const DOCUMENTATION_DEFAULT_WIDTH = 360;
@@ -102,7 +103,8 @@
   let workspaceEditorRefreshFrame = null;
   let documentationWidth = DOCUMENTATION_DEFAULT_WIDTH;
   let documentationPreferredWidth = DOCUMENTATION_DEFAULT_WIDTH;
-  let documentationExpandedMinWidth = DOCUMENTATION_MIN_WIDTH;
+  const workspacePanelMinWidths = [OUTLINER_MIN_EXPANDED_WIDTH,
+    PROJECT_AI_COLUMN_MIN_WIDTH, OUTLINER_EDITOR_MIN_WIDTH, DOCUMENTATION_MIN_WIDTH];
   let documentationHeadingIndex = new Map();
   let documentationRenderedHeadingIndex = new Map();
   let documentationMarkerHandles = [];
@@ -2812,12 +2814,9 @@
   // Dividers resize adjacent panels; a closed neighbor passes spare width to an
   // expanded pane so compact panels can be reopened independently.
   function getWorkspacePanelSpecs() {
-    return [
-      { min: OUTLINER_MIN_EXPANDED_WIDTH, compact: WORKSPACE_PANEL_COMPACT_WIDTH },
-      { min: PROJECT_AI_COLUMN_MIN_WIDTH, compact: WORKSPACE_PANEL_COMPACT_WIDTH },
-      { min: OUTLINER_EDITOR_MIN_WIDTH, compact: WORKSPACE_PANEL_COMPACT_WIDTH },
-      { min: getDocumentationMinWidth(), compact: WORKSPACE_PANEL_COMPACT_WIDTH },
-    ];
+    return workspacePanelMinWidths.map((_, index) => ({
+      min: getWorkspacePanelMinWidth(index), compact: WORKSPACE_PANEL_COMPACT_WIDTH,
+    }));
   }
 
   function snapWorkspacePanelSize(value, spec) {
@@ -2833,7 +2832,7 @@
   function getWorkspaceContentWidth() {
     const container = getCanvasSplitContainer();
     return Math.max(
-      OUTLINER_EDITOR_MIN_WIDTH + 3 * WORKSPACE_PANEL_COMPACT_WIDTH,
+      getWorkspacePanelMinWidth(2) + 3 * WORKSPACE_PANEL_COMPACT_WIDTH,
       Math.round(container?.getBoundingClientRect().width || 0) -
         WORKSPACE_RESIZER_TOTAL_WIDTH
     );
@@ -2922,12 +2921,21 @@
     const amount = Math.abs(delta);
     // A small motion on a closed rail must not immediately reopen it.
     if (start[growing] === specs[growing].compact &&
-        amount <= WORKSPACE_PANEL_COMPACT_THRESHOLD - specs[growing].compact) return [...start];
+        amount < WORKSPACE_PANEL_COLLAPSE_DISTANCE) return [...start];
     const sizes = [...start];
-    sizes[shrinking] = snapWorkspacePanelSize(start[shrinking] - amount, specs[shrinking]);
+    const requested = start[shrinking] - amount;
+    sizes[shrinking] = start[shrinking] === specs[shrinking].compact ||
+      requested <= specs[shrinking].min - WORKSPACE_PANEL_COLLAPSE_DISTANCE
+      ? specs[shrinking].compact
+      : Math.max(specs[shrinking].min, requested);
     const pairTotal = start[growing] + start[shrinking];
     sizes[growing] = Math.max(specs[growing].min, pairTotal - sizes[shrinking]);
     let missing = sizes[growing] + sizes[shrinking] - pairTotal;
+    // A reopened pane first takes its minimum from its expanded neighbor.
+    const adjacentSlack = sizes[shrinking] - workspacePanelFloor(sizes[shrinking], specs[shrinking]);
+    const adjacentTransfer = Math.min(missing, adjacentSlack);
+    sizes[shrinking] -= adjacentTransfer;
+    missing -= adjacentTransfer;
     // Two closed neighbors may need space from a farther expanded pane. Never
     // close that pane implicitly or take more than its spare space.
     for (const index of [2, 1, 0, 3]) {
@@ -2937,6 +2945,16 @@
       missing -= borrowed;
     }
     return missing > 0 ? [...start] : sizes;
+  }
+
+  function getWorkspaceCollapsePreview(start, specs, boundary, delta) {
+    if (!delta) return null;
+    const index = delta < 0 ? boundary : boundary + 1;
+    if (start[index] === specs[index].compact) return null;
+    const overtravel = specs[index].min - (start[index] - Math.abs(delta));
+    if (overtravel < 0 || overtravel >= WORKSPACE_PANEL_COLLAPSE_DISTANCE) return null;
+    return { index, direction: delta < 0 ? -1 : 1,
+      progress: overtravel / WORKSPACE_PANEL_COLLAPSE_DISTANCE };
   }
 
   function getWorkspaceRowSpecs() {
@@ -2972,13 +2990,15 @@
     else renderWorkspaceWidths(sizes, options);
   }
 
-  function getDocumentationMinWidth() {
-    const strip = document.querySelector(".documentation-action-strip");
-    const panel = $("projectDocumentationPane");
-    if (!strip || !panel) return documentationExpandedMinWidth;
+  function getWorkspacePanelMinWidth(index) {
+    const panel = getCanvasSplitContainer()?.querySelectorAll(
+      ":scope > :is(.outliner, .project-ai-layout, .editor-workspace, .documentation-workspace)"
+    )[index];
+    const strip = panel?.querySelector(".ui-panel-header");
+    if (!strip || !panel || !window.getComputedStyle) return workspacePanelMinWidths[index];
     const style = window.getComputedStyle?.(strip);
-    if (style?.display === "none") return documentationExpandedMinWidth;
-    const panelStyle = window.getComputedStyle?.(panel);
+    if (style?.display === "none" || !strip.getClientRects().length) return workspacePanelMinWidths[index];
+    const panelStyle = window.getComputedStyle(strip.closest(".avr-session-panel") || panel);
     const controls = [...strip.children].filter((element) => {
       const controlStyle = window.getComputedStyle?.(element);
       return !element.hidden && controlStyle?.display !== "none";
@@ -2996,17 +3016,12 @@
       (total, element) => total + element.getBoundingClientRect().width,
       0
     );
-    documentationExpandedMinWidth = Math.max(
-      DOCUMENTATION_MIN_WIDTH,
-      Math.ceil(
-        panelChrome +
-          horizontalPadding +
-          controlsWidth +
-          Math.max(0, controls.length - 1) * gap +
-          2
-      )
-    );
-    return documentationExpandedMinWidth;
+    // Header children keep their intrinsic widths in one row. Do not measure
+    // the constrained strip itself, which would lock its present pane width.
+    workspacePanelMinWidths[index] = Math.max(WORKSPACE_PANEL_COMPACT_WIDTH + 1,
+      Math.ceil(panelChrome + horizontalPadding + controlsWidth +
+        Math.max(0, controls.length - 1) * gap + 2));
+    return workspacePanelMinWidths[index];
   }
 
   function persistWorkspaceLayout() {
@@ -3050,6 +3065,8 @@
     editorCollapsed = widths[2] <= WORKSPACE_PANEL_COMPACT_THRESHOLD;
     const container = getCanvasSplitContainer();
     if (container) {
+      container.style.setProperty("--editor-workspace-min-width",
+        `${editorCollapsed ? WORKSPACE_PANEL_COMPACT_WIDTH : getWorkspacePanelMinWidth(2)}px`);
       for (const [property, value] of [
         ["--outliner-width", outlinerWidth],
         ["--project-ai-width", projectAiColumnWidth],
@@ -3163,11 +3180,32 @@
       handle.setAttribute("aria-valuemin", String(specs[index].compact));
       handle.setAttribute("aria-valuemax", String(Math.round(widths[index] + widths[index + 1] - specs[index + 1].compact)));
       handle.setAttribute("aria-valuenow", String(Math.round(widths[index])));
-      handle.setAttribute("aria-valuetext", `${names[index]} ${compact ? "collapsed" : `${Math.round(widths[index])} pixels`}; ${names[index + 1]} ${nextCompact ? "collapsed" : `${Math.round(widths[index + 1])} pixels`}`);
+      const arrows = isStackedCanvasLayout() ? ["ArrowUp", "ArrowDown"] : ["ArrowLeft", "ArrowRight"];
+      const describe = (i, collapsed, arrow) => collapsed ? "collapsed"
+        : widths[i] === specs[i].min ? `at minimum; ${arrow} to collapse`
+          : `${Math.round(widths[i])} pixels`;
+      handle.setAttribute("aria-valuetext", `${names[index]} ${describe(index, compact, arrows[0])}; ${names[index + 1]} ${describe(index + 1, nextCompact, arrows[1])}`);
     }
   }
 
-  // Pointer capture, cancellation and cursor feedback are shared by every separator.
+  function clearSplitCollapsePreview(handle) {
+    handle.removeAttribute("data-collapse-preview");
+    handle.style?.removeProperty("--collapse-progress");
+    document.querySelectorAll?.(".is-collapse-preview").forEach(panel => {
+      panel.classList.remove("is-collapse-preview");
+    });
+  }
+
+  function showSplitCollapsePreview(handle, panel, label, direction, progress) {
+    clearSplitCollapsePreview(handle);
+    const vertical = handle.getAttribute("aria-orientation") !== "horizontal";
+    const arrow = vertical ? (direction < 0 ? "←" : "→") : (direction < 0 ? "↑" : "↓");
+    handle.setAttribute("data-collapse-preview", `${arrow} Drag further to collapse ${label}`);
+    handle.style?.setProperty("--collapse-progress", String(Math.max(0, Math.min(1, progress))));
+    panel?.classList.add("is-collapse-preview");
+  }
+
+  // Pointer capture, cancellation and feedback are shared by every separator.
   function bindSplitResizer(handle, { axis, enabled = () => true, start, move, finish, key }) {
     if (!handle) return;
     const currentAxis = () => typeof axis === "function" ? axis() : axis;
@@ -3178,6 +3216,7 @@
           (event?.pointerId !== undefined && event.pointerId !== session.pointerId)) return;
       activeSplitResize = null;
       handle.classList.remove("is-resizing");
+      clearSplitCollapsePreview(handle);
       document.body.classList.remove(session.cursorClass);
       if (handle.hasPointerCapture?.(session.pointerId)) handle.releasePointerCapture(session.pointerId);
       finish?.(session.data);
@@ -3205,6 +3244,9 @@
       handle.addEventListener(type, end);
     }
     window.addEventListener("blur", () => end());
+    window.addEventListener("resize", () => {
+      if (activeSplitResize?.handle === handle && activeSplitResize.axis !== currentAxis()) end();
+    });
     handle.addEventListener("keydown", event => {
       if (!activeSplitResize && enabled()) key?.(event);
     });
@@ -3213,10 +3255,26 @@
   function bindWorkspaceColumnResizer(id, index) {
     bindSplitResizer($(id), {
       axis: () => isStackedCanvasLayout() ? "y" : "x",
-      start: () => ({ stacked: isStackedCanvasLayout(), widths: getActiveWorkspaceSizes(), specs: getActiveWorkspaceSpecs() }),
+      start: () => ({ stacked: isStackedCanvasLayout(), widths: getActiveWorkspaceSizes(), specs: getActiveWorkspaceSpecs(), offset: 0 }),
       move: (delta, state) => {
-        if (state.stacked !== isStackedCanvasLayout()) return;
-        renderActiveWorkspaceSizes(resizeWorkspaceBoundary(state.widths, state.specs, index, delta));
+        const handle = $(id);
+        if (state.stacked !== isStackedCanvasLayout()) {
+          clearSplitCollapsePreview(handle);
+          return;
+        }
+        const movement = delta - state.offset;
+        const sizes = resizeWorkspaceBoundary(state.widths, state.specs, index, movement);
+        renderActiveWorkspaceSizes(sizes);
+        const preview = getWorkspaceCollapsePreview(state.widths, state.specs, index, movement);
+        if (preview) {
+          const names = ["Files", "Canvas", "Code", "Guide"];
+          const panels = getCanvasSplitContainer()?.querySelectorAll(":scope > .outliner, :scope > .project-ai-layout, :scope > .editor-workspace, :scope > .documentation-workspace");
+          showSplitCollapsePreview(handle, panels?.[preview.index], names[preview.index], preview.direction, preview.progress);
+        } else clearSplitCollapsePreview(handle);
+        if (sizes.some((size, i) => (size === state.specs[i].compact) !== (state.widths[i] === state.specs[i].compact))) {
+          state.widths = sizes;
+          state.offset = delta;
+        }
       },
       finish: state => {
         if (state.stacked !== isStackedCanvasLayout()) fitWorkspaceToViewport();
@@ -3277,8 +3335,11 @@
     };
     if (typeof ResizeObserver === "function") {
       workspaceResizeObserver = new ResizeObserver(scheduleResize);
-      // Observe the available area, never the columns changed by a drag.
+      // Observe available space and intrinsic controls, never pane widths.
       workspaceResizeObserver.observe(container);
+      container.querySelectorAll(".ui-panel-header > *").forEach(control => {
+        workspaceResizeObserver.observe(control);
+      });
       const editorContainer = document.querySelector(".editor-container");
       if (editorContainer) {
         watermarkResizeObserver = new ResizeObserver(scheduleEditorFileWatermarkFit);
@@ -7635,7 +7696,7 @@
     }
 
     account.textContent =
-      String(session.user?.emailMasked || "").trim() || "Google account";
+      String(session.user?.displayName || "").trim() || "Google account";
     account.title = account.textContent;
     if (accountLabel) accountLabel.textContent = account.textContent;
     accountButton.classList.add("is-authenticated");
@@ -8271,7 +8332,14 @@
       move: (position, drag) => {
         const delta = position - drag.anchor;
         const requestedSteps = Math.floor(Math.abs(delta) / DEVICE_PANEL_DRAG_THRESHOLD);
-        if (requestedSteps < 1) return;
+        const handle = $("devicePanelToggle");
+        const preview = () => {
+          const remaining = position - drag.anchor;
+          if (devicePanelState === "compact" && remaining <= 0 && remaining > -DEVICE_PANEL_DRAG_THRESHOLD) {
+            showSplitCollapsePreview(handle, $("avrDeviceSection"), "Device and account", -1, Math.abs(remaining) / DEVICE_PANEL_DRAG_THRESHOLD);
+          } else clearSplitCollapsePreview(handle);
+        };
+        if (requestedSteps < 1) { preview(); return; }
         const direction = delta < 0 ? -1 : 1;
         let nextState = devicePanelState;
         let appliedSteps = 0;
@@ -8284,9 +8352,10 @@
         drag.anchor = appliedSteps < requestedSteps
           ? position
           : drag.anchor + direction * DEVICE_PANEL_DRAG_THRESHOLD * appliedSteps;
-        if (nextState === devicePanelState) return;
+        if (nextState === devicePanelState) { preview(); return; }
         setDevicePanelState(nextState, { persist: false, animate: false });
         refreshWorkspaceAfterDevicePanelResize();
+        preview();
       },
       finish: () => {
         setDevicePanelState(devicePanelState, { persist: true, animate: false });

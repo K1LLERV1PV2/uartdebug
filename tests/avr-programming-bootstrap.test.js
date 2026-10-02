@@ -1027,12 +1027,12 @@ test("unlimited Google account shows its entitlement without hiding or disabling
   const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
   const hooks = loadAvrFrontendFunctionHooks(["renderProjectAiAuthSession", "setProjectAiFormBusy"], { document });
   const session = { mode: "google", configured: true, authenticated: true,
-    user: { emailMasked: "t***@example.com" },
+    user: { displayName: "Test Account", emailMasked: "t***@example.com" },
     quota: { unlimited: true, granted: null, spent: null, reserved: null, remaining: null } };
   hooks.renderProjectAiAuthSession(session);
   const accountButton = document.getElementById("projectAiAccountBtn");
   const accountLabel = document.querySelector(".project-ai-account-trigger-label");
-  assert.equal(accountLabel.textContent, "t***@example.com");
+  assert.equal(accountLabel.textContent, "Test Account");
   assert.equal(accountButton.disabled, false);
   assert.equal(accountButton.getAttribute("aria-haspopup"), "dialog");
   const credits = document.getElementById("projectAiCredits");
@@ -1047,6 +1047,8 @@ test("unlimited Google account shows its entitlement without hiding or disabling
   assert.equal(button.disabled, false);
   hooks.renderProjectAiAuthSession({ ...session, quota: { granted: 100, remaining: 1 } });
   assert.equal(credits.textContent, "1 AI Credit remaining");
+  hooks.renderProjectAiAuthSession({ ...session, user: { emailMasked: "t***@example.com" } });
+  assert.equal(accountLabel.textContent, "Google account");
   hooks.renderProjectAiAuthSession({ ...session, authenticated: false, quota: null });
   assert.equal(accountLabel.textContent, "Continue with Google");
   assert.equal(accountButton.getAttribute("aria-label"), "Continue with Google");
@@ -1382,7 +1384,7 @@ test("compile shortcuts and file changes preserve an active UPDI operation log",
   assert.equal(document.getElementById("compileBtn").disabled, true);
 });
 
-test("snaps the guide pane and resolves one shared AVR side-panel budget", () => {
+test("uses one intrinsic toolbar row and shared width measurement for workspace panes", () => {
   const css = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.css"),
     "utf8"
@@ -1402,7 +1404,7 @@ test("snaps the guide pane and resolves one shared AVR side-panel budget", () =>
   );
   assert.match(
     source,
-    /documentationExpandedMinWidth\s*=\s*Math\.max\([\s\S]*?panelChrome\s*\+[\s\S]*?controlsWidth/
+    /workspacePanelMinWidths\[index\]\s*=\s*Math\.max\([\s\S]*?panelChrome\s*\+[\s\S]*?controlsWidth/
   );
   assert.doesNotMatch(source, /halfSplitWidth/);
   assert.doesNotMatch(source, /availableDocumentationWidth\s*\/\s*2/);
@@ -1430,7 +1432,7 @@ test("snaps the guide pane and resolves one shared AVR side-panel budget", () =>
   );
   assert.match(
     css,
-    /\.editor-workspace > \.editor-action-strip\s*\{[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?gap:\s*var\(--avr-control-gap\);/
+    /\.canvas-split-container \.ui-panel-header\s*\{[\s\S]*?flex-wrap:\s*nowrap;[\s\S]*?gap:\s*var\(--avr-control-gap\);/
   );
   assert.doesNotMatch(source, /OUTLINER_MAX_WIDTH|DOCUMENTATION_MAX_WIDTH/);
   assert.doesNotMatch(
@@ -1439,12 +1441,43 @@ test("snaps the guide pane and resolves one shared AVR side-panel budget", () =>
   );
   assert.match(
     source,
-    /function getDocumentationMinWidth\(\)[\s\S]*?strip\.children[\s\S]*?controlsWidth[\s\S]*?horizontalPadding/
+    /function getWorkspacePanelMinWidth\(index\)[\s\S]*?strip\.children[\s\S]*?controlsWidth[\s\S]*?horizontalPadding/
   );
   assert.doesNotMatch(
     source,
-    /function getDocumentationMinWidth\(\)[\s\S]{0,900}?strip\.scrollWidth/
+    /function getWorkspacePanelMinWidth\(index\)[\s\S]{0,900}?strip\.scrollWidth/
   );
+  assert.doesNotMatch(source, /function getDocumentationMinWidth/);
+});
+
+test("workspace minima follow visible intrinsic controls and retain them while collapsed", () => {
+  const { document } = parseHTML(`<html><body><div class="canvas-split-container">
+    <aside class="outliner"></aside>
+    <div class="project-ai-layout"><section class="avr-session-panel"><form class="ui-panel-header"><button id="canvasControl"></button></form></section></div>
+    <section class="editor-workspace avr-session-panel"><div class="ui-panel-header"><div id="targetControls"></div><div id="buildControls"></div><button id="hiddenControl" hidden></button></div></section>
+    <aside class="documentation-workspace avr-session-panel"><div class="ui-panel-header"><div id="guideLocale"></div><button id="guideEdit"></button></div></aside>
+  </div></body></html>`);
+  const widths = { canvasControl: 132, targetControls: 340, buildControls: 220, hiddenControl: 1000, guideLocale: 130, guideEdit: 88 };
+  for (const [id] of Object.entries(widths)) {
+    document.getElementById(id).getBoundingClientRect = () => ({ width: widths[id] });
+  }
+  for (const strip of document.querySelectorAll(".ui-panel-header")) {
+    strip.getClientRects = () => strip.hidden ? [] : [{}];
+  }
+  const hooks = loadAvrFrontendFunctionHooks(["getWorkspacePanelSpecs"], {
+    document,
+    window: { getComputedStyle: el => el.classList.contains("avr-session-panel")
+      ? { paddingLeft: "12px", paddingRight: "12px", borderLeftWidth: "1px", borderRightWidth: "1px" }
+      : { display: el.hidden ? "none" : "flex", columnGap: "8px" } },
+  });
+  const minima = () => Array.from(hooks.getWorkspacePanelSpecs(), spec => spec.min);
+  assert.deepEqual(minima(), [180, 160, 596, 254]);
+  widths.buildControls = 300;
+  assert.equal(minima()[2], 676);
+  document.querySelector(".editor-workspace .ui-panel-header").hidden = true;
+  widths.targetControls = 0;
+  widths.buildControls = 0;
+  assert.equal(minima()[2], 676, "a hidden toolbar must retain its last expanded width");
 });
 
 const workspacePanelSpecs = [
@@ -1472,6 +1505,34 @@ test("every boundary can collapse and restore the panel on either side", () => {
   }
 });
 
+test("boundary previews start at each minimum and need a short extra drag before collapse", () => {
+  const { resizeWorkspaceBoundary, getWorkspaceCollapsePreview } = loadAvrFrontendFunctionHooks([
+    "resizeWorkspaceBoundary", "getWorkspaceCollapsePreview",
+  ]);
+  const start = [305, 618, 839, 660];
+  for (const boundary of [0, 1, 2]) {
+    for (const index of [boundary, boundary + 1]) {
+      const direction = index === boundary ? -1 : 1;
+      const toMinimum = start[index] - workspacePanelSpecs[index].min;
+      assert.equal(getWorkspaceCollapsePreview(start, workspacePanelSpecs, boundary, direction * (toMinimum - 1)), null);
+      for (const overtravel of [0, 12, 47]) {
+        const delta = direction * (toMinimum + overtravel);
+        const preview = getWorkspaceCollapsePreview(start, workspacePanelSpecs, boundary, delta);
+        assert.equal(preview.index, index);
+        assert.equal(preview.direction, direction);
+        assert.equal(preview.progress, overtravel / 48);
+        assert.equal(resizeWorkspaceBoundary(start, workspacePanelSpecs, boundary, delta)[index], workspacePanelSpecs[index].min);
+      }
+      const delta = direction * (toMinimum + 48);
+      const collapsed = resizeWorkspaceBoundary(start, workspacePanelSpecs, boundary, delta);
+      assert.equal(collapsed[index], 62);
+      assert.equal(getWorkspaceCollapsePreview(start, workspacePanelSpecs, boundary, delta), null);
+      assert.equal(resizeWorkspaceBoundary(collapsed, workspacePanelSpecs, boundary, -direction * 1)[index], 62);
+      assert.ok(resizeWorkspaceBoundary(collapsed, workspacePanelSpecs, boundary, -direction * 48)[index] >= workspacePanelSpecs[index].min);
+    }
+  }
+});
+
 test("boundary drags conserve width and never collapse an unrelated pane", () => {
   const { resizeWorkspaceBoundary, fitWorkspaceWidths } = loadAvrFrontendFunctionHooks(["resizeWorkspaceBoundary", "fitWorkspaceWidths"]);
   for (const budget of [686, 1000, 1522, 2400]) {
@@ -1491,6 +1552,14 @@ test("boundary drags conserve width and never collapse an unrelated pane", () =>
       }
     }
   }
+});
+
+test("reopening a wide toolbar borrows from its adjacent expanded pane first", () => {
+  const { resizeWorkspaceBoundary } = loadAvrFrontendFunctionHooks(["resizeWorkspaceBoundary"]);
+  const specs = workspacePanelSpecs.map((spec, index) => ({ ...spec, min: index === 2 ? 700 : spec.min }));
+  const start = [62, 1115, 62, 62];
+  assert.deepEqual(Array.from(resizeWorkspaceBoundary(start, specs, 1, -47)), start);
+  assert.deepEqual(Array.from(resizeWorkspaceBoundary(start, specs, 1, -48)), [62, 477, 700, 62]);
 });
 
 test("resizes only the adjacent pair and stops at its minimum widths", () => {
@@ -1573,6 +1642,7 @@ test("shared pointer handling ignores other pointers and completes once on captu
     setPointerCapture: id => { captured = id; },
     hasPointerCapture: id => captured === id,
     releasePointerCapture: () => { captured = null; },
+    removeAttribute() {},
   };
   const document = { addEventListener() {}, body: { classList: classList(bodyClasses) } };
   const { bindSplitResizer } = loadAvrFrontendFunctionHooks(["bindSplitResizer"], { document });

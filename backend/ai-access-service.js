@@ -10,7 +10,7 @@ const { MAX_PROVIDER_RESPONSES } = require("./avr-ai-limits");
 
 const COMPLETED_PROVIDER_USAGE = Symbol("completedProviderUsage");
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const DEVICE_COOKIE = "__Host-ud_device";
 const SESSION_COOKIE = "__Host-ud_session";
 const INSTALLATION_SECRET_HEADER = "x-uartdebug-installation";
@@ -271,7 +271,9 @@ class AiAccessService {
       authRequired: this.googleAuthRequired,
       authConfigured: config.configured,
       authenticated: Boolean(session),
-      user: session ? { emailMasked: session.masked_email } : null,
+      user: session
+        ? { displayName: session.display_name, emailMasked: session.masked_email }
+        : null,
       quota: budget ? toPublicQuota(budget) : null,
       account: session ? { maskedEmail: session.masked_email } : null,
       budget: budget ? toDiagnosticBudget(budget) : null,
@@ -462,7 +464,7 @@ class AiAccessService {
     const authorizationUrl = this.oauthClient.generateAuthUrl({
       access_type: "online",
       redirect_uri: this.redirectUri,
-      scope: ["openid", "email"],
+      scope: ["openid", "email", "profile"],
       prompt: "select_account",
       state,
       nonce,
@@ -617,6 +619,7 @@ class AiAccessService {
     }
     const accountHash = this._identityHash("google-sub", String(payload.sub));
     const emailMasked = maskEmail(payload.email);
+    let displayName = normalizeGoogleDisplayName(payload.name);
     const sessionToken = this._randomToken(32);
     const sessionHash = this._sessionHash(sessionToken);
     const expiresAt = now + this.sessionTtlMs;
@@ -624,19 +627,21 @@ class AiAccessService {
     this._transaction(() => {
       const existingAccount = this.database
         .prepare(
-          `SELECT 1 AS found
+          `SELECT display_name
              FROM google_accounts
             WHERE account_hash = ?`
         )
         .get(accountHash);
       if (existingAccount) {
+        // Google can omit this optional claim on a later sign-in.
+        displayName ||= existingAccount.display_name;
         this.database
           .prepare(
             `UPDATE google_accounts
-                SET masked_email = ?, last_seen_at = ?
+                SET masked_email = ?, display_name = ?, last_seen_at = ?
               WHERE account_hash = ?`
           )
-          .run(emailMasked, now, accountHash);
+          .run(emailMasked, displayName, now, accountHash);
       } else {
         const sourceBudget = this._readDeviceBudget(device.id);
         const initialAccountGrantNanoUsd = Math.min(
@@ -646,13 +651,14 @@ class AiAccessService {
         this.database
           .prepare(
             `INSERT INTO google_accounts
-               (account_hash, masked_email, grant_source_device_id,
+               (account_hash, masked_email, display_name, grant_source_device_id,
                 grant_nano_usd, spent_nano_usd, created_at, last_seen_at)
-             VALUES (?, ?, ?, ?, 0, ?, ?)`
+             VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
           )
           .run(
             accountHash,
             emailMasked,
+            displayName,
             device.id,
             initialAccountGrantNanoUsd,
             now,
@@ -686,7 +692,7 @@ class AiAccessService {
     sendRedirect(res, successUrl.toString());
     return {
       redirectUrl: successUrl.toString(),
-      user: { emailMasked },
+      user: { displayName, emailMasked },
     };
   }
 
@@ -2163,7 +2169,7 @@ class AiAccessService {
       .prepare(
         `SELECT auth_sessions.session_hash, auth_sessions.device_id,
                 auth_sessions.account_hash, auth_sessions.expires_at,
-                google_accounts.masked_email,
+                google_accounts.masked_email, google_accounts.display_name,
                 google_accounts.grant_source_device_id
            FROM auth_sessions
            JOIN google_accounts
@@ -3060,6 +3066,19 @@ function migrateDatabase(database) {
       // the deployment rollback guard rejects incompatible older code.
       database.exec("PRAGMA user_version = 3;");
     }
+    if (version < 4) {
+      // Existing accounts need one profile-enabled sign-in. Revoke only their
+      // old sessions; account identity, workspace and credit records remain.
+      database.exec(`
+        ALTER TABLE google_accounts
+          ADD COLUMN display_name TEXT NOT NULL DEFAULT '';
+        DELETE FROM auth_sessions
+          WHERE account_hash IN (
+            SELECT account_hash FROM google_accounts WHERE display_name = ''
+          );
+        PRAGMA user_version = 4;
+      `);
+    }
     database.exec("COMMIT");
   } catch (error) {
     try {
@@ -3727,6 +3746,15 @@ function normalizeIdentifier(value, maxBytes) {
   const text = String(value || "").trim();
   if (!text || Buffer.byteLength(text, "utf8") > maxBytes) return "";
   return text;
+}
+
+function normalizeGoogleDisplayName(value) {
+  if (typeof value !== "string") return "";
+  const text = value
+    .replace(/\s+/gu, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, "")
+    .trim();
+  return Buffer.byteLength(text, "utf8") <= 512 ? text : "";
 }
 
 function normalizeOptionalRequestId(value, { required = false } = {}) {

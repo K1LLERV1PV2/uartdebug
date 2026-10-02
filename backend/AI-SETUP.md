@@ -53,7 +53,8 @@ The production Google redirect URI is exactly:
 https://uartdebug.com/api/avr/ai/auth/google/callback
 ```
 
-Use only the `openid` and `email` scopes. Detailed Google Cloud setup,
+Use the `openid`, `email`, and `profile` scopes to receive the display name.
+Detailed Google Cloud setup,
 the sign-in flow, device semantics, and free-access rules are documented in
 [`../docs/AI_ACCESS_AND_CREDITS.md`](../docs/AI_ACCESS_AND_CREDITS.md).
 
@@ -372,10 +373,11 @@ The deployment workflow invokes `backup-ai-access-database.sh` before switching
 the backend release or restarting the AI service. The helper uses SQLite's
 online backup command and verifies the copy's integrity and schema version. A
 schema-changing deployment therefore fails closed if `sqlite3` is missing or the
-backup cannot be verified. The canvas release advances SQLite `user_version`
-to 3 without rewriting existing rows: older schema-2 backends cannot read the
-new canvas payloads. Rolling back to a pre-canvas backend therefore requires
-restoring its matching pre-migration database backup;
+backup cannot be verified. SQLite `user_version` 3 marks canvas-capable storage;
+version 4 adds Google profile display names and expires existing sessions for
+accounts without a name. Their account, workspace and credit records remain,
+and the next sign-in updates the same account using the profile scope. Rolling
+back to an earlier schema therefore requires restoring its matching pre-migration database backup;
 switching only the release symlink is insufficient. Before any rollback release
 symlink changes, the workflow compares the live SQLite `user_version` with the
 target backend's `AI_ACCESS_SCHEMA_VERSION` and refuses an incompatible rollback
