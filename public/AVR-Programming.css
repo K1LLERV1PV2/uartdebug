@@ -908,46 +908,76 @@ main,
   bottom: 0;
   left: 0;
   width: clamp(48px, 22%, 100px);
-  background: linear-gradient(90deg, transparent, rgba(129, 159, 141, 0.18) 24%, rgba(200, 255, 221, 0.38));
+  opacity: 0;
+  animation: pane-collapse-right 2400ms linear infinite both;
+}
+
+.pane-collapse-chevron::before,
+.pane-collapse-chevron::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.pane-collapse-chevron::before {
+  right: 14%;
+  width: 175%;
+  background: linear-gradient(90deg, transparent 10%, rgba(129, 159, 141, 0.02) 55%, rgba(200, 255, 221, 0.055));
+  clip-path: polygon(0 0, 52% 0, 100% 50%, 52% 100%, 0 100%, 46% 50%);
+}
+
+.pane-collapse-chevron::after {
+  inset-inline: 0;
+  background: linear-gradient(90deg, transparent, rgba(129, 159, 141, 0.12) 24%, rgba(200, 255, 221, 0.28));
   clip-path: polygon(0 0, 16% 0, 100% 50%, 16% 100%, 0 100%, 84% 50%);
-  animation: pane-collapse-right 1050ms linear infinite;
 }
 
 .pane-collapse-chevron:nth-child(2) {
-  animation-delay: -350ms;
+  animation-delay: 110ms;
 }
 
 .pane-collapse-chevron:nth-child(3) {
-  animation-delay: -700ms;
+  animation-delay: 220ms;
 }
 
 .pane-collapse-cue[data-direction="left"] .pane-collapse-chevron {
-  background: linear-gradient(270deg, transparent, rgba(129, 159, 141, 0.18) 24%, rgba(200, 255, 221, 0.38));
-  clip-path: polygon(100% 0, 84% 0, 0 50%, 84% 100%, 100% 100%, 16% 50%);
   animation-name: pane-collapse-left;
+}
+
+.pane-collapse-cue[data-direction="left"] .pane-collapse-chevron::before {
+  right: auto;
+  left: 14%;
+  background: linear-gradient(270deg, transparent 10%, rgba(129, 159, 141, 0.02) 55%, rgba(200, 255, 221, 0.055));
+  clip-path: polygon(100% 0, 48% 0, 0 50%, 48% 100%, 100% 100%, 54% 50%);
+}
+
+.pane-collapse-cue[data-direction="left"] .pane-collapse-chevron::after {
+  background: linear-gradient(270deg, transparent, rgba(129, 159, 141, 0.12) 24%, rgba(200, 255, 221, 0.28));
+  clip-path: polygon(100% 0, 84% 0, 0 50%, 84% 100%, 100% 100%, 16% 50%);
 }
 
 @keyframes pane-collapse-right {
   0% { transform: translateX(-100%); opacity: 0; }
-  15%, 85% { opacity: 1; }
-  100% { transform: translateX(100cqw); opacity: 0; }
+  4%, 32% { opacity: 1; }
+  42%, 100% { transform: translateX(calc(100cqw + 100%)); opacity: 0; }
 }
 
 @keyframes pane-collapse-left {
   0% { transform: translateX(100cqw); opacity: 0; }
-  15%, 85% { opacity: 1; }
-  100% { transform: translateX(-100%); opacity: 0; }
+  4%, 32% { opacity: 1; }
+  42%, 100% { transform: translateX(-200%); opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pane-collapse-cue[data-direction] .pane-collapse-chevron {
-    left: 12%;
-    opacity: 0.65;
+    left: 20%;
+    opacity: 0.55;
     animation: none;
   }
 
-  .pane-collapse-cue[data-direction] .pane-collapse-chevron:nth-child(2) { left: 40%; }
-  .pane-collapse-cue[data-direction] .pane-collapse-chevron:nth-child(3) { left: 68%; }
+  .pane-collapse-cue[data-direction] .pane-collapse-chevron:nth-child(2) { left: 36%; }
+  .pane-collapse-cue[data-direction] .pane-collapse-chevron:nth-child(3) { left: 52%; }
 }
 
 body.is-column-resizing,
@@ -1873,6 +1903,41 @@ body.is-row-resizing * {
   padding: 0 12px;
   font-size: 11px;
   white-space: nowrap;
+}
+
+.project-ai-profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--avr-control-gap);
+}
+
+.project-ai-profile-form[hidden] {
+  display: none;
+}
+
+.project-ai-profile-form label {
+  color: var(--avr-text-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-ai-profile-row {
+  display: flex;
+  align-items: center;
+  gap: var(--avr-control-gap);
+}
+
+.project-ai-profile-row .ui-action {
+  flex: 0 0 auto;
+  width: auto !important;
+  padding-inline: 16px;
+}
+
+.project-ai-profile-form p {
+  margin: 0;
+  color: var(--avr-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .project-ai-google-sign-in {

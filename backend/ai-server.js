@@ -15,6 +15,7 @@ const AI_SERVER_VERSION = "20260924-canvas-v2";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;
+const ACCOUNT_PROFILE_BODY_LIMIT = 4 * 1024;
 const DEFAULT_MAX_CONCURRENT = 2;
 const DEFAULT_AUTH_START_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_AUTH_START_MAX_PER_IP = 10;
@@ -84,7 +85,7 @@ function createAiHttpServer(options = {}) {
       DEFAULT_AUTH_START_MAX_GLOBAL
     ),
   });
-  const accountWorkspaceWriteLimiter = createFixedWindowLimiter({
+  const accountWriteLimiter = createFixedWindowLimiter({
     now,
     windowMs: readInteger(
       environment.AI_ACCOUNT_WORKSPACE_WRITE_WINDOW_MS,
@@ -190,6 +191,52 @@ function createAiHttpServer(options = {}) {
     }
 
     if (
+      req.method === "PATCH" &&
+      requestUrl.pathname === "/api/avr/ai/account/profile"
+    ) {
+      if (!String(req.headers.origin || "").trim()) {
+        return sendJson(res, 403, {
+          ok: false,
+          code: "origin_required",
+          message: "A same-origin browser request is required.",
+          requestId,
+        });
+      }
+      if (!isJsonRequest(req)) {
+        return sendJson(res, 415, {
+          ok: false,
+          code: "json_required",
+          message: "Content-Type must be application/json.",
+          requestId,
+        });
+      }
+      return handleAccessEndpoint(res, requestId, async () => {
+        const context = await accessService.authenticateAccountRequest(req, res);
+        const writeLimit = accountWriteLimiter.consume(context?.accountHash);
+        if (!writeLimit.allowed) {
+          res.setHeader("Retry-After", String(writeLimit.retryAfterSeconds));
+          throw new AiAccessError(
+            429,
+            "account_profile_rate_limited",
+            "Too many account saves. Try again shortly."
+          );
+        }
+        let body;
+        try {
+          body = await readJsonBody(req, ACCOUNT_PROFILE_BODY_LIMIT);
+        } catch (error) {
+          const tooLarge = error?.code === "body_too_large";
+          throw new AiAccessError(
+            tooLarge ? 413 : 400,
+            tooLarge ? "body_too_large" : "invalid_json",
+            tooLarge ? "The profile request is too large." : "Invalid JSON request body."
+          );
+        }
+        return await accessService.updateAccountProfile(context, body);
+      }, 200);
+    }
+
+    if (
       req.method === "GET" &&
       requestUrl.pathname === "/api/avr/ai/account/workspace"
     ) {
@@ -197,7 +244,7 @@ function createAiHttpServer(options = {}) {
         res,
         requestId,
         async () => {
-          const context = await accessService.authenticateAccountWorkspaceRequest(
+          const context = await accessService.authenticateAccountRequest(
             req,
             res
           );
@@ -231,7 +278,7 @@ function createAiHttpServer(options = {}) {
       let accountContext;
       try {
         accountContext =
-          await accessService.authenticateAccountWorkspaceRequest(req, res);
+          await accessService.authenticateAccountRequest(req, res);
       } catch (error) {
         const normalized = normalizeAccessError(error);
         return sendJson(res, normalized.status, {
@@ -242,7 +289,7 @@ function createAiHttpServer(options = {}) {
         });
       }
 
-      const workspaceWriteLimit = accountWorkspaceWriteLimiter.consume(
+      const workspaceWriteLimit = accountWriteLimiter.consume(
         accountContext?.accountHash
       );
       if (!workspaceWriteLimit.allowed) {
