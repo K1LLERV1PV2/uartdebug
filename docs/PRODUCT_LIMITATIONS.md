@@ -3,6 +3,20 @@
 This file records boundaries that code cannot honestly remove today. It should
 be updated when a limitation is mitigated or a deferred decision is made.
 
+## Supported client environment
+
+Uart Debug is designed and developed for desktop and laptop computers. Its
+workspace, panel resizing, editor controls, and hardware workflows target a
+desktop browser with a mouse or trackpad and keyboard. Phones and tablets are
+outside the supported product scope; mobile layouts and touch-specific workflows
+are not maintained.
+
+The supported hardware-access environment is a Chromium-based desktop browser
+with the Web Serial API, running over HTTPS or localhost. Desktop window resizing,
+browser zoom, keyboard navigation, and reduced-motion preferences remain part
+of the supported interface. Pointer events are shared browser input primitives
+and remain necessary for reliable mouse dragging and cancellation.
+
 ## Device uniqueness
 
 Uart Debug cannot reliably identify a physical device from a normal web page.

@@ -51,7 +51,6 @@ def main():
         "/favicon.ico",
         "/icons/favicon-192.png",
         "/icons/logo-512.png",
-        "/icons/apple-touch-icon.png",
     ]
     stable_url_patterns = [
         (
