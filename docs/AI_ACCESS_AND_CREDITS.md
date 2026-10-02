@@ -53,8 +53,11 @@ The backend owns the OAuth 2.0 / OpenID Connect authorization-code flow:
    `/api/avr/ai/auth/session` and signs out through
    `/api/avr/ai/auth/logout`.
 
-Only the `openid` and `email` scopes are needed. The browser must not
-send a Google ID token directly as a substitute for the server callback flow.
+The requested scopes are `openid`, `email`, and `profile`. The verified ID token's
+optional `name` claim supplies the account display name; a missing name does not
+block sign-in. Google may ask existing users to approve the additional profile
+scope on their next sign-in. The browser must not send a Google ID token directly
+as a substitute for the server callback flow.
 
 ### Google Cloud configuration
 
@@ -252,7 +255,7 @@ cryptocurrency.
 
 The access database belongs at
 `/var/lib/uartdebug-ai/data/ai-access.sqlite`, outside versioned releases. It may
-contain HMAC-derived Google account IDs, masked account display metadata,
+contain HMAC-derived Google account IDs, Google profile display names, masked emails,
 installation HMACs, sessions, grants, reservations, ledger rows, retained legacy chat
 history, the latest account-scoped AVR file-workspace snapshot, and the separate
 latest canvas snapshot.
@@ -263,8 +266,11 @@ The systemd service grants write access only to the documentation-cache and data
 OAuth credentials and the identity/session secrets are root-owned systemd
 credentials. Database backups are sensitive and need the same access controls,
 retention rules, encryption, and restore tests as the live database. SQLite schema
-3 marks canvas-capable storage; migration preserves existing rows, and rollback
-to older code requires its matching verified database backup.
+4 adds Google profile names to the canvas-capable storage. Its migration expires
+existing sessions for accounts without a stored name, prompting one new sign-in
+with the profile scope. Account IDs, workspace snapshots, grants and usage remain
+intact; restarting schema-4 code does not repeat the session reset. Rollback to
+older code requires its matching verified database backup.
 
 There is currently no self-service account-data export or deletion UI. Signing
 out, clearing browser storage, or revoking the OAuth connection does not delete
