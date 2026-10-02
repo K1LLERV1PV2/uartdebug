@@ -80,7 +80,6 @@ const APP_SHELL_ASSETS = [
   "/icons/favicon-192.png",
   "/icons/logo-512.png",
   "/icons/sign-in-with-google-light.svg",
-  "/icons/apple-touch-icon.png",
 ];
 
 const APP_SHELL_PATHS = new Set(APP_SHELL_ASSETS);

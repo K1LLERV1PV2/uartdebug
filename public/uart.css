@@ -963,58 +963,6 @@ body {
   gap: 20px;
 }
 
-/* Mobile responsive styles */
-@media (max-width: 768px) {
-  .connection-panel {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .connection-control {
-    width: 100%;
-  }
-
-  .connection-control select,
-  .connection-control input {
-    width: 100% !important;
-    max-width: none;
-  }
-
-  .log-controls {
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
-    margin-left: 0;
-  }
-
-  /* Terminals stacked on mobile */
-  .uart-sessions-split {
-    flex-direction: column;
-    height: auto;
-  }
-
-  .terminal-container {
-    height: 350px;
-    min-height: 350px;
-    max-height: 350px;
-  }
-
-  .oscilloscope-container {
-    height: 350px;
-    min-height: 350px;
-    max-height: 350px;
-  }
-
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .modal-content {
-    width: 95%;
-    margin: 10px;
-  }
-}
-
 /* Height-responsive adjustments for UART page */
 html,
 body {
@@ -1338,27 +1286,6 @@ body {
 .terminal-header .loop-interval-label {
   font-size: 10px;
   margin-left: 0;
-}
-
-/* Responsive adjustments for data mode controls */
-@media (max-width: 768px) {
-  .data-mode-controls {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-    margin-left: 0;
-    margin-top: 5px;
-    width: 100%;
-  }
-
-  .radio-group {
-    width: 100%;
-    justify-content: space-between;
-  }
-
-  .generator-params-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-height: 800px) {
@@ -1917,7 +1844,6 @@ body.terminal-page .terminal-layout-resizer {
   background: transparent;
   opacity: 0.66;
   outline: none;
-  touch-action: none;
   transition:
     opacity 140ms ease,
     background 140ms ease;
@@ -1982,7 +1908,6 @@ body.terminal-page .uart-session .terminal-header {
   min-width: 0;
   max-width: 100%;
   cursor: default;
-  touch-action: auto;
 }
 
 body.terminal-page .uart-session .terminal-header:active {
@@ -2005,7 +1930,6 @@ body.terminal-page
     .data-mode-controls
   ) {
   cursor: auto;
-  touch-action: auto;
 }
 
 body.terminal-page .uart-session.is-terminal-drag-source {
@@ -2337,74 +2261,6 @@ body.terminal-page .modal-body .connection-control select {
   width: 100% !important;
   max-width: none;
   height: 44px;
-}
-
-@media (max-width: 768px) {
-  body.terminal-page .feature-panel {
-    overflow-y: auto;
-  }
-
-  body.terminal-page .terminal-device-panel {
-    grid-template-columns: 1fr;
-    align-items: stretch;
-  }
-
-  body.terminal-page .terminal-connect-btn {
-    width: 100% !important;
-  }
-
-  body.terminal-page .terminal-status-lines {
-    grid-template-columns: auto minmax(0, 1fr);
-    width: 100%;
-  }
-
-  body.terminal-page .terminal-settings-btn {
-    width: 100% !important;
-    min-width: 0;
-  }
-
-  body.terminal-page .modal-content {
-    width: min(94vw, 420px);
-    max-height: 86vh;
-  }
-
-  body.terminal-page .settings-grid {
-    grid-template-columns: 1fr;
-  }
-
-  body.terminal-page .uart-sessions-split,
-  body.terminal-page .uart-sessions-split[data-terminal-layout="row"],
-  body.terminal-page .uart-sessions-split[data-terminal-layout="column"] {
-    flex-direction: column;
-    flex: 0 0 auto;
-    gap: 14px;
-  }
-
-  body.terminal-page .terminal-layout-resizer {
-    display: none;
-  }
-
-  body.terminal-page .uart-sessions-split .uart-section {
-    min-width: 0;
-    flex: 0 0 auto;
-  }
-
-  body.terminal-page .terminal-wrapper {
-    flex: 0 0 auto;
-  }
-
-  body.terminal-page :is(.terminal-shell, .generator-panel, .oscilloscope-container) {
-    flex: 0 0 auto;
-    height: 350px;
-    min-height: 350px;
-    max-height: 350px;
-  }
-
-  body.terminal-page .terminal-container {
-    height: auto;
-    min-height: 0;
-    max-height: none;
-  }
 }
 
 @media (max-height: 800px) {

@@ -44,7 +44,8 @@ The repository is under active development. Hardware access requires a browser t
 
 ## Browser and hardware requirements
 
-- A browser with the Web Serial API. Chromium-based desktop browsers are the primary supported environment.
+- A desktop or laptop computer with a mouse or trackpad and keyboard. Phones and tablets are outside the supported product scope.
+- A Chromium-based desktop browser with the Web Serial API.
 - HTTPS on a hosted installation, or `localhost` during development.
 - An OS driver for the selected USB-to-UART adapter, when the operating system requires one.
 - Suitable UART or UPDI wiring and target hardware for device operations.

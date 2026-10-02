@@ -71,14 +71,3 @@ body {
   border-radius: var(--ui-radius-small);
   background: rgba(112, 205, 145, 0.06);
 }
-
-@media (max-width: 560px) {
-  .legal-shell {
-    width: min(100% - 20px, 820px);
-    padding-top: 14px;
-  }
-
-  .legal-document {
-    padding: 20px;
-  }
-}
