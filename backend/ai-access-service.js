@@ -10,7 +10,7 @@ const { MAX_PROVIDER_RESPONSES } = require("./avr-ai-limits");
 
 const COMPLETED_PROVIDER_USAGE = Symbol("completedProviderUsage");
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const DEVICE_COOKIE = "__Host-ud_device";
 const SESSION_COOKIE = "__Host-ud_session";
 const INSTALLATION_SECRET_HEADER = "x-uartdebug-installation";
@@ -271,6 +271,9 @@ class AiAccessService {
       authRequired: this.googleAuthRequired,
       authConfigured: config.configured,
       authenticated: Boolean(session),
+      accountKey: session
+        ? this._identityHash("account-workspace-client", session.account_hash)
+        : null,
       user: session
         ? { displayName: session.display_name, emailMasked: session.masked_email }
         : null,
@@ -284,12 +287,12 @@ class AiAccessService {
     return payload;
   }
 
-  authenticateAccountWorkspaceRequest(req, res) {
+  authenticateAccountRequest(req, res) {
     if (!this.googleAuthEnabled) {
       throw new AiAccessError(
         401,
         "google_sign_in_required",
-        "Sign in with Google to use account workspace storage."
+        "Sign in with Google to use your account."
       );
     }
 
@@ -301,7 +304,7 @@ class AiAccessService {
       throw new AiAccessError(
         401,
         "google_sign_in_required",
-        "Sign in with Google to use account workspace storage."
+        "Sign in with Google to use your account."
       );
     }
 
@@ -313,6 +316,39 @@ class AiAccessService {
       ),
       deviceId: device.id,
     });
+  }
+
+  updateAccountProfile(context, rawInput) {
+    const accountHash = readWorkspaceAccountHash(context);
+    const accountKey = readWorkspaceAccountKey(context);
+    const input = normalizeAccountProfileInput(rawInput);
+    if (input.expectedAccountKey !== accountKey) {
+      throw new AiAccessError(
+        409,
+        "account_profile_account_mismatch",
+        "The signed-in account changed before this profile could be saved. Reload the account profile before saving again."
+      );
+    }
+    const account = this.database
+      .prepare(
+        `UPDATE google_accounts
+            SET display_name_override = ?
+          WHERE account_hash = ?
+          RETURNING masked_email,
+            COALESCE(NULLIF(display_name_override, ''), display_name) AS display_name`
+      )
+      .get(input.displayName, accountHash);
+    if (!account) {
+      throw new AiAccessError(
+        401,
+        "google_sign_in_required",
+        "Sign in with Google to use your account."
+      );
+    }
+    return {
+      accountKey,
+      user: { displayName: account.display_name, emailMasked: account.masked_email },
+    };
   }
 
   readAccountWorkspace(context) {
@@ -620,6 +656,7 @@ class AiAccessService {
     const accountHash = this._identityHash("google-sub", String(payload.sub));
     const emailMasked = maskEmail(payload.email);
     let displayName = normalizeGoogleDisplayName(payload.name);
+    let effectiveDisplayName = displayName;
     const sessionToken = this._randomToken(32);
     const sessionHash = this._sessionHash(sessionToken);
     const expiresAt = now + this.sessionTtlMs;
@@ -627,7 +664,7 @@ class AiAccessService {
     this._transaction(() => {
       const existingAccount = this.database
         .prepare(
-          `SELECT display_name
+          `SELECT display_name, display_name_override
              FROM google_accounts
             WHERE account_hash = ?`
         )
@@ -642,6 +679,7 @@ class AiAccessService {
               WHERE account_hash = ?`
           )
           .run(emailMasked, displayName, now, accountHash);
+        effectiveDisplayName = existingAccount.display_name_override || displayName;
       } else {
         const sourceBudget = this._readDeviceBudget(device.id);
         const initialAccountGrantNanoUsd = Math.min(
@@ -692,7 +730,7 @@ class AiAccessService {
     sendRedirect(res, successUrl.toString());
     return {
       redirectUrl: successUrl.toString(),
-      user: { displayName, emailMasked },
+      user: { displayName: effectiveDisplayName, emailMasked },
     };
   }
 
@@ -2169,7 +2207,9 @@ class AiAccessService {
       .prepare(
         `SELECT auth_sessions.session_hash, auth_sessions.device_id,
                 auth_sessions.account_hash, auth_sessions.expires_at,
-                google_accounts.masked_email, google_accounts.display_name,
+                google_accounts.masked_email,
+                COALESCE(NULLIF(google_accounts.display_name_override, ''),
+                  google_accounts.display_name) AS display_name,
                 google_accounts.grant_source_device_id
            FROM auth_sessions
            JOIN google_accounts
@@ -3079,6 +3119,15 @@ function migrateDatabase(database) {
         PRAGMA user_version = 4;
       `);
     }
+    if (version < 5) {
+      // Custom names override the verified Google fallback without revoking
+      // sessions or changing account identity, workspace or credit records.
+      database.exec(`
+        ALTER TABLE google_accounts
+          ADD COLUMN display_name_override TEXT NOT NULL DEFAULT '';
+        PRAGMA user_version = 5;
+      `);
+    }
     database.exec("COMMIT");
   } catch (error) {
     try {
@@ -3755,6 +3804,47 @@ function normalizeGoogleDisplayName(value) {
     .replace(/[\u0000-\u001f\u007f-\u009f]/gu, "")
     .trim();
   return Buffer.byteLength(text, "utf8") <= 512 ? text : "";
+}
+
+function normalizeAccountProfileInput(rawInput) {
+  if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput) ||
+      Object.keys(rawInput).some((key) => !["displayName", "expectedAccountKey"].includes(key)) ||
+      !Object.prototype.hasOwnProperty.call(rawInput, "displayName") ||
+      typeof rawInput.displayName !== "string") {
+    throw new AiAccessError(
+      400,
+      "invalid_display_name",
+      "The profile request must contain only displayName and expectedAccountKey."
+    );
+  }
+  if (!Object.prototype.hasOwnProperty.call(rawInput, "expectedAccountKey") ||
+      typeof rawInput.expectedAccountKey !== "string" ||
+      !/^[A-Za-z0-9_-]{32,128}$/.test(rawInput.expectedAccountKey)) {
+    throw new AiAccessError(
+      400,
+      "expected_account_key_required",
+      "expectedAccountKey must identify the account profile being saved."
+    );
+  }
+  const value = rawInput.displayName;
+  // Keep multilingual names and emoji, including joining characters. Reject
+  // line breaks, invalid Unicode and invisible directional control characters.
+  if (/[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\u061c\u200b\u200e\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u.test(value)) {
+    throw new AiAccessError(
+      400,
+      "invalid_display_name",
+      "Display name cannot contain control characters or line breaks."
+    );
+  }
+  const displayName = value.trim().normalize("NFC");
+  if ([...displayName].length > 80) {
+    throw new AiAccessError(
+      400,
+      "invalid_display_name",
+      "Display name must be at most 80 characters."
+    );
+  }
+  return { displayName, expectedAccountKey: rawInput.expectedAccountKey };
 }
 
 function normalizeOptionalRequestId(value, { required = false } = {}) {

@@ -1162,6 +1162,138 @@ test("leaves an uncertain repair reservation unresolved instead of partially set
   });
 });
 
+test("updates an authenticated profile through the shared account guard without invoking AI", async (t) => {
+  const calls = [];
+  const context = { accountHash: "signed-account", accountKey: "a".repeat(43), deviceId: "device" };
+  const server = createAiHttpServer({
+    environment: {},
+    aiService: {},
+    accessService: {
+      authenticateAccountRequest(req) {
+        assert.equal(req.headers.cookie, "signed-session-cookie");
+        calls.push("authenticate");
+        return context;
+      },
+      updateAccountProfile(receivedContext, body) {
+        assert.equal(receivedContext, context);
+        assert.deepEqual(body, { displayName: "Давид 🦉", expectedAccountKey: context.accountKey });
+        calls.push("save");
+        return { accountKey: context.accountKey, user: { displayName: body.displayName, emailMasked: "d***@e***.com" } };
+      },
+    },
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+  const response = await fetch(`${baseUrl}/api/avr/ai/account/profile`, {
+    method: "PATCH", headers: { Origin: baseUrl, "Content-Type": "application/json", Cookie: "signed-session-cookie" },
+    body: JSON.stringify({ displayName: "Давид 🦉", expectedAccountKey: context.accountKey }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.accountKey, context.accountKey);
+  assert.deepEqual(body.user, { displayName: "Давид 🦉", emailMasked: "d***@e***.com" });
+  assert.match(body.requestId, /^[a-f0-9-]{36}$/i);
+  assert.deepEqual(calls, ["authenticate", "save"]);
+  const unsupportedMethod = await fetch(`${baseUrl}/api/avr/ai/account/profile`, { headers: { Origin: baseUrl } });
+  assert.equal(unsupportedMethod.status, 404);
+});
+
+test("profile writes require a same-origin JSON request and a valid signed account session", async (t) => {
+  let authentications = 0;
+  let saves = 0;
+  const server = createAiHttpServer({
+    environment: {}, aiService: {},
+    accessService: {
+      authenticateAccountRequest() {
+        authentications += 1;
+        throw new AiAccessError(401, "google_sign_in_required", "Sign in with Google to use your account.");
+      },
+      updateAccountProfile() { saves += 1; },
+    },
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+  for (const [headers, status, code] of [
+    [{ "Content-Type": "application/json" }, 403, "origin_required"],
+    [{ Origin: "https://attacker.example", "Content-Type": "application/json" }, 403, "origin_not_allowed"],
+    [{ Origin: baseUrl, "Sec-Fetch-Site": "cross-site", "Content-Type": "application/json" }, 403, "origin_not_allowed"],
+    [{ Origin: baseUrl, "Content-Type": "text/plain" }, 415, "json_required"],
+  ]) {
+    const response = await fetch(`${baseUrl}/api/avr/ai/account/profile`, {
+      method: "PATCH", headers, body: JSON.stringify({ displayName: "Name" }),
+    });
+    assert.equal(response.status, status);
+    assert.equal((await response.json()).code, code);
+  }
+  assert.equal(authentications, 0);
+  const unsigned = await fetch(`${baseUrl}/api/avr/ai/account/profile`, {
+    method: "PATCH", headers: { Origin: baseUrl, "Content-Type": "application/json" }, body: "not json",
+  });
+  assert.equal(unsigned.status, 401);
+  assert.equal((await unsigned.json()).code, "google_sign_in_required");
+  assert.equal(authentications, 1);
+  assert.equal(saves, 0);
+});
+
+test("profile writes enforce a small body limit and return safe JSON and validation errors", async (t) => {
+  let saves = 0;
+  const server = createAiHttpServer({
+    environment: {}, aiService: {},
+    accessService: {
+      authenticateAccountRequest: () => ({ accountHash: "signed-account" }),
+      updateAccountProfile() {
+        saves += 1;
+        throw new AiAccessError(400, "invalid_display_name", "Display name must be at most 80 characters.");
+      },
+    },
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+  const patch = (body) => fetch(`${baseUrl}/api/avr/ai/account/profile`, {
+    method: "PATCH", headers: { Origin: baseUrl, "Content-Type": "application/json" }, body,
+  });
+  const malformed = await patch("not json");
+  assert.equal(malformed.status, 400);
+  assert.equal((await malformed.json()).code, "invalid_json");
+  const oversized = await patch(JSON.stringify({ displayName: "x".repeat(4096) }));
+  assert.equal(oversized.status, 413);
+  assert.equal((await oversized.json()).code, "body_too_large");
+  assert.equal(saves, 0);
+  const invalid = await patch(JSON.stringify({ displayName: "x".repeat(81) }));
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json()).code, "invalid_display_name");
+  assert.equal(saves, 1);
+});
+
+test("profile writes share the account-save rate limit and never spend AI credits", async (t) => {
+  let saves = 0;
+  const server = createAiHttpServer({
+    environment: { AI_ACCOUNT_WORKSPACE_WRITES_PER_ACCOUNT: "2" }, aiService: {},
+    accessService: {
+      authenticateAccountRequest: () => ({ accountHash: "signed-account" }),
+      updateAccountProfile() { saves += 1; return { user: { displayName: "Name", emailMasked: "d***@e***.com" } }; },
+    },
+    log: { info() {}, warn() {} },
+  });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+  const patch = () => fetch(`${baseUrl}/api/avr/ai/account/profile`, {
+    method: "PATCH", headers: { Origin: baseUrl, "Content-Type": "application/json" }, body: JSON.stringify({ displayName: "Name" }),
+  });
+  assert.equal((await patch()).status, 200);
+  assert.equal((await patch()).status, 200);
+  const limited = await patch();
+  assert.equal(limited.status, 429);
+  assert.equal((await limited.json()).code, "account_profile_rate_limited");
+  assert.ok(Number(limited.headers.get("retry-after")) > 0);
+  assert.equal(saves, 2);
+});
+
 test("serves independently revisioned account workspace snapshots", async (t) => {
   const calls = [];
   const emptyRecord = (schemaVersion) => ({
@@ -1171,7 +1303,7 @@ test("serves independently revisioned account workspace snapshots", async (t) =>
     data: null,
   });
   const accessService = {
-    authenticateAccountWorkspaceRequest(req) {
+    authenticateAccountRequest(req) {
       calls.push(["authenticate", req.method]);
       return {
         accountHash: "private-account-hash",
@@ -1266,7 +1398,7 @@ test("account workspace writes require same-origin JSON and preserve revision co
   let authenticateCalls = 0;
   let writeCalls = 0;
   const accessService = {
-    authenticateAccountWorkspaceRequest() {
+    authenticateAccountRequest() {
       authenticateCalls += 1;
       return {
         accountHash: "account",
@@ -1336,7 +1468,7 @@ test("account workspace writes require same-origin JSON and preserve revision co
 test("account workspace writes reject a stale account key before persistence", async (t) => {
   let writeCalls = 0;
   const accessService = {
-    authenticateAccountWorkspaceRequest() {
+    authenticateAccountRequest() {
       return {
         accountHash: "new-account-hash",
         accountKey: "new_account_key_123456789012345678901234567890",
@@ -1381,7 +1513,7 @@ test("rate limits account workspace writes without spending AI credits", async (
   let writeCalls = 0;
   const accountKey = "account_key_123456789012345678901234567890";
   const accessService = {
-    authenticateAccountWorkspaceRequest() {
+    authenticateAccountRequest() {
       return { accountHash: "rate-limited-account", accountKey, deviceId: "device" };
     },
     writeAccountWorkspace(_context, type, body) {
@@ -1432,7 +1564,7 @@ test("rate limits account workspace writes without spending AI credits", async (
 test("account instruction HTTP body limit is enforced before persistence", async (t) => {
   let writeCalls = 0;
   const accessService = {
-    authenticateAccountWorkspaceRequest() {
+    authenticateAccountRequest() {
       return {
         accountHash: "account",
         accountKey: "account_key_123456789012345678901234567890",

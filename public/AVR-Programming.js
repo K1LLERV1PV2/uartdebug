@@ -27,6 +27,7 @@
   const PROJECT_AI_AUTH_SESSION_URL = "/api/avr/ai/auth/session";
   const PROJECT_AI_GOOGLE_START_URL = "/api/avr/ai/auth/google/start";
   const PROJECT_AI_LOGOUT_URL = "/api/avr/ai/auth/logout";
+  const PROJECT_AI_ACCOUNT_PROFILE_URL = "/api/avr/ai/account/profile";
   const PROJECT_AI_ACCOUNT_WORKSPACE_URL =
     "/api/avr/ai/account/workspace";
   const MARKDOWN_AUTHORSHIP_SCHEMA_VERSION = 1;
@@ -172,6 +173,9 @@
   let projectAiAuthSession = null;
   let projectAiAuthSessionPromise = null;
   let projectAiAuthRequestEpoch = 0;
+  let projectAiProfileSavePromise = null;
+  let projectAiProfileNameDirty = false;
+  let projectAiProfileAccountKey = "";
   let projectAiQuotaUpdateSequence = 0;
   let projectAiLatestQuota = null;
   let workspaceResizeFrame = null;
@@ -7591,6 +7595,23 @@
       return;
     }
 
+    const profileForm = $("projectAiProfileForm");
+    const nameInput = $("projectAiDisplayName");
+    const saveName = $("projectAiProfileSaveBtn");
+    const signedIn = session?.mode === "google" && session.configured === true && session.authenticated === true;
+    const accountKey = signedIn ? String(session.accountKey || "") : "";
+    if (profileForm) profileForm.hidden = !signedIn;
+    if (!signedIn || accountKey !== projectAiProfileAccountKey) {
+      projectAiProfileNameDirty = false;
+      nameInput?.removeAttribute("aria-invalid");
+    }
+    projectAiProfileAccountKey = accountKey;
+    if (nameInput) {
+      if (!projectAiProfileNameDirty) nameInput.value = signedIn ? String(session.user?.displayName || "") : "";
+      nameInput.disabled = !signedIn || !accountKey || auth.getAttribute("aria-busy") === "true";
+    }
+    if (saveName) saveName.disabled = !signedIn || !accountKey || !projectAiProfileNameDirty || auth.getAttribute("aria-busy") === "true";
+
     auth.hidden = true;
     accountButton.classList.remove(
       "is-sign-in-required",
@@ -7641,14 +7662,14 @@
       return;
     }
 
-    account.textContent =
-      String(session.user?.displayName || "").trim() || "Google account";
+    const displayName = String(session.user?.displayName || "").trim() || "Google account";
+    account.textContent = String(session.user?.emailMasked || "").trim() || "Google account";
     account.title = account.textContent;
-    if (accountLabel) accountLabel.textContent = account.textContent;
+    if (accountLabel) accountLabel.textContent = displayName;
     accountButton.classList.add("is-authenticated");
     accountButton.setAttribute(
       "aria-label",
-      `Open AI account: ${account.textContent}`
+      `Open AI account: ${displayName}`
     );
     const remaining = Number(session.quota?.remaining);
     renderProjectAiQuota(session.quota);
@@ -7683,9 +7704,77 @@
     }
     if (signIn) signIn.disabled = !!pending;
     if (signOut) signOut.disabled = !!pending;
+    const signedIn = projectAiAuthSession?.authenticated === true && !!projectAiProfileAccountKey;
+    if ($("projectAiDisplayName")) $("projectAiDisplayName").disabled = !!pending || !signedIn;
+    if ($("projectAiProfileSaveBtn")) $("projectAiProfileSaveBtn").disabled = !!pending || !signedIn || !projectAiProfileNameDirty;
+  }
+
+  function handleProjectAiProfileNameInput() {
+    projectAiProfileNameDirty = true;
+    $("projectAiDisplayName")?.removeAttribute("aria-invalid");
+    setProjectAiAccountStatus();
+    if ($("projectAiProfileSaveBtn")) $("projectAiProfileSaveBtn").disabled = !projectAiProfileAccountKey || $("projectAiAuth")?.getAttribute("aria-busy") === "true";
+  }
+
+  async function saveProjectAiProfile(event) {
+    event?.preventDefault();
+    if (projectAiProfileSavePromise) return projectAiProfileSavePromise;
+    const input = $("projectAiDisplayName");
+    const expectedAccountKey = projectAiProfileAccountKey;
+    if (!input || !expectedAccountKey || projectAiAuthSession?.authenticated !== true ||
+        $("projectAiAuth")?.getAttribute("aria-busy") === "true") return false;
+    const displayName = input.value.trim().normalize("NFC");
+    if (Array.from(displayName).length > 80 || /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\u061C\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069\uFEFF]/u.test(input.value)) {
+      input.setAttribute("aria-invalid", "true");
+      setProjectAiAccountStatus("Use a display name of up to 80 characters without control characters.", "error");
+      input.focus({ preventScroll: true });
+      return false;
+    }
+    const authEpoch = ++projectAiAuthRequestEpoch;
+    let refreshAuth = false;
+    projectAiAuthSessionPromise = null;
+    setProjectAiAuthPending(true);
+    setProjectAiAccountStatus();
+    const savePromise = (async () => {
+      try {
+        const response = await fetch(PROJECT_AI_ACCOUNT_PROFILE_URL, {
+          method: "PATCH",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ displayName, expectedAccountKey }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (authEpoch !== projectAiAuthRequestEpoch || projectAiAuthSession?.authenticated !== true) return false;
+        refreshAuth = response.status === 401 || data?.code === "account_profile_account_mismatch";
+        if (!response.ok || data?.ok !== true || data.accountKey !== expectedAccountKey || typeof data.user?.displayName !== "string") {
+          throw new Error(String(data?.error?.message || data?.error || data?.message || `Display name could not be saved (${response.status}).`));
+        }
+        projectAiProfileNameDirty = false;
+        input.removeAttribute("aria-invalid");
+        projectAiAuthSession = { ...projectAiAuthSession, user: { ...projectAiAuthSession.user, ...data.user } };
+        renderProjectAiAuthSession(projectAiAuthSession);
+        setProjectAiAccountStatus(displayName ? "Display name saved." : "Google display name restored.", "success");
+        return true;
+      } catch (error) {
+        if (authEpoch === projectAiAuthRequestEpoch) {
+          setProjectAiAccountStatus(error?.message || "Display name could not be saved. Try again.", "error");
+        }
+        return false;
+      }
+    })();
+    projectAiProfileSavePromise = savePromise;
+    try { return await savePromise; }
+    finally {
+      if (projectAiProfileSavePromise === savePromise) {
+        projectAiProfileSavePromise = null;
+        setProjectAiAuthPending(false);
+        if (refreshAuth) await fetchProjectAiAuthSession().catch(() => {});
+      }
+    }
   }
 
   async function fetchProjectAiAuthSession() {
+    if (projectAiProfileSavePromise) await projectAiProfileSavePromise;
     if (projectAiAuthSessionPromise) return projectAiAuthSessionPromise;
 
     const quotaSequenceAtRequest = projectAiQuotaUpdateSequence;
@@ -7873,6 +7962,7 @@
   }
 
   async function handleProjectAiSignOut() {
+    if (projectAiProfileSavePromise) await projectAiProfileSavePromise;
     let focusSignIn = false;
     setProjectAiAccountStatus();
     setProjectAiAuthPending(true);
@@ -8100,7 +8190,7 @@
       return;
     }
     const accountEpoch = projectAiAccountWorkspaceEpoch;
-    const authEpoch = projectAiAuthRequestEpoch;
+    const accountKey = projectAiAuthSession?.accountKey || null;
     const canvasScopeEpoch = projectInstructionScopeEpoch;
     let quotaUpdated = false;
     let indicator = appendProjectAiThinking();
@@ -8114,12 +8204,12 @@
       });
       const result = await readProjectAiApiResponse(response, (progress) => renderProjectAiThinkingProgress(indicator, progress));
       const data = result.data;
+      if (accountEpoch !== projectAiAccountWorkspaceEpoch || accountKey !== (projectAiAuthSession?.accountKey || null)) {
+        throw new Error("The account changed while AI was working. No changes were applied.");
+      }
       if (data?.quota) { updateProjectAiQuota(data.quota); quotaUpdated = true; }
       if (result.status < 200 || result.status >= 300 || data?.ok !== true) {
         throw new Error(String(data?.message || data?.error?.message || `Canvas request failed (${result.status}).`));
-      }
-      if (accountEpoch !== projectAiAccountWorkspaceEpoch || authEpoch !== projectAiAuthRequestEpoch) {
-        throw new Error("The account changed while AI was working. No changes were applied.");
       }
       const baseRevision = assertProjectAiInstructionIsFresh(request, canvasScopeEpoch);
       const target = getCanvasTarget();
@@ -9391,6 +9481,8 @@
       projectAiSignInBtn.addEventListener("click", handleProjectAiSignIn);
     projectAiSignOutBtn &&
       projectAiSignOutBtn.addEventListener("click", handleProjectAiSignOut);
+    $("projectAiProfileForm")?.addEventListener("submit", saveProjectAiProfile);
+    $("projectAiDisplayName")?.addEventListener("input", handleProjectAiProfileNameInput);
     fileAddModal &&
       fileAddModal.addEventListener("click", (event) => {
         const target = event.target;

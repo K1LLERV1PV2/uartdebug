@@ -173,7 +173,7 @@ async function signIn(service, oauthClient, { cookie = "", code, sub, email, nam
     email_verified: true,
   });
   const callbackResponse = new MockResponse();
-  await service.completeGoogleLogin(
+  const callbackResult = await service.completeGoogleLogin(
     request(cookieHeader(startResponse)),
     callbackResponse,
     `https://uartdebug.test/api/avr/ai/auth/google/callback?state=${encodeURIComponent(
@@ -185,6 +185,7 @@ async function signIn(service, oauthClient, { cookie = "", code, sub, email, nam
     cookie: cookieHeader(callbackResponse),
     callbackResponse,
     startResponse,
+    callbackResult,
   };
 }
 
@@ -202,6 +203,7 @@ test("public mode authorizes without Google or persistent identity configuration
   assert.equal(status.mode, "public");
   assert.equal(status.authRequired, false);
   assert.equal(status.authenticated, false);
+  assert.equal(status.accountKey, null);
   assert.equal(status.configured, true);
 });
 
@@ -300,6 +302,131 @@ test("missing or malformed optional Google profile names do not prevent sign-in"
     assert.equal(status.authenticated, true);
     assert.equal(status.user.displayName, "");
   }
+});
+
+test("editable names are shared by account, survive Google sign-in and leave workspace and credits unchanged", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const first = await signIn(service, oauthClient, {
+    code: "editable-first", sub: "editable-account", email: "person@example.com", name: "Google Name",
+  });
+  const secondDevice = await signIn(service, oauthClient, {
+    code: "editable-second-device", sub: "editable-account", email: "person@example.com", name: "Google Name",
+  });
+  const other = await signIn(service, oauthClient, {
+    code: "editable-other", sub: "other-account", email: "other@example.com", name: "Other Person",
+  });
+  const context = service.authenticateAccountRequest(request(first.cookie), new MockResponse());
+  assert.equal((await service.getPublicStatus(request(first.cookie), new MockResponse())).accountKey, context.accountKey);
+  assert.equal(service.readAccountWorkspace(context).accountKey, context.accountKey);
+  service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 0, expectedAccountKey: context.accountKey,
+    data: { schemaVersion: 2, revision: 1, markdown: "# Existing project", annotations: [] },
+  });
+  const beforeAccount = service.database.prepare("SELECT * FROM google_accounts WHERE account_hash = ?").get(context.accountHash);
+  const beforeSessions = service.database.prepare("SELECT * FROM auth_sessions ORDER BY session_hash").all();
+  const beforeWorkspace = service.database.prepare("SELECT * FROM account_workspace_snapshots").all();
+  const saved = service.updateAccountProfile(context, { displayName: "  Давид Jose\u0301 👩‍💻  ", expectedAccountKey: context.accountKey });
+  assert.equal(saved.accountKey, context.accountKey);
+  assert.deepEqual(saved.user, { displayName: "Давид José 👩‍💻", emailMasked: "p***@e***.com" });
+  assert.deepEqual({ ...service.database.prepare("SELECT * FROM google_accounts WHERE account_hash = ?").get(context.accountHash) },
+    { ...beforeAccount, display_name_override: "Давид José 👩‍💻" });
+  assert.deepEqual(service.database.prepare("SELECT * FROM auth_sessions ORDER BY session_hash").all(), beforeSessions);
+  assert.deepEqual(service.database.prepare("SELECT * FROM account_workspace_snapshots").all(), beforeWorkspace);
+  assert.equal((await service.getPublicStatus(request(secondDevice.cookie), new MockResponse())).user.displayName, "Давид José 👩‍💻");
+  assert.equal((await service.getPublicStatus(request(other.cookie), new MockResponse())).user.displayName, "Other Person");
+  const signedInAgain = await signIn(service, oauthClient, {
+    cookie: first.cookie, code: "editable-relogin", sub: "editable-account", email: "person@example.com", name: "Updated Google Name",
+  });
+  assert.equal(signedInAgain.callbackResult.user.displayName, "Давид José 👩‍💻");
+  assert.equal((await service.getPublicStatus(request(first.cookie), new MockResponse())).user.displayName, "Давид José 👩‍💻");
+  assert.equal(service.database.prepare("SELECT display_name FROM google_accounts WHERE account_hash = ?").get(context.accountHash).display_name, "Updated Google Name");
+  assert.deepEqual(service.updateAccountProfile(context, { displayName: "   ", expectedAccountKey: context.accountKey }).user,
+    { displayName: "Updated Google Name", emailMasked: "p***@e***.com" });
+});
+
+test("editable names validate Unicode code points and reject malformed requests without changing the saved name", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  assert.throws(() => service.authenticateAccountRequest(request(), new MockResponse()),
+    (error) => error.status === 401 && error.code === "google_sign_in_required");
+  const login = await signIn(service, oauthClient, {
+    code: "editable-validation", sub: "editable-validation-account", email: "person@example.com",
+  });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  assert.equal(service.updateAccountProfile(context, { displayName: "محمد‌رضا", expectedAccountKey: context.accountKey }).user.displayName, "محمد‌رضا");
+  assert.equal(service.updateAccountProfile(context, { displayName: "🦉".repeat(80), expectedAccountKey: context.accountKey }).user.displayName, "🦉".repeat(80));
+  const before = service.database.prepare("SELECT * FROM google_accounts").get();
+  for (const input of [null, [], "Name", {}, { displayName: null }, { displayName: 12 },
+    { displayName: "Name", accountHash: context.accountHash }, { displayName: "🦉".repeat(81) },
+    ...["Name\n", "Name\u0000", "Name\u007f", "Name\u0085", "Name\u2028", "Name\u202e", "Name\ud800", "Name\u200b"].map((displayName) => ({ displayName }))]) {
+    const keyedInput = input && typeof input === "object" && !Array.isArray(input)
+      ? { ...input, expectedAccountKey: context.accountKey } : input;
+    assert.throws(() => service.updateAccountProfile(context, keyedInput),
+      (error) => error.status === 400 && error.code === "invalid_display_name", JSON.stringify(input));
+    assert.deepEqual(service.database.prepare("SELECT * FROM google_accounts").get(), before);
+  }
+  for (const expectedAccountKey of [undefined, null, 12, [], [context.accountKey], {}, "", "x".repeat(31), "x".repeat(129)]) {
+    assert.throws(() => service.updateAccountProfile(context, { displayName: "Name", expectedAccountKey }),
+      (error) => error.status === 400 && error.code === "expected_account_key_required");
+    assert.deepEqual(service.database.prepare("SELECT * FROM google_accounts").get(), before);
+  }
+  assert.equal(service.updateAccountProfile(context, { displayName: "", expectedAccountKey: context.accountKey }).user.displayName, "");
+});
+
+test("a profile opened under account A cannot rename account B after a cookie-based account switch", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  assert.equal((await service.getPublicStatus(request(), new MockResponse())).accountKey, null);
+  const loginA = await signIn(service, oauthClient, {
+    code: "profile-switch-a", sub: "profile-switch-account-a", email: "a@example.com", name: "Account A",
+  });
+  const statusA = await service.getPublicStatus(request(loginA.cookie), new MockResponse());
+  const contextA = service.authenticateAccountRequest(request(loginA.cookie), new MockResponse());
+  assert.equal(statusA.accountKey, contextA.accountKey);
+  assert.equal(statusA.accountKey, service.readAccountWorkspace(contextA).accountKey);
+  const staleForm = { displayName: "Name intended for A", expectedAccountKey: statusA.accountKey };
+  const loginB = await signIn(service, oauthClient, {
+    cookie: loginA.cookie, code: "profile-switch-b", sub: "profile-switch-account-b", email: "b@example.com", name: "Account B",
+  });
+  const statusB = await service.getPublicStatus(request(loginB.cookie), new MockResponse());
+  const contextB = service.authenticateAccountRequest(request(loginB.cookie), new MockResponse());
+  assert.notEqual(statusB.accountKey, statusA.accountKey);
+  assert.equal(statusB.accountKey, contextB.accountKey);
+  assert.equal(statusB.accountKey, service.readAccountWorkspace(contextB).accountKey);
+  const accountsBefore = service.database.prepare("SELECT * FROM google_accounts ORDER BY account_hash").all();
+  assert.throws(() => service.updateAccountProfile(contextB, staleForm),
+    (error) => error.status === 409 && error.code === "account_profile_account_mismatch");
+  assert.deepEqual(service.database.prepare("SELECT * FROM google_accounts ORDER BY account_hash").all(), accountsBefore);
+  assert.equal((await service.getPublicStatus(request(loginA.cookie), new MockResponse())).user.displayName, "Account A");
+  assert.equal((await service.getPublicStatus(request(loginB.cookie), new MockResponse())).user.displayName, "Account B");
+  assert.throws(() => service.updateAccountProfile(contextB, { displayName: "Name" }),
+    (error) => error.status === 400 && error.code === "expected_account_key_required");
+  const saved = service.updateAccountProfile(contextB, { displayName: "New B", expectedAccountKey: statusB.accountKey });
+  assert.equal(saved.accountKey, statusB.accountKey);
+  assert.equal(saved.user.displayName, "New B");
+});
+
+test("the shared account guard rejects forged, mismatched-device and expired session cookies", async (t) => {
+  let timestamp = 1_800_000_000_000;
+  const { service, oauthClient } = makeService({ now: () => timestamp, sessionTtlMs: 60_000 });
+  t.after(() => service.close());
+  const first = await signIn(service, oauthClient, {
+    code: "guard-first", sub: "guard-account", email: "person@example.com", name: "Original Name",
+  });
+  const otherDevice = await signIn(service, oauthClient, {
+    code: "guard-other-device", sub: "guard-other-account", email: "other@example.com", name: "Other Name",
+  });
+  const rejectCookie = (cookie) => assert.throws(
+    () => service.authenticateAccountRequest(request(cookie), new MockResponse()),
+    (error) => error.status === 401 && error.code === "google_sign_in_required"
+  );
+  rejectCookie(`${DEVICE_COOKIE}=forged-device-cookie; ${SESSION_COOKIE}=${cookieValue(first.callbackResponse, SESSION_COOKIE)}`);
+  rejectCookie(`${DEVICE_COOKIE}=${cookieValue(first.callbackResponse, DEVICE_COOKIE)}; ${SESSION_COOKIE}=forged-session-cookie`);
+  rejectCookie(`${DEVICE_COOKIE}=${cookieValue(otherDevice.callbackResponse, DEVICE_COOKIE)}; ${SESSION_COOKIE}=${cookieValue(first.callbackResponse, SESSION_COOKIE)}`);
+  timestamp += 60_001;
+  rejectCookie(otherDevice.cookie);
+  assert.equal(service.database.prepare("SELECT COUNT(*) AS n FROM google_accounts WHERE display_name_override <> ''").get().n, 0);
 });
 
 test("Google login returns JSON for same-origin fetch while setting device identity", async (t) => {
@@ -1741,7 +1868,7 @@ test("account workspace snapshots persist independently without spending AI cred
     "UPDATE google_accounts SET spent_nano_usd = grant_nano_usd; UPDATE devices SET spent_nano_usd = grant_nano_usd;"
   );
 
-  const context = service.authenticateAccountWorkspaceRequest(
+  const context = service.authenticateAccountRequest(
     request(login.cookie),
     new MockResponse()
   );
@@ -1863,15 +1990,15 @@ test("account workspace is isolated by Google account and rejects stale revision
     sub: "workspace-other-account",
     email: "other@example.com",
   });
-  const firstContext = service.authenticateAccountWorkspaceRequest(
+  const firstContext = service.authenticateAccountRequest(
     request(first.cookie),
     new MockResponse()
   );
-  const secondDeviceContext = service.authenticateAccountWorkspaceRequest(
+  const secondDeviceContext = service.authenticateAccountRequest(
     request(secondDevice.cookie),
     new MockResponse()
   );
-  const otherContext = service.authenticateAccountWorkspaceRequest(
+  const otherContext = service.authenticateAccountRequest(
     request(other.cookie),
     new MockResponse()
   );
@@ -1926,7 +2053,7 @@ test("account workspace validates authentication, schemas, and payload limits", 
   t.after(() => service.close());
   assert.throws(
     () =>
-      service.authenticateAccountWorkspaceRequest(request(), new MockResponse()),
+      service.authenticateAccountRequest(request(), new MockResponse()),
     (error) => error instanceof AiAccessError && error.status === 401
   );
   const login = await signIn(service, oauthClient, {
@@ -1934,7 +2061,7 @@ test("account workspace validates authentication, schemas, and payload limits", 
     sub: "workspace-limits-account",
     email: "limits@example.com",
   });
-  const context = service.authenticateAccountWorkspaceRequest(
+  const context = service.authenticateAccountRequest(
     request(login.cookie),
     new MockResponse()
   );
@@ -2111,14 +2238,14 @@ test("account workspace validates authentication, schemas, and payload limits", 
   assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.instruction, 256 * 1024);
 });
 
-test("AI access database migrates to schema 4 with canvas storage and Google profile names", (t) => {
+test("AI access database migrates to schema 5 with canvas storage and editable profile names", (t) => {
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "uartdebug-ai-schema-")
   );
   const databasePath = path.join(temporaryDirectory, "ai-access.sqlite");
   const initial = makeService({ databasePath }).service;
   initial.database.exec(
-    "ALTER TABLE google_accounts DROP COLUMN display_name; DROP TABLE account_workspace_snapshots; PRAGMA user_version = 1;"
+    "ALTER TABLE google_accounts DROP COLUMN display_name_override; ALTER TABLE google_accounts DROP COLUMN display_name; DROP TABLE account_workspace_snapshots; PRAGMA user_version = 1;"
   );
   initial.close();
 
@@ -2127,10 +2254,10 @@ test("AI access database migrates to schema 4 with canvas storage and Google pro
     service.close();
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   });
-  assert.equal(AI_ACCESS_SCHEMA_VERSION, 4);
+  assert.equal(AI_ACCESS_SCHEMA_VERSION, 5);
   assert.equal(
     Number(service.database.prepare("PRAGMA user_version").get().user_version),
-    4
+    5
   );
   const table = service.database
     .prepare(
@@ -2146,7 +2273,7 @@ test("canvas v2 and a public YAML specification survive account synchronization"
   const login = await signIn(service, oauthClient, {
     code: "canvas-workspace", sub: "canvas-workspace-account", email: "canvas@example.com",
   });
-  const context = service.authenticateAccountWorkspaceRequest(request(login.cookie), new MockResponse());
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
   const canvas = {
     schemaVersion: 2, revision: 9, locale: "ru", markdown: "# Задача\nМигать светодиодом.",
     target: { mcu: "attiny1624", packageName: "SOIC-14" },
@@ -2190,31 +2317,69 @@ test("schema-2 migration preserves credits and legacy workspace bytes through pr
   const login = await signIn(initial.service, initial.oauthClient, {
     code: "legacy-workspace", sub: "legacy-workspace-account", email: "legacy@example.com",
   });
-  const context = initial.service.authenticateAccountWorkspaceRequest(request(login.cookie), new MockResponse());
+  const context = initial.service.authenticateAccountRequest(request(login.cookie), new MockResponse());
   const legacyInstruction = { schemaVersion: 1, revision: 7, markdown: "# Existing project\n", skillRefs: [] };
   initial.service.writeAccountWorkspace(context, "instruction", {
     baseRevision: 0, expectedAccountKey: context.accountKey, data: legacyInstruction,
   });
-  initial.service.database.exec("UPDATE google_accounts SET spent_nano_usd = 12345; UPDATE devices SET spent_nano_usd = 12345; ALTER TABLE google_accounts DROP COLUMN display_name; PRAGMA user_version = 2;");
+  initial.service.database.exec("UPDATE google_accounts SET spent_nano_usd = 12345; UPDATE devices SET spent_nano_usd = 12345; ALTER TABLE google_accounts DROP COLUMN display_name_override; ALTER TABLE google_accounts DROP COLUMN display_name; PRAGMA user_version = 2;");
   const snapshot = initial.service.database.prepare("SELECT * FROM account_workspace_snapshots").get();
   const account = initial.service.database.prepare("SELECT * FROM google_accounts").get();
   initial.service.close();
   const { service: migrated, oauthClient } = makeService({ databasePath });
   t.after(() => { migrated.close(); fs.rmSync(temporaryDirectory, { recursive: true, force: true }); });
-  assert.equal(migrated.database.prepare("PRAGMA user_version").get().user_version, 4);
+  assert.equal(migrated.database.prepare("PRAGMA user_version").get().user_version, 5);
   const expired = await migrated.getPublicStatus(request(login.cookie), new MockResponse());
   assert.equal(expired.authenticated, false);
   assert.deepEqual(migrated.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
-  assert.deepEqual({ ...migrated.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name: "" });
+  assert.deepEqual({ ...migrated.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name: "", display_name_override: "" });
   const renewed = await signIn(migrated, oauthClient, {
     cookie: login.cookie, code: "legacy-profile", sub: "legacy-workspace-account",
     email: "legacy@example.com", name: "Existing User",
   });
-  const restoredContext = migrated.authenticateAccountWorkspaceRequest(request(renewed.cookie), new MockResponse());
+  const restoredContext = migrated.authenticateAccountRequest(request(renewed.cookie), new MockResponse());
   assert.equal(restoredContext.accountKey, context.accountKey);
   assert.deepEqual(migrated.readAccountWorkspace(restoredContext).documents.instruction.data, legacyInstruction);
   assert.deepEqual(migrated.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
-  assert.deepEqual({ ...migrated.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name: "Existing User" });
+  assert.deepEqual({ ...migrated.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name: "Existing User", display_name_override: "" });
+});
+
+test("schema-4 editable-name migration preserves active sessions, identity, workspace and credits", async (t) => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-editable-name-migration-"));
+  const databasePath = path.join(temporaryDirectory, "ai-access.sqlite");
+  const initial = makeService({ databasePath });
+  const login = await signIn(initial.service, initial.oauthClient, {
+    code: "schema-four-name", sub: "schema-four-account", email: "existing@example.com", name: "Google Name",
+  });
+  const context = initial.service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  initial.service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 0, expectedAccountKey: context.accountKey,
+    data: { schemaVersion: 2, revision: 1, markdown: "# Existing project", annotations: [] },
+  });
+  initial.service.database.exec("UPDATE google_accounts SET spent_nano_usd = 4321; ALTER TABLE google_accounts DROP COLUMN display_name_override; PRAGMA user_version = 4;");
+  const account = initial.service.database.prepare("SELECT * FROM google_accounts").get();
+  const sessions = initial.service.database.prepare("SELECT * FROM auth_sessions").all();
+  const snapshots = initial.service.database.prepare("SELECT * FROM account_workspace_snapshots").all();
+  const devices = initial.service.database.prepare("SELECT * FROM devices").all();
+  initial.service.close();
+  const upgraded = makeService({ databasePath }).service;
+  assert.equal(upgraded.database.prepare("PRAGMA user_version").get().user_version, 5);
+  assert.deepEqual({ ...upgraded.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name_override: "" });
+  assert.deepEqual(upgraded.database.prepare("SELECT * FROM auth_sessions").all(), sessions);
+  assert.deepEqual(upgraded.database.prepare("SELECT * FROM account_workspace_snapshots").all(), snapshots);
+  assert.deepEqual(upgraded.database.prepare("SELECT * FROM devices").all(), devices);
+  assert.equal((await upgraded.getPublicStatus(request(login.cookie), new MockResponse())).authenticated, true);
+  const upgradedContext = upgraded.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  assert.equal(upgradedContext.accountKey, context.accountKey);
+  upgraded.updateAccountProfile(upgradedContext, { displayName: "Saved Name", expectedAccountKey: upgradedContext.accountKey });
+  upgraded.close();
+  const reopened = makeService({ databasePath }).service;
+  t.after(() => { reopened.close(); fs.rmSync(temporaryDirectory, { recursive: true, force: true }); });
+  assert.deepEqual((await reopened.getPublicStatus(request(login.cookie), new MockResponse())).user,
+    { displayName: "Saved Name", emailMasked: "e***@e***.com" });
+  assert.deepEqual(reopened.database.prepare("SELECT * FROM auth_sessions").all(), sessions);
+  assert.deepEqual(reopened.database.prepare("SELECT * FROM account_workspace_snapshots").all(), snapshots);
+  assert.equal(reopened.database.prepare("SELECT spent_nano_usd FROM google_accounts").get().spent_nano_usd, 4321);
 });
 
 test("schema-3 profile migration revokes old sessions once and retains account identity and workspace", async (t) => {
@@ -2224,26 +2389,26 @@ test("schema-3 profile migration revokes old sessions once and retains account i
   const login = await signIn(initial.service, initial.oauthClient, {
     code: "old-profile", sub: "existing-profile-account", email: "existing@example.com",
   });
-  const context = initial.service.authenticateAccountWorkspaceRequest(request(login.cookie), new MockResponse());
+  const context = initial.service.authenticateAccountRequest(request(login.cookie), new MockResponse());
   initial.service.writeAccountWorkspace(context, "instruction", {
     baseRevision: 0, expectedAccountKey: context.accountKey,
     data: { schemaVersion: 2, revision: 1, markdown: "# Existing project\n", annotations: [] },
   });
-  initial.service.database.exec("UPDATE google_accounts SET spent_nano_usd = 4321; ALTER TABLE google_accounts DROP COLUMN display_name; PRAGMA user_version = 3;");
+  initial.service.database.exec("UPDATE google_accounts SET spent_nano_usd = 4321; ALTER TABLE google_accounts DROP COLUMN display_name_override; ALTER TABLE google_accounts DROP COLUMN display_name; PRAGMA user_version = 3;");
   const account = initial.service.database.prepare("SELECT * FROM google_accounts").get();
   const snapshot = initial.service.database.prepare("SELECT * FROM account_workspace_snapshots").get();
   const links = initial.service.database.prepare("SELECT * FROM device_account_links").all();
   initial.service.close();
   const upgraded = makeService({ databasePath });
   assert.equal(upgraded.service.database.prepare("SELECT COUNT(*) AS n FROM auth_sessions").get().n, 0);
-  assert.deepEqual({ ...upgraded.service.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name: "" });
+  assert.deepEqual({ ...upgraded.service.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name: "", display_name_override: "" });
   assert.deepEqual(upgraded.service.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
   assert.deepEqual(upgraded.service.database.prepare("SELECT * FROM device_account_links").all(), links);
   const renewed = await signIn(upgraded.service, upgraded.oauthClient, {
     cookie: login.cookie, code: "new-profile", sub: "existing-profile-account",
     email: "existing@example.com", name: "David Profile",
   });
-  const renewedContext = upgraded.service.authenticateAccountWorkspaceRequest(request(renewed.cookie), new MockResponse());
+  const renewedContext = upgraded.service.authenticateAccountRequest(request(renewed.cookie), new MockResponse());
   assert.equal(renewedContext.accountKey, context.accountKey);
   assert.equal(upgraded.service.database.prepare("SELECT COUNT(*) AS n FROM google_accounts").get().n, 1);
   upgraded.service.close();

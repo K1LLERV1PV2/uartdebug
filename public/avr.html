@@ -547,6 +547,24 @@
                   </button>
                 </div>
 
+                <form id="projectAiProfileForm" class="project-ai-profile-form" hidden>
+                  <label for="projectAiDisplayName">Display name</label>
+                  <div class="project-ai-profile-row">
+                    <input
+                      id="projectAiDisplayName"
+                      class="ui-text-input"
+                      type="text"
+                      autocomplete="nickname"
+                      maxlength="160"
+                      aria-describedby="projectAiDisplayNameHint"
+                    />
+                    <button id="projectAiProfileSaveBtn" class="connect-btn ui-action" type="submit" disabled>
+                      Save
+                    </button>
+                  </div>
+                  <p id="projectAiDisplayNameHint">Shown in Uart Debug. Leave blank to use your Google name.</p>
+                </form>
+
                 <span
                   class="project-ai-auth-unavailable"
                   id="projectAiAuthUnavailable"
@@ -570,7 +588,7 @@
                 >
                   Before sign-in, Google shares a verified account identifier,
                   profile name and email. Uart Debug stores a pseudonymous
-                  identifier, the name for account display, and masked email,
+                  identifier, the Google name and your chosen display name, and masked email,
                   and links the account to this browser
                   installation for authentication, a shared free AI-credit
                   pool, and abuse prevention. Google identity data is not sent

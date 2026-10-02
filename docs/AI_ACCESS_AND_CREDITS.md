@@ -54,10 +54,29 @@ The backend owns the OAuth 2.0 / OpenID Connect authorization-code flow:
    `/api/avr/ai/auth/logout`.
 
 The requested scopes are `openid`, `email`, and `profile`. The verified ID token's
-optional `name` claim supplies the account display name; a missing name does not
+optional `name` claim supplies the default account display name; a missing name does not
 block sign-in. Google may ask existing users to approve the additional profile
 scope on their next sign-in. The browser must not send a Google ID token directly
 as a substitute for the server callback flow.
+
+Signed-in users can edit their display name in the Account dialog. A same-origin
+JSON `PATCH /api/avr/ai/account/profile` with
+`{ "displayName": "Name", "expectedAccountKey": "..." }` stores an account-wide
+override and returns the account key, effective name and masked email.
+The signed device cookie and opaque session select the account; the client cannot
+choose an account ID. The session response includes the same opaque `accountKey`
+used by workspace synchronization, or `null` when signed out. A profile form
+captures this key when opened and sends it with its save. Missing or malformed
+keys are rejected; an account switch returns `account_profile_account_mismatch`
+without editing the newly signed-in account. Profile edits require no AI call
+and spend no credits.
+Names are trimmed, normalized to NFC and limited to 80 Unicode code points.
+Control characters, line breaks, invalid Unicode and invisible directional
+controls are rejected; multilingual names and joining characters are supported.
+A blank name clears the override and restores the verified Google name. Later
+Google sign-ins update the fallback name while preserving the user's override.
+Profile and workspace writes share the existing account-save rate limit; the
+profile request body has a separate 4 KiB limit.
 
 ### Google Cloud configuration
 
@@ -255,7 +274,7 @@ cryptocurrency.
 
 The access database belongs at
 `/var/lib/uartdebug-ai/data/ai-access.sqlite`, outside versioned releases. It may
-contain HMAC-derived Google account IDs, Google profile display names, masked emails,
+contain HMAC-derived Google account IDs, Google profile names and user-edited display names, masked emails,
 installation HMACs, sessions, grants, reservations, ledger rows, retained legacy chat
 history, the latest account-scoped AVR file-workspace snapshot, and the separate
 latest canvas snapshot.
@@ -269,7 +288,9 @@ retention rules, encryption, and restore tests as the live database. SQLite sche
 4 adds Google profile names to the canvas-capable storage. Its migration expires
 existing sessions for accounts without a stored name, prompting one new sign-in
 with the profile scope. Account IDs, workspace snapshots, grants and usage remain
-intact; restarting schema-4 code does not repeat the session reset. Rollback to
+intact; restarting schema-4 or later code does not repeat the session reset.
+Schema 5 adds the optional display-name override without expiring current
+sessions or changing account IDs, workspace snapshots, grants or usage. Rollback to
 older code requires its matching verified database backup.
 
 There is currently no self-service account-data export or deletion UI. Signing

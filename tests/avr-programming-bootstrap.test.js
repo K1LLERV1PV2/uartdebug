@@ -58,6 +58,7 @@ function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
     TextDecoder,
     URL,
     localStorage: fakeWindow.localStorage,
+    fetch: overrides.fetch,
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../public/ui-controls.js"), "utf8"), sandbox);
   vm.runInNewContext(instrumented, sandbox);
@@ -1055,6 +1056,198 @@ test("unlimited Google account shows its entitlement without hiding or disabling
   assert.equal(accountButton.hasAttribute("aria-haspopup"), false);
   assert.equal(credits.hidden, true);
   assert.equal(document.getElementById("projectAiBudget").hidden, true);
+});
+
+test("account name saves once, preserves an edited draft during quota updates, and refreshes the visible name", async () => {
+  const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+  let finishSave;
+  const calls = [];
+  const hooks = loadAvrFrontendFunctionHooks([
+    "saveProjectAiProfile", "handleProjectAiProfileNameInput", "updateProjectAiQuota",
+    "session(value) { projectAiAuthSession = value; renderProjectAiAuthSession(value); }",
+  ], { document, fetch: (url, options) => {
+    calls.push({ url, options });
+    return new Promise(resolve => { finishSave = resolve; });
+  } });
+  hooks.session({ mode: "google", configured: true, authenticated: true, accountKey: "profile_account_key_12345678901234567890",
+    user: { displayName: "David", emailMasked: "d***@example.com" }, quota: { unlimited: true } });
+  const input = document.getElementById("projectAiDisplayName");
+  const button = document.getElementById("projectAiProfileSaveBtn");
+  assert.equal(input.value, "David");
+  assert.equal(button.disabled, true);
+  input.value = "  Давид 👩‍💻  ";
+  hooks.handleProjectAiProfileNameInput();
+  hooks.updateProjectAiQuota({ unlimited: true });
+  assert.equal(input.value, "  Давид 👩‍💻  ", "Credit refresh must preserve an unsaved name");
+  const saved = hooks.saveProjectAiProfile();
+  const duplicate = hooks.saveProjectAiProfile();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/avr/ai/account/profile");
+  assert.equal(calls[0].options.method, "PATCH");
+  assert.equal(calls[0].options.credentials, "same-origin");
+  assert.deepEqual(JSON.parse(calls[0].options.body), { displayName: "Давид 👩‍💻", expectedAccountKey: "profile_account_key_12345678901234567890" });
+  assert.equal(input.disabled, true);
+  assert.equal(document.getElementById("projectAiSignOutBtn").disabled, true);
+  finishSave({ ok: true, status: 200, json: async () => ({ ok: true, accountKey: "profile_account_key_12345678901234567890", user: { displayName: "Давид 👩‍💻", emailMasked: "d***@example.com" } }) });
+  assert.deepEqual(await Promise.all([saved, duplicate]), [true, true]);
+  assert.equal(input.value, "Давид 👩‍💻");
+  assert.equal(input.disabled, false);
+  assert.equal(button.disabled, true);
+  assert.equal(document.querySelector(".project-ai-account-trigger-label").textContent, "Давид 👩‍💻");
+  assert.equal(document.getElementById("projectAiAccount").textContent, "d***@example.com");
+  assert.equal(document.getElementById("projectAiCredits").textContent, "Unlimited AI Credits");
+});
+
+test("failed name saves preserve the draft and can retry or reset to the Google name", async () => {
+  const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+  let fail = true;
+  const hooks = loadAvrFrontendFunctionHooks([
+    "saveProjectAiProfile", "handleProjectAiProfileNameInput",
+    "prepare() { projectAiAuthSession = {mode:'google',configured:true,authenticated:true,accountKey:'profile_account_key_12345678901234567890',user:{displayName:'David'},quota:{unlimited:true}}; renderProjectAiAuthSession(projectAiAuthSession); }",
+  ], { document, fetch: async () => fail
+    ? { ok: false, status: 429, json: async () => ({ message: "Try again shortly." }) }
+    : { ok: true, status: 200, json: async () => ({ ok: true, accountKey: "profile_account_key_12345678901234567890", user: { displayName: "David", emailMasked: "d***@example.com" } }) } });
+  hooks.prepare();
+  const input = document.getElementById("projectAiDisplayName");
+  input.value = "New name";
+  hooks.handleProjectAiProfileNameInput();
+  assert.equal(await hooks.saveProjectAiProfile(), false);
+  assert.equal(input.value, "New name");
+  assert.equal(document.getElementById("projectAiProfileSaveBtn").disabled, false);
+  assert.equal(document.getElementById("projectAiAccountStatus").textContent, "Try again shortly.");
+  fail = false;
+  input.value = "";
+  hooks.handleProjectAiProfileNameInput();
+  assert.equal(await hooks.saveProjectAiProfile(), true);
+  assert.equal(input.value, "David");
+  assert.equal(document.getElementById("projectAiAccountStatus").textContent, "Google display name restored.");
+});
+
+test("a delayed name-save response cannot repaint a signed-out account", async () => {
+  const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+  let finishSave;
+  const hooks = loadAvrFrontendFunctionHooks([
+    "saveProjectAiProfile", "handleProjectAiProfileNameInput",
+    "prepare() { projectAiAuthSession = {mode:'google',configured:true,authenticated:true,accountKey:'profile_account_key_12345678901234567890',user:{displayName:'David'}}; renderProjectAiAuthSession(projectAiAuthSession); }",
+    "expire() { projectAiAuthRequestEpoch++; projectAiAuthSession = {mode:'google',configured:true,authenticated:false}; renderProjectAiAuthSession(projectAiAuthSession); }",
+  ], { document, fetch: () => new Promise(resolve => { finishSave = resolve; }) });
+  hooks.prepare();
+  document.getElementById("projectAiDisplayName").value = "Old response";
+  hooks.handleProjectAiProfileNameInput();
+  const saved = hooks.saveProjectAiProfile();
+  hooks.expire();
+  finishSave({ ok: true, status: 200, json: async () => ({ ok: true, accountKey: "profile_account_key_12345678901234567890", user: { displayName: "Old response" } }) });
+  assert.equal(await saved, false);
+  assert.equal(document.getElementById("projectAiProfileForm").hidden, true);
+  assert.equal(document.getElementById("projectAiDisplayName").value, "");
+  assert.equal(document.querySelector(".project-ai-account-trigger-label").textContent, "Continue with Google");
+});
+
+test("name validation accepts 80 Unicode points and rejects longer names and multiline/control text", async () => {
+  const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+  let calls = 0;
+  const hooks = loadAvrFrontendFunctionHooks([
+    "saveProjectAiProfile", "handleProjectAiProfileNameInput",
+    "prepare() { projectAiAuthSession = {mode:'google',configured:true,authenticated:true,accountKey:'profile_account_key_12345678901234567890',user:{displayName:'David'}}; renderProjectAiAuthSession(projectAiAuthSession); }",
+  ], { document, fetch: async (_, options) => {
+    calls++;
+    return { ok: true, status: 200, json: async () => ({ ok: true, accountKey: "profile_account_key_12345678901234567890", user: { displayName: JSON.parse(options.body).displayName } }) };
+  } });
+  hooks.prepare();
+  const input = document.getElementById("projectAiDisplayName");
+  for (const name of ["🙂".repeat(81), "David\nTest", "David\u2028Test", "David\u202eTest", "David\ud800Test"]) {
+    input.value = name;
+    hooks.handleProjectAiProfileNameInput();
+    assert.equal(await hooks.saveProjectAiProfile(), false);
+    assert.equal(input.getAttribute("aria-invalid"), "true");
+  }
+  assert.equal(calls, 0);
+  input.value = "🙂".repeat(80);
+  hooks.handleProjectAiProfileNameInput();
+  assert.equal(await hooks.saveProjectAiProfile(), true);
+  assert.equal(calls, 1);
+});
+
+test("an account switch clears the previous account's unsaved name even when masked emails match", () => {
+  const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+  const hooks = loadAvrFrontendFunctionHooks([
+    "handleProjectAiProfileNameInput",
+    "session(value) { projectAiAuthSession = value; renderProjectAiAuthSession(value); }",
+  ], { document });
+  const session = { mode: "google", configured: true, authenticated: true,
+    accountKey: "account_a_123456789012345678901234567890", user: { displayName: "Account A", emailMasked: "d***@example.com" } };
+  hooks.session(session);
+  const input = document.getElementById("projectAiDisplayName");
+  input.value = "A's unfinished name";
+  hooks.handleProjectAiProfileNameInput();
+  hooks.session({ ...session, accountKey: "account_b_123456789012345678901234567890", user: { ...session.user, displayName: "Account B" } });
+  assert.equal(input.value, "Account B");
+  assert.equal(document.getElementById("projectAiProfileSaveBtn").disabled, true);
+});
+
+test("a session read started before a name save cannot restore the former name", async () => {
+  const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+  const key = "profile_account_key_12345678901234567890";
+  let finishRead;
+  const hooks = loadAvrFrontendFunctionHooks([
+    "fetchProjectAiAuthSession", "saveProjectAiProfile", "handleProjectAiProfileNameInput",
+    "prepare() { projectAiAuthSession = {mode:'google',configured:true,authenticated:true,accountKey:'profile_account_key_12345678901234567890',user:{displayName:'David'}}; renderProjectAiAuthSession(projectAiAuthSession); }",
+  ], { document, fetch: (url) => url.endsWith("/auth/session")
+    ? new Promise(resolve => { finishRead = resolve; })
+    : Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, accountKey: key, user: { displayName: "New name" } }) }) });
+  hooks.prepare();
+  const oldRead = hooks.fetchProjectAiAuthSession();
+  document.getElementById("projectAiDisplayName").value = "New name";
+  hooks.handleProjectAiProfileNameInput();
+  assert.equal(await hooks.saveProjectAiProfile(), true);
+  finishRead({ ok: true, status: 200, json: async () => ({ ok: true, mode: "google", configured: true, authenticated: true, accountKey: key, user: { displayName: "David" } }) });
+  await oldRead;
+  assert.equal(document.querySelector(".project-ai-account-trigger-label").textContent, "New name");
+  assert.equal(document.getElementById("projectAiDisplayName").value, "New name");
+});
+
+test("a name save preserves an in-flight canvas result while a real account switch rejects it and its quota", async () => {
+  for (const changeAccount of [false, true]) {
+    const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+    let finishCanvas;
+    const hooks = loadAvrFrontendFunctionHooks([
+      "submitProjectCanvas", "saveProjectAiProfile", "handleProjectAiProfileNameInput",
+      `prepare() {
+        projectInstructionDocument = normalizeProjectInstructionDocument({ schemaVersion:2, revision:3, markdown:'Blink LED', annotations:[] });
+        projectAiAuthSession = {mode:'google',configured:true,authenticated:true,accountKey:'profile_account_key_12345678901234567890',user:{displayName:'David'},quota:{unlimited:true}};
+        renderProjectAiAuthSession(projectAiAuthSession);
+        getCanvasTarget = () => ({ mcu:'attiny1624', packageName:'SOIC-14' });
+        appendProjectAiThinking = () => null;
+        removeProjectAiThinking = () => {};
+        applyProjectInstructionMarkdown = markdown => { window.appliedCanvas = markdown; };
+        fetchProjectAiAuthSession = async () => projectAiAuthSession;
+      }`,
+      `changeAccount() {
+        projectAiAuthSession = {...projectAiAuthSession,accountKey:'other_account_key_123456789012345678901',user:{displayName:'Other'},quota:{granted:100,remaining:80}};
+        renderProjectAiAuthSession(projectAiAuthSession);
+      }`,
+      "applied() { return window.appliedCanvas; }",
+    ], { document, fetch: (url) => url.endsWith("/canvas")
+      ? new Promise(resolve => { finishCanvas = resolve; })
+      : Promise.resolve({ ok:true, status:200, json:async()=>({ok:true,accountKey:"profile_account_key_12345678901234567890",user:{displayName:"New name"}}) }) });
+    hooks.prepare();
+    const canvasRequest = hooks.submitProjectCanvas();
+    document.getElementById("projectAiDisplayName").value = "New name";
+    hooks.handleProjectAiProfileNameInput();
+    assert.equal(await hooks.saveProjectAiProfile(), true);
+    if (changeAccount) hooks.changeAccount();
+    finishCanvas({ ok:true, status:200, headers:{get:()=>"application/json"}, json:async()=>({ok:true,kind:"canvas",baseRevision:3,
+      canvas:{schemaVersion:2,revision:4,markdown:"AI added details",annotations:[]},quota:{unlimited:true},message:"Canvas updated."}) });
+    await canvasRequest;
+    if (changeAccount) {
+      assert.equal(hooks.applied(), undefined);
+      assert.match(document.getElementById("projectCanvasStatus").textContent, /account changed/);
+      assert.equal(document.getElementById("projectAiBudgetValue").textContent, "80 / 100");
+    } else {
+      assert.equal(hooks.applied(), "AI added details");
+      assert.equal(document.getElementById("projectCanvasStatus").textContent, "Canvas updated.");
+    }
+  }
 });
 
 test("keeps only technical AI concurrency safeguards", () => {
