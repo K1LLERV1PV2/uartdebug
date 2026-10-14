@@ -671,6 +671,15 @@ function validateCanvasOutput(raw, options = {}) {
     MAX_CANVAS_BYTES,
     { generated: true },
   );
+  if (
+    operation === "analyze" &&
+    !input.markdown.trim() &&
+    !/^[ \t]*>[ \t]*#{6}[ \t]+\*\[[^\]\r\n]{1,40}\][ \t]+[^\r\n]+\*[ \t]*\r?\n(?:[ \t]*>[ \t]*\r?\n)*[ \t]*>[ \t]*\S[^\r\n]*/m.test(markdown)
+  )
+    fail(
+      "Reviewing an empty draft must put initial questions in canonical inline Markdown remark blocks on that draft, not only in the service message. This stage explicitly authorizes those remarks before project identity is confirmed.",
+      true,
+    );
   if (operation !== "analyze" && markdown !== input.markdown)
     fail(
       "Code generation and description must preserve the specification exactly.",
