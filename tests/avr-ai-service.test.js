@@ -1033,3 +1033,52 @@ test("generation checks canonical physical pin claims before compiler work", asy
   );
   assert.equal(compilations, 0);
 });
+
+test("empty analysis repairs message-only output into inline questions and retains both calls' usage", async () => {
+  const raw = input("analyze");
+  raw.canvas.markdown = "";
+  raw.mcu = raw.canvas.target.mcu = "";
+  raw.packageName = raw.canvas.target.packageName = "";
+  raw.currentProject = null;
+  const questions =
+    "> ###### *[AI.1] Question.*\n>\n> What project name and version should be used?";
+  let calls = 0;
+  const result = await service({
+    environment: { ...environment, AI_COMPILE_MAX_REPAIR_ATTEMPTS: "1" },
+    fetch: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      calls += 1;
+      if (calls === 2) {
+        const repair = JSON.parse(body.input.at(-1).content);
+        assert.equal(repair.repairAttempt, 1);
+        assert.equal(repair.validationError.code, "invalid_generated_canvas");
+        assert.match(repair.validationError.message, /inline/i);
+      }
+      return response({
+        ...envelope({
+          action: "clarify",
+          message: "Provide the project name and version.",
+          canvas: {
+            markdown: calls === 1 ? "" : questions,
+            locale: "en",
+            annotations: [],
+          },
+          project: null,
+        }),
+        id: calls === 1 ? "resp_empty_analysis" : "resp_inline_analysis",
+      });
+    },
+  }).processCanvas(raw);
+  assert.equal(calls, 2);
+  assert.equal(result.kind, "canvas");
+  assert.equal(result.stage, "analyze");
+  assert.equal(result.canvas.markdown, questions);
+  assert.equal(result.canvas.revision, raw.canvas.revision + 1);
+  assert.equal(result._metering.usage.inputTokens, 240);
+  assert.equal(result._metering.usage.outputTokens, 60);
+  assert.equal(result._metering.usage.totalTokens, 300);
+  assert.deepEqual(
+    result._metering.responses.map((item) => item.responseId),
+    ["resp_empty_analysis", "resp_inline_analysis"],
+  );
+});

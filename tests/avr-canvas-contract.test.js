@@ -63,6 +63,25 @@ const options = (operation = "generate", overrides = {}) => ({
   ...overrides,
 });
 
+test("empty draft review requires inline remarks and accepts an explicitly authorized initial question", () => {
+  const raw = {
+    ...generation(),
+    action: "clarify",
+    project: null,
+    canvas: { markdown: "", locale: "en", annotations: [] },
+  };
+  const opts = options("analyze", {
+    canvas: canvas({ markdown: "" }),
+    currentProject: null,
+  });
+  assert.throws(() => validateCanvasOutput(raw, opts), /initial questions/);
+  raw.canvas.markdown = "> ###### *[AI.1] Question.*";
+  assert.throws(() => validateCanvasOutput(raw, opts), /initial questions/);
+  raw.canvas.markdown =
+    "> ###### *[AI.1] Question.*\n>\n> What project name and version should be used?";
+  assert.equal(validateCanvasOutput(raw, opts).canvas.markdown, raw.canvas.markdown);
+});
+
 test("legacy instructions migrate without obsolete skill references or data loss", () => {
   const migrated = normalizeCanvas({
     schemaVersion: 1,
