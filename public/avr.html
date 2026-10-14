@@ -194,25 +194,24 @@
                     id="fileListResizer"
                     role="separator"
                     tabindex="0"
-                    aria-label="Resize files and canvas"
+                    aria-label="Resize projects and specification"
                     aria-orientation="vertical"
                     data-tooltip-disabled
                   ></div>
 
-                  <div class="project-ai-layout" aria-label="AI project canvas">
+                  <div class="project-ai-layout" aria-label="Project specification">
                     <section class="project-instruction-panel avr-session-panel" aria-labelledby="projectInstructionTitle">
-                      <h2 class="sr-only" id="projectInstructionTitle">Project canvas</h2>
+                      <h2 class="sr-only" id="projectInstructionTitle">Project specification</h2>
                       <form class="project-canvas-controls ui-panel-header" id="projectCanvasForm" novalidate>
-                        <button class="connect-btn ui-action" id="projectCanvasRunBtn" type="submit">Process canvas</button>
+                        <button class="connect-btn ui-action" id="projectCanvasRunBtn" type="submit">Review specification</button>
                       </form>
                       <span class="project-instruction-save-state" id="projectInstructionSaveState" role="status" aria-live="polite" hidden></span>
                       <div class="project-instruction-workspace">
                         <div class="project-instruction-live-editor scroll-frame" id="projectInstructionDropZone">
-                          <label class="sr-only" for="projectInstructionEditor">Project canvas Markdown</label>
+                          <label class="sr-only" for="projectInstructionEditor">Project specification Markdown</label>
                           <textarea id="projectInstructionEditor" spellcheck="true"></textarea>
                         </div>
                       </div>
-                      <div id="projectCanvasAnnotationsFallback" class="project-canvas-annotations" hidden></div>
                       <div class="project-canvas-status" id="projectCanvasStatus" role="status" aria-live="polite" hidden></div>
                     </section>
                   </div>
@@ -222,7 +221,7 @@
                     id="projectAiColumnResizer"
                     role="separator"
                     tabindex="0"
-                    aria-label="Resize canvas and code"
+                    aria-label="Resize specification and code"
                     aria-orientation="vertical"
                     aria-controls="projectInstructionTitle editorWorkspace"
                     data-tooltip-disabled
@@ -250,6 +249,7 @@
                         </div>
                       </div>
                       <div class="editor-build-actions" role="group" aria-label="Build and flash">
+                        <button class="connect-btn ui-action" id="projectGenerateCodeBtn" type="button">Generate code</button>
                         <button class="connect-btn ui-action" id="compileBtn" type="button">
                           Compile
                         </button>
@@ -305,7 +305,7 @@
                   <aside
                     class="documentation-workspace project-documentation-panel avr-session-panel"
                     id="projectDocumentationPane"
-                    aria-label="Project documentation"
+                    aria-label="Code description"
                     data-tooltip-disabled
                   >
                     <div
@@ -314,12 +314,18 @@
                     >
                       <div class="connection-control documentation-locale-control">
                         <label class="sr-only" for="documentationLocaleSelect">
-                          Guide language
+                          Description language
                         </label>
                         <select id="documentationLocaleSelect" disabled>
                           <option value="en">English</option>
                         </select>
                       </div>
+
+                      <button
+                        class="connect-btn ui-action"
+                        id="projectDescribeCodeBtn"
+                        type="button"
+                      >Describe code</button>
 
                       <button
                         class="connect-btn ui-action secondary-btn documentation-edit-toggle"
@@ -374,9 +380,6 @@
           <div id="fileContextMenu" class="file-context-menu">
             <button type="button" data-action="rename">Rename</button>
             <button type="button" data-action="delete">Delete</button>
-            <button type="button" data-action="leave-group">
-              Remove from group
-            </button>
             <button type="button" data-action="download">Download</button>
             <button type="button" data-action="download-hex">
               Download HEX
@@ -386,7 +389,7 @@
           <input
             id="fileUploadInput"
             type="file"
-            accept=".c,.h,.cpp,.cc,.hpp,.ino,.s,.S,.asm,.txt,.md,.yaml,.yml,.hex,.ihex,.zip,application/zip"
+            accept=".zip,application/zip"
             hidden
           />
 
@@ -400,7 +403,7 @@
           >
             <div class="file-add-dialog">
               <div class="file-add-header ui-dialog-header">
-                <h3 class="editor-title" id="fileAddModalTitle">Add file</h3>
+                <h3 class="editor-title" id="fileAddModalTitle">Add project</h3>
                 <button
                   class="file-add-close ui-dialog-close"
                   id="fileAddCloseBtn"
@@ -426,7 +429,7 @@
                     id="createEmptyProjectCard"
                     type="button"
                   >
-                    <span class="file-add-card-title">Empty project</span>
+                    <span class="file-add-card-title">New project</span>
                   </button>
 
                   <button
@@ -434,15 +437,7 @@
                     id="uploadExistingFileCard"
                     type="button"
                   >
-                    <span class="file-add-card-title">UPLOAD</span>
-                  </button>
-
-                  <button
-                    class="file-add-card"
-                    id="createNewGroupCard"
-                    type="button"
-                  >
-                    <span class="file-add-card-title">CREATE file group</span>
+                    <span class="file-add-card-title">Import project ZIP</span>
                   </button>
                 </div>
 

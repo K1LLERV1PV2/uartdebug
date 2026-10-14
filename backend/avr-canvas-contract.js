@@ -1,14 +1,8 @@
 "use strict";
 
-const {
-  extractDocumentationMarkers,
-  extractMarkdownHeadings,
-} = require("./avr-documentation-markers");
-const { RTC_PIT_PERIOD_CYCLES } = require("./avr-knowledge");
-
+const YAML = require("yaml");
 const MAX_CANVAS_BYTES = 128 * 1024;
 const MAX_ANNOTATIONS = 100;
-const GUIDE_VERIFICATION_MARKER = "<!-- uartdebug:verification -->";
 const safeId = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/;
 const localePattern = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/i;
 const object = (properties) => ({
@@ -23,176 +17,32 @@ const text = (maxLength, minLength = 0) => ({
   maxLength,
 });
 const nullable = (schema) => ({ anyOf: [schema, { type: "null" }] });
-const integer = (minimum = 1) => ({
-  type: "integer",
-  minimum,
-  maximum: Number.MAX_SAFE_INTEGER,
-});
 const enumeration = (...values) => ({ type: "string", enum: values });
-const array = (items, maxItems) => ({ type: "array", items, maxItems });
-
-const annotationSchema = object({
-  id: text(96, 1),
-  kind: enumeration("question", "information", "error"),
-  anchor: object({ quote: text(2000, 1), line: nullable(integer()) }),
-  message: text(8000, 1),
-  status: enumeration("open", "resolved"),
-  answer: text(8000),
-});
-const described = (schema, description) => ({ ...schema, description });
-function resourceVariant(kind, fields, description) {
-  const unused = {
-    type: "null",
-    description: `Not applicable to ${kind}; return null.`,
-  };
-  return {
-    ...object({
-      id: described(
-        text(64, 1),
-        "Stable ASCII resource identifier; start with a letter and use letters, digits, underscores or hyphens.",
-      ),
-      kind: enumeration(kind),
-      pin: unused,
-      direction: unused,
-      instance: unused,
-      route: unused,
-      txPin: unused,
-      rxPin: unused,
-      baud: unused,
-      periodUs: unused,
-      prescaler: unused,
-      clockSource: unused,
-      periodCycles: unused,
-      ...fields,
-      description: described(
-        text(4000),
-        "Purpose and relevant configuration in the canvas language.",
-      ),
-    }),
-    description,
-  };
-}
-const resourceSchema = {
-  anyOf: [
-    resourceVariant(
-      "gpio",
-      {
-        pin: described(
-          text(16, 1),
-          "Allocated port pin, such as PA3; must exist in the selected package.",
-        ),
-        direction: enumeration("input", "output"),
-      },
-      "A GPIO resource uses only pin and direction; all peripheral fields are null.",
-    ),
-    resourceVariant(
-      "uart",
-      {
-        instance: enumeration("USART0", "USART1"),
-        route: described(
-          enumeration("DEFAULT", "ALT1"),
-          "USART pin routing selection from the device profile; match txPin and rxPin to this route.",
-        ),
-        txPin: described(
-          nullable(text(16, 1)),
-          "TXD port pin for the selected USART route, or null when transmission is unused.",
-        ),
-        rxPin: described(
-          nullable(text(16, 1)),
-          "RXD port pin for the selected USART route, or null when reception is unused. At least one of txPin and rxPin must be set.",
-        ),
-        baud: described(
-          integer(),
-          "Requested UART baud rate in bits per second.",
-        ),
-      },
-      "A UART resource uses instance, route, txPin, rxPin and baud. pin, direction, periodUs and prescaler must be null.",
-    ),
-    resourceVariant(
-      "timer",
-      {
-        pin: described(
-          nullable(text(16, 1)),
-          "An optional pin owned by this timer resource; normally null for interrupt timing. Never duplicate a separate GPIO allocation.",
-        ),
-        instance: enumeration("TCA0"),
-        periodUs: described(
-          integer(),
-          "Requested TCA0 SINGLE overflow period in microseconds.",
-        ),
-        prescaler: described(
-          integer(),
-          "TCA0 prescaler divisor: 1, 2, 4, 8, 16, 64, 256 or 1024.",
-        ),
-      },
-      "TCA0 SINGLE normal overflow timer. Use instance, periodUs and prescaler, with an optional owned pin. route MUST be null: SINGLE is a timer mode, not a routing value. direction, txPin, rxPin and baud must also be null.",
-    ),
-    resourceVariant(
-      "rtc-pit",
-      {
-        instance: enumeration("RTC"),
-        clockSource: enumeration("INT32K"),
-        periodCycles: described(
-          { type: "integer", enum: RTC_PIT_PERIOD_CYCLES },
-          "PIT interval in nominal 32768 Hz RTC clocks; selects RTC_PERIOD_CYC<n>_gc. No CPU clock or RTC counter prescaler is involved.",
-        ),
-        periodUs: described(
-          nullable(integer()),
-          "Nominal PIT interval rounded to the nearest microsecond, or null. When supplied it must match periodCycles * 1000000 / 32768 rounded to the nearest integer.",
-        ),
-      },
-      "Boot-only RTC PIT periodic interrupts using INT32K. Reserves RTC clock configuration and RTC_PIT_vect. Use a separate GPIO resource for the output pin; pin, direction, route, txPin, rxPin, baud and prescaler must be null. RTC counter, calibration, sleep and runtime reconfiguration are not supported.",
-    ),
-  ],
-};
-const specSchema = object({
-  schemaVersion: { type: "integer", enum: [1] },
-  language: text(35, 2),
-  microcontroller: object({ model: text(40, 1), package: text(48, 1) }),
-  clock: object({ hz: described(nullable(integer()), "Actual configured CPU/peripheral clock in Hz, or null to leave the CPU clock unchanged without claiming its frequency. Null is allowed only for GPIO and RTC PIT projects without CPU-dependent delays.") }),
-  resources: array(resourceSchema, 100),
-  includes: array(text(128, 1), 64),
-  description: text(16000, 1),
-});
-const projectSchema = object({
-  title: text(96, 1),
-  summary: text(1000, 1),
-  version: text(32, 1),
-  source: object({ name: text(96, 1), content: text(64 * 1024, 1) }),
-  guide: object({
-    name: text(96, 1),
-    locale: text(35, 2),
-    content: described(
-      text(120 * 1024, 1),
-      `Guide Markdown in guide.locale. Include exactly one literal ${GUIDE_VERIFICATION_MARKER} where the server will insert actual verification results. Do not write compilation or hardware-test claims elsewhere.`,
-    ),
-    verificationMessages: object({
-      passed: described(
-        text(1000, 1),
-        "One short sentence in guide.locale meaning: The generated source passed server compiler verification. This is a template, not a claim that compilation has already happened.",
-      ),
-      skipped: described(
-        text(1000, 1),
-        "One short sentence in guide.locale meaning: Server compiler verification was not performed.",
-      ),
-      hardwareNotTested: described(
-        text(1000, 1),
-        "One short sentence in guide.locale meaning: This generated project has not been tested on physical hardware.",
-      ),
-    }),
-  }),
-  spec: specSchema,
-});
-
+const fileSchema = object({ name: text(96, 1), content: text(128 * 1024, 1) });
 const CANVAS_OUTPUT_SCHEMA = object({
-  action: enumeration("clarify", "generate"),
+  action: enumeration("clarify", "generate", "describe"),
   message: text(2000, 1),
   canvas: object({
-    markdown: text(MAX_CANVAS_BYTES, 1),
+    markdown: text(MAX_CANVAS_BYTES),
     locale: text(35, 2),
-    annotations: array(annotationSchema, MAX_ANNOTATIONS),
+    annotations: { type: "array", items: { type: "string" }, maxItems: 0 },
   }),
-  project: nullable(projectSchema),
+  project: nullable(
+    object({
+      title: text(96, 1),
+      summary: text(1000),
+      version: text(32, 1),
+      source: nullable(fileSchema),
+      guide: nullable(
+        object({
+          name: text(96, 1),
+          locale: text(35, 2),
+          content: text(120 * 1024, 1),
+        }),
+      ),
+      resources: nullable(fileSchema),
+    }),
+  ),
 });
 
 class CanvasContractError extends Error {
@@ -462,260 +312,469 @@ function validateFileName(name, extension) {
   }
 }
 
-function validateProject(
-  project,
-  { canvas, mcu, packageName, currentProject },
-) {
-  validateFileName(project.source.name, /\.c$/i);
-  validateFileName(project.guide.name, /\.md$/i);
-  boundedText(project.source.content, "project.source.content", 64 * 1024, {
-    empty: false,
-    generated: true,
-  });
-  // Leave room for the two localized verification sentences inserted by the server.
-  boundedText(project.guide.content, "project.guide.content", 120 * 1024, {
-    empty: false,
-    generated: true,
-  });
-  normalizeLocale(project.guide.locale, true);
-  normalizeLocale(project.spec.language, true);
+function projectIdentity(markdown) {
+  const names = [
+    ...markdown.matchAll(/^#\s+(?:Проект|Project)\s+(.+?)\s*$/gim),
+  ].map((match) => match[1].trim());
+  const versions = [
+    ...markdown.matchAll(
+      /^(?:Версия проекта|Project version)\s*[-:]\s*(Ver\.\d+\.\d+)\s*$/gim,
+    ),
+  ].map((match) => match[1]);
   if (
-    project.guide.locale.toLowerCase() !== canvas.locale.toLowerCase() ||
-    project.spec.language.toLowerCase() !== canvas.locale.toLowerCase()
-  ) {
+    !names.length ||
+    new Set(names).size !== 1 ||
+    !versions.length ||
+    new Set(versions).size !== 1
+  )
+    return null;
+  return { title: names[0], version: versions[0].replace(/^ver\./i, "Ver.") };
+}
+
+function projectOutputNames(markdown, identity, currentProject = null) {
+  const cNames = [
+    ...markdown.matchAll(
+      /^(?:Файл программы C|C program file|C source file)\s*[-:]\s*(.+?)\s*$/gim,
+    ),
+  ].map((match) => match[1]);
+  const resourceNames = [
+    ...markdown.matchAll(
+      /^(?:Файл ресурсов проекта|Project resources file|Resource file)\s*[-:]\s*(.+?)\s*$/gim,
+    ),
+  ].map((match) => match[1]);
+  if (
+    (cNames.length || resourceNames.length) &&
+    (cNames.length !== 1 || resourceNames.length !== 1)
+  )
     fail(
-      "Generated documentation and specification must use the canvas language.",
+      "Confirmed alternative output names must be one complete C/YAML pair.",
       true,
     );
+  const sourceName =
+    cNames[0] ||
+    (currentProject?.source?.trim()
+      ? currentProject.sourceName
+      : `${identity.title}.c`);
+  const resourcesName =
+    resourceNames[0] ||
+    (currentProject?.specification?.content?.trim()
+      ? currentProject.specification.name
+      : `${identity.title}.yaml`);
+  validateFileName(sourceName, /\.c$/i);
+  validateFileName(resourcesName, /\.yaml$/i);
+  return { sourceName, resourcesName };
+}
+
+function parseProjectResources(content, target = {}) {
+  boundedText(content, "project.resources.content", 128 * 1024, {
+    empty: false,
+    generated: true,
+  });
+  const document = YAML.parseDocument(content, {
+    uniqueKeys: true,
+    schema: "core",
+    customTags: [],
+  });
+  if (document.errors.length || document.warnings.length)
+    fail(
+      "Project resources must be valid YAML without duplicate keys or custom tags.",
+      true,
+    );
+  let resources;
+  try {
+    resources = document.toJS({ maxAliasCount: 0 });
+  } catch {
+    fail("Project resources cannot contain aliases or recursive values.", true);
   }
-  const expectedMcu = mcu || canvas.target?.mcu;
-  const expectedPackage = packageName || canvas.target?.packageName;
+  if (!isObject(resources))
+    fail("Project resources must be a YAML mapping.", true);
+  const required = [
+    "microcontroller",
+    "hardware_resources",
+    "software_dependencies",
+  ];
+  const keys = Object.keys(resources);
   if (
-    expectedMcu &&
-    project.spec.microcontroller.model.toLowerCase() !==
-      expectedMcu.toLowerCase()
+    required.some((key) => !isObject(resources[key])) ||
+    required.some(
+      (key, index) =>
+        index && keys.indexOf(key) <= keys.indexOf(required[index - 1]),
+    )
   )
     fail(
-      "The generated specification changes the selected microcontroller.",
+      "Resource YAML requires microcontroller, hardware_resources and software_dependencies mappings in that order.",
       true,
     );
-  if (
-    expectedPackage &&
-    project.spec.microcontroller.package.toLowerCase() !==
-      expectedPackage.toLowerCase()
-  )
-    fail("The generated specification changes the selected package.", true);
-  for (const [key, generated] of [
-    ["sourceName", project.source.name],
-    ["guideName", project.guide.name],
+  const device = resources.microcontroller;
+  for (const [key, expected] of [
+    ["model", target.mcu],
+    ["package", target.packageName],
   ]) {
-    const existing = currentProject?.[key];
-    if (existing && existing !== generated)
-      fail(`Generated updates must preserve the current ${key}.`, true);
+    if (
+      typeof device[key] !== "string" ||
+      !device[key].trim() ||
+      (expected && device[key].toLowerCase() !== expected.toLowerCase())
+    )
+      fail(
+        "Resource YAML must preserve the exact selected microcontroller and package.",
+        true,
+      );
   }
-  const ids = new Set();
-  for (const resource of project.spec.resources) {
-    if (!safeId.test(resource.id) || ids.has(resource.id))
-      fail("Resource identifiers must be unique and URL-safe.", true);
-    ids.add(resource.id);
-    for (const field of ["pin", "txPin", "rxPin"]) {
-      if (resource[field] !== null && !/^P[A-Z][0-7]$/.test(resource[field]))
+  const includes = resources.software_dependencies.includes;
+  if (
+    !Array.isArray(includes) ||
+    includes.length > 64 ||
+    !includes.includes("#include <xc.h>") ||
+    includes.some(
+      (line) =>
+        typeof line !== "string" ||
+        !/^#include\s*[<"][A-Za-z0-9_][A-Za-z0-9_./-]*\.h[>"]$/.test(line) ||
+        line.includes("..") ||
+        line.includes("//"),
+    )
+  )
+    fail(
+      "Resource dependencies require complete include directives, including #include <xc.h>.",
+      true,
+    );
+  validateHardwarePins(
+    resources.hardware_resources,
+    target.device,
+    device.package,
+  );
+  return resources;
+}
+
+function validateHardwarePins(hardware, device, packageName) {
+  if (!device) return;
+  const pinout = Object.entries(device.pinouts || {}).find(
+    ([name]) => name.toLowerCase() === packageName.toLowerCase(),
+  )?.[1]?.pins;
+  if (!pinout) fail("The selected package pin map is unavailable.", true);
+  const pending = [hardware];
+  while (pending.length) {
+    const entry = pending.pop();
+    if (Array.isArray(entry)) {
+      pending.push(...entry);
+      continue;
+    }
+    if (!isObject(entry)) continue;
+    const present = (key) => Object.hasOwn(entry, key) && entry[key] !== null;
+    if (!["pin_symbol", "package_pin", "port_pin"].some(present)) {
+      pending.push(...Object.values(entry));
+      continue;
+    }
+    let symbol = null;
+    if (present("pin_symbol")) {
+      if (
+        typeof entry.pin_symbol !== "string" ||
+        !Object.hasOwn(pinout, entry.pin_symbol)
+      )
         fail(
-          "Resource pins must use their device port names, for example PA3.",
+          "A declared pin_symbol is unavailable in the selected device package.",
+          true,
+        );
+      symbol = entry.pin_symbol;
+    }
+    const coordinates = symbol && /^P([A-Z])(\d+)$/.exec(symbol);
+    let port = null;
+    if (present("port")) {
+      if (
+        typeof entry.port !== "string" ||
+        !/^(?:PORT)?[A-Z]$/.test(entry.port)
+      )
+        fail(
+          "A declared port must use its canonical port letter or PORT name.",
+          true,
+        );
+      port = entry.port.replace(/^PORT/, "");
+      if (symbol && (!coordinates || coordinates[1] !== port))
+        fail("The declared port disagrees with pin_symbol.", true);
+    }
+    if (present("port_pin")) {
+      if (
+        !Number.isSafeInteger(entry.port_pin) ||
+        entry.port_pin < 0 ||
+        entry.port_pin > 7 ||
+        (symbol && (!coordinates || Number(coordinates[2]) !== entry.port_pin))
+      )
+        fail("The declared port_pin disagrees with the device pin.", true);
+      if (!symbol && port) {
+        symbol = `P${port}${entry.port_pin}`;
+        if (!Object.hasOwn(pinout, symbol))
+          fail(
+            "The declared port and port_pin are unavailable in this package.",
+            true,
+          );
+      }
+    }
+    if (present("package_pin")) {
+      const physical = entry.package_pin;
+      if (
+        !Number.isSafeInteger(physical) ||
+        physical <= 0 ||
+        !Object.values(pinout).includes(physical) ||
+        (symbol && pinout[symbol] !== physical)
+      )
+        fail(
+          "The declared package_pin disagrees with the selected package pin map.",
           true,
         );
     }
-    if (resource.kind === "gpio" && (!resource.pin || !resource.direction))
-      fail("GPIO resources require a pin and direction.", true);
+    pending.push(...Object.values(entry));
+  }
+}
+
+// Read actual line comments only. Markers inside string literals or block comments are data.
+function sourceWithoutLiterals(source) {
+  return source.replace(
+    /\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g,
+    (value) => value.replace(/[^\n]/g, " "),
+  );
+}
+function codeRegions(source) {
+  const lines = sourceWithoutLiterals(source).split("\n");
+  const original = source.split("\n");
+  const regions = [];
+  let open = null;
+  const keyOf = (label) =>
+    label
+      .replace(/^(?:начало|конец|begin|start|end)\s+/i, "")
+      .trim()
+      .toLowerCase();
+  for (const [line, value] of lines.entries()) {
+    const marker = /^\s*\/\/([+-])\s*(.+?)\s*$/.exec(value);
+    if (!marker) continue;
+    if (marker[1] === "+") {
+      if (open) fail("Permanent C code regions must not be nested.", true);
+      open = { key: keyOf(marker[2]), label: marker[2], start: line };
+    } else {
+      if (!open || keyOf(marker[2]) !== open.key)
+        fail("Permanent C code region markers must form matching pairs.", true);
+      if (regions.some((region) => region.key === open.key))
+        fail("Permanent C code regions must be unique.", true);
+      regions.push({
+        ...open,
+        end: line,
+        user: /(?:пользоват|\buser\b)/i.test(open.label),
+        content: original.slice(open.start + 1, line).join("\n"),
+      });
+      open = null;
+    }
+  }
+  if (open) fail("Permanent C code region markers are incomplete.", true);
+  return regions;
+}
+function validateSource(
+  source,
+  resources,
+  currentSource = "",
+  identity = null,
+) {
+  boundedText(source, "project.source.content", 64 * 1024, {
+    empty: false,
+    generated: true,
+  });
+  if (identity) {
+    const information = source
+      .slice(0, source.search(/^\s*#\s*include/m))
+      .split("\n");
+    const name = information
+      .map(
+        (line) =>
+          /^\s*\/\/\s*(?:Project(?: name)?|Имя проекта)\s*:\s*(.+?)\s*$/i.exec(
+            line,
+          )?.[1],
+      )
+      .filter(Boolean);
+    const version = information
+      .map(
+        (line) =>
+          /^\s*\/\/\s*(?:Project version|Версия проекта)\s*:\s*(Ver\.\d+\.\d+)\s*$/i.exec(
+            line,
+          )?.[1],
+      )
+      .filter(Boolean);
     if (
-      resource.kind === "uart" &&
-      (!resource.instance ||
-        !resource.baud ||
-        (!resource.txPin && !resource.rxPin))
+      name.length !== 1 ||
+      name[0] !== identity.title ||
+      version.length !== 1 ||
+      version[0] !== identity.version
     )
       fail(
-        "UART resources require an instance, baud rate and at least one signal pin.",
+        "C project information must preserve the specification's name and version.",
         true,
       );
-    if (
-      resource.kind === "timer" &&
-      (!resource.instance || !resource.periodUs || !resource.prescaler)
-    )
-      fail("Timer resources require an instance, period and prescaler.", true);
-    if (resource.kind === "rtc-pit" &&
-        (resource.instance !== "RTC" || resource.clockSource !== "INT32K" || !resource.periodCycles))
-      fail("RTC PIT requires RTC, INT32K and a supported fixed cycle period.", true);
   }
-  const headings = new Set(
-    extractMarkdownHeadings(project.guide.content).map(
-      (heading) => `${heading.level}:${heading.key}`,
-    ),
-  );
-  for (const marker of extractDocumentationMarkers(project.source.content)) {
-    if (!headings.has(`${marker.level}:${marker.key}`))
-      fail(`The guide is missing the source heading "${marker.title}".`, true);
-  }
-  if (project.guide.content.split(GUIDE_VERIFICATION_MARKER).length !== 2) {
+  const clean = sourceWithoutLiterals(source);
+  const executable = clean.replace(/\/\/[^\n]*/g, "");
+  if (
+    !/^\s*#\s*include\s*<xc\.h>/.test(executable) ||
+    !/\bint\s+main\s*\(\s*void\s*\)/.test(executable) ||
+    !/\bwhile\s*\(\s*1\s*\)/.test(executable)
+  )
     fail(
-      "The guide must contain exactly one verification placeholder for actual server results.",
+      "C must start with #include <xc.h>, define int main(void) and preserve the main while (1) loop.",
       true,
     );
+  if (/\/\/X(?:\s|$)/m.test(clean))
+    fail("Temporary //X instructions must not remain in generated C.", true);
+  const regions = codeRegions(source);
+  if (
+    regions.filter((region) => region.user).length < 3 ||
+    regions.filter((region) => !region.user).length < 4
+  )
+    fail("C must preserve the canonical AI and user insertion regions.", true);
+  const previous = codeRegions(currentSource);
+  for (const region of previous.filter((entry) => entry.user)) {
+    const next = regions.find(
+      (entry) => entry.key === region.key && entry.user,
+    );
+    if (!next || next.content !== region.content)
+      fail(
+        "Generated updates must preserve every user C region exactly.",
+        true,
+      );
   }
-  return {
-    ...project,
-    source: {
-      ...project.source,
-      content: project.source.content.replace(/\r\n?/g, "\n"),
-    },
-    guide: {
-      ...project.guide,
-      content: project.guide.content.replace(/\r\n?/g, "\n"),
-    },
-  };
+  const sourceCode = source.replace(
+    /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'/g,
+    (value) =>
+      value.startsWith("/*") || value.startsWith("//")
+        ? value.replace(/[^\n]/g, " ")
+        : value,
+  );
+  const includes = [
+    ...sourceCode.matchAll(/^\s*#\s*include\s*([<"][^>"\n]+[>"])/gm),
+  ].map((match) => `#include ${match[1]}`);
+  if (
+    includes.filter((line) => line === "#include <xc.h>").length !== 1 ||
+    JSON.stringify([...new Set(includes)].sort()) !==
+      JSON.stringify(
+        [...new Set(resources.software_dependencies.includes)].sort(),
+      )
+  )
+    fail("C includes and resource YAML dependencies must agree exactly.", true);
+  if (/\.\s*(?:PIT)?INTFLAGS\s*\|=/.test(executable))
+    fail("Clear W1C INTFLAGS with assignment, not read-modify-write.", true);
 }
 
 function validateCanvasOutput(raw, options = {}) {
   assertSchema(raw, CANVAS_OUTPUT_SCHEMA);
   const input = normalizeCanvas(options.canvas);
+  const operation = options.operation || "analyze";
   const locale = normalizeLocale(raw.canvas.locale, true);
-  if (input.locale && input.locale.toLowerCase() !== locale.toLowerCase()) {
-    fail(
-      "The generated canvas must preserve its explicitly selected language.",
-      true,
-    );
-  }
+  if (input.locale && input.locale.toLowerCase() !== locale.toLowerCase())
+    fail("Preserve the explicitly selected project language.", true);
   const markdown = boundedText(
     raw.canvas.markdown,
     "canvas.markdown",
     MAX_CANVAS_BYTES,
-    { generated: true, empty: false },
+    { generated: true },
   );
-  const annotations = normalizeAnnotations(raw.canvas.annotations, markdown, {
-    generated: true,
-    requireAnchors: true,
-  });
-  const byId = new Map(
-    annotations.map((annotation) => [annotation.id, annotation]),
-  );
-  const previousIds = new Set(
-    input.annotations.map((annotation) => annotation.id),
-  );
-  for (const annotation of annotations) {
+  if (operation !== "analyze" && markdown !== input.markdown)
+    fail(
+      "Code generation and description must preserve the specification exactly.",
+      true,
+    );
+  if (raw.action === "clarify") {
+    if (raw.project !== null)
+      fail("Clarification must not contain project files.", true);
+  } else {
     if (
-      annotation.kind === "question" &&
-      !previousIds.has(annotation.id) &&
-      (annotation.answer || annotation.status === "resolved")
-    ) {
-      fail("A new question must await the user's answer.", true);
-    }
-  }
-  for (const previous of input.annotations) {
-    const updated = byId.get(previous.id);
+      !raw.project ||
+      (raw.action === "generate"
+        ? operation !== "generate"
+        : operation !== "describe")
+    )
+      fail("The response does not match the authorized project stage.", true);
+    const project = raw.project;
+    validateFileName(`${project.title}.md`, /\.md$/i);
+    const identity = projectIdentity(input.markdown);
     if (
-      !updated ||
-      updated.kind !== previous.kind ||
-      updated.answer !== previous.answer
+      !identity ||
+      project.title !== identity.title ||
+      project.version !== identity.version
     )
       fail(
-        "Generated canvas edits must preserve annotation identifiers, kinds and user answers.",
+        "Use the exact project name and Ver.X.Y from the specification.",
         true,
       );
+    if (raw.action === "generate") {
+      if (!project.source || !project.resources || project.guide !== null)
+        fail("Code generation must return C and resource YAML only.", true);
+      validateFileName(project.source.name, /\.c$/i);
+      validateFileName(project.resources.name, /\.yaml$/i);
+      const names = projectOutputNames(
+        input.markdown,
+        identity,
+        options.currentProject,
+      );
+      if (
+        project.source.name !== names.sourceName ||
+        project.resources.name !== names.resourcesName
+      )
+        fail("Preserve existing or canonical output file names.", true);
+      const resources = parseProjectResources(
+        project.resources.content,
+        options,
+      );
+      validateSource(
+        project.source.content,
+        resources,
+        options.currentProject?.source || "",
+        identity,
+      );
+    } else {
+      if (
+        project.source !== null ||
+        project.resources !== null ||
+        !project.guide ||
+        !options.currentProject?.source?.trim()
+      )
+        fail(
+          "Description must use existing C and return documentation only.",
+          true,
+        );
+      validateFileName(project.guide.name, /\.md$/i);
+      normalizeLocale(project.guide.locale, true);
+      const hasDescription = !!options.currentProject.guide?.trim();
+      const expectedLocale =
+        hasDescription && options.currentProject.guideLocale
+          ? options.currentProject.guideLocale
+          : locale;
+      const expectedName = hasDescription
+        ? options.currentProject.guideName
+        : `${identity.title} (description).md`;
+      if (project.guide.locale.toLowerCase() !== expectedLocale.toLowerCase())
+        fail(
+          "Preserve the selected description language or use the specification language for a new description.",
+          true,
+        );
+      if (project.guide.name !== expectedName)
+        fail("Use the existing or canonical description filename.", true);
+    }
   }
-  if ((raw.action === "clarify") !== (raw.project === null))
-    fail(
-      "Clarification must have no project; generation must provide a complete project.",
-      true,
-    );
-  if (
-    raw.action === "generate" &&
-    annotations.some(
-      (annotation) =>
-        annotation.status === "open" &&
-        ["question", "error"].includes(annotation.kind),
-    )
-  ) {
-    fail(
-      "Resolve open questions and errors before generating a project.",
-      true,
-    );
-  }
-  const canvas = {
-    schemaVersion: 2,
-    revision: input.revision,
-    markdown,
-    locale,
-    annotations,
-    ...(input.target ? { target: input.target } : {}),
-  };
   return {
-    action: raw.action,
-    message: raw.message,
-    canvas,
-    project:
-      raw.project === null
-        ? null
-        : validateProject(raw.project, { ...options, canvas }),
+    ...raw,
+    canvas: {
+      schemaVersion: 2,
+      revision: input.revision,
+      markdown,
+      locale,
+      annotations: [],
+      ...(input.target ? { target: input.target } : {}),
+    },
   };
-}
-
-// JSON quoted strings are valid YAML 1.2 scalars and cannot inject tags, keys or comments.
-function serializeProjectSpec(spec) {
-  assertSchema(spec, specSchema, "spec");
-  function lines(value, indent, parentKey = "") {
-    const prefix = " ".repeat(indent);
-    if (Array.isArray(value)) {
-      return value.flatMap((entry) =>
-        isObject(entry)
-          ? [`${prefix}-`, ...lines(entry, indent + 2)]
-          : [`${prefix}- ${JSON.stringify(entry)}`],
-      );
-    }
-    return Object.entries(value).flatMap(([key, entry]) => {
-      // The strict model schema uses explicit nulls; human-facing YAML omits
-      // fields that do not apply to this resource.
-      if (entry === null) return parentKey === "clock" && key === "hz" ? [`${prefix}${key}: null`] : [];
-      if (Array.isArray(entry) && entry.length === 0)
-        return [`${prefix}${key}: []`];
-      return isObject(entry) || Array.isArray(entry)
-        ? [`${prefix}${key}:`, ...lines(entry, indent + 2, key)]
-        : [`${prefix}${key}: ${JSON.stringify(entry)}`];
-    });
-  }
-  // Canonical property order is defined by the contract, independent of model JSON order.
-  function order(value, schema) {
-    if (schema.anyOf) {
-      const alternative = schema.anyOf.find((candidate) => {
-        try {
-          assertSchema(value, candidate, "spec");
-          return true;
-        } catch (error) {
-          if (!(error instanceof CanvasContractError)) throw error;
-          return false;
-        }
-      });
-      if (!alternative)
-        fail("The specification has no matching schema variant.", true);
-      return order(value, alternative);
-    }
-    if (schema.type === "object")
-      return Object.fromEntries(
-        Object.entries(schema.properties).map(([key, child]) => [
-          key,
-          order(value[key], child),
-        ]),
-      );
-    if (schema.type === "array")
-      return value.map((entry) => order(entry, schema.items));
-    return value;
-  }
-  return `${lines(order(spec, specSchema), 0).join("\n")}\n`;
 }
 
 module.exports = {
   CANVAS_OUTPUT_SCHEMA,
-  GUIDE_VERIFICATION_MARKER,
   CanvasContractError,
   normalizeCanvas,
   validateCanvasOutput,
-  serializeProjectSpec,
+  projectIdentity,
+  projectOutputNames,
+  parseProjectResources,
+  codeRegions,
+  validateSource,
 };

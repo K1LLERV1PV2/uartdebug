@@ -28,17 +28,17 @@ const ACCOUNT_WORKSPACE_MAX_BYTES = Object.freeze({
   instruction: 256 * 1024,
 });
 const CREDIT_NANO_USD = 1_000_000;
-const DEFAULT_PRICE_CATALOG_VERSION = "2026-08-24";
-const DEFAULT_MODEL = "gpt-5.6-terra";
+const DEFAULT_PRICE_CATALOG_VERSION = "2026-10-14";
+const DEFAULT_MODEL = "gpt-6.1-sol";
 const LONG_CONTEXT_THRESHOLD = 272_000;
 const OAUTH_TRANSACTION_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DEVICE_COOKIE_TTL_SECONDS = 400 * 24 * 60 * 60;
 const RESERVATION_TTL_MS = 5 * 60 * 1000;
 
-const PRICE_CATALOGS = Object.freeze({
-  [DEFAULT_PRICE_CATALOG_VERSION]: Object.freeze({
-    [DEFAULT_MODEL]: Object.freeze({
+// Historical ledger entries retain the rates under which they were settled.
+const LEGACY_MODEL_PRICES = Object.freeze({
+    "gpt-5.6-terra": Object.freeze({
       inputNanoUsdPerToken: 2_000,
       cachedInputNanoUsdPerToken: 200,
       cacheWriteNanoUsdPerToken: 2_500,
@@ -48,6 +48,22 @@ const PRICE_CATALOGS = Object.freeze({
       longCachedInputNanoUsdPerToken: 400,
       longCacheWriteNanoUsdPerToken: 5_000,
       longOutputNanoUsdPerToken: 18_000,
+    }),
+});
+const PRICE_CATALOGS = Object.freeze({
+  "2026-08-24": LEGACY_MODEL_PRICES,
+  [DEFAULT_PRICE_CATALOG_VERSION]: Object.freeze({
+    ...LEGACY_MODEL_PRICES,
+    [DEFAULT_MODEL]: Object.freeze({
+      inputNanoUsdPerToken: 2_000,
+      cachedInputNanoUsdPerToken: 100,
+      cacheWriteNanoUsdPerToken: 2_500,
+      outputNanoUsdPerToken: 10_000,
+      longContextThreshold: LONG_CONTEXT_THRESHOLD,
+      longInputNanoUsdPerToken: 4_000,
+      longCachedInputNanoUsdPerToken: 200,
+      longCacheWriteNanoUsdPerToken: 5_000,
+      longOutputNanoUsdPerToken: 15_000,
     }),
   }),
 });
@@ -3522,8 +3538,10 @@ function addCosts(left, right) {
 
 function resolveCatalogModel(model) {
   const normalized = normalizeIdentifier(model || DEFAULT_MODEL, 160);
-  if (normalized === DEFAULT_MODEL || normalized.startsWith(`${DEFAULT_MODEL}-`)) {
-    return DEFAULT_MODEL;
+  for (const catalogModel of Object.keys(MODEL_PRICES)) {
+    if (normalized === catalogModel || normalized.startsWith(`${catalogModel}-`)) {
+      return catalogModel;
+    }
   }
   return normalized;
 }

@@ -8,6 +8,7 @@ const http = require("node:http");
 const os = require("node:os");
 const { execFile, execFileSync } = require("node:child_process");
 const { promisify } = require("node:util");
+const { createMaterialsFixture } = require("./helpers/avr-materials-fixture");
 
 const repositoryRoot = path.join(__dirname, "..");
 const read = (relativePath) =>
@@ -87,8 +88,9 @@ test("canvas installation includes its complete runtime and retains protected da
     );
   }
   assert.match(installer, /loadKnowledge\(\)/);
-  assert.match(installer, /ai\/canvas-rules\.md/);
-  assert.match(installer, /cp -R "\$\{stage\}\/ai\/knowledge\/\."/);
+  assert.match(installer, /avr-materials\.js/);
+  assert.doesNotMatch(installer, /ai\/canvas-rules\.md|cp -R .*ai\/knowledge/);
+  assert.match(unit, /AI_MATERIALS_ROOT=\/var\/lib\/uartdebug-ai\/materials\/current\/repository/);
   assert.match(
     installer,
     /install -d -o uartai -g uartai -m 0700 "\$\{documentation_root\}"/,
@@ -137,7 +139,7 @@ test("canvas smoke check verifies retired routes and avoids paid generation", as
       return res.end(
         JSON.stringify({
           ok: true,
-          contract: "uartdebug-canvas/v1",
+          contract: "uartdebug-project/v2",
           accessRequired: false,
           configured,
           rules: { packageId: "canvas-v2" },
@@ -261,19 +263,22 @@ test("release verification detects mismatched running knowledge or rules", async
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const file = path.join(directory, "status.json");
   const { createAvrAiService } = require("../backend/avr-ai-service");
-  const status = await createAvrAiService({ environment: {} }).getStatus();
+  const fixture = createMaterialsFixture(t);
+  const environment = { AI_MATERIALS_ROOT: fixture.root };
+  const status = await createAvrAiService({ environment }).getStatus();
+  const executionOptions = { env: { ...process.env, ...environment }, stdio: "pipe" };
   const script = path.join(
     repositoryRoot,
     "backend/deploy/verify-ai-release.js",
   );
   fs.writeFileSync(file, JSON.stringify(status));
-  execFileSync(process.execPath, [script, file]);
+  execFileSync(process.execPath, [script, file], executionOptions);
   for (const field of ["rules", "knowledge"]) {
     const mismatch = structuredClone(status);
     mismatch[field].digest = "0".repeat(64);
     fs.writeFileSync(file, JSON.stringify(mismatch));
     assert.throws(
-      () => execFileSync(process.execPath, [script, file], { stdio: "pipe" }),
+      () => execFileSync(process.execPath, [script, file], executionOptions),
       (error) => error.status === 1,
     );
   }

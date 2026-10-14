@@ -27,6 +27,54 @@ function close(server) {
   );
 }
 
+test("project catalog exposes curated examples and protects repository target samples", async (t) => {
+  const example = { id: "example-01_Minimum", title: "Minimum", kind: "example" };
+  const target = { id: "target-Project_One", title: "Project_One", kind: "target" };
+  const server = createAiHttpServer({ environment: {}, aiService: {},
+    accessService: { authenticateAccountRequest(req) {
+      if (req.headers.cookie === "signed-in") return { accountKey: "key" };
+      throw new AiAccessError(401, "google_sign_in_required", "Sign in");
+    } },
+    getProjectCatalog: () => ({
+      listProjects: ({ includeTargets }) => includeTargets ? [example, target] : [example],
+      readProject: (id, { includeTargets }) => id === example.id ? example :
+        id === target.id && includeTargets ? target : null,
+    }), log: { info() {}, warn() {} },
+  });
+  const base = await listen(server);
+  t.after(() => close(server));
+  assert.deepEqual((await (await fetch(`${base}/api/avr/ai/projects`)).json()).projects, [example]);
+  assert.equal((await fetch(`${base}/api/avr/ai/projects/${target.id}`)).status, 404);
+  const signed = { headers: { Cookie: "signed-in" } };
+  assert.deepEqual((await (await fetch(`${base}/api/avr/ai/projects`, signed)).json()).projects, [example, target]);
+  assert.deepEqual((await (await fetch(`${base}/api/avr/ai/projects/${target.id}`, signed)).json()).project, target);
+  assert.equal((await fetch(`${base}/api/avr/ai/projects/MCU_Knowledge_Base/secret`)).status, 404);
+});
+
+test("compiler preflight blocks generation but permits empty specification review", async (t) => {
+  let reviews = 0;
+  const server = createAiHttpServer({ environment: {},
+    aiService: {
+      authorizeAccessToken: () => true, validateRequestInput() {},
+      getStatus: async () => ({ enabled: true, configured: true, rules: { packageId: "canonical" },
+        knowledge: { version: "test" }, compilerVerification: { enabled: true, ready: false } }),
+      processCanvas: async () => { reviews++; return { ok: true, kind: "canvas" }; },
+    },
+    accessService: { authorizeAiRequest: async () => ({ mode: "public" }), releaseAiRequest: async () => {} },
+    log: { info() {}, warn() {} },
+  });
+  const base = await listen(server);
+  t.after(() => close(server));
+  const request = (operation) => fetch(`${base}/api/avr/ai/canvas`, {
+    method: "POST", headers: { Origin: base, "Content-Type": "application/json" },
+    body: JSON.stringify({ operation, canvas: { schemaVersion: 2, revision: 0, markdown: "", locale: "", annotations: [] } }),
+  });
+  assert.equal((await request("generate")).status, 503);
+  assert.equal(reviews, 0);
+  assert.equal((await request("analyze")).status, 200);
+  assert.equal(reviews, 1);
+});
+
 test("serves safe AI status metadata and health from a separate server", async (t) => {
   const aiService = {
     authorizeAccessToken() {

@@ -1,13 +1,12 @@
 "use strict";
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const fs = require("node:fs");
-const path = require("node:path");
 const {
   createAvrAiService,
-  AiServiceError,
+  normalizeRequest,
 } = require("../backend/avr-ai-service");
 const {
+  getRuntimeConfig,
   parseStructuredOutput,
   extractOpenAiMetering,
   mergeOpenAiMetering,
@@ -16,98 +15,81 @@ const {
   createCompileEnvelope,
   AVR_COMPILE_HEALTH_SERVICE,
 } = require("../backend/avr-compiler-contract");
-const { DOCUMENT_ROOTS } = require("../backend/avr-documentation-lookup");
 const environment = {
   AI_ENABLED: "1",
   OPENAI_API_KEY: "test-only",
   AI_COMPILE_VERIFY_ENABLED: "0",
   AI_COMPILE_MAX_REPAIR_ATTEMPTS: "0",
 };
-const input = () => ({
-  canvas: {
-    schemaVersion: 2,
-    revision: 7,
-    markdown: "# LED\nSet PA3 high.",
-    locale: "en",
-    annotations: [],
-    target: { mcu: "attiny1624", packageName: "SOIC-14" },
-  },
+const canvas = () => ({
+  schemaVersion: 2,
+  revision: 7,
+  markdown:
+    "# Project led\n\nProject version - Ver.1.0\n\n## Hardware requirements\nATtiny1624, SOIC-14, LED PA3.\n\n## Software requirements\nSet PA3 high.",
+  locale: "en",
+  annotations: [],
+  target: { mcu: "attiny1624", packageName: "SOIC-14" },
+});
+const input = (operation = "generate") => ({
+  operation,
+  canvas: canvas(),
   mcu: "attiny1624",
   packageName: "SOIC-14",
 });
-const resource = () => ({
-  id: "led",
-  kind: "gpio",
-  pin: "PA3",
-  direction: "output",
-  instance: null,
-  route: null,
-  txPin: null,
-  rxPin: null,
-  baud: null,
-  periodUs: null,
-  prescaler: null,
-  clockSource: null,
-  periodCycles: null,
-  description: "LED output",
-});
+const source = (user = "") =>
+  `// Project: led\n// Project version: Ver.1.0\n#include <xc.h>\n\n//+ Begin AI includes and defines\n//- End AI includes and defines\n\n//+ Begin AI global functions and variables\n//- End AI global functions and variables\n\n//+ Begin user global functions and variables\n${user}\n//- End user global functions and variables\n\nint main(void)\n{\n    //+ Begin AI local variables and initialization\n    PORTA.OUTSET = PIN3_bm;\n    PORTA.DIRSET = PIN3_bm;\n    //- End AI local variables and initialization\n\n    //+ Begin user local variables and initialization\n    //- End user local variables and initialization\n\n    while (1)\n    {\n        //+ Begin AI cyclic code\n        //- End AI cyclic code\n\n        //+ Begin user cyclic code\n        //- End user cyclic code\n    }\n    return 0;\n}\n`;
+const resources = () =>
+  'microcontroller:\n  model: ATtiny1624\n  package: SOIC-14\nhardware_resources:\n  led:\n    pin: PA3\n    direction: output\nsoftware_dependencies:\n  includes:\n    - "#include <xc.h>"\n';
 const generated = () => ({
   action: "generate",
-  message: "Project ready.",
-  canvas: { markdown: input().canvas.markdown, locale: "en", annotations: [] },
+  message: "Code ready.",
+  canvas: { markdown: canvas().markdown, locale: "en", annotations: [] },
   project: {
-    title: "LED",
+    title: "led",
     summary: "Sets PA3 high.",
-    version: "1.0.0",
-    source: {
-      name: "led.c",
-      content:
-        "#define F_CPU 3333333UL\n#include <xc.h>\n//# LED\nint main(void) { PORTA.OUTSET = PIN3_bm; PORTA.DIRSET = PIN3_bm; for (;;) {} }\n",
-    },
-    guide: {
-      name: "led.md",
-      locale: "en",
-      content:
-        "# LED\nConnect the LED to PA3 through a suitable resistor.\n<!-- uartdebug:verification -->\n",
-      verificationMessages: {
-        passed: "Compiled successfully with XC8 for the selected target.",
-        skipped: "Compiler verification was skipped.",
-        hardwareNotTested: "Physical hardware has not been tested.",
-      },
-    },
-    spec: {
-      schemaVersion: 1,
-      language: "en",
-      microcontroller: { model: "ATtiny1624", package: "SOIC-14" },
-      clock: { hz: 3333333 },
-      resources: [resource()],
-      includes: ["xc.h"],
-      description: "Set PA3 high.",
-    },
+    version: "Ver.1.0",
+    source: { name: "led.c", content: source() },
+    guide: null,
+    resources: { name: "led.yaml", content: resources() },
   },
 });
 const clarify = () => ({
   action: "clarify",
   message: "Specify the LED pin.",
-  canvas: {
-    markdown: input().canvas.markdown,
-    locale: "en",
-    annotations: [
-      {
-        id: "pin",
-        kind: "question",
-        anchor: { quote: "LED", line: 1 },
-        message: "Which pin?",
-        status: "open",
-        answer: "",
-      },
-    ],
-  },
+  canvas: { markdown: canvas().markdown, locale: "en", annotations: [] },
   project: null,
+});
+const knowledge = () => ({
+  id: "UartDebug2",
+  version: "a".repeat(40),
+  repository: "Sergey-Bulanov/UartDebug2",
+  manifest: { files: {} },
+  initialRules: [
+    "AGENTS.md",
+    "Project_Rules/AGENTS_Add_On.md",
+    "Project_Rules/Project_Description.md",
+    "Project_Rules/Base_project_rules.md",
+  ].map((path) => ({ path, text: `Canonical ${path}.` })),
+  initialKnowledge: [
+    {
+      path: "MCU_Knowledge_Base/00_README.md",
+      text: "Canonical local reading map.",
+    },
+  ],
+  devices: [
+    {
+      mcu: "ATtiny1624",
+      packages: ["SOIC-14"],
+      pinouts: { "SOIC-14": { pins: { PA3: 13, PB1: 8 } } },
+    },
+  ],
+  corpus: { documents: [] },
+  reviewedFacts: { facts: [] },
+  dfpRegisters: { devices: [] },
 });
 const envelope = (value) => ({
   id: "resp_test",
-  model: "gpt-5.6-terra",
+  model: "gpt-6.1-sol",
   status: "completed",
   output: [
     {
@@ -126,6 +108,12 @@ const response = (value, status = 200) => ({
 const service = (options = {}) =>
   createAvrAiService({
     environment,
+    loadKnowledge: knowledge,
+    resolveKnowledge: ({ mcu, packageName }) => ({
+      supported: mcu === "attiny1624" && packageName === "SOIC-14",
+      context: "Canonical local knowledge.",
+      manifest: { id: "UartDebug2", version: "a".repeat(40), mcu, packageName },
+    }),
     fetch: async () => response(envelope(generated())),
     ...options,
   });
@@ -154,51 +142,6 @@ const compile = (ok = true, extra = {}) =>
     ok ? 200 : 400,
   );
 
-test("RTC/PIT generates CPU-independent 125 ms timing and rejects scope drift", async () => {
-  const data = generated();
-  data.project.source.content = fs.readFileSync(path.join(__dirname, "../scripts/avr-knowledge/fixtures/rtc-pit-blink.c"), "utf8");
-  data.project.source.content += '\nstatic const char *note = "F_CPU is intentionally unspecified";\n';
-  data.project.spec.clock.hz = null;
-  data.project.spec.includes.push("avr/interrupt.h");
-  data.project.spec.resources[0].pin = "PB1";
-  data.project.spec.resources.push({
-    ...resource(), id: "blink", kind: "rtc-pit", pin: null, direction: null,
-    instance: "RTC", clockSource: "INT32K", periodCycles: 4096, periodUs: 125000,
-  });
-  const result = await service({ fetch: async () => response(envelope(data)) }).processCanvas(input());
-  assert.equal(result.kind, "project");
-  assert.equal(result.verification.calculations[0].nominalPeriodUs, 125000);
-  assert.equal(result.verification.calculations[0].sourceHz, 32768);
-  assert.match(result.project.files.find((file) => file.role === "specification").content, /hz: null/);
-  for (const [oldText, newText, code] of [
-    ["RTC_PERIOD_CYC4096_gc", "RTC_PERIOD_CYC8192_gc", "project_rtc_pit_mismatch"],
-    ["RTC.PITINTFLAGS =", "RTC.PITINTFLAGS |=", "unsafe_interrupt_flag_write"],
-    ["RTC.PITINTFLAGS =", "RTC . PITINTFLAGS |=", "unsafe_interrupt_flag_write"],
-    ["RTC.PITINTFLAGS =", "RTC.CTRLA =", "unsupported_peripheral_access"],
-    ["#include <xc.h>", "#define F_CPU 20000000UL\n#include <xc.h>", "project_clock_mismatch"],
-    ["#include <xc.h>", "#include <xc.h>\nvoid clock_init(void) { CLKCTRL.MCLKCTRLB = 0; }", "project_clock_mismatch"],
-  ]) {
-    const invalid = structuredClone(data);
-    invalid.project.source.content = invalid.project.source.content.replace(oldText, newText);
-    await assert.rejects(service({ fetch: async () => response(envelope(invalid)) }).processCanvas(input()), (error) => error.code === code);
-  }
-});
-
-test("status advertises local target/packages and no legacy skill catalog", async () => {
-  const s = service();
-  const status = await s.getStatus();
-  assert.equal(status.ready, true);
-  assert.equal(status.contract, "uartdebug-canvas/v1");
-  assert.equal(status.knowledge.devices.length, 3);
-  assert.equal(status.rules.packageId, "uartdebug-canvas-2026-09-24.4");
-  assert.equal(status.knowledge.referenceDocuments.length, 2);
-  assert.ok(status.knowledge.reviewedErrataCount > 0);
-  assert.equal(s.getSkills, undefined);
-  assert.equal(
-    (await service({ environment: {} }).getStatus()).configured,
-    false,
-  );
-});
 test("optional access credentials remain server-side and fail closed", () => {
   const s = service({
     environment: {
@@ -211,26 +154,7 @@ test("optional access credentials remain server-side and fail closed", () => {
   assert.equal(s.authorizeAccessToken("secret-test"), true);
   assert.equal(service().authorizeAccessToken(""), true);
 });
-test("missing/unsupported targets return canvas annotations without provider or compiler work", async () => {
-  let calls = 0;
-  const s = service({
-    fetch: async () => {
-      calls++;
-      throw Error("unexpected");
-    },
-  });
-  const missing = input();
-  missing.packageName = "";
-  missing.canvas.target.packageName = "";
-  assert.equal((await s.processCanvas(missing)).kind, "canvas");
-  const unsupported = input();
-  unsupported.mcu = unsupported.canvas.target.mcu = "attiny85";
-  assert.equal(
-    (await s.processCanvas(unsupported)).canvas.annotations[0].kind,
-    "error",
-  );
-  assert.equal(calls, 0);
-});
+
 test("malformed canvas and conflicting selected target fail before provider work", async () => {
   const s = service();
   for (const raw of [
@@ -239,107 +163,7 @@ test("malformed canvas and conflicting selected target fail before provider work
   ])
     await assert.rejects(s.processCanvas(raw), (e) => e.status === 400);
 });
-test("clarification edits the same revisioned canvas without creating files", async () => {
-  const result = await service({
-    fetch: async () => response(envelope(clarify())),
-  }).processCanvas(input());
-  assert.equal(result.kind, "canvas");
-  assert.equal(result.baseRevision, 7);
-  assert.equal(result.canvas.revision, 8);
-  assert.equal(result.canvas.annotations[0].id, "pin");
-  assert.equal(result.project, undefined);
-  assert.equal(result._metering.usage.totalTokens, 150);
-});
-test("generation returns C, localized guide and server-serialized YAML in one project", async () => {
-  let body;
-  const result = await service({
-    fetch: async (_url, request) => {
-      body = JSON.parse(request.body);
-      return response(envelope(generated()));
-    },
-  }).processCanvas(input());
-  assert.equal(result.kind, "project");
-  assert.equal(result.operation, "create");
-  assert.deepEqual(
-    result.project.files.map((f) => f.role),
-    ["source", "guide", "specification"],
-  );
-  assert.match(result.project.files[2].content, /PA3/);
-  assert.equal(result.project.aiSpecRef, undefined);
-  assert.equal(result.verification.hardware, "not-tested");
-  assert.equal(body.store, false);
-  assert.equal(body.text.format.strict, true);
-  assert.match(body.instructions, /local knowledge/i);
-  assert.equal(body.input.length, 1);
-  assert.equal(body.tools[0].name, "read_avr_documentation");
-});
-test("updates preserve project identity, source/guide/YAML names and locale", async () => {
-  const raw = input();
-  raw.currentProject = {
-    instanceId: "instance-1",
-    id: "original-id",
-    sourceName: "led.c",
-    guideName: "led.md",
-    source: generated().project.source.content,
-    guide: generated().project.guide.content,
-    specification: { name: "hardware.yaml", content: "schemaVersion: 1" },
-  };
-  const result = await service().processCanvas(raw);
-  assert.equal(result.operation, "update");
-  assert.equal(result.targetInstanceId, "instance-1");
-  assert.equal(result.project.id, "original-id");
-  assert.equal(result.project.files[2].name, "hardware.yaml");
-  const renamed = generated();
-  renamed.project.source.name = "different.c";
-  await assert.rejects(
-    service({ fetch: async () => response(envelope(renamed)) }).processCanvas(
-      raw,
-    ),
-    (e) => e.status === 502,
-  );
-});
-test("resource conflicts, clock mismatch and unsafe W1C writes are blocked before compile", async () => {
-  for (const mutate of [
-    (p) => p.spec.resources.push({ ...resource(), id: "second" }),
-    (p) => (p.spec.clock.hz = 20000000),
-    (p) =>
-      (p.source.content += "\nvoid bad(void) { TCA0.SINGLE.INTFLAGS |= 1; }"),
-  ]) {
-    const data = generated();
-    mutate(data.project);
-    let compileCalls = 0;
-    const s = service({
-      fetch: async () => response(envelope(data)),
-      compileFetch: async () => {
-        compileCalls++;
-        return compile();
-      },
-    });
-    await assert.rejects(
-      s.processCanvas(input()),
-      (e) => e.status === 502 && e._metering.usage.totalTokens === 150,
-    );
-    assert.equal(compileCalls, 0);
-  }
-});
-test("full reference access does not permit undeclared unsupported peripheral code", async () => {
-  for (const extra of ["void sample(void) { ADC0.CTRLA = 1; }", "void sleep_timer(void) { RTC.CTRLA = 1; }"]) {
-    const data = generated();
-    data.project.source.content += extra;
-    let compileCalls = 0;
-    await assert.rejects(service({
-      environment: { ...environment, AI_COMPILE_VERIFY_ENABLED: "1" },
-      compileHealthFetch: async () => health(),
-      compileFetch: async () => { compileCalls++; return compile(); },
-      fetch: async () => response(envelope(data)),
-    }).processCanvas(input()), (error) => error.code === "unsupported_peripheral_access");
-    assert.equal(compileCalls, 0);
-  }
-  const data = generated();
-  data.project.source.content += '\n/* ADC0.CTRLA is reference text. */\n// RTC.CTRLA is not accessed.\nstatic const char *note = "SPI0.CTRLA / TWI0.CTRLA";\nvoid clock_setup(void) { CPU.CCP = 0xD8; CLKCTRL.MCLKCTRLB = 0; PORTMUX.USARTROUTEA = 0; }\n';
-  const result = await service({ fetch: async () => response(envelope(data)) }).processCanvas(input());
-  assert.equal(result.kind, "project", "literals, comments and supported clock/route setup remain permitted");
-});
+
 test("compiler readiness is required before any paid call", async () => {
   let calls = 0;
   const s = service({
@@ -356,6 +180,7 @@ test("compiler readiness is required before any paid call", async () => {
   );
   assert.equal(calls, 0);
 });
+
 test("compiler failures trigger a bounded synchronized repair and accumulate usage", async () => {
   const requests = [],
     events = [];
@@ -389,6 +214,7 @@ test("compiler failures trigger a bounded synchronized repair and accumulate usa
     events.some((e) => e.id === "compilation" && e.status === "failed"),
   );
 });
+
 test("compiler target mismatch and exhausted repairs never return a project", async () => {
   for (const [compileFetch, code] of [
     [
@@ -408,6 +234,7 @@ test("compiler target mismatch and exhausted repairs never return a project", as
     );
   }
 });
+
 test("exact token count reserves budget before provider work", async () => {
   const order = [];
   const s = service({
@@ -431,6 +258,7 @@ test("exact token count reserves budget before provider work", async () => {
   });
   assert.deepEqual(order, ["count", "reserve", "mark", "provider"]);
 });
+
 test("missing usage on a metered paid response is uncertain; explicit 4xx is not", async () => {
   for (const rejected of [false, true]) {
     const s = service({
@@ -452,6 +280,7 @@ test("missing usage on a metered paid response is uncertain; explicit 4xx is not
     );
   }
 });
+
 test("repair extends the reservation and retains earlier usage when the next call fails", async () => {
   let calls = 0;
   const s = service({
@@ -462,7 +291,7 @@ test("repair extends the reservation and retains earlier usage when the next cal
       calls++;
       if (calls === 2) throw Error("network");
       const bad = generated();
-      bad.project.spec.resources[0].pin = "PA0";
+      bad.project.resources.content = "invalid: true";
       return response(envelope(bad));
     },
   });
@@ -485,108 +314,64 @@ test("repair extends the reservation and retains earlier usage when the next cal
 test("budget denial preserves the actual continuation stage and paid usage", async () => {
   for (const documentation of [true, false]) {
     const bad = generated();
-    bad.project.spec.resources[0].pin = "PA0";
-    const first = documentation ? {
-      ...envelope(null),
-      output: [{ type: "function_call", name: "read_avr_documentation", call_id: "catalog", arguments: JSON.stringify({ operation: "catalog", query: "", documentId: "", sectionId: "", page: 0, url: "", gap: "" }) }],
-    } : envelope(bad);
+    bad.project.resources.content = "invalid: true";
+    const first = documentation
+      ? {
+          ...envelope(null),
+          output: [
+            {
+              type: "function_call",
+              name: "read_avr_documentation",
+              call_id: "catalog",
+              arguments: JSON.stringify({
+                operation: "catalog",
+                query: "",
+                documentId: "",
+                sectionId: "",
+                page: 0,
+                url: "",
+                gap: "",
+              }),
+            },
+          ],
+        }
+      : envelope(bad);
     const s = service({
       environment: { ...environment, AI_COMPILE_MAX_REPAIR_ATTEMPTS: "1" },
-      fetch: async (url) => response(url.endsWith("/input_tokens") ? { input_tokens: 1000 } : first),
+      fetch: async (url) =>
+        response(
+          url.endsWith("/input_tokens") ? { input_tokens: 1000 } : first,
+        ),
     });
-    await assert.rejects(s.processCanvas(input(), {
-      reserveBudget: async () => ({ maxOutputTokens: 9000 }),
-      extendBudget: async () => { throw Object.assign(new Error("Insufficient credits for the next AI step."), { status: 429, code: "free_quota_insufficient" }); },
-    }), (error) => {
-      assert.equal(error.code, "free_quota_insufficient");
-      assert.equal(error.diagnostic.stage, documentation ? "documentation-continuation" : "validation-repair");
-      assert.equal(error.diagnostic.causeCode, documentation ? null : "project_resource_validation_failed");
-      assert.equal(error.diagnostic.providerCalls, 1);
-      assert.equal(error._metering.usage.totalTokens, 150);
-      assert.equal(error._usageUncertain, undefined);
-      return true;
-    });
+    await assert.rejects(
+      s.processCanvas(input(), {
+        reserveBudget: async () => ({ maxOutputTokens: 9000 }),
+        extendBudget: async () => {
+          throw Object.assign(
+            new Error("Insufficient credits for the next AI step."),
+            { status: 429, code: "free_quota_insufficient" },
+          );
+        },
+      }),
+      (error) => {
+        assert.equal(error.code, "free_quota_insufficient");
+        assert.equal(
+          error.diagnostic.stage,
+          documentation ? "documentation-continuation" : "validation-repair",
+        );
+        assert.equal(
+          error.diagnostic.causeCode,
+          documentation ? null : "invalid_generated_canvas",
+        );
+        assert.equal(error.diagnostic.providerCalls, 1);
+        assert.equal(error._metering.usage.totalTokens, 150);
+        assert.equal(error._usageUncertain, undefined);
+        return true;
+      },
+    );
   }
 });
-test("local corpus search/read/register steps continue Responses with provenance and budget accounting without internet", async () => {
-  let calls = 0,
-    web = 0;
-  const requests = [];
-  const s = service({
-    environment: { ...environment, AI_EXTERNAL_DOCUMENTATION_ENABLED: "0" },
-    documentationFetch: async () => {
-      web++;
-      throw Error("external disabled");
-    },
-    fetch: async (_url, r) => {
-      requests.push(JSON.parse(r.body));
-      calls++;
-      const outputs = requests.at(-1).input.filter((item) => item.type === "function_call_output");
-      const previous = outputs.length ? JSON.parse(outputs.at(-1).output) : null;
-      if (previous) assert.equal(previous.ok, true, JSON.stringify(previous));
-      const argumentsByStep = [
-        { operation: "search", query: "ADC SAMPDUR", documentId: "datasheet", sectionId: "", page: 0, url: "", gap: "" },
-        { operation: "read", query: "ADC SAMPDUR", documentId: "datasheet", sectionId: "", page: previous?.results?.[0]?.page || 1, url: "", gap: "" },
-        { operation: "registers", query: "ADC_REFSEL", documentId: "", sectionId: "ADC", page: 0, url: "", gap: "" },
-      ];
-      return response(
-        calls <= 3
-          ? {
-              ...envelope(null),
-              output: [
-                {
-                  type: "function_call",
-                  name: "read_avr_documentation",
-                  call_id: `call-doc-${calls}`,
-                  arguments: JSON.stringify(argumentsByStep[calls - 1]),
-                },
-              ],
-            }
-          : envelope(clarify()),
-      );
-    },
-  });
-  const result = await s.processCanvas(input());
-  assert.equal(result.kind, "canvas");
-  assert.equal(result._metering.usage.totalTokens, 600);
-  assert.equal(web, 0);
-  assert.equal(calls, 4, "local retrieval is not restricted by the two-network-request limit");
-  assert.ok(result.references.some((reference) => reference.documentId === "datasheet" && reference.page > 1 && reference.revision && reference.reviewStatus === "machine-extracted-reference"));
-  assert.ok(result.references.some((reference) => reference.atdfMember && reference.digestScope === "downloaded-pack-bytes"));
-  assert.ok(
-    requests[1].input.some(
-      (item) =>
-        item.type === "function_call_output" && item.call_id === "call-doc-1",
-    ),
-  );
-});
 
-test("canvas requests receive core coding methodology and retrieve detailed source lines locally", async () => {
-  let calls = 0, network = 0;
-  const s = service({
-    documentationFetch: async () => { network++; throw Error("No external documentation expected"); },
-    fetch: async (_url, request) => {
-      const body = JSON.parse(request.body);
-      assert.match(body.instructions, /Core coding methodology \(methodology-coding-style\)/);
-      assert.match(body.instructions, /methodology-interrupts/);
-      if (++calls === 1) return response({ ...envelope(null), output: [{
-        type: "function_call", name: "read_avr_documentation", call_id: "methodology-read",
-        arguments: JSON.stringify({ operation: "read", documentId: "methodology-interrupts", sectionId: "", page: 0, query: "atomic", url: "", gap: "" }),
-      }] });
-      const output = JSON.parse(body.input.find((item) => item.type === "function_call_output").output);
-      assert.equal(output.ok, true);
-      assert.equal(output.verification, "methodology-review");
-      assert.ok(output.results.every((item) => item.startLine > 0 && item.sha256));
-      assert.match(output.results.map((item) => item.text).join("\n"), /ATOMIC_RESTORESTATE/);
-      return response(envelope(generated()));
-    },
-  });
-  const result = await s.processCanvas(input());
-  assert.equal(result.kind, "project");
-  assert.ok(result.references.some((item) => item.documentId === "methodology-interrupts" && item.startLine && item.verification === "methodology-review"));
-  assert.equal(network, 0);
-  assert.equal(calls, 2);
-});
 test("unregistered tool names are rejected without side effects", async () => {
   const s = service({
     fetch: async () =>
@@ -607,6 +392,7 @@ test("unregistered tool names are rejected without side effects", async () => {
     (e) => e.code === "documentation_limit_reached",
   );
 });
+
 test("Responses parsing rejects refusals/incomplete JSON; accounting validates totals", () => {
   assert.deepEqual(parseStructuredOutput(envelope({ a: 1 })), { a: 1 });
   assert.throws(
@@ -651,87 +437,599 @@ test("Responses parsing rejects refusals/incomplete JSON; accounting validates t
   );
 });
 
-test("a malformed clarification can be repaired into a valid question without forced generation", async () => {
-  let calls = 0;
-  const bad = clarify();
-  bad.canvas.annotations[0].anchor.quote = "absent quote";
-  const result = await service({
-    environment: { ...environment, AI_COMPILE_MAX_REPAIR_ATTEMPTS: "1" },
-    fetch: async () => response(envelope(++calls === 1 ? bad : clarify())),
-  }).processCanvas(input());
-  assert.equal(result.kind, "canvas");
-  assert.equal(calls, 2);
-  assert.equal(result.canvas.annotations[0].kind, "question");
+test("status reports the canonical project contract and requested model", async () => {
+  const status = await service().getStatus();
+  assert.equal(status.ready, true);
+  assert.equal(status.contract, "uartdebug-project/v2");
+  assert.equal(status.model, "gpt-6.1-sol");
+  assert.deepEqual(status.stages, ["analyze", "generate", "describe"]);
+  assert.equal(status.externalDocumentation.enabled, false);
+  assert.match(status.rules.packageId, /^UartDebug2@/);
 });
-test("normalized resource specification is the one serialized to YAML", async () => {
+test("empty specifications and empty selected project drafts reach analysis without a target or compiler", async () => {
+  const raw = input("analyze");
+  raw.canvas.markdown = "";
+  raw.mcu = raw.canvas.target.mcu = "";
+  raw.packageName = raw.canvas.target.packageName = "";
+  raw.currentProject = { instanceId: "draft-1", source: "", guide: "" };
+  let calls = 0;
   const result = await service({
-    validateProjectSpec: (spec) => ({
-      valid: true,
-      errors: [],
-      warnings: [],
-      normalized: { ...spec, description: "Canonical resource specification" },
-    }),
-  }).processCanvas(input());
-  assert.match(
-    result.project.files[2].content,
-    /Canonical resource specification/,
+    environment: { ...environment, AI_COMPILE_VERIFY_ENABLED: "1" },
+    compileHealthFetch: async () => {
+      throw Error("Analysis must not call compiler");
+    },
+    fetch: async (_url, request) => {
+      calls++;
+      const body = JSON.parse(request.body);
+      assert.equal(JSON.parse(body.input[0].content).operation, "analyze");
+      for (const document of knowledge().initialRules)
+        assert.ok(body.instructions.includes(document.text));
+      return response(
+        envelope({
+          ...clarify(),
+          canvas: {
+            markdown:
+              "> ###### *[AI.1] Question.*\n>\n> What project name and version should be used?",
+            locale: "en",
+            annotations: [],
+          },
+        }),
+      );
+    },
+  }).processCanvas(raw);
+  assert.equal(calls, 1);
+  assert.equal(result.kind, "canvas");
+  assert.equal(result.baseRevision, 7);
+  assert.equal(result.canvas.revision, 8);
+  assert.deepEqual(result.canvas.annotations, []);
+  assert.match(result.canvas.markdown, /\[AI\.1\]/);
+});
+test("generation returns only C and hidden canonical YAML while preserving the specification", async () => {
+  const result = await service().processCanvas(input());
+  assert.equal(result.kind, "project");
+  assert.equal(result.stage, "generate");
+  assert.deepEqual(
+    result.project.files.map((file) => file.role),
+    ["source", "specification"],
+  );
+  assert.equal(result.project.files[1].hidden, true);
+  assert.equal(result.project.canvasName, "led.md");
+  assert.equal(result.project.projectPath, "Target_Projects/led Ver.1.0");
+  assert.equal(result.canvas.markdown, canvas().markdown);
+  assert.equal(result.verification.hardware, "not-tested");
+});
+test("updates retain instance identity and existing logical output names", async () => {
+  const raw = input();
+  raw.currentProject = {
+    instanceId: "instance-1",
+    id: "existing-id",
+    sourceName: "led.c",
+    guideName: "led (description).md",
+    source: source(),
+    guide: "Existing description",
+    specification: { name: "led.yaml", content: resources() },
+  };
+  const result = await service().processCanvas(raw);
+  assert.equal(result.operation, "update");
+  assert.equal(result.targetInstanceId, "instance-1");
+  assert.equal(result.project.id, "existing-id");
+  assert.equal(result.project.files.length, 2);
+  const renamed = generated();
+  renamed.project.source.name = "other.c";
+  await assert.rejects(
+    service({ fetch: async () => response(envelope(renamed)) }).processCanvas(
+      raw,
+    ),
+    (error) => error.status === 502,
   );
 });
-
-test("non-ASCII source names still receive a valid browser project identifier", async () => {
-  const output = generated();
-  output.project.source.name = "Светодиод.c";
-  const result = await service({
-    fetch: async () => response(envelope(output)),
-  }).processCanvas(input());
-  assert.match(result.project.id, /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/);
-});
-
-test("the server renders verification only after compilation and hides internal templates", async () => {
-  for (const enabled of [false, true]) {
-    const result = await service({
-      environment: {
-        ...environment,
-        AI_COMPILE_VERIFY_ENABLED: enabled ? "1" : "0",
+test("description uses the actual current C and cannot change C, YAML or specification", async () => {
+  const raw = input("describe");
+  raw.currentProject = {
+    instanceId: "instance-1",
+    id: "existing-id",
+    sourceName: "led.c",
+    guideName: "led (description).md",
+    source: source("int user_counter;"),
+    guide: "",
+  };
+  const described = {
+    ...generated(),
+    action: "describe",
+    project: {
+      ...generated().project,
+      source: null,
+      resources: null,
+      guide: {
+        name: "led (description).md",
+        locale: "en",
+        content:
+          "# LED\nThe actual code configures PA3 and preserves user_counter.",
       },
-      compileHealthFetch: async () => health(),
-      compileFetch: async () => compile(),
-    }).processCanvas(input());
-    const guide = result.project.files.find((file) => file.role === "guide");
-    assert.match(
-      guide.content,
-      enabled
-        ? /Compiled successfully with XC8/
-        : /Compiler verification was skipped/,
-    );
-    assert.match(guide.content, /Physical hardware has not been tested/);
-    assert.doesNotMatch(guide.content, /uartdebug:verification/);
-    assert.equal(guide.verificationMessages, undefined);
-  }
+    },
+  };
+  const result = await service({
+    environment: { ...environment, AI_COMPILE_VERIFY_ENABLED: "1" },
+    compileHealthFetch: async () => {
+      throw Error("Description must not compile");
+    },
+    fetch: async (_url, request) => {
+      assert.match(JSON.parse(request.body).input[0].content, /user_counter/);
+      return response(envelope(described));
+    },
+  }).processCanvas(raw);
+  assert.equal(result.stage, "describe");
+  assert.deepEqual(
+    result.project.files.map((file) => file.role),
+    ["guide"],
+  );
+  assert.equal(result.verification.status, "not-requested");
+  assert.equal(result.canvas.markdown, raw.canvas.markdown);
+  const drift = structuredClone(described);
+  drift.project.source = generated().project.source;
+  await assert.rejects(
+    service({ fetch: async () => response(envelope(drift)) }).processCanvas(
+      raw,
+    ),
+  );
 });
-
-test("timing verification distinguishes microseconds from milliseconds", async () => {
+test("missing generation identity and target clarify without spending a provider call", async () => {
+  let calls = 0;
+  const s = service({
+    fetch: async () => {
+      calls++;
+      throw Error("Unexpected paid call");
+    },
+  });
+  for (const raw of [
+    { ...input(), canvas: { ...canvas(), markdown: "" } },
+    {
+      ...input(),
+      mcu: "",
+      canvas: {
+        ...canvas(),
+        markdown: canvas().markdown.replace(
+          "ATtiny1624, SOIC-14,",
+          "Unspecified target,",
+        ),
+        target: { mcu: "", packageName: "SOIC-14" },
+      },
+    },
+    {
+      ...input(),
+      mcu: "attiny85",
+      canvas: {
+        ...canvas(),
+        target: { mcu: "attiny85", packageName: "SOIC-14" },
+      },
+    },
+  ]) {
+    const result = await s.processCanvas(raw);
+    assert.equal(result.kind, "canvas");
+    assert.equal(result.canvas.markdown, raw.canvas.markdown);
+  }
+  assert.equal(calls, 0);
+});
+test("canonical guidance replaces the old artificial peripheral allowlist", async () => {
   const output = generated();
   output.project.source.content = output.project.source.content.replace(
-    "3333333UL",
-    "20000000UL",
+    "PORTA.OUTSET = PIN3_bm;",
+    "ADC0.CTRLA = 1;\n    TCB0.CTRLA = 1;",
   );
-  output.project.spec.clock.hz = 20000000;
-  output.project.spec.resources.push({
-    ...resource(),
-    id: "tick",
-    kind: "timer",
-    pin: null,
-    direction: null,
-    instance: "TCA0",
-    periodUs: 500000,
-    prescaler: 256,
-  });
   const result = await service({
     fetch: async () => response(envelope(output)),
   }).processCanvas(input());
-  const timing = result.verification.calculations[0];
-  assert.equal(timing.per, 39062);
-  assert.equal(timing.actualPeriodUs, 500006.4);
-  assert.ok(Math.abs(timing.actualPeriodMs - 500.0064) < 1e-9);
+  assert.equal(result.kind, "project");
+});
+test("W1C read-modify-write, broken YAML and user C changes fail before compilation", async () => {
+  const raw = input();
+  raw.currentProject = {
+    instanceId: "instance-1",
+    sourceName: "led.c",
+    source: source("int user_counter;"),
+    guide: "",
+  };
+  for (const mutate of [
+    (output) => {
+      output.project.source.content = source("int user_counter = 4;");
+    },
+    (output) => {
+      output.project.resources.content = "microcontroller: {}";
+    },
+    (output) => {
+      output.project.source.content = source("int user_counter;").replace(
+        "PORTA.OUTSET = PIN3_bm;",
+        "TCA0.SINGLE.INTFLAGS |= 1;",
+      );
+    },
+  ]) {
+    const output = generated();
+    mutate(output);
+    let compilations = 0;
+    await assert.rejects(
+      service({
+        environment: { ...environment, AI_COMPILE_VERIFY_ENABLED: "1" },
+        compileHealthFetch: async () => health(),
+        compileFetch: async () => {
+          compilations++;
+          return compile();
+        },
+        fetch: async () => response(envelope(output)),
+      }).processCanvas(raw),
+      (error) =>
+        error.status === 502 && error._metering.usage.totalTokens === 150,
+    );
+    assert.equal(compilations, 0);
+  }
+});
+test("tool continuation preserves local provenance and usage without network", async () => {
+  let calls = 0;
+  const result = await service({
+    documentationFetch: async () => {
+      throw Error("No network");
+    },
+    fetch: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      if (++calls === 1)
+        return response({
+          ...envelope(null),
+          output: [
+            {
+              type: "function_call",
+              name: "read_avr_documentation",
+              call_id: "catalog",
+              arguments: JSON.stringify({
+                operation: "catalog",
+                query: "",
+                documentId: "",
+                sectionId: "",
+                page: 0,
+                url: "",
+                gap: "",
+              }),
+            },
+          ],
+        });
+      const tool = body.input.find(
+        (item) => item.type === "function_call_output",
+      );
+      assert.equal(tool.call_id, "catalog");
+      assert.equal(JSON.parse(tool.output).ok, true);
+      return response(envelope(generated()));
+    },
+  }).processCanvas(input());
+  assert.equal(calls, 2);
+  assert.equal(result._metering.usage.totalTokens, 300);
+});
+
+test("real canonical loader supplies rules once and pins tool reads to the request snapshot", async (t) => {
+  const { createMaterialsFixture } = require("./helpers/avr-materials-fixture");
+  const first = createMaterialsFixture(t);
+  const second = createMaterialsFixture(t, {
+    "MCU_Knowledge_Base/AVR/GPIO.md":
+      "# GPIO\n\nDifferent next release content.",
+  });
+  const liveEnvironment = { ...environment, AI_MATERIALS_ROOT: first.root };
+  let calls = 0;
+  const s = createAvrAiService({
+    environment: liveEnvironment,
+    fetch: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      for (const [file, content] of Object.entries(first.files).filter(
+        ([file]) => file === "AGENTS.md" || file.startsWith("Project_Rules/"),
+      ))
+        assert.equal(body.instructions.split(content).length, 2, file);
+      assert.doesNotMatch(
+        body.instructions,
+        /SECRET_NOTE|SECRET_PROBLEM|SECRET_TEMP|SECRET_TARGET/,
+      );
+      if (++calls === 1) {
+        liveEnvironment.AI_MATERIALS_ROOT = second.root;
+        return response({
+          ...envelope(null),
+          output: [
+            {
+              type: "function_call",
+              name: "read_avr_documentation",
+              call_id: "gpio",
+              arguments: JSON.stringify({
+                operation: "read",
+                documentId: "MCU_Knowledge_Base/AVR/GPIO.md",
+                sectionId: "",
+                page: 0,
+                url: "",
+                query: "DIRSET",
+                gap: "",
+              }),
+            },
+          ],
+        });
+      }
+      const output = JSON.parse(
+        body.input.find((item) => item.type === "function_call_output").output,
+      );
+      assert.equal(output.ok, true);
+      assert.match(JSON.stringify(output), /ATOMIC_RESTORESTATE/);
+      assert.doesNotMatch(JSON.stringify(output), /Different next release/);
+      return response(envelope(clarify()));
+    },
+  });
+  const result = await s.processCanvas(input("analyze"));
+  assert.equal(result.kind, "canvas");
+  assert.equal(calls, 2);
+  assert.equal(
+    result.references[0].documentId,
+    "MCU_Knowledge_Base/AVR/GPIO.md",
+  );
+  assert.equal(
+    result.references[0].sha256,
+    first.manifest.files["MCU_Knowledge_Base/AVR/GPIO.md"].sha256,
+  );
+});
+
+test("generation can use the unambiguous target confirmed in specification text", async () => {
+  const raw = input();
+  raw.mcu = raw.canvas.target.mcu = "";
+  raw.packageName = raw.canvas.target.packageName = "";
+  const result = await service().processCanvas(raw);
+  assert.equal(result.kind, "project");
+  assert.equal(result.verification.mcu, "attiny1624");
+  assert.equal(result.verification.packageName, "SOIC-14");
+  assert.equal(result.canvas.markdown, raw.canvas.markdown);
+});
+
+test("compiler outages do not disable specification analysis or actual-code descriptions", async () => {
+  const status = await service({
+    environment: { ...environment, AI_COMPILE_VERIFY_ENABLED: "1" },
+    compileHealthFetch: async () => response({}, 503),
+  }).getStatus();
+  assert.equal(status.ready, true);
+  assert.equal(status.compilerVerification.ready, false);
+  assert.equal(status.compilerVerification.error, "compiler_unavailable");
+});
+
+test("GPT-6.1 Sol rejects unsupported none reasoning while retaining supported levels", () => {
+  for (const model of ["gpt-6.1-sol", "gpt-6.1-sol-2026-10-01"]) {
+    assert.equal(
+      getRuntimeConfig({ OPENAI_MODEL: model, OPENAI_REASONING_EFFORT: "none" })
+        .reasoningEffort,
+      "medium",
+    );
+    for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+      assert.equal(
+        getRuntimeConfig({
+          OPENAI_MODEL: model,
+          OPENAI_REASONING_EFFORT: effort,
+        }).reasoningEffort,
+        effort,
+      );
+    }
+  }
+  assert.equal(
+    getRuntimeConfig({
+      OPENAI_MODEL: "gpt-5.6-terra",
+      OPENAI_REASONING_EFFORT: "none",
+    }).reasoningEffort,
+    "none",
+  );
+});
+
+test("unrestricted canonical searches retain material source provenance", async (t) => {
+  const { createMaterialsFixture } = require("./helpers/avr-materials-fixture");
+  const fixture = createMaterialsFixture(t);
+  let calls = 0;
+  const result = await createAvrAiService({
+    environment: { ...environment, AI_MATERIALS_ROOT: fixture.root },
+    fetch: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      if (++calls === 1)
+        return response({
+          ...envelope(null),
+          output: [
+            {
+              type: "function_call",
+              name: "read_avr_documentation",
+              call_id: "search",
+              arguments: JSON.stringify({
+                operation: "search",
+                documentId: "",
+                sectionId: "",
+                page: 0,
+                query: "ATOMIC_RESTORESTATE",
+                url: "",
+                gap: "",
+              }),
+            },
+          ],
+        });
+      const lookup = JSON.parse(
+        body.input.find((item) => item.type === "function_call_output").output,
+      );
+      assert.ok(lookup.materialResults.length > 0);
+      return response(envelope(clarify()));
+    },
+  }).processCanvas(input("analyze"));
+  assert.ok(
+    result.references.some(
+      (reference) =>
+        reference.documentId === "MCU_Knowledge_Base/AVR/GPIO.md" &&
+        reference.sha256 ===
+          fixture.manifest.files["MCU_Knowledge_Base/AVR/GPIO.md"].sha256 &&
+        reference.startLine > 0,
+    ),
+  );
+});
+test("canonical section continuations can finish beyond the old ten-step limit with metering intact", async () => {
+  const material = knowledge();
+  const text =
+    "# Peripheral guide\n\n" +
+    Array.from(
+      { length: 13 },
+      (_, index) =>
+        `## Section ${index}\n\n${"Technical reference detail. ".repeat(330)}\n`,
+    ).join("\n");
+  material.documents = [
+    {
+      id: "MCU_Knowledge_Base/AVR/Peripheral.md",
+      path: "MCU_Knowledge_Base/AVR/Peripheral.md",
+      sourcePath: "MCU_Knowledge_Base/AVR/Peripheral.md",
+      text,
+      title: "Peripheral guide",
+      kind: "reference",
+      sha256: "a".repeat(64),
+    },
+  ];
+  let providerCalls = 0,
+    documentationCalls = 0;
+  const result = await service({
+    loadKnowledge: () => material,
+    fetch: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      providerCalls++;
+      const outputs = body.input.filter(
+        (item) => item.type === "function_call_output",
+      );
+      const previous = outputs.length
+        ? JSON.parse(outputs.at(-1).output)
+        : null;
+      if (previous) assert.equal(previous.ok, true);
+      if (previous && !previous.nextSectionId)
+        return response(envelope(generated()));
+      documentationCalls++;
+      return response({
+        ...envelope(null),
+        output: [
+          {
+            type: "function_call",
+            name: "read_avr_documentation",
+            call_id: `section-${documentationCalls}`,
+            arguments: JSON.stringify({
+              operation: "read",
+              documentId: material.documents[0].id,
+              sectionId: previous?.nextSectionId || "",
+              page: 0,
+              query: "",
+              url: "",
+              gap: "",
+            }),
+          },
+        ],
+      });
+    },
+  }).processCanvas(input());
+  assert.equal(result.kind, "project");
+  assert.ok(documentationCalls > 10);
+  assert.equal(result._metering.usage.totalTokens, providerCalls * 150);
+  assert.ok(
+    result.references.some(
+      (reference) => reference.sectionTitle === "Section 12",
+    ),
+  );
+});
+test("empty description placeholders do not determine the new filename or documentation language", async () => {
+  const raw = input("describe");
+  raw.canvas.locale = "ru";
+  raw.currentProject = {
+    instanceId: "draft-1",
+    sourceName: "led.c",
+    source: source(),
+    guideName: "Untitled project (description).md",
+    guideLocale: "en",
+    guide: "",
+  };
+  const output = {
+    ...generated(),
+    action: "describe",
+    canvas: { ...generated().canvas, locale: "ru" },
+    project: {
+      ...generated().project,
+      source: null,
+      resources: null,
+      guide: {
+        name: "led (description).md",
+        locale: "ru",
+        content: "# Код светодиода\nPA3 настроен как выход.",
+      },
+    },
+  };
+  const result = await service({
+    fetch: async () => response(envelope(output)),
+  }).processCanvas(raw);
+  assert.equal(result.project.files[0].name, "led (description).md");
+  assert.equal(result.project.files[0].locale, "ru");
+  assert.equal(result.canvas.locale, "ru");
+  const wrong = structuredClone(output);
+  wrong.project.guide.name = raw.currentProject.guideName;
+  await assert.rejects(
+    service({ fetch: async () => response(envelope(wrong)) }).processCanvas(
+      raw,
+    ),
+  );
+});
+test("a nonempty selected description retains its explicit language and filename", async () => {
+  const raw = input("describe");
+  raw.canvas.locale = "ru";
+  raw.currentProject = {
+    instanceId: "existing-1",
+    sourceName: "led.c",
+    source: source(),
+    guideName: "led (en).md",
+    guideLocale: "en",
+    guide: "Existing English description.",
+  };
+  const output = {
+    ...generated(),
+    action: "describe",
+    canvas: { ...generated().canvas, locale: "ru" },
+    project: {
+      ...generated().project,
+      source: null,
+      resources: null,
+      guide: {
+        name: "led (en).md",
+        locale: "en",
+        content: "# LED\nPA3 is configured as output.",
+      },
+    },
+  };
+  const result = await service({
+    fetch: async (_url, request) => {
+      assert.equal(
+        JSON.parse(JSON.parse(request.body).input[0].content).currentProject
+          .guideLocale,
+        "en",
+      );
+      return response(envelope(output));
+    },
+  }).processCanvas(raw);
+  assert.equal(result.project.files[0].locale, "en");
+  const wrong = structuredClone(output);
+  wrong.project.guide.locale = "ru";
+  await assert.rejects(
+    service({ fetch: async () => response(envelope(wrong)) }).processCanvas(
+      raw,
+    ),
+  );
+});
+
+test("generation checks canonical physical pin claims before compiler work", async () => {
+  const invalid = generated();
+  invalid.project.resources.content = resources().replace(
+    "    pin: PA3",
+    "    pin_symbol: PB1\n    package_pin: 14\n    port: B\n    port_pin: 1",
+  );
+  let compilations = 0;
+  await assert.rejects(
+    service({
+      environment: { ...environment, AI_COMPILE_VERIFY_ENABLED: "1" },
+      compileHealthFetch: async () => health(),
+      compileFetch: async () => {
+        compilations++;
+        return compile();
+      },
+      fetch: async () => response(envelope(invalid)),
+    }).processCanvas(input()),
+    (error) => error.status === 502 && /package_pin/.test(error.message),
+  );
+  assert.equal(compilations, 0);
 });
