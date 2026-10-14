@@ -214,22 +214,22 @@ Balances, reservations, charges, and price calculations use integers in nanoUSD;
 floating-point currency arithmetic is not allowed. The UI may display the
 nanoUSD balance as AI Credits, but the integer ledger remains authoritative.
 
-The current provisional `gpt-5.6-terra` catalog is:
+The current `gpt-6.1-sol` catalog (`2026-10-14`) is:
 
 | Usage category | Standard, up to 272,000 input tokens | Long context, over 272,000 input tokens |
 | --- | ---: | ---: |
 | Input | 2,000 | 4,000 |
-| Cached input | 200 | 400 |
+| Cached input | 100 | 200 |
 | Cache write | 2,500 | 5,000 |
-| Output | 12,000 | 18,000 |
+| Output | 10,000 | 15,000 |
 
 At the standard tier, the catalogued cost is:
 
 ```text
 input tokens       * 2,000
-+ cached tokens    *   200
++ cached tokens    *   100
 + cache-write      * 2,500
-+ output tokens    * 12,000
++ output tokens    * 10,000
 = provider-cost nanoUSD
 ```
 
@@ -238,10 +238,11 @@ greater than 272,000, the long-context rates apply to the entire response. The
 ledger records the selected tier as well as the catalog version.
 
 Every ledger entry records the model and immutable price-catalog version used
-for the calculation. `AI_PRICE_CATALOG_VERSION=2026-08-24` selects the current
+for the calculation. `AI_PRICE_CATALOG_VERSION=2026-10-14` selects the current
 catalog. A pricing change creates a new version; historical entries are never
 recalculated. Provider invoices remain the final reconciliation source because
-API usage fields and prices can change.
+API usage fields and prices can change. The `2026-08-24` Terra catalog remains
+available for historical records; existing balances and ledger entries are not rewritten.
 
 ## Proposed 2:1:1 token fund
 
@@ -307,4 +308,4 @@ cannot provide and decisions that still block paid access.
 - [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect)
 - [Google ID-token verification](https://developers.google.com/identity/sign-in/web/backend-auth)
 - [OpenAI Responses input-token counting](https://developers.openai.com/api/reference/typescript/resources/responses/subresources/input_tokens)
-- [OpenAI GPT-5.6 Terra model and pricing](https://developers.openai.com/api/docs/models/gpt-5.6-terra)
+- [OpenAI GPT-6.1 Sol model and pricing](https://developers.openai.com/api/docs/models/gpt-6.1-sol)

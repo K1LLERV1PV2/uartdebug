@@ -8,6 +8,32 @@ const vm = require("node:vm");
 
 const core = require("../public/avr-mini-projects.js");
 
+test("preserves canonical project folders and Markdown specifications separately from resources", () => {
+  const project = core.normalizeDefinition({ schemaVersion: 1, id: "controller", title: "Controller", version: "Ver.2.1",
+    canvasName: "Controller.md", projectPath: "Target_Projects/Controller Ver.2.1", canvas: { markdown: "# Project Controller", locale: "en" },
+    files: [{ role: "source", name: "Controller.c", content: "" }, { role: "resources", name: "Controller.yaml", content: "microcontroller: {}" }],
+  });
+  assert.equal(project.contract, "uartdebug-project/v2");
+  assert.equal(project.canvasName, "Controller.md");
+  assert.equal(project.canvas.markdown, "# Project Controller");
+  assert.equal(project.files.specification.hidden, true);
+  assert.equal(project.projectPath, "Target_Projects/Controller Ver.2.1");
+  for (const path of ["../Controller", "Target_Projects/../outside", "Target_Projects/A/extra", "Other/A", "Target_Projects/__proto__"]) {
+    assert.throws(() => core.normalizeProjectPath(path), /invalid|Target_Projects/i);
+  }
+  assert.equal(core.normalizeProjectPath("Target_Projects/Контроллер Ver.2.1"), "Target_Projects/Контроллер Ver.2.1");
+});
+
+test("accepts canonical specification-only drafts without inventing starter code", () => {
+  const project = core.normalizeDefinition({ schemaVersion: 1, contract: "uartdebug-project/v2", id: "draft", title: "Draft", version: "",
+    canvasName: "Draft.md", projectPath: "Target_Projects/Draft", canvas: { markdown: "", locale: "" }, files: [],
+  });
+  assert.equal(project.files.source.name, "Draft.c");
+  assert.equal(project.files.source.content, "");
+  assert.equal(project.version, "");
+  assert.equal(project.files.guide, undefined);
+});
+
 test("exports schema version and installs the browser UMD global", () => {
   assert.equal(core.SCHEMA_VERSION, 1);
 

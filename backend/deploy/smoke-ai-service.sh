@@ -25,7 +25,7 @@ grep -q '"rules":{"packageId":' "${status_file}"
 node -e '
   const fs = require("fs");
   const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  if (value.contract !== "uartdebug-canvas/v1" || !value.knowledge) process.exit(1);
+  if (value.contract !== "uartdebug-project/v2" || !value.knowledge) process.exit(1);
   if (!Array.isArray(value.knowledge.devices) || !value.knowledge.devices.length) process.exit(1);
 ' "${status_file}"
 

@@ -10,8 +10,9 @@ const {
   AiAccessError,
   createAiAccessService,
 } = require("./ai-access-service");
+const { loadMaterials, createProjectCatalog } = require("./avr-materials");
 
-const AI_SERVER_VERSION = "20260924-canvas-v2";
+const AI_SERVER_VERSION = "20261014-project-v2";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -46,6 +47,8 @@ function createAiHttpServer(options = {}) {
       randomBytes: options.randomBytes,
     });
   const ownsAccessService = !options.accessService;
+  const getProjectCatalog = options.getProjectCatalog || (() =>
+    createProjectCatalog(loadMaterials({ root: environment.AI_MATERIALS_ROOT })));
   const now = options.now || (() => Date.now());
   const log = options.log || console;
   const allowedOrigins = new Set(
@@ -368,6 +371,33 @@ function createAiHttpServer(options = {}) {
       }
     }
 
+    const projectCatalogMatch = requestUrl.pathname.match(/^\/api\/avr\/ai\/projects(?:\/([A-Za-z0-9._-]{1,128}))?$/);
+    if (req.method === "GET" && projectCatalogMatch) {
+      try {
+        let includeTargets = false;
+        if (typeof accessService.authenticateAccountRequest === "function") {
+          try {
+            const account = await accessService.authenticateAccountRequest(req, res);
+            includeTargets = Boolean(account?.accountKey);
+          } catch (error) {
+            if (error?.status !== 401) throw error;
+          }
+        }
+        const catalog = getProjectCatalog();
+        if (!projectCatalogMatch[1]) return sendJson(res, 200, {
+          ok: true, projects: catalog.listProjects({ includeTargets }), requestId,
+        });
+        const project = catalog.readProject(projectCatalogMatch[1], { includeTargets });
+        if (!project) return sendJson(res, 404, { ok: false, code: "project_not_found", requestId });
+        return sendJson(res, 200, { ok: true, project, requestId });
+      } catch (error) {
+        return sendJson(res, 503, {
+          ok: false, code: "project_catalog_unavailable",
+          message: "Project examples are temporarily unavailable.", requestId,
+        });
+      }
+    }
+
     if (
       req.method === "GET" &&
       requestUrl.pathname === "/api/avr/ai/status"
@@ -489,6 +519,7 @@ function createAiHttpServer(options = {}) {
           );
         }
         if (
+          requestBody.operation === "generate" &&
           status.compilerVerification?.enabled === true &&
           status.compilerVerification?.ready !== true
         ) {

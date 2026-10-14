@@ -565,6 +565,8 @@
     }
 
     const root = findSharedRoot(extractedFiles.map((file) => file.path));
+    const canonical = buildCanonicalProjectDefinition(extractedFiles, root, limits);
+    if (canonical) return canonical;
     const classified = {
       source: [],
       guide: [],
@@ -724,6 +726,57 @@
     };
   }
 
+  function buildCanonicalProjectDefinition(extractedFiles, root, limits) {
+    const entries = extractedFiles.map(file => ({ ...file,
+      relativePath: stripSharedRoot(file.path, root), baseName: basename(file.path),
+    }));
+    const specs = entries.filter(file => /\.md$/i.test(file.baseName) &&
+      !/(?:_help|_ai|[._]description|\(description\)|\.guide)(?:[^/]*)\.md$/i.test(file.baseName) &&
+      !/^(?:AGENTS|00_README|README)\.md$/i.test(file.baseName));
+    if (!specs.length) return null;
+    requireExactlyOne(specs, "project specification Markdown");
+    const specification = specs[0];
+    const sourceEntries = entries.filter(file => /\.c$/i.test(file.baseName));
+    const resourceEntries = entries.filter(file => /\.ya?ml$/i.test(file.baseName));
+    if (sourceEntries.length > 1 || resourceEntries.length > 1) {
+      fail("INVALID_PROJECT", "A project archive must contain one project, not several versions or programs.");
+    }
+    const guideEntries = entries.filter(file => /(?:[._]description|\(description\)|\.guide)(?:[^/]*)\.md$/i.test(file.baseName));
+    const images = entries.filter(file => Object.hasOwn(IMAGE_EXTENSIONS, extensionOf(file.baseName.toLowerCase())));
+    const allowed = new Set([specification, ...sourceEntries, ...resourceEntries, ...guideEntries, ...images]);
+    if (entries.some(file => !allowed.has(file))) {
+      fail("UNSUPPORTED_PROJECT_FILE", "The archive contains files outside the selected project structure.");
+    }
+    const coreEntries = [specification, ...sourceEntries, ...resourceEntries, ...guideEntries];
+    if (new Set(coreEntries.map(file => canonicalPathKey(dirname(file.relativePath)))).size !== 1) {
+      fail("INVALID_PROJECT", "All project documents must be in the same project folder.");
+    }
+    const markdown = decodeProjectText(specification, limits);
+    const stem = specification.baseName.replace(/\.md$/i, "");
+    const titleMatch = /^#\s+(?:Project|\u041f\u0440\u043e\u0435\u043a\u0442)\s+(.+)$/im.exec(markdown);
+    const title = titleMatch?.[1]?.trim() || stem;
+    const versionMatch = /\bVer\.(\d+\.\d+)(?![.\d])/i.exec(markdown);
+    const version = versionMatch ? "Ver." + versionMatch[1] : "";
+    const source = sourceEntries[0];
+    const resources = resourceEntries[0];
+    const guides = guideEntries.map(file => ({ role: "guide", name: file.baseName,
+      content: decodeProjectText(file, limits), locale: extractGuideLocale(file.baseName), mediaType: "text/markdown", hidden: true,
+    }));
+    if (!guides.length) guides.push({ role: "guide", name: stem + " (description).md", content: "", locale: "en", mediaType: "text/markdown", hidden: true });
+    const assets = images.map(file => buildImageAsset({ ...file, extension: extensionOf(file.baseName.toLowerCase()) }, limits));
+    return {
+      schemaVersion: 1, contract: "uartdebug-project/v2", id: stem, title, version, summary: "",
+      defaultLocale: guides[0].locale, canvasName: specification.baseName,
+      projectPath: "Target_Projects/" + title + (version ? " " + version : ""),
+      canvas: { markdown, locale: "" }, assets,
+      files: [
+        { role: "source", name: source?.baseName || stem + ".c", content: source ? decodeProjectText(source, limits) : "", mediaType: "text/x-c" },
+        ...guides,
+        ...(resources ? [{ role: "specification", name: resources.baseName, content: decodeProjectText(resources, limits), mediaType: "application/yaml", hidden: true }] : []),
+      ],
+    };
+  }
+
   function decodeProjectText(entry, limits) {
     if (entry.data.byteLength > limits.maxTextBytes) {
       fail("TEXT_TOO_LARGE", `Text file exceeds the size limit: ${entry.relativePath}`);
@@ -859,7 +912,7 @@
   }
 
   function extractGuideLocale(fileName) {
-    const match = /_help\(([A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8})*)\)/i.exec(
+    const match = /\(([A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8})*)\)/i.exec(
       fileName
     );
     if (!match) return "en";

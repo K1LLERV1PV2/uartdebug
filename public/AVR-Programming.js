@@ -1,4 +1,4 @@
-// AVR programming canvas with local files, CodeMirror, UART, and XC8 compilation.
+// Desktop AVR projects with a specification, C program, code description and XC8 compilation.
 (function () {
   const STORAGE_KEY = "ud_avr_programming_files_v1";
   const STORAGE_STATE = "ud_avr_programming_state_v2";
@@ -60,16 +60,6 @@
   const MINI_PROJECT_INSTALLED_EVENT = "ud-avr-mini-project-installed";
   const MINI_PROJECT_READY_EVENT = "ud-avr-mini-projects-ready";
   const DEFAULT_PROJECT_INSTRUCTION = "";
-  const LEGACY_BUILTIN_MINI_PROJECT_IDS = new Set([
-    "minimum",
-    "cpu-clock",
-    "delay-blink",
-    "timer-interrupt",
-    "uart-tx",
-    "uart-rx",
-    "printf-usart0",
-    "printf-usart1",
-  ]);
   const MINI_PROJECT_ARCHIVE_WORKSPACE_LIMITS = Object.freeze({
     maxArchiveBytes: 4 * 1024 * 1024,
     maxEntryUncompressedBytes: 2 * 1024 * 1024,
@@ -94,7 +84,6 @@
   let saveTimer = null;
   let compileErrorLineHandle = null;
   let contextMenuFile = null;
-  let contextMenuGroup = null;
   let inlineFileEdit = null;
   let outlinerWidth = OUTLINER_DEFAULT_WIDTH;
   let outlinerPreferredWidth = OUTLINER_DEFAULT_WIDTH;
@@ -131,8 +120,8 @@
     },
   };
   const projectInstructionSaveJobs = new Map();
-  // The separate instruction document belongs to loose files. Mini-project
-  // canvases travel with their project in the workspace/account snapshot.
+  // The unassigned specification is a draft before project creation. Project
+  // specifications travel with their project in the workspace/account snapshot.
   let unassignedProjectInstructionDocument = null;
   let projectInstructionInstanceId = null;
   let projectInstructionScopeEpoch = 0;
@@ -142,7 +131,6 @@
   let projectInstructionEditorSyncing = false;
   let projectInstructionCompositionActive = false;
   const markdownLiveEditors = new Map();
-  let canvasAnnotationWidgets = [];
   let canvasSupportedDevices = [];
   let devicePanelState = "expanded";
   let devicePanelHeight = DEVICE_PANEL_EXPANDED_HEIGHT;
@@ -183,22 +171,6 @@
   let watermarkFitFrame = null;
   let watermarkResizeObserver = null;
   let siteDialogResolve = null;
-  const EDITOR_FILE_EXTENSIONS = new Set([
-    "c",
-    "h",
-    "cpp",
-    "cc",
-    "hpp",
-    "ino",
-    "s",
-    "asm",
-    "txt",
-    "md",
-    "yaml",
-    "yml",
-    "hex",
-    "ihex",
-  ]);
   const HEX_FILE_EXTENSIONS = new Set(["hex", "ihex"]);
   const COMPILE_PROJECT_FILE_EXTENSIONS = new Set([
     "c",
@@ -492,7 +464,7 @@
     const watermark = $("editorFileWatermark");
     if (!watermark) return;
     watermark.style.removeProperty("font-size");
-    watermark.textContent = fileName || "";
+    watermark.textContent = fileName ? getMiniProjectForFile(fileName)?.project.fileNames?.[fileName] || fileName : "";
     scheduleEditorFileWatermarkFit();
   }
 
@@ -932,258 +904,83 @@
 
   // Built-in mini-projects are loaded from the versioned catalog below.
 
-  const BUILTIN_MINI_PROJECT_CATALOG_URL = "/avr-mini-projects/catalog.json";
+  const BUILTIN_MINI_PROJECT_CATALOG_URL = "/api/avr/ai/projects";
   let builtInMiniProjectCatalogPromise = null;
   let builtInMiniProjectCardsPromise = null;
   let builtInMiniProjectCardsReady = false;
 
   async function loadBuiltInMiniProjectCatalog() {
-    if (builtInMiniProjectCatalogPromise) {
-      return builtInMiniProjectCatalogPromise;
-    }
-
+    if (builtInMiniProjectCatalogPromise) return builtInMiniProjectCatalogPromise;
     builtInMiniProjectCatalogPromise = fetch(BUILTIN_MINI_PROJECT_CATALOG_URL, {
-      cache: "no-cache",
-      credentials: "same-origin",
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(
-            `Mini-project catalog could not be loaded (${response.status}).`
-          );
-        }
-        const catalog = await response.json();
-        if (
-          !catalog ||
-          Number(catalog.schemaVersion) !== 1 ||
-          !Array.isArray(catalog.projects)
-        ) {
-          throw new Error("Mini-project catalog has an unsupported format.");
-        }
-
-        const projects = new Map();
-        for (const descriptor of catalog.projects) {
-          const id = String(descriptor?.id || "").trim();
-          if (!id || projects.has(id)) {
-            throw new Error("Mini-project catalog contains an invalid id.");
-          }
-          projects.set(id, descriptor);
-        }
-        return projects;
-      })
-      .catch((error) => {
-        builtInMiniProjectCatalogPromise = null;
-        throw error;
-      });
-
+      cache: "no-cache", credentials: "same-origin", headers: { Accept: "application/json" },
+    }).then(async response => {
+      const catalog = await response.json();
+      if (!response.ok || catalog.ok !== true || !Array.isArray(catalog.projects)) {
+        throw new Error("Project catalog is unavailable.");
+      }
+      const projects = new Map();
+      for (const descriptor of catalog.projects) {
+        const id = String(descriptor?.id || "").trim();
+        if (!id || projects.has(id)) throw new Error("Project catalog has an invalid ID.");
+        projects.set(id, descriptor);
+      }
+      return projects;
+    }).catch(error => { builtInMiniProjectCatalogPromise = null; throw error; });
     return builtInMiniProjectCatalogPromise;
-  }
-
-  async function fetchBuiltInMiniProjectText(rawUrl, label) {
-    const url = new URL(String(rawUrl || ""), window.location.href);
-    if (url.origin !== window.location.origin) {
-      throw new Error(`${label} must be served from this site.`);
-    }
-    const response = await fetch(url.href, {
-      cache: "no-cache",
-      credentials: "same-origin",
-    });
-    if (!response.ok) {
-      throw new Error(`${label} could not be loaded (${response.status}).`);
-    }
-    return response.text();
-  }
-
-  function normalizeBuiltInMiniProjectLocale(value) {
-    return String(value || "").trim().replace(/_/g, "-").toLowerCase();
-  }
-
-  function getBuiltInMiniProjectDefaultGuide(descriptor) {
-    const guides = Array.isArray(descriptor?.guides)
-      ? descriptor.guides.filter(
-          (guide) => guide && typeof guide === "object" && guide.url
-        )
-      : [];
-    if (!guides.length) return null;
-
-    const defaultLocale = normalizeBuiltInMiniProjectLocale(
-      descriptor?.defaultLocale
-    );
-    if (!defaultLocale) return guides[0];
-
-    return (
-      guides.find(
-        (guide) =>
-          normalizeBuiltInMiniProjectLocale(guide.locale) === defaultLocale
-      ) || guides[0]
-    );
-  }
-
-  function createBuiltInMiniProjectCard(descriptor) {
-    const card = document.createElement("button");
-    card.className = "file-add-card file-template-card";
-    card.type = "button";
-    card.dataset.templateId = descriptor.id;
-    card.disabled = true;
-
-    const title = document.createElement("span");
-    title.className = "file-add-card-title";
-    title.textContent = String(descriptor.displayName || descriptor.id);
-    card.appendChild(title);
-
-    const copy = document.createElement("span");
-    copy.className = "file-add-card-copy";
-    copy.hidden = true;
-    card.appendChild(copy);
-
-    return { card, copy };
   }
 
   async function renderBuiltInMiniProjectCards() {
     if (builtInMiniProjectCardsReady) return;
-    if (builtInMiniProjectCardsPromise) {
-      return builtInMiniProjectCardsPromise;
-    }
-
+    if (builtInMiniProjectCardsPromise) return builtInMiniProjectCardsPromise;
     const grid = $("fileTemplateGrid");
     if (!grid) return;
-
     builtInMiniProjectCardsPromise = (async () => {
       grid.setAttribute("aria-busy", "true");
-      const loading = document.createElement("span");
-      loading.textContent = "Loading mini-projects...";
-      grid.replaceChildren(loading);
-
       try {
         const catalog = await loadBuiltInMiniProjectCatalog();
-        const records = Array.from(catalog.values()).map((descriptor) => ({
-          descriptor,
-          ...createBuiltInMiniProjectCard(descriptor),
-        }));
-
-        if (!records.length) {
-          const empty = document.createElement("span");
-          empty.textContent = "No mini-projects are available.";
-          grid.replaceChildren(empty);
-          builtInMiniProjectCardsReady = true;
-          return;
-        }
-
-        grid.replaceChildren(...records.map((record) => record.card));
-        let descriptionsReady = true;
-
-        await Promise.all(
-          records.map(async ({ descriptor, card, copy }) => {
-            try {
-              const guide = getBuiltInMiniProjectDefaultGuide(descriptor);
-              if (!guide) {
-                throw new Error("The default guide is missing.");
-              }
-              const markdown = await fetchBuiltInMiniProjectText(
-                guide.url,
-                "Guide file"
-              );
-              const description =
-                miniProjectCore.extractShortProjectDescription(markdown);
-              if (!description) {
-                throw new Error(
-                  'The default guide has no "Short Project Description" section.'
-                );
-              }
-              copy.textContent = description;
-              copy.hidden = false;
-            } catch (error) {
-              descriptionsReady = false;
-              console.warn(
-                `Mini-project description could not be loaded for ${descriptor.id}:`,
-                error
-              );
-            } finally {
-              card.disabled = false;
-            }
-          })
-        );
-
-        builtInMiniProjectCardsReady = descriptionsReady;
+        const cards = [...catalog.values()].map(descriptor => {
+          const card = document.createElement("button");
+          card.type = "button";
+          card.className = "file-add-card file-template-card";
+          card.dataset.templateId = descriptor.id;
+          const title = document.createElement("span");
+          title.className = "file-add-card-title";
+          title.textContent = String(descriptor.displayName || descriptor.title || descriptor.id);
+          card.appendChild(title);
+          if (descriptor.summary) {
+            const copy = document.createElement("span");
+            copy.className = "file-add-card-copy";
+            copy.textContent = descriptor.summary;
+            card.appendChild(copy);
+          }
+          return card;
+        });
+        grid.replaceChildren(...cards);
+        builtInMiniProjectCardsReady = true;
       } catch (error) {
         const failure = document.createElement("span");
-        failure.textContent = "Mini-projects could not be loaded.";
+        failure.textContent = "Projects could not be loaded.";
         grid.replaceChildren(failure);
-        console.warn("Mini-project catalog could not be rendered:", error);
+        console.warn("Project catalog could not be rendered:", error);
       } finally {
         grid.removeAttribute("aria-busy");
         builtInMiniProjectCardsPromise = null;
       }
     })();
-
     return builtInMiniProjectCardsPromise;
   }
 
   async function loadBuiltInMiniProjectDefinition(templateId) {
     const catalog = await loadBuiltInMiniProjectCatalog();
-    const descriptor = catalog.get(String(templateId || ""));
-    if (!descriptor) return null;
-
-    const sourceDescriptor = descriptor.source;
-    if (!sourceDescriptor?.name || !sourceDescriptor?.url) {
-      throw new Error("Mini-project catalog entry is missing its source file.");
+    if (!catalog.has(String(templateId || ""))) return null;
+    const response = await fetch(BUILTIN_MINI_PROJECT_CATALOG_URL + "/" + encodeURIComponent(templateId), {
+      cache: "no-cache", credentials: "same-origin", headers: { Accept: "application/json" },
+    });
+    const result = await response.json();
+    if (!response.ok || result.ok !== true || !result.project) {
+      throw new Error("Project could not be loaded.");
     }
-
-    const guideDescriptors = Array.isArray(descriptor.guides)
-      ? descriptor.guides
-      : [];
-    const [sourceContent, ...guideContents] = await Promise.all([
-      fetchBuiltInMiniProjectText(sourceDescriptor.url, "Source file"),
-      ...guideDescriptors.map((guide) =>
-        fetchBuiltInMiniProjectText(guide?.url, "Guide file")
-      ),
-    ]);
-    const defaultGuide = getBuiltInMiniProjectDefaultGuide(descriptor);
-    const defaultGuideIndex = defaultGuide
-      ? guideDescriptors.indexOf(defaultGuide)
-      : -1;
-    const summary =
-      defaultGuideIndex >= 0
-        ? miniProjectCore.extractShortProjectDescription(
-            guideContents[defaultGuideIndex]
-          )
-        : "";
-
-    return {
-      schemaVersion: 1,
-      id: descriptor.id,
-      displayName: descriptor.displayName || descriptor.title || descriptor.id,
-      title: descriptor.title || descriptor.displayName || descriptor.id,
-      summary,
-      version: descriptor.version ?? 1,
-      defaultLocale: descriptor.defaultLocale || "",
-      files: [
-        {
-          role: "source",
-          name: sourceDescriptor.name,
-          content: sourceContent,
-          mediaType: sourceDescriptor.mediaType || "text/x-c",
-        },
-        ...guideDescriptors.map((guide, index) => ({
-          role: "guide",
-          name: guide.name,
-          content: guideContents[index],
-          mediaType: guide.mediaType || "text/markdown",
-          locale: guide.locale,
-          label: guide.label,
-          default:
-            !!descriptor.defaultLocale &&
-            descriptor.defaultLocale.toLowerCase() ===
-              String(guide.locale || "").toLowerCase(),
-          assetBaseUrl: guide.assetBaseUrl,
-        })),
-      ],
-      ...(descriptor.aiSpecRef &&
-        typeof descriptor.aiSpecRef === "object" &&
-        !Array.isArray(descriptor.aiSpecRef)
-        ? { aiSpecRef: descriptor.aiSpecRef }
-        : {}),
-    };
+    return result.project;
   }
 
   function loadState() {
@@ -1343,12 +1140,6 @@
       if (!instanceId || normalized[instanceId]) continue;
       const definitionId = String(rawProject.definitionId || instanceId);
       const origin = String(rawProject.origin || "local");
-      if (
-        origin === "builtin" &&
-        LEGACY_BUILTIN_MINI_PROJECT_IDS.has(definitionId)
-      ) {
-        continue;
-      }
 
       const roleFiles = {};
       const mediaTypes = {};
@@ -1454,6 +1245,7 @@
 
       normalized[instanceId] = {
         schemaVersion: 1,
+        contract: "uartdebug-project/v2",
         definitionId,
         title: String(rawProject.title || rawProject.definitionId || instanceId),
         displayName: String(
@@ -1465,6 +1257,9 @@
         summary: String(rawProject.summary || ""),
         version: rawProject.version ?? 1,
         origin,
+        canvasName: String(rawProject.canvasName || getFileStem(roleFiles.source) + ".md"),
+        projectPath: String(rawProject.projectPath || "Target_Projects/" + getSafeProjectFolderName(rawProject.title || definitionId, instanceId)),
+        fileNames: createDictionary(rawProject.fileNames),
         files: roleFiles,
         mediaTypes,
         guides,
@@ -1486,7 +1281,6 @@
     if (
       activeLink &&
       activeLink.role !== miniProjectCore.ROLES.SOURCE &&
-      activeLink.role !== miniProjectCore.ROLES.SPECIFICATION &&
       hasFile(activeLink.project.files?.source)
     ) {
       current = activeLink.project.files.source;
@@ -1580,24 +1374,6 @@
     return `${stem}_${i}${ext}`;
   }
 
-  function uniqueImportedName(base) {
-    if (!base || !hasFile(base)) return base;
-
-    const lastDot = base.lastIndexOf(".");
-    const hasExtension = lastDot > 0;
-    const stem = hasExtension ? base.slice(0, lastDot) : base;
-    const ext = hasExtension ? base.slice(lastDot) : "";
-    let index = 2;
-    let candidate = `${stem}_${index}${ext}`;
-
-    while (hasFile(candidate)) {
-      index += 1;
-      candidate = `${stem}_${index}${ext}`;
-    }
-
-    return candidate;
-  }
-
   function getFileExtension(name) {
     const lastDot = typeof name === "string" ? name.lastIndexOf(".") : -1;
     return lastDot > -1 ? name.slice(lastDot + 1).toLowerCase() : "";
@@ -1611,40 +1387,9 @@
     return Object.prototype.hasOwnProperty.call(fileGroups, name);
   }
 
-  function uniqueGroupName(base = "New group") {
-    if (!hasGroup(base) && !hasFile(base)) return base;
-
-    let index = 2;
-    let candidate = `${base} ${index}`;
-    while (hasGroup(candidate) || hasFile(candidate)) {
-      index += 1;
-      candidate = `${base} ${index}`;
-    }
-    return candidate;
-  }
-
   function getGroupChildGroups(groupName) {
     const group = fileGroups[groupName];
     return (group?.groups || []).filter((name) => hasGroup(name));
-  }
-
-  function getRootGroupNames() {
-    const nested = new Set();
-
-    for (const group of Object.values(fileGroups)) {
-      for (const groupName of group.groups || []) {
-        if (hasGroup(groupName)) nested.add(groupName);
-      }
-    }
-
-    return Object.keys(fileGroups).filter((name) => !nested.has(name));
-  }
-
-  function getGroupParent(groupName) {
-    for (const [parentName, group] of Object.entries(fileGroups)) {
-      if ((group.groups || []).includes(groupName)) return parentName;
-    }
-    return "";
   }
 
   function isGroupDescendant(groupName, possibleDescendant) {
@@ -1674,130 +1419,11 @@
     }
   }
 
-  function getGroupedFileSet() {
-    const grouped = new Set();
-    for (const group of Object.values(fileGroups)) {
-      for (const fileName of group.files || []) {
-        if (hasFile(fileName)) grouped.add(fileName);
-      }
-    }
-    return grouped;
-  }
-
-  function getGroupFileCount(groupName) {
-    const visitedGroups = new Set();
-    const visibleFiles = new Set();
-
-    const collectVisibleFiles = (name) => {
-      if (!hasGroup(name) || visitedGroups.has(name)) return;
-      visitedGroups.add(name);
-
-      const group = fileGroups[name];
-      for (const fileName of group.files || []) {
-        if (hasFile(fileName) && !isHiddenMiniProjectFile(fileName)) {
-          visibleFiles.add(fileName);
-        }
-      }
-
-      for (const childGroupName of group.groups || []) {
-        collectVisibleFiles(childGroupName);
-      }
-    };
-
-    collectVisibleFiles(groupName);
-    return visibleFiles.size;
-  }
-
   function getFileGroup(fileName) {
     for (const [groupName, group] of Object.entries(fileGroups)) {
       if ((group.files || []).includes(fileName)) return groupName;
     }
     return "";
-  }
-
-  function insertName(names, name, targetName = "", placement = "after") {
-    const next = names.filter((itemName) => itemName !== name);
-    const targetIndex = targetName ? next.indexOf(targetName) : -1;
-
-    if (targetIndex === -1) {
-      next.push(name);
-      return next;
-    }
-
-    next.splice(placement === "before" ? targetIndex : targetIndex + 1, 0, name);
-    return next;
-  }
-
-  function insertFileName(names, fileName, targetName = "", placement = "after") {
-    return insertName(names, fileName, targetName, placement);
-  }
-
-  function setFilesInOrder(names) {
-    const nextFiles = Object.create(null);
-    const seen = new Set();
-
-    for (const name of names) {
-      if (!hasFile(name) || seen.has(name)) continue;
-      nextFiles[name] = files[name];
-      seen.add(name);
-    }
-
-    for (const name of Object.keys(files)) {
-      if (seen.has(name)) continue;
-      nextFiles[name] = files[name];
-    }
-
-    files = nextFiles;
-  }
-
-  function setGroupsInOrder(names) {
-    const nextGroups = Object.create(null);
-    const seen = new Set();
-
-    for (const name of names) {
-      if (!hasGroup(name) || seen.has(name)) continue;
-      nextGroups[name] = fileGroups[name];
-      seen.add(name);
-    }
-
-    for (const name of Object.keys(fileGroups)) {
-      if (seen.has(name)) continue;
-      nextGroups[name] = fileGroups[name];
-    }
-
-    fileGroups = nextGroups;
-  }
-
-  function renameFileKey(oldName, newName) {
-    const nextFiles = Object.create(null);
-    const nextAuthorship = Object.create(null);
-
-    for (const name of Object.keys(files)) {
-      nextFiles[name === oldName ? newName : name] = files[name];
-    }
-
-    for (const name of Object.keys(fileAuthorship)) {
-      nextAuthorship[name === oldName ? newName : name] = fileAuthorship[name];
-    }
-
-    files = nextFiles;
-    fileAuthorship = nextAuthorship;
-  }
-
-  function renameGroupKey(oldName, newName) {
-    const nextGroups = Object.create(null);
-
-    for (const name of Object.keys(fileGroups)) {
-      nextGroups[name === oldName ? newName : name] = fileGroups[name];
-    }
-
-    fileGroups = nextGroups;
-
-    for (const group of Object.values(fileGroups)) {
-      group.groups = (group.groups || []).map((groupName) =>
-        groupName === oldName ? newName : groupName
-      );
-    }
   }
 
   function isCFileName(fileName) {
@@ -1817,10 +1443,6 @@
       };
     }
     return "text/plain";
-  }
-
-  function getNewFileContent(fileName) {
-    return "";
   }
 
   function isHexFileName(fileName) {
@@ -1956,7 +1578,6 @@
     const ext = getFileExtension(fileName);
 
     if (ext === "zip") return "mini-project-archive";
-    if (!ext || EDITOR_FILE_EXTENSIONS.has(ext)) return "editor";
     return "unsupported";
   }
 
@@ -2003,22 +1624,6 @@
     );
   }
 
-  function importEditorFile(fileName, content) {
-    const requestedName = String(fileName || "").trim();
-    const safeRequestedName = isReservedStorageName(requestedName)
-      ? `_${requestedName}`
-      : requestedName;
-    const normalizedName =
-      uniqueImportedName(safeRequestedName) || uniqueName("main.c");
-
-    files[normalizedName] = String(content || "").replace(/\r\n/g, "\n");
-    fileAuthorship[normalizedName] = createMarkdownAuthorship(
-      files[normalizedName],
-      "human"
-    );
-    selectFile(normalizedName);
-  }
-
   function uniqueMiniProjectInstanceId(baseId) {
     const safeBase =
       String(baseId || "mini-project")
@@ -2038,7 +1643,7 @@
     return candidate;
   }
 
-  function getSafeMiniProjectGroupBase(title, definitionId) {
+  function getSafeProjectFolderName(title, definitionId) {
     const reservedNames = new Set(["__proto__", "prototype", "constructor"]);
     const cleanTitle = String(title || "")
       .replace(/[\\/:*?"<>|\x00-\x1f]/g, " ")
@@ -2094,7 +1699,9 @@
       return [
         {
           role,
-          name,
+          name: project.fileNames?.[name] || name,
+          storageName: name,
+          hidden: role !== "source",
           content: getLiveFileContent(name),
           mediaType: project.mediaTypes?.[role] || defaultMediaTypes[role],
         },
@@ -2106,7 +1713,9 @@
       return [
         {
           role: miniProjectCore.ROLES.GUIDE,
-          name,
+          name: project.fileNames?.[name] || name,
+          storageName: name,
+          hidden: true,
           content: getLiveFileContent(name),
           mediaType: guide.mediaType || defaultMediaTypes.guide,
           locale: guide.locale || "",
@@ -2117,6 +1726,7 @@
 
     return {
       schemaVersion: 1,
+      contract: "uartdebug-project/v2",
       instanceId,
       id: project.definitionId,
       title: project.title,
@@ -2124,11 +1734,14 @@
       summary: project.summary || "",
       version: project.version,
       origin: project.origin,
+      canvasName: project.canvasName,
+      projectPath: project.projectPath,
+      canvas: normalizeProjectInstructionDocument(project.canvas),
       defaultLocale: project.defaultLocale || "",
       selectedLocale: project.selectedLocale || project.defaultLocale || "",
       files: [...projectFiles, ...guideFiles],
       assets: normalizeProjectAssets(project.assets),
-      aiSpecRef: cloneJsonMetadata(project.aiSpecRef, null),
+      ...(project.aiSpecRef ? { aiSpecRef: cloneJsonMetadata(project.aiSpecRef, null) } : {}),
     };
   }
 
@@ -2242,6 +1855,7 @@
 
       miniProjects[instanceId] = {
         schemaVersion: 1,
+        contract: "uartdebug-project/v2",
         definitionId: definition.id,
         title: definition.title,
         displayName: String(
@@ -2250,6 +1864,9 @@
         summary: definition.summary,
         version: definition.version ?? 1,
         origin: String(origin || "local"),
+        canvasName: definition.canvasName || getFileStem(definition.files.source.name) + ".md",
+        projectPath: definition.projectPath || "Target_Projects/" + getSafeProjectFolderName(definition.title, definition.id),
+        fileNames: Object.fromEntries(pendingFiles.map((file, index) => [file.name, definitionFiles[index].name])),
         files: roleFiles,
         mediaTypes,
         guides,
@@ -2257,7 +1874,9 @@
         selectedLocale: defaultLocale,
         assets: normalizeProjectAssets(definition.assets),
         aiSpecRef: cloneJsonMetadata(definition.aiSpecRef, null),
-        canvas: String(origin || "local") === "ai"
+        canvas: definition.canvas ? normalizeProjectInstructionDocument({
+          schemaVersion: 2, revision: 0, annotations: [], ...definition.canvas,
+        }) : String(origin || "local") === "ai"
           ? getProjectInstructionSnapshot()
           : normalizeProjectInstructionDocument(null),
       };
@@ -2300,171 +1919,72 @@
     }
   }
 
-  function updateMiniProjectInstance(
-    instanceId,
-    rawDefinition,
-    { origin = "ai" } = {}
-  ) {
-    const normalizedInstanceId = String(instanceId || "").trim();
-    const existingProject = miniProjects[normalizedInstanceId];
-    if (!existingProject) throw new Error("Mini-project was not found.");
-
-    const definition = miniProjectCore.normalizeDefinition(rawDefinition);
-    const sourceName = existingProject.files?.source;
-    if (!sourceName || !hasFile(sourceName)) {
-      throw new Error("The current mini-project source file was not found.");
-    }
-
-    const selectedLocale =
-      existingProject.selectedLocale || existingProject.defaultLocale || "";
-    const generatedGuide =
-      definition.guides.find((guide) => guide.locale === selectedLocale) ||
-      definition.guides.find(
-        (guide) => guide.locale === definition.defaultLocale
-      ) ||
-      definition.files.guide ||
-      definition.guides[0] ||
-      null;
-    const existingGuide =
-      existingProject.guides?.[generatedGuide?.locale] ||
-      existingProject.guides?.[selectedLocale] ||
-      existingProject.guides?.[existingProject.defaultLocale] ||
-      getMiniProjectGuideEntries(existingProject)[0] ||
-      null;
-
-    if (
-      !generatedGuide ||
-      !existingGuide?.fileName ||
-      !hasFile(existingGuide.fileName)
-    ) {
-      throw new Error("The current mini-project guide file was not found.");
-    }
-
-    const previousFiles = files;
-    const previousAuthorship = fileAuthorship;
-    const previousGroups = fileGroups;
-    const previousProjects = miniProjects;
-    const previousCurrent = current;
-    let selectionStarted = false;
-
-    if (editor && previousCurrent && hasFile(previousCurrent)) {
-      previousFiles[previousCurrent] = editor.getValue();
-    }
-
+  function updateMiniProjectInstance(instanceId, rawDefinition, { origin = "ai" } = {}) {
+    const id = String(instanceId || "").trim();
+    const existing = miniProjects[id];
+    if (!existing) throw new Error("Project was not found.");
+    const incoming = Array.isArray(rawDefinition?.files) ? rawDefinition.files : [];
+    if (!incoming.length) throw new Error("The response has no project files.");
+    const live = getPublicMiniProjectInstance(id);
+    const incomingKeys = new Set(incoming.map(file => file.role === "guide"
+      ? "guide:" + (file.locale || existing.selectedLocale || "en") : file.role));
+    const merged = live.files.filter(file => !incomingKeys.has(file.role === "guide"
+      ? "guide:" + (file.locale || existing.selectedLocale || "en") : file.role));
+    const definition = miniProjectCore.normalizeDefinition({
+      ...live, ...rawDefinition, files: [...merged, ...incoming],
+      defaultLocale: rawDefinition.defaultLocale || existing.defaultLocale || "en",
+    });
+    const previous = { files, fileAuthorship, fileGroups, miniProjects, current };
+    if (editor && current && hasFile(current)) files[current] = editor.getValue();
     files = createDictionary(files);
     fileAuthorship = createDictionary(cloneJsonMetadata(fileAuthorship, {}));
-    fileGroups = createDictionary(cloneJsonMetadata(fileGroups, {}));
     miniProjects = createDictionary(cloneJsonMetadata(miniProjects, {}));
-
     try {
-      const project = miniProjects[normalizedInstanceId];
-      const guide =
-        project.guides?.[generatedGuide.locale] ||
-        project.guides?.[selectedLocale] ||
-        project.guides?.[project.defaultLocale] ||
-        Object.values(project.guides || {}).find(
-          (entry) => entry?.fileName === existingGuide.fileName
-        );
-      if (!guide?.fileName || !hasFile(guide.fileName)) {
-        throw new Error("The current mini-project guide file was not found.");
+      const project = miniProjects[id];
+      const author = origin === "ai" ? "ai" : "original";
+      const reserved = new Set();
+      for (const rawFile of incoming) {
+        const role = miniProjectCore.normalizeRole(rawFile.role);
+        const locale = rawFile.locale || project.selectedLocale || project.defaultLocale || "en";
+        const file = role === "guide" ? definition.guides.find(item => item.locale === locale)
+          : definition.files[role];
+        if (!file) throw new Error("The response has an invalid project file.");
+        let name = role === "guide" ? project.guides?.[locale]?.fileName : project.files[role];
+        if (!name || !hasFile(name)) {
+          name = uniqueReservedFileName(file.name, reserved);
+          reserved.add(name);
+        }
+        const old = files[name] || "";
+        files[name] = file.content;
+        fileAuthorship[name] = mergeMarkdownAuthorshipForReplacement(old, file.content, fileAuthorship[name], author);
+        project.fileNames = project.fileNames || {};
+        project.fileNames[name] = file.name;
+        if (role === "guide") {
+          project.guides = project.guides || {};
+          project.guides[locale] = {
+            locale, fileName: name, label: file.label || locale,
+            mediaType: "text/markdown", assets: normalizeProjectAssets(file.assets),
+            assetBaseUrl: file.assetBaseUrl || "",
+          };
+          project.selectedLocale = project.defaultLocale = locale;
+          project.files.guide = name;
+        } else project.files[role] = name;
       }
-
-      const previousSource = files[sourceName];
-      const previousGuide = files[guide.fileName];
-      files[sourceName] = String(definition.files.source.content || "").replace(
-        /\r\n?/g,
-        "\n"
-      );
-      files[guide.fileName] = String(generatedGuide.content || "").replace(
-        /\r\n?/g,
-        "\n"
-      );
-      const replacementAuthor = String(origin || "ai") === "ai" ? "ai" : "original";
-      fileAuthorship[sourceName] = mergeMarkdownAuthorshipForReplacement(
-        previousSource,
-        files[sourceName],
-        fileAuthorship[sourceName],
-        replacementAuthor
-      );
-      fileAuthorship[guide.fileName] = mergeMarkdownAuthorshipForReplacement(
-        previousGuide,
-        files[guide.fileName],
-        fileAuthorship[guide.fileName],
-        replacementAuthor
-      );
-
-      if (definition.files.specification) {
-        const spec = definition.files.specification;
-        const specName = project.files.specification && hasFile(project.files.specification)
-          ? project.files.specification : uniqueReservedFileName(spec.name, new Set());
-        const previousSpec = files[specName] || "";
-        files[specName] = spec.content;
-        fileAuthorship[specName] = mergeMarkdownAuthorshipForReplacement(previousSpec, spec.content, fileAuthorship[specName], replacementAuthor);
-        project.files.specification = specName;
-        project.mediaTypes.specification = "application/yaml";
-      }
-      if (generatedGuide.locale && guide.locale !== generatedGuide.locale) {
-        delete project.guides[guide.locale];
-        guide.locale = generatedGuide.locale;
-        guide.label = generatedGuide.label || generatedGuide.locale;
-        project.guides[guide.locale] = guide;
-        project.selectedLocale = guide.locale;
-        project.defaultLocale = guide.locale;
-      }
-      project.title = definition.title || project.title;
+      project.title = definition.title;
+      project.displayName = rawDefinition.displayName || definition.title;
       project.summary = definition.summary;
-      project.version = definition.version ?? project.version;
-      project.origin = project.origin || String(origin || "ai");
-      project.mediaTypes = project.mediaTypes || {};
-      project.mediaTypes.source =
-        definition.files.source.mediaType ||
-        project.mediaTypes.source ||
-        "text/x-c";
-      guide.label = guide.label || generatedGuide.label || guide.locale || "";
-      guide.mediaType =
-        generatedGuide.mediaType || guide.mediaType || "text/markdown";
-      if (generatedGuide.assetBaseUrl) {
-        guide.assetBaseUrl = generatedGuide.assetBaseUrl;
-      }
-      const generatedAssets = normalizeProjectAssets(generatedGuide.assets);
-      if (generatedAssets.length) guide.assets = generatedAssets;
-      project.aiSpecRef = cloneJsonMetadata(
-        definition.aiSpecRef,
-        cloneJsonMetadata(project.aiSpecRef, null)
-      );
-
-      selectionStarted = true;
-      selectFile(sourceName);
+      project.version = definition.version;
+      project.canvasName = definition.canvasName || project.canvasName;
+      project.projectPath = definition.projectPath || project.projectPath;
+      selectFile(project.files.source);
       persistState({ throwOnError: true });
-      return getPublicMiniProjectInstance(normalizedInstanceId);
+      return getPublicMiniProjectInstance(id);
     } catch (error) {
-      files = previousFiles;
-      fileAuthorship = previousAuthorship;
-      fileGroups = previousGroups;
-      miniProjects = previousProjects;
-      current = previousCurrent;
-
-      if (selectionStarted) {
-        activateCurrentProjectCanvas({ savePrevious: false, legacyFallback: true });
-      }
-
-      if (selectionStarted && editor) {
-        editor.setOption("readOnly", previousCurrent ? false : "nocursor");
-        editor.setOption("mode", getEditorModeForFile(previousCurrent));
-        editor.setValue(
-          previousCurrent && hasFile(previousCurrent)
-            ? previousFiles[previousCurrent]
-            : ""
-        );
-      }
-
-      updateEditorFileWatermark(previousCurrent || "");
+      ({ files, fileAuthorship, fileGroups, miniProjects, current } = previous);
+      activateCurrentProjectCanvas({ savePrevious: false });
+      if (editor) editor.setValue(current ? files[current] || "" : "");
       renderOutliner();
       refreshDocumentationPane();
-      scheduleDocumentationMarkerRefresh();
-      try {
-        persistState();
-      } catch {}
       throw error;
     }
   }
@@ -2571,23 +2091,26 @@
       id: "empty-project",
       title,
       summary: "",
+      version: "",
       defaultLocale: "en",
       files: [
         {
           role: "source",
-          name: "main.c",
+          name: title + ".c",
           mediaType: "text/x-c",
-          content: "int main(void)\n{\n    for (;;) {\n    }\n}\n",
+          content: "",
         },
         {
           role: "guide",
-          name: "README.md",
+          name: title + " (description).md",
           mediaType: "text/markdown",
           locale: "en",
           label: "English",
-          content: "# Project\n",
+          content: "",
         },
       ],
+      canvasName: title + ".md",
+      projectPath: "Target_Projects/" + title,
     }, { origin: "local" });
   }
 
@@ -2626,65 +2149,51 @@
       return;
     }
 
-    if (fileKind === "editor") {
-      const text = await readLocalFileText(file);
-      importEditorFile(file.name, text);
-      return;
-    }
+
 
     const message =
-      'Unsupported file type. Upload a source, guide, firmware file, or a mini-project archive (.zip).';
+      'Import a project archive (.zip).';
     await showSiteAlert(message, "Unsupported file");
     console.warn(`Import rejected: "${file.name}" has an unsupported extension.`);
   }
 
-  function ensureAtLeastOneFile() {
-    if (Object.keys(files).length === 0) {
-      const name = "main.c";
-      files[name] = "";
-      fileAuthorship[name] = createMarkdownAuthorship("", "human");
-      current = name;
-      persistState();
+  function migrateLooseFilesToProjects() {
+    const loose = Object.keys(files).filter(name => !getMiniProjectForFile(name));
+    const legacyEmpty = loose.length === 1 && loose[0] === "main.c" && !files["main.c"];
+    if (legacyEmpty) {
+      delete files["main.c"];
+      delete fileAuthorship["main.c"];
+      if (current === "main.c") current = null;
     }
+    for (const name of loose) {
+      if (!hasFile(name) || !/\.c$/i.test(name)) continue;
+      const title = getFileStem(name);
+      const instanceId = uniqueMiniProjectInstanceId(title);
+      const stem = getFileStem(name);
+      const resource = loose.find(file => /\.ya?ml$/i.test(file) && getFileStem(file) === stem);
+      const guide = loose.find(file => /\.md$/i.test(file) &&
+        [stem, stem + ".guide", stem + "_help"].includes(getFileStem(file)) && !getMiniProjectForFile(file));
+      const guideName = guide || uniqueName(stem + " (description).md");
+      if (!guide) files[guideName] = "";
+      miniProjects[instanceId] = {
+        schemaVersion: 1, contract: "uartdebug-project/v2", definitionId: title,
+        title, displayName: title, summary: "", version: "", origin: "migrated",
+        canvasName: stem + ".md", projectPath: "Target_Projects/" + stem,
+        files: { source: name, guide: guideName, ...(resource ? { specification: resource } : {}) },
+        guides: { en: { locale: "en", fileName: guideName, label: "English", mediaType: "text/markdown" } },
+        defaultLocale: "en", selectedLocale: "en", mediaTypes: {},
+        fileNames: { [name]: name, [guideName]: guideName },
+        canvas: current === name ? getUnassignedProjectInstructionSnapshot() : normalizeProjectInstructionDocument(null),
+      };
+    }
+    // Keep unclaimed legacy files in storage/recovery; only projects are shown.
+    if (current && isHiddenMiniProjectFile(current)) current = getVisibleWorkspaceFileNames()[0] || null;
   }
 
   function isReservedStorageName(name) {
     return ["__proto__", "prototype", "constructor"].includes(
       String(name || "").trim().toLowerCase()
     );
-  }
-
-  function validateInlineFileName(fileName, originalName = "") {
-    const name = String(fileName || "").trim();
-
-    if (!name) return "Enter a file name.";
-    if (name === "." || name === "..") return "Use a regular file name.";
-    if (isReservedStorageName(name)) return "Use a different file name.";
-    if (/[\\/:*?"<>|\x00-\x1f]/.test(name)) {
-      return 'Do not use path separators or these characters: \\ / : * ? " < > |';
-    }
-    if (name.length > 96) return "Keep the file name under 96 characters.";
-    if (name !== originalName && (hasFile(name) || hasGroup(name))) {
-      return "A file or group with this name already exists.";
-    }
-
-    return "";
-  }
-
-  function validateInlineGroupName(groupName, originalName = "") {
-    const name = String(groupName || "").trim();
-
-    if (!name) return "Enter a group name.";
-    if (isReservedStorageName(name)) return "Use a different group name.";
-    if (name.length > 64) return "Keep the group name under 64 characters.";
-    if (/[\\/:*?"<>|\x00-\x1f]/.test(name)) {
-      return 'Do not use path separators or these characters: \\ / : * ? " < > |';
-    }
-    if (name !== originalName && (hasGroup(name) || hasFile(name))) {
-      return "A file or group with this name already exists.";
-    }
-
-    return "";
   }
 
   function validateMiniProjectDisplayName(displayName, instanceId = "") {
@@ -2716,21 +2225,6 @@
     return "";
   }
 
-  function normalizeInlineFileName(fileName) {
-    const name = String(fileName || "").trim();
-    if (!name || name === "." || name === "..") return name;
-
-    const withoutTrailingDots = name.replace(/\.+$/g, "");
-    if (!withoutTrailingDots) return name;
-
-    const lastDot = withoutTrailingDots.lastIndexOf(".");
-    return lastDot > 0 ? withoutTrailingDots : `${withoutTrailingDots}.txt`;
-  }
-
-  function isInlineGroupEdit(edit = inlineFileEdit) {
-    return edit?.mode === "create-group" || edit?.mode === "rename-group";
-  }
-
   function getFileNameSelectionEnd(fileName) {
     const name = String(fileName || "");
     const lastDot = name.lastIndexOf(".");
@@ -2742,7 +2236,7 @@
       const input = document.querySelector(".file-inline-input");
       if (!input) return;
       input.focus();
-      if (isInlineGroupEdit() || inlineFileEdit?.mode === "rename-project") {
+      if (inlineFileEdit?.mode === "rename-project") {
         input.select();
         return;
       }
@@ -2760,18 +2254,7 @@
     input.type = "text";
     input.value = edit.value || "";
     input.spellcheck = false;
-    input.setAttribute(
-      "aria-label",
-      edit.mode === "rename-group"
-        ? "Rename group"
-        : edit.mode === "create-group"
-          ? "New group name"
-          : edit.mode === "rename-project"
-            ? "Rename mini-project"
-          : edit.mode === "rename"
-            ? "Rename file"
-            : "New file name"
-    );
+    input.setAttribute("aria-label", "Rename project");
 
     const error = document.createElement("div");
     error.className = "file-inline-error";
@@ -3330,32 +2813,6 @@
     return "F";
   }
 
-  function startInlineCreate() {
-    closeFileContextMenu();
-    closeAddFileModal();
-    expandOutlinerForEditing();
-    inlineFileEdit = {
-      mode: "create",
-      value: uniqueName("main.c"),
-      error: "",
-    };
-    renderOutliner();
-    focusInlineFileInput();
-  }
-
-  function startInlineCreateGroup() {
-    closeFileContextMenu();
-    closeAddFileModal();
-    expandOutlinerForEditing();
-    inlineFileEdit = {
-      mode: "create-group",
-      value: uniqueGroupName("New group"),
-      error: "",
-    };
-    renderOutliner();
-    focusInlineFileInput();
-  }
-
   function startInlineRename(fileName) {
     if (!hasFile(fileName)) return;
     closeFileContextMenu();
@@ -3388,21 +2845,6 @@
     focusInlineFileInput();
   }
 
-  function startInlineRenameGroup(groupName) {
-    if (!hasGroup(groupName)) return;
-    closeFileContextMenu();
-    closeAddFileModal();
-    expandOutlinerForEditing();
-    inlineFileEdit = {
-      mode: "rename-group",
-      originalName: groupName,
-      value: groupName,
-      error: "",
-    };
-    renderOutliner();
-    focusInlineFileInput();
-  }
-
   function cancelInlineFileEdit() {
     inlineFileEdit = null;
     renderOutliner();
@@ -3416,20 +2858,8 @@
       input ? input.value : inlineFileEdit.value || ""
     ).trim();
     const originalName = inlineFileEdit.originalName || "";
-    const isGroupEdit =
-      inlineFileEdit.mode === "create-group" ||
-      inlineFileEdit.mode === "rename-group";
-    const isProjectEdit = inlineFileEdit.mode === "rename-project";
-    const nextName =
-      isGroupEdit || isProjectEdit
-        ? rawName
-        : normalizeInlineFileName(rawName);
-    const error = isProjectEdit
-      ? validateMiniProjectDisplayName(nextName, inlineFileEdit.instanceId)
-      : isGroupEdit
-        ? validateInlineGroupName(nextName, originalName)
-        : validateInlineFileName(nextName, originalName);
-
+    const nextName = rawName;
+    const error = validateMiniProjectDisplayName(nextName, inlineFileEdit.instanceId);
     if (error) {
       inlineFileEdit.value = nextName;
       inlineFileEdit.error = error;
@@ -3437,42 +2867,6 @@
       focusInlineFileInput();
       return false;
     }
-
-    if (inlineFileEdit.mode === "create") {
-      files[nextName] = getNewFileContent(nextName);
-      fileAuthorship[nextName] = createMarkdownAuthorship(
-        files[nextName],
-        "human"
-      );
-      inlineFileEdit = null;
-      selectFile(nextName);
-      return true;
-    }
-
-    if (inlineFileEdit.mode === "create-group") {
-      fileGroups[nextName] = {
-        files: [],
-        groups: [],
-        expanded: false,
-      };
-      inlineFileEdit = null;
-      persistState();
-      renderOutliner();
-      return true;
-    }
-
-    if (inlineFileEdit.mode === "rename") {
-      inlineFileEdit = null;
-      applyFileRename(originalName, nextName);
-      return true;
-    }
-
-    if (inlineFileEdit.mode === "rename-group") {
-      inlineFileEdit = null;
-      applyGroupRename(originalName, nextName);
-      return true;
-    }
-
     if (inlineFileEdit.mode === "rename-project") {
       const instanceId = inlineFileEdit.instanceId;
       inlineFileEdit = null;
@@ -3491,216 +2885,6 @@
     }
   }
 
-  function removeGroupFromParents(groupName) {
-    for (const group of Object.values(fileGroups)) {
-      group.groups = (group.groups || []).filter((name) => name !== groupName);
-    }
-  }
-
-  function moveFileToRoot(fileName, targetName = "", placement = "after") {
-    if (!hasFile(fileName)) return false;
-
-    removeFileFromGroups(fileName);
-    setFilesInOrder(
-      insertFileName(Object.keys(files), fileName, targetName, placement)
-    );
-    persistState();
-    renderOutliner();
-    refreshDocumentationPane({ preserveScroll: true });
-    return true;
-  }
-
-  function moveFileToGroup(fileName, groupName, targetName = "", placement = "after") {
-    if (!hasFile(fileName) || !hasGroup(groupName)) return;
-
-    removeFileFromGroups(fileName);
-    const group = fileGroups[groupName];
-    const groupFiles = (group.files || []).filter((name) => hasFile(name));
-    group.files = insertFileName(groupFiles, fileName, targetName, placement);
-    group.expanded = true;
-    persistState();
-    renderOutliner();
-    refreshDocumentationPane({ preserveScroll: true });
-    return true;
-  }
-
-  function moveGroupToRoot(groupName, targetName = "", placement = "after") {
-    if (!hasGroup(groupName)) return false;
-
-    removeGroupFromParents(groupName);
-    setGroupsInOrder(
-      insertName(Object.keys(fileGroups), groupName, targetName, placement)
-    );
-    persistState();
-    renderOutliner();
-    refreshDocumentationPane({ preserveScroll: true });
-    return true;
-  }
-
-  function moveGroupToGroup(groupName, parentGroupName, targetName = "", placement = "after") {
-    if (
-      !hasGroup(groupName) ||
-      !hasGroup(parentGroupName) ||
-      groupName === parentGroupName ||
-      isGroupDescendant(groupName, parentGroupName)
-    ) {
-      return false;
-    }
-
-    removeGroupFromParents(groupName);
-    const parentGroup = fileGroups[parentGroupName];
-    const groupNames = (parentGroup.groups || []).filter((name) => hasGroup(name));
-    parentGroup.groups = insertName(groupNames, groupName, targetName, placement);
-    parentGroup.expanded = true;
-    persistState();
-    renderOutliner();
-    return true;
-  }
-
-  function assignFileToGroup(fileName, groupName) {
-    moveFileToGroup(fileName, groupName);
-  }
-
-  function createGroupFromFiles(sourceFileName, targetFileName) {
-    if (
-      !hasFile(sourceFileName) ||
-      !hasFile(targetFileName) ||
-      sourceFileName === targetFileName
-    ) {
-      return false;
-    }
-
-    const parentGroupName = getFileGroup(targetFileName);
-    const groupName = uniqueGroupName("New group");
-    fileGroups[groupName] = {
-      files: [],
-      groups: [],
-      expanded: true,
-    };
-
-    removeFileFromGroups(sourceFileName);
-    removeFileFromGroups(targetFileName);
-    fileGroups[groupName].files = [targetFileName, sourceFileName];
-
-    if (parentGroupName && hasGroup(parentGroupName)) {
-      const parentGroup = fileGroups[parentGroupName];
-      parentGroup.groups = insertName(parentGroup.groups || [], groupName);
-      parentGroup.expanded = true;
-    }
-
-    persistState();
-    renderOutliner();
-    refreshDocumentationPane({ preserveScroll: true });
-    return true;
-  }
-
-  function eventHasDraggedEntry(event) {
-    const types = Array.from(event.dataTransfer?.types || []);
-    return (
-      types.includes("text/x-ud-file") ||
-      types.includes("text/x-ud-group") ||
-      types.includes("text/plain")
-    );
-  }
-
-  function getDraggedEntry(event) {
-    const type = event.dataTransfer?.getData("text/x-ud-drag-type") || "";
-    const groupName = event.dataTransfer?.getData("text/x-ud-group") || "";
-    const fileName = event.dataTransfer?.getData("text/x-ud-file") || "";
-
-    if (type === "group" && groupName) {
-      return {
-        type: "group",
-        name: groupName,
-      };
-    }
-
-    if (type === "file" && fileName) {
-      return {
-        type: "file",
-        name: fileName,
-      };
-    }
-
-    if (groupName) {
-      return {
-        type: "group",
-        name: groupName,
-      };
-    }
-
-    return {
-      type: "file",
-      name: fileName || event.dataTransfer?.getData("text/plain") || "",
-    };
-  }
-
-  function getDropPlacement(event, row) {
-    const rect = row.getBoundingClientRect();
-    const y = event.clientY - rect.top;
-    if (y > rect.height * 0.28 && y < rect.height * 0.72) return "inside";
-    return y < rect.height / 2 ? "before" : "after";
-  }
-
-  function clearOutlinerDropMarkers() {
-    document
-      .querySelectorAll(".file-item.drop-before, .file-item.drop-after, .file-item.drop-target, .file-group-block.drop-target")
-      .forEach((row) => {
-        row.classList.remove("drop-before", "drop-after", "drop-target");
-      });
-    $("fileList")?.classList.remove("root-drop-target");
-  }
-
-  function markRowDrop(row, placement) {
-    clearOutlinerDropMarkers();
-    if (placement === "inside") {
-      row.classList.add("drop-target");
-      return;
-    }
-
-    row.classList.add(placement === "before" ? "drop-before" : "drop-after");
-  }
-
-  function bindOutlinerDropZone() {
-    const list = $("fileList");
-    if (!list) return;
-
-    list.addEventListener("dragover", (event) => {
-      if (!eventHasDraggedEntry(event)) return;
-      const handledTarget = event.target.closest(
-        ".file-item[data-file], .file-item.file-group, .file-group-block"
-      );
-      if (handledTarget) return;
-
-      event.preventDefault();
-      clearOutlinerDropMarkers();
-      list.classList.add("root-drop-target");
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    });
-
-    list.addEventListener("dragleave", (event) => {
-      if (list.contains(event.relatedTarget)) return;
-      list.classList.remove("root-drop-target");
-    });
-
-    list.addEventListener("drop", (event) => {
-      if (!eventHasDraggedEntry(event)) return;
-      const handledTarget = event.target.closest(
-        ".file-item[data-file], .file-item.file-group, .file-group-block"
-      );
-      if (handledTarget) return;
-
-      event.preventDefault();
-      clearOutlinerDropMarkers();
-      const dragged = getDraggedEntry(event);
-      if (dragged.type === "group") {
-        moveGroupToRoot(dragged.name);
-      } else {
-        moveFileToRoot(dragged.name);
-      }
-    });
-  }
-
   function renderFileRow(list, name, groupName = "", depth = 0) {
     const linkedProject = getMiniProjectForFile(name);
     const isMiniProjectSource =
@@ -3715,8 +2899,10 @@
     row.dataset.outlinerIcon = isMiniProjectSource
       ? "MP"
       : getOutlinerFileIcon(name);
-    row.draggable = true;
-    row.title = isMiniProjectSource ? `${displayName} (${name})` : name;
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", displayName);
+    row.title = isMiniProjectSource ? `${displayName} (${linkedProject.project.fileNames?.[name] || name})` : name;
     row.style.setProperty("--outliner-depth", String(depth));
     if (isMiniProjectSource) row.classList.add("mini-project-item");
 
@@ -3753,7 +2939,7 @@
 
     const menuBtn = document.createElement("button");
     menuBtn.className = "file-menu-btn";
-    menuBtn.title = "File actions";
+    menuBtn.title = "Project actions";
     menuBtn.textContent = "\u22ef";
 
     menuBtn.addEventListener("click", (e) => {
@@ -3769,399 +2955,19 @@
       if (inlineFileEdit && !commitInlineFileEdit()) return;
       selectFile(name);
     });
+    row.addEventListener("keydown", event => {
+      if (event.target === row && ["Enter", " "].includes(event.key)) {
+        event.preventDefault();
+        row.click();
+      }
+    });
 
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       openFileContextMenu(name, e.clientX, e.clientY);
     });
 
-    row.addEventListener("dragstart", (e) => {
-      row.classList.add("dragging");
-      e.dataTransfer?.setData("text/x-ud-drag-type", "file");
-      e.dataTransfer?.setData("text/x-ud-file", name);
-      e.dataTransfer?.setData("text/x-ud-source-group", groupName || "");
-      e.dataTransfer?.setData("text/plain", name);
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-    });
-
-    row.addEventListener("dragend", () => {
-      row.classList.remove("dragging");
-      clearOutlinerDropMarkers();
-    });
-
-    row.addEventListener("dragover", (e) => {
-      if (!eventHasDraggedEntry(e)) return;
-
-      const dragged = getDraggedEntry(e);
-      if (dragged.type === "file" && dragged.name === name) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-      const placement = getDropPlacement(e, row);
-      markRowDrop(row, dragged.type === "file" ? placement : placement === "inside" ? "after" : placement);
-    });
-
-    row.addEventListener("dragleave", (e) => {
-      if (row.contains(e.relatedTarget)) return;
-      row.classList.remove("drop-before", "drop-after", "drop-target");
-    });
-
-    row.addEventListener("drop", (e) => {
-      if (!eventHasDraggedEntry(e)) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-      clearOutlinerDropMarkers();
-
-      const dragged = getDraggedEntry(e);
-      if (!dragged.name || dragged.name === name) return;
-      const placement = getDropPlacement(e, row);
-
-      if (dragged.type === "group") {
-        if (groupName) {
-          moveGroupToGroup(dragged.name, groupName);
-        } else {
-          moveGroupToRoot(dragged.name);
-        }
-        return;
-      }
-
-      if (placement === "inside") {
-        createGroupFromFiles(dragged.name, name);
-        return;
-      }
-
-      if (groupName) {
-        moveFileToGroup(dragged.name, groupName, name, placement);
-      } else {
-        moveFileToRoot(dragged.name, name, placement);
-      }
-    });
-
     list.appendChild(row);
-  }
-
-  function renderGroupRow(list, groupName, depth = 0) {
-    const groupFileCount = getGroupFileCount(groupName);
-    const row = document.createElement("div");
-    row.className = "file-item file-group";
-    row.dataset.group = groupName;
-    row.dataset.outlinerIcon = "";
-    row.dataset.groupCount = String(groupFileCount);
-    row.draggable = true;
-    row.title = groupName;
-    row.style.setProperty("--outliner-depth", String(depth));
-
-    const group = fileGroups[groupName];
-    if (group?.expanded) row.classList.add("expanded");
-
-    const editingThisGroup =
-      inlineFileEdit &&
-      inlineFileEdit.mode === "rename-group" &&
-      inlineFileEdit.originalName === groupName;
-
-    if (editingThisGroup) {
-      row.classList.add("editing");
-      renderInlineFileInput(row, inlineFileEdit);
-      list.appendChild(row);
-      return;
-    }
-
-    const label = document.createElement("div");
-    label.className = "file-name";
-    label.textContent = groupName;
-    row.appendChild(label);
-
-    const count = document.createElement("span");
-    count.className = "file-group-count";
-    count.textContent = `+${groupFileCount}`;
-    count.title = "Files in group";
-    row.appendChild(count);
-
-    const acts = document.createElement("div");
-    acts.className = "file-actions";
-
-    const menuBtn = document.createElement("button");
-    menuBtn.className = "file-menu-btn";
-    menuBtn.title = "Group actions";
-    menuBtn.textContent = "\u22ef";
-
-    menuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const rect = menuBtn.getBoundingClientRect();
-      openGroupContextMenu(groupName, rect.left + rect.width / 2, rect.bottom + 4);
-    });
-
-    acts.appendChild(menuBtn);
-    row.appendChild(acts);
-
-    row.addEventListener("click", () => {
-      if (inlineFileEdit && !commitInlineFileEdit()) return;
-      fileGroups[groupName].expanded = !fileGroups[groupName].expanded;
-      persistState();
-      renderOutliner();
-    });
-
-    row.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      openGroupContextMenu(groupName, e.clientX, e.clientY);
-    });
-
-    row.addEventListener("dragstart", (e) => {
-      row.classList.add("dragging");
-      e.dataTransfer?.setData("text/x-ud-drag-type", "group");
-      e.dataTransfer?.setData("text/x-ud-group", groupName);
-      e.dataTransfer?.setData("text/plain", groupName);
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-    });
-
-    row.addEventListener("dragend", () => {
-      row.classList.remove("dragging");
-      clearOutlinerDropMarkers();
-    });
-
-    row.addEventListener("dragover", (e) => {
-      if (!eventHasDraggedEntry(e)) return;
-      const dragged = getDraggedEntry(e);
-      if (
-        dragged.type === "group" &&
-        (dragged.name === groupName || isGroupDescendant(dragged.name, groupName))
-      ) {
-        return;
-      }
-
-      e.preventDefault();
-      e.stopPropagation();
-      const placement = getDropPlacement(e, row);
-      markRowDrop(row, placement);
-      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    });
-
-    row.addEventListener("dragleave", (e) => {
-      if (row.contains(e.relatedTarget)) return;
-      row.classList.remove("drop-before", "drop-after", "drop-target");
-    });
-
-    row.addEventListener("drop", (e) => {
-      if (!eventHasDraggedEntry(e)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      clearOutlinerDropMarkers();
-
-      const dragged = getDraggedEntry(e);
-      if (!dragged.name) return;
-      const placement = getDropPlacement(e, row);
-
-      if (dragged.type === "group") {
-        if (
-          dragged.name === groupName ||
-          isGroupDescendant(dragged.name, groupName)
-        ) {
-          return;
-        }
-
-        if (placement === "inside") {
-          moveGroupToGroup(dragged.name, groupName);
-          return;
-        }
-
-        const parentGroupName = getGroupParent(groupName);
-        if (parentGroupName) {
-          moveGroupToGroup(dragged.name, parentGroupName, groupName, placement);
-        } else {
-          moveGroupToRoot(dragged.name, groupName, placement);
-        }
-        return;
-      }
-
-      if (placement === "inside") {
-        assignFileToGroup(dragged.name, groupName);
-        return;
-      }
-
-      const parentGroupName = getGroupParent(groupName);
-      if (parentGroupName) {
-        moveFileToGroup(dragged.name, parentGroupName);
-      } else {
-        moveFileToRoot(dragged.name);
-      }
-    });
-
-    list.appendChild(row);
-  }
-
-  function renderOutlinerLegacy() {
-    const list = $("fileList");
-    list.innerHTML = "";
-
-    const newRow = document.createElement("div");
-    newRow.className = "file-item new-item";
-    newRow.dataset.outlinerIcon = "+";
-    newRow.title = "Add file";
-    newRow.setAttribute("role", "button");
-    newRow.setAttribute("aria-label", "Add file");
-    newRow.tabIndex = 0;
-    newRow.addEventListener("keydown", (event) => {
-      if (event.target === newRow && ["Enter", " "].includes(event.key)) {
-        event.preventDefault();
-        newRow.click();
-      }
-    });
-
-    if (inlineFileEdit && inlineFileEdit.mode === "create") {
-      newRow.classList.add("active", "editing");
-      renderInlineFileInput(newRow, inlineFileEdit);
-    } else {
-      const plus = document.createElement("div");
-      plus.className = "file-name";
-      plus.textContent = "+";
-
-      newRow.appendChild(plus);
-      newRow.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openAddFileModal();
-      });
-    }
-
-    list.appendChild(newRow);
-
-    const names = Object.keys(files);
-
-    for (const name of names) {
-      const row = document.createElement("div");
-      row.className = "file-item";
-      row.dataset.file = name;
-      if (isCFileName(name)) row.classList.add("file-c");
-
-      if (name === current) {
-        row.classList.add("active");
-      }
-
-      const editingThisFile =
-        inlineFileEdit &&
-        inlineFileEdit.mode === "rename" &&
-        inlineFileEdit.originalName === name;
-
-      if (editingThisFile) {
-        row.classList.add("editing");
-        renderInlineFileInput(row, inlineFileEdit);
-        list.appendChild(row);
-        continue;
-      }
-
-      const label = document.createElement("div");
-      label.className = "file-name";
-      label.textContent = name;
-      row.appendChild(label);
-
-      const acts = document.createElement("div");
-      acts.className = "file-actions";
-
-      const menuBtn = document.createElement("button");
-      menuBtn.className = "file-menu-btn";
-      menuBtn.title = "File actions";
-      menuBtn.textContent = "\u22ef";
-
-      menuBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const rect = menuBtn.getBoundingClientRect();
-        openFileContextMenu(name, rect.left + rect.width / 2, rect.bottom + 4);
-      });
-
-      acts.appendChild(menuBtn);
-      row.appendChild(acts);
-
-      row.addEventListener("click", () => {
-        if (inlineFileEdit && !commitInlineFileEdit()) return;
-        selectFile(name);
-      });
-
-      row.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        openFileContextMenu(name, e.clientX, e.clientY);
-      });
-
-      list.appendChild(row);
-    }
-
-    updateToolbarState();
-    updateCompilePanelState(false);
-  }
-
-  function renderGroupEntry(list, groupName, depth = 0) {
-    const group = fileGroups[groupName];
-    if (!group) return;
-
-    if (!group.expanded) {
-      renderGroupRow(list, groupName, depth);
-      return;
-    }
-
-    const groupBlock = document.createElement("div");
-    groupBlock.className = "file-group-block";
-    groupBlock.dataset.groupFiles = groupName;
-    groupBlock.style.setProperty("--outliner-depth", String(depth));
-
-    groupBlock.addEventListener("dragover", (event) => {
-      if (!eventHasDraggedEntry(event)) return;
-      const handledTarget = event.target.closest(
-        ".file-item[data-file], .file-item.file-group"
-      );
-      if (handledTarget) return;
-
-      const dragged = getDraggedEntry(event);
-      if (
-        dragged.type === "group" &&
-        (dragged.name === groupName || isGroupDescendant(dragged.name, groupName))
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-      clearOutlinerDropMarkers();
-      groupBlock.classList.add("drop-target");
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    });
-
-    groupBlock.addEventListener("dragleave", (event) => {
-      if (groupBlock.contains(event.relatedTarget)) return;
-      groupBlock.classList.remove("drop-target");
-    });
-
-    groupBlock.addEventListener("drop", (event) => {
-      if (!eventHasDraggedEntry(event)) return;
-      const handledTarget = event.target.closest(
-        ".file-item[data-file], .file-item.file-group"
-      );
-      if (handledTarget) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      clearOutlinerDropMarkers();
-
-      const dragged = getDraggedEntry(event);
-      if (dragged.type === "group") {
-        moveGroupToGroup(dragged.name, groupName);
-      } else {
-        moveFileToGroup(dragged.name, groupName);
-      }
-    });
-
-    renderGroupRow(groupBlock, groupName, depth);
-
-    for (const childGroupName of getGroupChildGroups(groupName)) {
-      renderGroupEntry(groupBlock, childGroupName, depth + 1);
-    }
-
-    for (const fileName of (group.files || []).filter(
-      (name) => hasFile(name) && !isHiddenMiniProjectFile(name)
-    )) {
-      renderFileRow(groupBlock, fileName, groupName, depth + 1);
-    }
-
-    list.appendChild(groupBlock);
   }
 
   function renderOutliner() {
@@ -4171,9 +2977,9 @@
     const newRow = document.createElement("div");
     newRow.className = "file-item new-item";
     newRow.dataset.outlinerIcon = "+";
-    newRow.title = "Add file";
+    newRow.title = "Add project";
     newRow.setAttribute("role", "button");
-    newRow.setAttribute("aria-label", "Add file");
+    newRow.setAttribute("aria-label", "Add project");
     newRow.tabIndex = 0;
     newRow.addEventListener("keydown", (event) => {
       if (event.target === newRow && ["Enter", " "].includes(event.key)) {
@@ -4182,10 +2988,7 @@
       }
     });
 
-    if (inlineFileEdit && inlineFileEdit.mode === "create") {
-      newRow.classList.add("active", "editing");
-      renderInlineFileInput(newRow, inlineFileEdit);
-    } else {
+    {
       const plus = document.createElement("div");
       plus.className = "file-name";
       plus.textContent = "+";
@@ -4199,36 +3002,8 @@
 
     list.appendChild(newRow);
 
-    if (inlineFileEdit && inlineFileEdit.mode === "create-group") {
-      const groupRow = document.createElement("div");
-      groupRow.className = "file-item file-group editing";
-      groupRow.dataset.outlinerIcon = "";
-      renderInlineFileInput(groupRow, inlineFileEdit);
-      list.appendChild(groupRow);
-    }
-
-    const groupedFiles = getGroupedFileSet();
-    const entries = [
-      ...getRootGroupNames().map((name) => ({
-        type: "group",
-        name,
-      })),
-      ...Object.keys(files)
-        .filter(
-          (name) => !groupedFiles.has(name) && !isHiddenMiniProjectFile(name)
-        )
-        .map((name) => ({
-          type: "file",
-          name,
-        })),
-    ];
-
-    for (const entry of entries) {
-      if (entry.type === "group") {
-        renderGroupEntry(list, entry.name, 0);
-      } else {
-        renderFileRow(list, entry.name, "", 0);
-      }
+    for (const name of getVisibleWorkspaceFileNames()) {
+      renderFileRow(list, name, "", 0);
     }
 
     updateToolbarState();
@@ -4240,13 +3015,10 @@
     if (!menu) return;
 
     contextMenuFile = fileName;
-    contextMenuGroup = null;
 
     const renameBtn = menu.querySelector('button[data-action="rename"]');
     const deleteBtn = menu.querySelector('button[data-action="delete"]');
-    const leaveGroupBtn = menu.querySelector('button[data-action="leave-group"]');
     const downloadBtn = menu.querySelector('button[data-action="download"]');
-    const groupName = getFileGroup(fileName);
     const linkedProject = getMiniProjectForFile(fileName);
     const isMiniProjectSource =
       linkedProject?.role === miniProjectCore.ROLES.SOURCE;
@@ -4254,16 +3026,15 @@
     if (renameBtn) {
       renameBtn.hidden = false;
       renameBtn.textContent = isMiniProjectSource
-        ? "Rename mini-project"
+        ? "Rename project"
         : "Rename";
     }
     if (deleteBtn) {
       deleteBtn.hidden = false;
       deleteBtn.textContent = isMiniProjectSource
-        ? "Delete mini-project"
+        ? "Delete project"
         : "Delete";
     }
-    if (leaveGroupBtn) leaveGroupBtn.hidden = !groupName;
     if (downloadBtn) downloadBtn.hidden = false;
 
     const downloadHexBtn = menu.querySelector(
@@ -4300,79 +3071,14 @@
     menu.style.top = y + "px";
   }
 
-  function openGroupContextMenu(groupName, clientX, clientY) {
-    const menu = $("fileContextMenu");
-    if (!menu) return;
-
-    contextMenuFile = null;
-    contextMenuGroup = groupName;
-
-    const renameBtn = menu.querySelector('button[data-action="rename"]');
-    const deleteBtn = menu.querySelector('button[data-action="delete"]');
-    const leaveGroupBtn = menu.querySelector('button[data-action="leave-group"]');
-    const downloadBtn = menu.querySelector('button[data-action="download"]');
-    const downloadHexBtn = menu.querySelector(
-      'button[data-action="download-hex"]'
-    );
-
-    if (renameBtn) {
-      renameBtn.hidden = false;
-      renameBtn.textContent = "Rename group";
-    }
-    if (deleteBtn) {
-      deleteBtn.hidden = false;
-      deleteBtn.textContent = "Delete group";
-    }
-    if (leaveGroupBtn) leaveGroupBtn.hidden = true;
-    if (downloadBtn) downloadBtn.hidden = true;
-    if (downloadHexBtn) downloadHexBtn.hidden = true;
-
-    menu.style.display = "block";
-
-    const menuRect = menu.getBoundingClientRect();
-    const margin = 4;
-    let x = clientX;
-    let y = clientY;
-
-    if (x + menuRect.width + margin > window.innerWidth) {
-      x = window.innerWidth - menuRect.width - margin;
-    }
-    if (y + menuRect.height + margin > window.innerHeight) {
-      y = window.innerHeight - menuRect.height - margin;
-    }
-    if (x < margin) x = margin;
-    if (y < margin) y = margin;
-
-    menu.style.left = x + "px";
-    menu.style.top = y + "px";
-  }
-
   function closeFileContextMenu() {
     const menu = $("fileContextMenu");
     if (!menu) return;
     menu.style.display = "none";
     contextMenuFile = null;
-    contextMenuGroup = null;
   }
 
   async function handleFileContextAction(action) {
-    if (contextMenuGroup && hasGroup(contextMenuGroup)) {
-      const targetGroup = contextMenuGroup;
-      closeFileContextMenu();
-
-      switch (action) {
-        case "rename":
-          startInlineRenameGroup(targetGroup);
-          break;
-        case "delete":
-          await deleteGroup(targetGroup);
-          break;
-        default:
-          break;
-      }
-      return;
-    }
-
     if (!contextMenuFile || !hasFile(contextMenuFile)) {
       closeFileContextMenu();
       return;
@@ -4388,9 +3094,6 @@
         break;
       case "delete":
         await deleteFile(targetName);
-        break;
-      case "leave-group":
-        moveFileToRoot(targetName);
         break;
       case "download":
         downloadFile(targetName);
@@ -4448,9 +3151,7 @@
 
   function isHiddenMiniProjectFile(fileName) {
     const linkedProject = getMiniProjectForFile(fileName);
-    return !!(
-      linkedProject && [miniProjectCore.ROLES.GUIDE, miniProjectCore.ROLES.AI_SPEC].includes(linkedProject.role)
-    );
+    return !linkedProject || linkedProject.role !== miniProjectCore.ROLES.SOURCE;
   }
 
   function getVisibleWorkspaceFileNames() {
@@ -4468,17 +3169,6 @@
       );
     }
     return fileName;
-  }
-
-  function renameMiniProjectFile(oldName, newName) {
-    for (const project of Object.values(miniProjects)) {
-      for (const role of Object.keys(project.files || {})) {
-        if (project.files[role] === oldName) project.files[role] = newName;
-      }
-      for (const guide of Object.values(project.guides || {})) {
-        if (guide?.fileName === oldName) guide.fileName = newName;
-      }
-    }
   }
 
   function removeMiniProjectFile(fileName) {
@@ -4985,20 +3675,48 @@
   function normalizeProjectInstructionDocument(value) {
     const source = value && typeof value === "object" ? value : {};
     const revision = Number(source.revision);
-    const markdown = typeof source.markdown === "string"
+    const originalMarkdown = typeof source.markdown === "string"
       ? source.markdown : DEFAULT_PROJECT_INSTRUCTION;
+    const legacyAnnotations = normalizeCanvasAnnotations(source.annotations);
+    const markdown = migrateCanvasAnnotationsToMarkdown(originalMarkdown, legacyAnnotations);
     return {
       schemaVersion: 2,
       revision: Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
       markdown,
       locale: typeof source.locale === "string" ? source.locale : "",
-      annotations: normalizeCanvasAnnotations(source.annotations),
+      annotations: [],
       ...(source.target && typeof source.target === "object" ? { target: {
-        mcu: String(source.target.mcu || ""),
+        mcu: String(source.target.mcu || "").toLowerCase(),
         packageName: String(source.target.packageName || ""),
       } } : {}),
-      authorship: normalizeMarkdownAuthorship(source.authorship, markdown),
+      authorship: legacyAnnotations.length
+        ? mergeMarkdownAuthorshipForReplacement(originalMarkdown, markdown, source.authorship, "ai")
+        : normalizeMarkdownAuthorship(source.authorship, markdown),
     };
+  }
+
+  function migrateCanvasAnnotationsToMarkdown(markdown, annotations) {
+    if (!annotations.length) return markdown;
+    let number = Math.max(0, ...Array.from(markdown.matchAll(/\[(?:AI|\u0418\u0418)\.(\d+)\]/g), match => Number(match[1])));
+    const insertions = new Map();
+    for (const annotation of annotations) {
+      number += 1;
+      const type = annotation.kind === "error" ? "Error" : annotation.kind === "information" ? "Information" : "Question";
+      const block = [`> ###### *[AI.${number}] ${type}.*`, ">",
+        ...annotation.message.split("\n").map(line => "> " + line),
+        ...(annotation.answer ? [">", "> > **User:** " + annotation.answer.replace(/\n/g, "\n> > ")] : []),
+        ...(annotation.status === "resolved" ? [">", "> Resolved in the previous canvas."] : []),
+      ].join("\n");
+      const line = resolveCanvasAnnotationLine(annotation, markdown);
+      const lines = markdown.split("\n");
+      let after = line === null ? lines.length - 1 : line;
+      while (after + 1 < lines.length && lines[after + 1].trim()) after += 1;
+      const entries = insertions.get(after) || [];
+      entries.push(block);
+      insertions.set(after, entries);
+    }
+    return markdown.split("\n").map((line, index) => line +
+      (insertions.has(index) ? "\n\n" + insertions.get(index).join("\n\n") + "\n" : "")).join("\n");
   }
 
   function parseStoredProjectInstruction(rawValue) {
@@ -5043,7 +3761,6 @@
     setProjectInstructionEditorValue(projectInstructionDocument.markdown);
     projectInstructionEditor?.clearHistory?.();
     scheduleProjectInstructionPreview();
-    renderCanvasAnnotations();
     syncCanvasTargetControls(true);
     reportProjectCanvasMessage("", "");
     refreshProjectInstructionSaveState();
@@ -5152,90 +3869,6 @@
     if (preferredOffset >= 0 && preferredOffset < (lines[preferred]?.length || 0)) return preferred;
     const offset = quote ? markdown.indexOf(quote) : -1;
     return offset >= 0 ? markdown.slice(0, offset).split("\n").length - 1 : null;
-  }
-
-  function updateCanvasAnnotation(id, changes) {
-    projectInstructionDocument = {
-      ...projectInstructionDocument,
-      revision: projectInstructionDocument.revision + 1,
-      annotations: projectInstructionDocument.annotations.map((annotation) =>
-        annotation.id === id ? { ...annotation, ...changes } : annotation),
-    };
-    persistProjectInstruction({ recover: true });
-  }
-
-  function createCanvasAnnotationElement(annotation, anchored) {
-    const card = document.createElement("section");
-    card.className = `canvas-annotation is-${annotation.kind} is-${annotation.status}`;
-    card.dataset.annotationId = annotation.id;
-    card.dataset.annotationStatus = annotation.status;
-    const heading = document.createElement("div");
-    heading.className = "canvas-annotation-heading";
-    const title = document.createElement("strong");
-    title.textContent = annotation.kind === "question" ? "Question"
-      : annotation.kind === "error" ? "Needs attention" : "Note";
-    const state = document.createElement("span");
-    state.textContent = annotation.status === "resolved" ? "Resolved" : "Open";
-    heading.append(title, state);
-    const quote = document.createElement("blockquote");
-    quote.textContent = annotation.anchor.quote;
-    quote.title = anchored ? "Linked canvas text" : "The linked text was moved or removed";
-    const message = document.createElement("p");
-    message.textContent = annotation.message;
-    card.append(heading, quote, message);
-    if (!anchored) {
-      const moved = document.createElement("small");
-      moved.textContent = "Linked text changed; AI will relocate this note on the next run.";
-      card.appendChild(moved);
-    }
-    const answerLabel = document.createElement("label");
-    answerLabel.textContent = "Your answer";
-    const answer = document.createElement("textarea");
-    answer.rows = 2;
-    answer.maxLength = 8000;
-    answer.value = annotation.answer;
-    answer.setAttribute("aria-label", `${answerLabel.textContent}: ${annotation.message}`);
-    answerLabel.appendChild(answer);
-    card.appendChild(answerLabel);
-    const resolvedLabel = document.createElement("label");
-    resolvedLabel.className = "canvas-annotation-resolved";
-    const resolved = document.createElement("input");
-    resolved.type = "checkbox";
-    resolved.checked = annotation.status === "resolved";
-    resolved.disabled = annotation.kind === "question" && !answer.value.trim();
-    resolvedLabel.append(resolved, document.createTextNode("Resolved"));
-    answer.addEventListener("input", () => {
-      const changes = { answer: answer.value };
-      if (annotation.kind === "question" && !answer.value.trim()) {
-        changes.status = "open";
-        resolved.checked = false;
-      }
-      resolved.disabled = annotation.kind === "question" && !answer.value.trim();
-      updateCanvasAnnotation(annotation.id, changes);
-    });
-    resolved.addEventListener("change", () => {
-      updateCanvasAnnotation(annotation.id, { status: resolved.checked ? "resolved" : "open" });
-      renderCanvasAnnotations();
-    });
-    card.appendChild(resolvedLabel);
-    return card;
-  }
-
-  function renderCanvasAnnotations() {
-    for (const widget of canvasAnnotationWidgets) widget.clear();
-    canvasAnnotationWidgets = [];
-    const fallback = $("projectCanvasAnnotationsFallback");
-    fallback?.replaceChildren();
-    for (const annotation of projectInstructionDocument.annotations || []) {
-      const line = resolveCanvasAnnotationLine(annotation, projectInstructionDocument.markdown);
-      const card = createCanvasAnnotationElement(annotation, line !== null);
-      if (projectInstructionEditor?.addLineWidget && line !== null) {
-        canvasAnnotationWidgets.push(projectInstructionEditor.addLineWidget(line, card, {
-          coverGutter: false, noHScroll: true, handleMouseEvents: false,
-        }));
-      } else fallback?.appendChild(card);
-    }
-    if (fallback) fallback.hidden = !fallback.childElementCount;
   }
 
   function setProjectInstructionSaveState(message = "", { error = false } = {}) {
@@ -6179,7 +4812,7 @@
 
   function applyProjectInstructionMarkdown(
     markdown,
-    { annotations, locale, expectedRevision = null, focus = false } = {}
+    { annotations, locale, target, expectedRevision = null, focus = false } = {}
   ) {
     if (typeof markdown !== "string") throw new TypeError("The canvas must be Markdown text.");
     if (expectedRevision !== null && projectInstructionDocument.revision !== expectedRevision) {
@@ -6192,13 +4825,14 @@
       markdown,
       locale: locale === undefined ? previous.locale : locale,
       annotations: annotations === undefined ? previous.annotations : annotations,
+      ...(target ? { target } : {}),
       authorship: mergeMarkdownAuthorshipForReplacement(
         previous.markdown, markdown, previous.authorship, "ai"
       ),
     });
-    setProjectInstructionEditorValue(markdown);
+    setProjectInstructionEditorValue(projectInstructionDocument.markdown);
+    if (target) syncCanvasTargetControls(true);
     scheduleProjectInstructionPreview();
-    renderCanvasAnnotations();
     persistProjectInstruction({ recover: true });
     if (focus) projectInstructionEditor?.focus();
   }
@@ -6253,7 +4887,7 @@
       });
 
       const inputField = projectInstructionEditor.getInputField();
-      inputField.setAttribute("aria-label", "Project instruction Markdown");
+      inputField.setAttribute("aria-label", "Project specification Markdown");
       inputField.setAttribute("aria-multiline", "true");
       inputField.setAttribute("data-tooltip-disabled", "");
       inputField.setAttribute("role", "textbox");
@@ -6286,8 +4920,7 @@
           )
         );
         scheduleProjectInstructionPreview();
-        renderCanvasAnnotations();
-        persistProjectInstruction({ recover: true });
+            persistProjectInstruction({ recover: true });
       });
       projectInstructionEditor.on(
         "cursorActivity",
@@ -6314,13 +4947,11 @@
             previousMarkdown === editorElement.value ? "original" : "human"
           )
         );
-        renderCanvasAnnotations();
-        persistProjectInstruction({ recover: true });
+            persistProjectInstruction({ recover: true });
       });
     }
 
     renderProjectInstructionPreview();
-    renderCanvasAnnotations();
     window.UartDebugAvrAiWorkspace = Object.freeze({
       getInstruction: getProjectInstructionSnapshot,
       processCanvas: submitProjectCanvas,
@@ -6481,13 +5112,11 @@
     if (kind === "files") {
       return {
         schemaVersion: 2,
-        files: { "main.c": "" },
-        authorship: {
-          "main.c": createMarkdownAuthorship("", "human"),
-        },
+        files: {},
+        authorship: {},
         fileGroups: {},
         miniProjects: {},
-        current: "main.c",
+        current: null,
       };
     }
     if (kind === "instruction") {
@@ -6580,8 +5209,8 @@
     normalizeFileGroups();
     normalizeMiniProjectInstances();
     if (current && !hasFile(current)) current = null;
-    ensureAtLeastOneFile();
-    if (!current) current = Object.keys(files)[0] || null;
+    migrateLooseFilesToProjects();
+    if (!current) current = getVisibleWorkspaceFileNames()[0] || null;
     try {
       persistState({ throwOnError: true });
     } catch (error) {
@@ -8027,7 +6656,11 @@
     if (button) {
       button.disabled = !!busy;
       button.textContent = busy
-        ? "Working…" : "Process canvas";
+        ? "Working…" : "Review specification";
+    }
+    for (const id of ["projectGenerateCodeBtn", "projectDescribeCodeBtn"]) {
+      const control = $(id);
+      if (control) control.disabled = !!busy;
     }
     $("projectCanvasForm")?.setAttribute("aria-busy", String(!!busy));
   }
@@ -8042,7 +6675,7 @@
 
 
 
-  function getProjectAiRequestPayload() {
+  function getProjectAiRequestPayload(operation = "analyze") {
     const linkedProject = getMiniProjectForFile(current);
     const project = linkedProject ? getPublicMiniProjectInstance(linkedProject.instanceId) : null;
     const source = project?.files.find((file) => file.role === "source");
@@ -8050,22 +6683,24 @@
       || project?.files.find((file) => file.role === "guide");
     const specification = project?.files.find((file) => file.role === "specification");
     const target = getCanvasTarget();
-    const payload = { canvas: { ...getProjectInstructionSnapshot(), target }, ...target };
-    if (project && source && guide) {
+    const payload = { operation, canvas: { ...getProjectInstructionSnapshot(), target }, ...target };
+    if (project && source) {
       payload.currentProject = {
         instanceId: project.instanceId,
         id: project.id,
         title: project.title,
         displayName: project.displayName,
         sourceName: source.name,
-        guideName: guide.name,
-        guideLocale: guide.locale || project.selectedLocale || "en",
+        guideName: guide?.name || getFileStem(source.name) + " (description).md",
+        guideLocale: guide?.locale || project.selectedLocale || "en",
         source: source.content,
-        guide: guide.content,
-        sourceAuthorship: getFileAuthorship(source.name),
-        guideAuthorship: getFileAuthorship(guide.name),
+        guide: guide?.content || "",
+        version: project.version,
+        canvasName: project.canvasName,
+        projectPath: project.projectPath,
+        sourceAuthorship: getFileAuthorship(source.storageName || source.name),
+        ...(guide ? { guideAuthorship: getFileAuthorship(guide.storageName || guide.name) } : {}),
         ...(specification ? { specification: { name: specification.name, content: specification.content } } : {}),
-        ...(project.aiSpecRef?.id ? { aiSpecRef: { id: project.aiSpecRef.id } } : {}),
       };
     }
     return payload;
@@ -8085,15 +6720,17 @@
         file.role === miniProjectCore.ROLES.GUIDE &&
         file.name === snapshot.guideName
     );
+    const guideUnchanged = snapshot?.guideAuthorship
+      ? liveProject?.selectedLocale === snapshot.guideLocale &&
+        liveGuide?.name === snapshot.guideName && liveGuide.content === snapshot.guide
+      : !liveProject?.files?.some(file => file.role === miniProjectCore.ROLES.GUIDE);
     const unchanged =
       snapshot &&
       linkedProject?.instanceId === snapshot.instanceId &&
-      liveProject?.selectedLocale === snapshot.guideLocale &&
       liveSource?.name === snapshot.sourceName &&
-      liveGuide?.name === snapshot.guideName &&
-      getLiveFileContent(snapshot.sourceName) === snapshot.source &&
-      getLiveFileContent(snapshot.guideName) === snapshot.guide &&
-      (!snapshot.specification || getLiveFileContent(snapshot.specification.name) === snapshot.specification.content);
+      liveSource.content === snapshot.source &&
+      guideUnchanged &&
+      (!snapshot.specification || liveProject.files.find(file => file.role === "specification")?.content === snapshot.specification.content);
     if (unchanged) return;
 
     throw new Error(
@@ -8157,36 +6794,24 @@
       displayName,
       summary: String(project.summary || ""),
       version: project.version ?? 1,
+      ...(project.canvasName ? { canvasName: project.canvasName } : {}),
+      ...(project.projectPath ? { projectPath: project.projectPath } : {}),
       files,
       defaultLocale:
         files.find((file) => file.role === miniProjectCore.ROLES.GUIDE)
           ?.locale || "en",
     };
-    if (
-      project.aiSpecRef &&
-      typeof project.aiSpecRef === "object" &&
-      !Array.isArray(project.aiSpecRef)
-    ) {
-      definition.aiSpecRef = cloneJsonMetadata(project.aiSpecRef, null);
-    }
     return definition;
   }
 
 
 
-  async function submitProjectCanvas() {
+  async function submitProjectCanvas(operation = "analyze") {
     if (projectAiRequestInFlight) return;
-    const request = getProjectAiRequestPayload();
-    if (!request.canvas.markdown.trim()) {
-      reportProjectCanvasMessage("system", "Describe your project on the canvas first.");
-      projectInstructionEditor?.focus();
-      return;
-    }
-    if (!request.mcu || request.mcu === "auto" || !request.packageName) {
-      reportProjectCanvasMessage("system", "Choose the target MCU and chip package first.");
-      expandEditorForTargetValidation();
-      const missingTarget = request.mcu && request.mcu !== "auto" ? $("projectPackageSelect") : $("mcuSelect");
-      missingTarget?.nextElementSibling?.querySelector(".custom-select-trigger")?.focus();
+    if (!["analyze", "generate", "describe"].includes(operation)) return;
+    const request = getProjectAiRequestPayload(operation);
+    if (operation === "describe" && !request.currentProject?.source.trim()) {
+      reportProjectCanvasMessage("system", "Generate or write the project code before describing it.");
       return;
     }
     const accountEpoch = projectAiAccountWorkspaceEpoch;
@@ -8221,10 +6846,17 @@
           typeof data.canvas.markdown !== "string" || !Array.isArray(data.canvas.annotations)) {
         throw new Error("The server returned an incompatible canvas revision.");
       }
+      if (data.stage && data.stage !== operation) throw new Error("The response belongs to a different project stage.");
+      if (operation === "analyze" && data.kind === "project") throw new Error("Review cannot change project code or resources.");
+      if (operation !== "analyze" && data.canvas.markdown !== request.canvas.markdown) {
+        throw new Error("This stage cannot change the project specification.");
+      }
       if (data.kind === "project") {
         const definition = normalizeGeneratedAiProject(data.project);
-        if (!definition.files.some((file) => file.role === "specification")) {
-          throw new Error("The project response is missing its YAML specification.");
+        const roles = definition.files.map(file => file.role).sort();
+        const expectedRoles = operation === "generate" ? ["source", "specification"] : ["guide"];
+        if (roles.join(",") !== expectedRoles.sort().join(",")) {
+          throw new Error("The response does not match the requested project stage.");
         }
         if (data.operation === "update") {
           const instanceId = request.currentProject?.instanceId;
@@ -8234,15 +6866,18 @@
           assertProjectAiUpdateIsFresh(request);
           await window.UartDebugAvrMiniProjects.updateInstance(instanceId, definition, { origin: "ai" });
         } else if (data.operation === "create") {
+          if (operation !== "generate" || request.currentProject) throw new Error("The response cannot create a different project.");
+          definition.files.push({ role: "guide", name: getFileStem(definition.files.find(file => file.role === "source").name) + " (description).md", content: "", mediaType: "text/markdown", locale: "en" });
           await window.UartDebugAvrMiniProjects.install(definition, { origin: "ai" });
         } else throw new Error("The response did not specify a project action.");
       }
       applyProjectInstructionMarkdown(data.canvas.markdown, {
         annotations: data.canvas.annotations,
         locale: data.canvas.locale,
+        target: data.canvas.target,
         expectedRevision: baseRevision,
       });
-      reportProjectCanvasMessage("assistant", data.message || "Canvas updated.");
+      reportProjectCanvasMessage("assistant", data.message || (operation === "analyze" ? "Specification reviewed." : "Project updated."));
     } catch (error) {
       reportProjectCanvasMessage("system", error?.message || "The canvas request could not be completed.");
     } finally {
@@ -8401,23 +7036,6 @@
         setDevicePanelState(states[index]);
       },
     });
-  }
-
-  function showDocumentationEmpty(title, message) {
-    const content = $("projectDocumentationContent");
-    if (!content) return;
-    documentationHeadingIndex = new Map();
-    documentationRenderedHeadingIndex = new Map();
-    content.replaceChildren();
-
-    const empty = document.createElement("div");
-    empty.className = "project-documentation-empty";
-    const strong = document.createElement("strong");
-    strong.textContent = title;
-    const copy = document.createElement("p");
-    copy.textContent = message;
-    empty.append(strong, copy);
-    content.appendChild(empty);
   }
 
   function setDocumentationNotice(message = "") {
@@ -8586,7 +7204,7 @@
     });
     documentationEditor.setSize("100%", "100%");
     const input = documentationEditor.getInputField();
-    input.setAttribute("aria-label", "Project guide Markdown");
+    input.setAttribute("aria-label", "Code description Markdown");
     input.setAttribute("aria-multiline", "true");
     input.setAttribute("data-tooltip-disabled", "");
     input.setAttribute("role", "textbox");
@@ -8702,10 +7320,7 @@
       content.hidden = false;
       documentationEditor?.getWrapperElement?.().setAttribute("hidden", "");
       markdownEditor.hidden = true;
-      showDocumentationEmpty(
-        "Guide file is not connected yet",
-        "When a mini-project includes a human-readable .md file, it will appear here automatically."
-      );
+      content.replaceChildren();
       scroll.scrollTop = 0;
       return;
     }
@@ -8913,7 +7528,7 @@
   }
 
   function selectFile(name) {
-    if (!hasFile(name)) return;
+    if (!hasFile(name) || isHiddenMiniProjectFile(name)) return;
     if (editor && current && current !== name && hasFile(current)) {
       files[current] = editor.getValue();
     }
@@ -8942,88 +7557,8 @@
     if (editor) setTimeout(() => editor.refresh(), 0);
   }
 
-  function newCanvas() {
-    startInlineCreate();
-  }
-
   function renameFile(oldName) {
     startInlineRename(oldName);
-  }
-
-  function applyFileRename(oldName, newName) {
-    if (!hasFile(oldName)) return;
-    if (oldName === newName) {
-      renderOutliner();
-      return;
-    }
-
-    renameFileKey(oldName, newName);
-    renameMiniProjectFile(oldName, newName);
-    if (hexArtifactsBySource.has(oldName)) {
-      hexArtifactsBySource.set(newName, hexArtifactsBySource.get(oldName));
-      hexArtifactsBySource.delete(oldName);
-    }
-    for (const group of Object.values(fileGroups)) {
-      group.files = (group.files || []).map((fileName) =>
-        fileName === oldName ? newName : fileName
-      );
-    }
-    const renamedCurrent = current === oldName;
-    if (renamedCurrent) current = newName;
-    persistState();
-    renderOutliner();
-    refreshDocumentationPane({ preserveScroll: true });
-    scheduleDocumentationMarkerRefresh();
-    if (renamedCurrent) {
-      if (editor) {
-        editor.setOption("mode", getEditorModeForFile(newName));
-      }
-      updateEditorFileWatermark(newName);
-      resetHexArtifact();
-      updateCompilePanelState(true);
-    }
-  }
-
-  function applyGroupRename(oldName, newName) {
-    if (!hasGroup(oldName)) return;
-    if (oldName === newName) {
-      renderOutliner();
-      return;
-    }
-
-    renameGroupKey(oldName, newName);
-    persistState();
-    renderOutliner();
-  }
-
-  async function deleteGroup(groupName) {
-    if (!hasGroup(groupName)) return;
-
-    const childGroups = getGroupChildGroups(groupName);
-    const parentGroupName = getGroupParent(groupName);
-    const confirmed = await showSiteConfirm({
-      title: "Delete group",
-      message: `Delete group "${groupName}"? Files inside it will stay in Files.`,
-      confirmText: "Delete group",
-      cancelText: "Cancel",
-      danger: true,
-    });
-    if (!confirmed) return;
-
-    removeGroupFromParents(groupName);
-    if (parentGroupName && hasGroup(parentGroupName)) {
-      const parentGroup = fileGroups[parentGroupName];
-      parentGroup.groups = [
-        ...(parentGroup.groups || []).filter((name) => name !== groupName),
-        ...childGroups.filter((name) => name !== parentGroupName),
-      ];
-      parentGroup.expanded = true;
-    }
-
-    delete fileGroups[groupName];
-    persistState();
-    renderOutliner();
-    refreshDocumentationPane({ preserveScroll: true });
   }
 
   async function deleteFile(name) {
@@ -9035,11 +7570,11 @@
       ? getOutlinerFileLabel(name)
       : name;
     const confirmed = await showSiteConfirm({
-      title: deleteWholeProject ? "Delete mini-project" : "Delete file",
+      title: deleteWholeProject ? "Delete project" : "Delete file",
       message: deleteWholeProject
         ? `Delete mini-project "${displayName}" and its local source and guide copies? This cannot be undone.`
         : `Delete "${name}"? This cannot be undone.`,
-      confirmText: deleteWholeProject ? "Delete mini-project" : "Delete",
+      confirmText: deleteWholeProject ? "Delete project" : "Delete",
       cancelText: "Cancel",
       danger: true,
     });
@@ -9098,7 +7633,7 @@
     const blob = new Blob([getLiveFileContent(name)], { type: `${type};charset=utf-8` });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = name;
+    a.download = getMiniProjectForFile(name)?.project.fileNames?.[name] || name;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -9357,7 +7892,6 @@
       const fileAddModal = $("fileAddModal");
       const fileAddCloseBtn = $("fileAddCloseBtn");
       const uploadExistingFileCard = $("uploadExistingFileCard");
-      const createNewGroupCard = $("createNewGroupCard");
       const fileTemplateGrid = $("fileTemplateGrid");
       const siteDialog = $("siteDialog");
       const siteDialogCloseBtn = $("siteDialogCloseBtn");
@@ -9375,7 +7909,6 @@
     initCustomSelect(mcuSelect);
     initCustomSelect($("projectPackageSelect"));
     initCustomSelect(documentationLocaleSelect);
-    bindOutlinerDropZone();
     bindFileListResizer();
     bindDocumentationResizer();
     bindProjectAiResizers();
@@ -9383,7 +7916,7 @@
     bindProjectInstructionWorkspace();
     bindDocumentationWorkspace();
     bindWorkspaceResizeObserver();
-    newBtn && newBtn.addEventListener("click", startInlineCreate);
+    newBtn && newBtn.addEventListener("click", openAddFileModal);
     renameBtn &&
       renameBtn.addEventListener("click", () => current && renameFile(current));
     deleteBtn &&
@@ -9411,11 +7944,6 @@
         );
       }
     });
-    createNewGroupCard &&
-      createNewGroupCard.addEventListener("click", () => {
-        closeAddFileModal();
-        startInlineCreateGroup();
-      });
     fileTemplateGrid &&
       fileTemplateGrid.addEventListener("click", async (event) => {
         const card = event.target.closest("[data-template-id]");
@@ -9463,6 +7991,8 @@
         setDocumentationEditMode(!documentationEditMode);
       });
     $("projectCanvasForm")?.addEventListener("submit", handleProjectCanvasSubmit);
+    $("projectGenerateCodeBtn")?.addEventListener("click", () => void submitProjectCanvas("generate"));
+    $("projectDescribeCodeBtn")?.addEventListener("click", () => void submitProjectCanvas("describe"));
     bindCanvasTargetControls();
     projectAiAccountBtn &&
       projectAiAccountBtn.addEventListener("click", handleProjectAiAccountAction);
@@ -10119,10 +8649,10 @@
     restoreProjectAiAccountSyncState();
     restoreProjectInstruction();
     const projectAiAuthReturn = consumeProjectAiAuthReturn();
-    ensureAtLeastOneFile();
+    migrateLooseFilesToProjects();
     restoreWorkspaceLayout();
     renderOutliner();
-    if (!current) current = Object.keys(files)[0];
+    if (!current) current = getVisibleWorkspaceFileNames()[0] || null;
     initUpdiBridge();
 
     restoreDevicePanelState();

@@ -397,7 +397,12 @@ jobs:
                   else
                     echo "Rollback release has no AI service unit; retaining the installed unit"
                   fi
-                  if [ -f "${BE_DIR}/avr-knowledge.js" ]; then
+                  if [ -f "${BE_DIR}/avr-materials.js" ]; then
+                    run_sudo /usr/bin/node "${BE_DIR}/deploy/verify-materials.js" \
+                      /var/lib/uartdebug-ai/materials/current/repository
+                    run_sudo /bin/bash "${BE_DIR}/deploy/install-materials-sync.sh" "${BE_DIR}"
+                    run_sudo install -d -o uartai -g uartai -m 0700 /var/lib/uartdebug-ai/documentation
+                  elif [ -f "${BE_DIR}/avr-knowledge.js" ]; then
                     /usr/bin/node -e 'require(process.argv[1]).loadKnowledge()' "${BE_DIR}/avr-knowledge.js"
                     run_sudo install -d -o uartai -g uartai -m 0700 /var/lib/uartdebug-ai/documentation
                   elif [ -n "${ROLLBACK}" ] && [ -f "${BE_DIR}/deploy/install-ai-rule-pack.sh" ]; then
@@ -417,7 +422,7 @@ jobs:
                   }
                   expected_ai_rule_package="$(
                     if [ -f "${BE_DIR}/avr-knowledge.js" ]; then
-                      /usr/bin/node -e 'require(process.argv[1]).createAvrAiService({environment:{}}).getStatus().then(s => process.stdout.write(s.rules?.packageId || ""))' "${BE_DIR}/avr-ai-service.js"
+                      run_sudo /usr/bin/node -e 'require(process.argv[1]).createAvrAiService({environment:{}}).getStatus().then(s => process.stdout.write(s.rules?.packageId || ""))' "${BE_DIR}/avr-ai-service.js"
                     else
                       /usr/bin/node -e 'process.stdout.write(require(process.argv[1]).packageId || "")' "${BE_DIR}/ai/rule-packs/active.json"
                     fi
@@ -468,7 +473,7 @@ jobs:
                       exit 1
                   }
                   if [ -f "${BE_DIR}/avr-knowledge.js" ]; then
-                    /usr/bin/node "${BE_DIR}/deploy/verify-ai-release.js" "${ai_status_body}"
+                    run_sudo /usr/bin/node "${BE_DIR}/deploy/verify-ai-release.js" "${ai_status_body}"
                   fi
                   rm -f "${ai_status_body}"
 

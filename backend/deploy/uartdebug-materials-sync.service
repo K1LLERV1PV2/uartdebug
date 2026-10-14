@@ -1,0 +1,35 @@
+[Unit]
+Description=UARTDebug private AI materials deployment
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=uartmaterials
+Group=uartai
+WorkingDirectory=/var/www/uartdebug/backend
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /var/www/uartdebug/backend/materials-sync-server.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+UMask=0027
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/uartdebug-ai/materials
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=512M
+TasksMax=32
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

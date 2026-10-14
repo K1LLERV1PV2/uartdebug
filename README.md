@@ -40,7 +40,7 @@ The repository is under active development. Hardware access requires a browser t
 - Verify AI-created or updated source with the server-side AVR compiler and let
   the assistant repair compiler errors before returning the project.
 - Keep anchored questions, answers, selected MCU/package and requirements together. Generated YAML describes resource allocation and is editable/exportable alongside C and Markdown.
-- Use a prepared local knowledge bundle for ATtiny1624/1626/1627. Other compiler-supported devices remain available for manual programming.
+- Use the private UartDebug2 repository as the local source of project rules and AVR knowledge. Other compiler-supported devices remain available for manual programming.
 
 ## Browser and hardware requirements
 
@@ -102,15 +102,16 @@ The compiler and AI services bind to loopback by default. nginx is the public sa
 
 ## AVR mini-project format
 
-Generated projects contain three synchronized file roles:
+Projects use the canonical repository structure:
 
-1. **Source** — a standalone XC8 `.c` file.
-2. **Guide** — a Markdown explanation in the user's language, with headings matching `//#` source markers.
-3. **Specification** — a `.yaml` file serialized by the server from a validated resource specification.
+1. **Project Specification** — editable project requirements in `Name.md`.
+2. **C Code** — standalone XC8 source in `Name.c`, with preserved AI/user regions.
+3. **Resources** — internal `Name.yaml`, hidden from the user file list.
+4. **Code Description** — a separate Markdown description generated from the current C.
 
-The built-in educational mini-projects under [public/avr-mini-projects](public/avr-mini-projects) remain available as examples. Their historical AI notes under [backend/ai/mini-projects](backend/ai/mini-projects) are source material for the reviewed recipes; they are not appended to every request. Their catalogs remain for tutorial integrity and legacy imports.
+Educational examples are derived from the canonical `User_Examples` folder and use the same project format. Their source logic is preserved; the website no longer maintains a separate static mini-project tree.
 
-New reusable coding knowledge belongs in the versioned [knowledge bundle](backend/ai/knowledge), with official-source provenance, precise device coverage, tests and truthful verification evidence. See [the canvas architecture](docs/AVR_CANVAS.md) for the contract and expansion process.
+Project rules, technical references and examples are maintained in the private `Sergey-Bulanov/UartDebug2` repository. Its tracked files are mirrored on the server without rearranging or rewriting them. See [the project architecture](docs/AVR_CANVAS.md) and [materials deployment](docs/AI_MATERIALS_DEPLOYMENT.md).
 
 The first paragraph below `## Short Project Description` in a built-in guide becomes its Add file description. Add its public assets to [public/sw.js](public/sw.js). Built-in projects are copied into the browser workspace before editing.
 

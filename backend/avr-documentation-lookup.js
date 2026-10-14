@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const { parse } = require("parse5");
-const { createMethodologyIndex } = require("./avr-methodology");
+const { createMaterialIndex } = require("./avr-methodology");
 
 // Restrict retrieval to the pilot device's full datasheet and silicon errata.
 // New device families must register their reviewed official roots explicitly.
@@ -17,12 +17,12 @@ const LOOKUP_TOOL = {
   name: "read_avr_documentation",
   strict: true,
   description:
-    "Browse, search and read local coding methodology, its original colleague sources, complete official PDFs and DFP definitions. Maintained methodology guides coding within its stated scope; original work-in-progress texts and extracted PDF pages are reference data. External HTML requires a prior search across ALL local documents (empty documentId and sectionId) for the same query plus an explicit remaining knowledge gap; at most two network requests are allowed.",
+    "Browse, search and read the pinned UartDebug2 repository knowledge maps, programming rules, reviewed references, prepared examples, structured JSON/YAML, extracted official PDFs and DFP definitions. Repository-relative paths are document IDs. Notes, Problems.md, temporary files and unselected target projects are excluded. External HTML requires a prior search across ALL local documents for the same query plus an explicit necessary gap; at most two network requests are allowed.",
   parameters: {
     type: "object",
     additionalProperties: false,
     properties: {
-      operation: { type: "string", enum: ["catalog", "search", "read", "registers", "external"], description: "catalog browses documents and sections; search finds PDF and methodology candidates; read retrieves up to three PDF pages or 12000 bytes of methodology sections with nextSectionId; registers finds DFP definitions; external requests an official HTML section." },
+      operation: { type: "string", enum: ["catalog", "search", "read", "registers", "external"], description: "catalog browses documents and sections; search finds local PDF and repository candidates; read retrieves up to three PDF pages or 12000 UTF-8 bytes of repository text with nextSectionId; registers finds DFP definitions; external requests an official HTML section." },
       documentId: { type: "string", description: "Local document id from the catalog, or empty for a search across ALL documents. Only an unrestricted search with empty documentId and sectionId satisfies the local-first external-lookup requirement." },
       sectionId: { type: "string", description: "Local section id for catalog/read, module name for registers, or empty. Catalog without a section lists top-level sections." },
       page: { type: "integer", minimum: 0, description: "One-based PDF page for read; 0 starts at the chosen section. Use nextPage to continue PDFs. Methodology and original colleague documents use page=0 and nextSectionId instead; results cite source line ranges." },
@@ -297,13 +297,14 @@ function createLocalReferenceIndex(corpus = { documents: [] }, reviewedFacts = {
 }
 
 function createDocumentationLookup({
+  knowledge,
   fetch: fetchImpl = globalThis.fetch,
   cacheRoot,
   localDocuments = [],
-  corpus = { documents: [] },
-  reviewedFacts = { facts: [] },
-  dfpRegisters = null,
-  methodology = {},
+  corpus = knowledge?.corpus || { documents: [] },
+  reviewedFacts = knowledge?.reviewedFacts || { facts: [] },
+  dfpRegisters = knowledge?.dfpRegisters || null,
+  documents = knowledge?.documents || [],
   mcu = "",
   enabled = true,
   roots = DOCUMENT_ROOTS,
@@ -312,7 +313,7 @@ function createDocumentationLookup({
 } = {}) {
   let externalRequests = 0;
   const local = createLocalReferenceIndex(corpus, reviewedFacts, dfpRegisters, mcu);
-  const methods = createMethodologyIndex(methodology);
+  const materials = createMaterialIndex({ documents, version: knowledge?.version });
   const examinedQueries = new Set();
   async function lookup(args) {
     const operation = args?.operation || (args?.url ? "external" : "search");
@@ -325,21 +326,19 @@ function createDocumentationLookup({
           (args.page !== undefined && (!Number.isSafeInteger(args.page) || args.page < 0)))
         return { ok: false, code: "local_request_invalid", message: "Use valid local catalog ids, a bounded query and a nonnegative page." };
       let result;
-      if (operation !== "registers" && methods.handles(args.documentId)) {
-        result = methods.lookup({ ...args, operation });
+      if (operation !== "registers" && materials.handles(args.documentId)) {
+        result = materials.lookup({ ...args, operation });
+      } else if (operation === "catalog" && !args.documentId && materials.hasDocuments) {
+        result = materials.lookup({ ...args, operation });
+        if (!args.sectionId && result.ok) result.documents.unshift(...corpus.documents.map(({ pages, sections, ...document }) => ({ ...document, documentId: document.id })));
       } else {
         result = operation === "registers" ? local.registers(args) : local.lookup({ ...args, operation });
-        if (!args.documentId && !args.sectionId && operation === "catalog" && result.ok && methodology.documents?.length)
-          result.documents.push(...methods.catalog);
-        if (!args.documentId && !args.sectionId && operation === "search" && methodology.documents?.length) {
-          const methodResult = methods.lookup({ ...args, operation });
-          if (methodResult.ok) {
-            // Keep both result classes visible; WIP originals never displace
-            // the maintained methodology or official PDF candidates.
-            if (!result.ok && result.code === "local_documentation_not_found") result = { ...methodResult, results: [] };
-            result.methodologyResults = methodResult.results.filter((item) => item.kind === "methodology");
-            result.colleagueSourceCandidates = methodResult.results.filter((item) => item.kind === "colleague-source").map(({text, ...item}) => item);
-          }
+      }
+      if (!args.documentId && !args.sectionId && operation === "search" && materials.hasDocuments) {
+        const materialResult = materials.lookup({ ...args, operation });
+        if (materialResult.ok) {
+          if (!result.ok && result.code === "local_documentation_not_found") result = { ...materialResult, results: [] };
+          result.materialResults = materialResult.results;
         }
       }
       if (operation === "search" && !args.documentId && !args.sectionId && (result.ok || result.code === "local_documentation_not_found")) {
@@ -374,7 +373,7 @@ function createDocumentationLookup({
           "Use a section link from the registered official device documents.",
       };
     }
-    if (local.hasCorpus && !examinedQueries.has(queryKey(args.query)))
+    if ((local.hasCorpus || materials.hasDocuments) && !examinedQueries.has(queryKey(args.query)))
       return { ok: false, code: "local_documentation_first", message: "Search ALL local documents for this exact query first with empty documentId and sectionId, then request external documentation only if a necessary fact remains missing. Reading arbitrary pages or searching only one document is insufficient. Local hits are candidates, not a completeness guarantee." };
     const key = crypto.createHash("sha256").update(url).digest("hex");
     const cacheFile = cacheRoot && path.join(cacheRoot, `${key}.json`);

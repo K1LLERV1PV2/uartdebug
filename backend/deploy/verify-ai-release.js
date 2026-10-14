@@ -6,7 +6,9 @@ const { createAvrAiService } = require("../avr-ai-service");
 
 async function main() {
   const actual = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-  const expected = await createAvrAiService({ environment: {} }).getStatus();
+  const expected = await createAvrAiService({ environment: {
+    AI_MATERIALS_ROOT: process.env.AI_MATERIALS_ROOT,
+  } }).getStatus();
   assert.ok(
     expected.rules?.digest && expected.knowledge?.digest,
     "Release knowledge is unavailable",
@@ -31,6 +33,7 @@ async function main() {
     expected.knowledge.version,
     "Running knowledge version differs from the release",
   );
+  assert.equal(actual.model, "gpt-6.1-sol", "Running model differs from the configured project model");
 }
 
 main().catch((error) => {

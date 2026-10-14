@@ -1,7 +1,6 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const crypto = require("node:crypto");
 const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -11,10 +10,6 @@ const vm = require("node:vm");
 const { parseHTML } = require("../frontend/markdown-runtime/node_modules/linkedom");
 
 const core = require("../public/avr-mini-projects.js");
-const {
-  extractDocumentationMarkers,
-  extractMarkdownHeadings,
-} = require("../backend/avr-documentation-markers");
 
 function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
   const windowListeners = new Map();
@@ -248,21 +243,18 @@ test("migrates legacy instructions without losing text or authorship and removes
   assert.equal("target" in normalizeProjectInstructionDocument(null), false);
 });
 
-test("keeps annotation answers separate from Markdown and relocates quoted anchors", () => {
-  const hooks = loadAvrFrontendFunctionHooks([
-    "normalizeProjectInstructionDocument", "resolveCanvasAnnotationLine",
-  ]);
-  const markdown = "# Проект\n\nМигать светодиодом.";
-  const canvas = hooks.normalizeProjectInstructionDocument({ schemaVersion: 2,
-    revision: 1, markdown, locale: "ru", target: { mcu: "attiny1624", packageName: "SOIC-14" },
-    annotations: [{ id: "q:frequency", kind: "question", anchor: { quote: "Мигать светодиодом.", line: 3 },
-      message: "Какая частота?", status: "resolved", answer: "1 Гц" }] });
-  assert.equal(canvas.markdown, markdown);
-  assert.equal(canvas.annotations[0].answer, "1 Гц");
-  assert.equal(canvas.annotations[0].id, "q:frequency");
-  assert.equal(hooks.resolveCanvasAnnotationLine(canvas.annotations[0], "Новая строка\n" + markdown), 3);
-  assert.equal(hooks.resolveCanvasAnnotationLine(canvas.annotations[0], "# Удалён текст"), null);
-  assert.equal(canvas.target.packageName, "SOIC-14");
+test("migrates legacy annotation questions and answers into Markdown exactly once", () => {
+  const hooks = loadAvrFrontendFunctionHooks(["normalizeProjectInstructionDocument", "resolveCanvasAnnotationLine"]);
+  const markdown = "# Project\n\nBlink the LED.";
+  const annotation = { id: "q:frequency", kind: "question", anchor: { quote: "Blink the LED.", line: 3 }, message: "How often?", status: "resolved", answer: "1 Hz\nKeep the pin." };
+  const canvas = hooks.normalizeProjectInstructionDocument({ schemaVersion:2,revision:1,markdown,locale:"en",annotations:[annotation],target:{mcu:"attiny1624",packageName:"SOIC-14"} });
+  assert.match(canvas.markdown, /Blink the LED\.\n\n> ###### \*\[AI\.1\] Question\.\*/);
+  assert.match(canvas.markdown, /> > \*\*User:\*\* 1 Hz\n> > Keep the pin\./);
+  assert.match(canvas.markdown, /Resolved in the previous canvas/);
+  assert.equal(canvas.annotations.length,0);
+  assert.equal(hooks.normalizeProjectInstructionDocument(canvas).markdown,canvas.markdown);
+  assert.equal(hooks.resolveCanvasAnnotationLine(annotation,"New line\n"+markdown),3);
+  assert.equal(canvas.target.packageName,"SOIC-14");
 });
 
 test("rejects a delayed canvas result after a user edit", () => {
@@ -275,7 +267,7 @@ test("rejects a delayed canvas result after a user edit", () => {
   assert.equal(hooks.assertProjectAiInstructionIsFresh({ canvas: { revision: 5 } }), 5);
 });
 
-test("infers language again after a manual canvas edit while preserving answers and target", () => {
+test("infers language again after a manual specification edit while preserving its target", () => {
   const hooks = loadAvrFrontendFunctionHooks([
     "getProjectInstructionSnapshot", "updateProjectInstructionFromUser",
     "setCanvas(value) { projectInstructionDocument = normalizeProjectInstructionDocument(value); }",
@@ -289,7 +281,7 @@ test("infers language again after a manual canvas edit while preserving answers 
   assert.equal(canvas.locale, "");
   assert.equal(canvas.revision, 7);
   assert.equal(canvas.target.packageName, "SOIC-14");
-  assert.equal(canvas.annotations[0].answer, "1 секунда");
+  assert.equal(canvas.annotations.length, 0);
 });
 
 function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
@@ -299,6 +291,8 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
     "selectFile", "getProjectInstructionSnapshot", "getProjectAiAccountFilesSnapshot",
     "getProjectAiAccountDocumentSnapshot", "applyProjectAiAccountDocument",
     "restoreProjectInstruction", "loadState", "persistState", "persistProjectInstruction",
+    "getPublicMiniProjectInstance", "getVisibleWorkspaceFileNames", "migrateLooseFilesToProjects", "getEmptyProjectAiAccountDocument", "isHiddenMiniProjectFile",
+    "getProjectAiRequestPayload", "assertProjectAiUpdateIsFresh",
     "assertProjectAiInstructionIsFresh", "canvasScope() { return projectInstructionScopeEpoch; }",
     `prepare() {
       resetHexArtifact = updateCompilePanelState = renderOutliner =
@@ -332,7 +326,8 @@ test("new projects have empty canvases and project switches restore each saved d
   const first = hooks.createEmptyProject();
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
   assert.equal(first.files.some((file) => file.role === "specification"), false);
-  assert.match(first.files.find((file) => file.role === "source").content, /int main\(void\)/);
+  assert.equal(first.files.find((file) => file.role === "source").content, "");
+  assert.equal(first.files.find((file) => file.role === "guide").content, "");
   hooks.editCanvas("First project's requirements");
   const second = hooks.createEmptyProject();
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
@@ -463,7 +458,7 @@ test("sends only the canvas and selected target without chat history or skill re
   ], { document });
   hooks.setCanvas({ schemaVersion: 2, revision: 2, markdown: "Мигать PB2", locale: "ru" });
   const request = hooks.getProjectAiRequestPayload();
-  assert.deepEqual(Object.keys(request).sort(), ["canvas", "mcu", "packageName"]);
+  assert.deepEqual(Object.keys(request).sort(), ["canvas", "mcu", "operation", "packageName"]);
   assert.equal(request.canvas.markdown, "Мигать PB2");
   assert.equal(request.mcu, "attiny1624");
   assert.equal(request.packageName, "SOIC-14");
@@ -1409,14 +1404,16 @@ test("installs OAuth callback log redaction idempotently", (t) => {
   assert.match(migrated, /location \^~ \/api\/avr\/ai\//);
 });
 
-test("deploys the local AVR knowledge package instead of the old skill catalog", () => {
+test("deploys the canonical materials loader instead of the old skill catalog", () => {
   const installer = fs.readFileSync(
     path.join(__dirname, "../backend/deploy/install-ai-service.sh"),
     "utf8"
   );
 
   assert.match(installer, /loadKnowledge/);
-  assert.match(installer, /ai\/knowledge/);
+  assert.match(installer, /avr-materials\.js/);
+  const unit = fs.readFileSync(path.join(__dirname, "../backend/deploy/uartdebug-ai.service"), "utf8");
+  assert.match(unit, /AI_MATERIALS_ROOT=.*materials\/current\/repository/);
   assert.doesNotMatch(installer, /loadAiSkillCatalog/);
 });
 
@@ -1522,25 +1519,23 @@ test("code collapses from either boundary and retains desktop preferences as the
   assert.equal(storage.has("ud_avr_programming_row_sizes_v1"), false);
 });
 
-test("canvas target validation expands code and focuses the missing selector", async () => {
-  for (const mcu of ["auto", "attiny1624"]) {
-    const { document } = parseHTML(`<html><body><div class="canvas-split-container"><section id="editorWorkspace"><div id="editorContent"></div><select id="mcuSelect"><option value="${mcu}" selected>MCU</option></select><div><button class="custom-select-trigger" id="mcuTrigger"></button></div><select id="projectPackageSelect"><option value="" selected>Choose package</option></select><div><button class="custom-select-trigger" id="packageTrigger"></button></div></section></div><div id="projectCanvasStatus"></div></body></html>`);
-    document.querySelector(".canvas-split-container").getBoundingClientRect = () => ({ width: 1564 });
-    let focused = "";
-    for (const id of ["mcuTrigger", "packageTrigger"]) document.getElementById(id).focus = () => { focused = id; };
-    const hooks = loadAvrFrontendFunctionHooks([
-      "submitProjectCanvas",
-      "prepare() { projectInstructionDocument = normalizeProjectInstructionDocument({ markdown: 'Blink an LED' }); renderWorkspaceWidths([220, 798, 62, 442]); }",
-    ], {
-      document,
-      window: { requestAnimationFrame: () => 1, localStorage: { setItem() {} } },
-    });
-    hooks.prepare();
-    await hooks.submitProjectCanvas();
-    assert.equal(document.getElementById("editorContent").hidden, false);
-    assert.equal(focused, mcu === "auto" ? "mcuTrigger" : "packageTrigger");
-    assert.match(document.getElementById("projectCanvasStatus").textContent, /Choose the target MCU/);
-  }
+test("review sends an empty specification without requiring target selectors", async () => {
+  const {document}=parseHTML('<html><body><button id="projectCanvasRunBtn"></button><button id="projectGenerateCodeBtn"></button><button id="projectDescribeCodeBtn"></button><form id="projectCanvasForm"></form><div id="projectCanvasStatus"></div></body></html>');
+  let sent;
+  const hooks=loadAvrFrontendFunctionHooks(["submitProjectCanvas","getProjectInstructionSnapshot",
+    "prepare() { projectInstructionDocument = normalizeProjectInstructionDocument({markdown:'',revision:0}); appendProjectAiThinking=removeProjectAiThinking=()=>null; persistProjectInstruction=scheduleProjectInstructionPreview=()=>{}; }"],{
+    document,fetch:async(url,options)=>{sent=JSON.parse(options.body);return {ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({ok:true,kind:"canvas",stage:"analyze",baseRevision:0,canvas:{schemaVersion:2,revision:1,markdown:"> ###### *[AI.1] Question.*\n>\n> What should the project do?",annotations:[]}})};},
+    window:{requestAnimationFrame:()=>1,setTimeout:()=>1,clearTimeout(){},localStorage:{setItem(){}}}
+  });
+  hooks.prepare();
+  await hooks.submitProjectCanvas();
+  assert.equal(sent.operation,"analyze");
+  assert.equal(sent.canvas.markdown,"");
+  assert.equal(sent.mcu,"");
+  assert.equal(sent.packageName,"");
+  assert.match(hooks.getProjectInstructionSnapshot().markdown,/What should the project do/);
+  assert.equal(document.getElementById("projectCanvasRunBtn").disabled,false);
+  assert.equal(document.getElementById("projectGenerateCodeBtn").disabled,false);
 });
 
 test("compile shortcuts and file changes preserve an active UPDI operation log", async () => {
@@ -1614,7 +1609,7 @@ test("uses one intrinsic toolbar row and shared width measurement for workspace 
   );
   assert.match(
     css,
-    /\.canvas-split-container\.is-documentation-compact[\s\S]*?\.project-documentation-panel::before\s*\{[\s\S]*?content:\s*"D\\A O\\A C\\A U\\A M\\A E\\A N\\A T\\A A\\A T\\A I\\A O\\A N";/
+    /\.canvas-split-container\.is-documentation-compact[\s\S]*?\.project-documentation-panel::before\s*\{[\s\S]*?content:\s*"D\\A E\\A S\\A C";/
   );
   assert.match(
     css,
@@ -2148,188 +2143,94 @@ test("renames a mini-project display name without renaming its linked files", ()
   );
 });
 
-test("renders every built-in card from its catalog and default guide", () => {
-  const html = fs.readFileSync(
-    path.join(__dirname, "../public/avr.html"),
-    "utf8"
-  );
-  const source = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.js"),
-    "utf8"
-  );
-  const sw = fs.readFileSync(
-    path.join(__dirname, "../public/sw.js"),
-    "utf8"
-  );
-  const publicCatalog = JSON.parse(
-    fs.readFileSync(
-      path.join(__dirname, "../public/avr-mini-projects/catalog.json"),
-      "utf8"
-    )
-  );
-  const privateCatalog = JSON.parse(
-    fs.readFileSync(
-      path.join(__dirname, "../backend/ai/mini-projects/catalog.json"),
-      "utf8"
-    )
-  );
-  const templateGridStart = html.indexOf('id="fileTemplateGrid"');
-  const templateGridEnd = html.indexOf("</div>", templateGridStart);
-  const templateGridMarkup = html.slice(templateGridStart, templateGridEnd);
+test("loads project cards from the private-backed API and fetches only the selected project", async () => {
+  const {document}=parseHTML('<html><body><div id="fileTemplateGrid"></div></body></html>');
+  const calls=[];
+  const project={schemaVersion:1,id:"fixture",title:"Fixture",version:"Ver.1.0",canvasName:"Fixture.md",projectPath:"Target_Projects/Fixture Ver.1.0",canvas:{markdown:"# Project Fixture",locale:"en"},files:[{role:"source",name:"Fixture.c",content:""}]};
+  const hooks=loadAvrFrontendFunctionHooks(["renderBuiltInMiniProjectCards","loadBuiltInMiniProjectDefinition"],{document,fetch:async url=>{
+    calls.push(url);
+    return {ok:true,json:async()=>url.endsWith("/fixture")?{ok:true,project}:{ok:true,schemaVersion:2,projects:[{id:"fixture",title:"Fixture",summary:"A reviewed example."}]}};
+  }});
+  await hooks.renderBuiltInMiniProjectCards();
+  assert.deepEqual(calls,["/api/avr/ai/projects"]);
+  const card=document.querySelector('[data-template-id="fixture"]');
+  assert.ok(card);
+  assert.equal(card.textContent,"FixtureA reviewed example.");
+  assert.equal(card.disabled,false);
+  const definition=await hooks.loadBuiltInMiniProjectDefinition("fixture");
+  assert.equal(definition.canvasName,"Fixture.md");
+  assert.deepEqual(calls,["/api/avr/ai/projects","/api/avr/ai/projects/fixture"]);
+  assert.equal(fs.existsSync(path.join(__dirname,"../public/avr-mini-projects/catalog.json")),false);
+});
 
-  assert.ok(templateGridStart >= 0);
-  assert.doesNotMatch(templateGridMarkup, /data-template-id|file-add-card-copy/);
-  assert.match(source, /function renderBuiltInMiniProjectCards\(\)/);
-  assert.match(
-    source,
-    /title\.textContent\s*=\s*String\(descriptor\.displayName\s*\|\|\s*descriptor\.id\)/
-  );
-  assert.match(
-    source,
-    /copy\.textContent\s*=\s*description/
-  );
-  assert.doesNotMatch(source, /copy\.innerHTML/);
-  assert.doesNotMatch(source, /summary:\s*descriptor\.summary/);
-  assert.deepEqual(
-    publicCatalog.projects.map((entry) => entry.id),
-    [
-      "01_Minimum",
-      "02_CPU_Clock",
-      "03_Delay-Based_Blink",
-      "04_Timer_Interrupt_Blink",
-      "05_UART_Basic_Transmission",
-      "06_UART_Basic_Receive",
-      "07_Printf_Redirect_USART0",
-      "08_Printf_Redirect_USART1",
-      "09_UART0_Interrupt_Transmission",
-      "10_UART1_Interrupt_Transmission",
-    ]
-  );
 
-  for (const project of publicCatalog.projects) {
-    const privateReference = privateCatalog.projects.find(
-      (entry) => entry.id === project.id
-    );
-    assert.equal(project.aiSpecRef, undefined);
-    assert.ok(privateReference, `missing private AI reference for ${project.id}`);
 
-    const sourcePath = path.join(
-      __dirname,
-      "../public",
-      project.source.url.replace(/^\/+/, "")
-    );
-    const aiPath = path.join(
-      __dirname,
-      "../backend/ai/mini-projects",
-      privateReference.file
-    );
-    assert.ok(fs.existsSync(sourcePath), sourcePath);
-    assert.ok(fs.existsSync(aiPath), aiPath);
-    const defaultGuide =
-      project.guides.find(
-        (guide) =>
-          String(guide.locale || "").toLowerCase() ===
-          String(project.defaultLocale || "").toLowerCase()
-      ) || project.guides[0];
-    const defaultGuidePath = path.join(
-      __dirname,
-      "../public",
-      defaultGuide.url.replace(/^\/+/, "")
-    );
-    const extractedDescription = core.extractShortProjectDescription(
-      fs.readFileSync(defaultGuidePath, "utf8")
-    );
-    assert.ok(
-      extractedDescription,
-      `${project.id}: missing Short Project Description in the default guide`
-    );
-    if (Object.hasOwn(project, "summary")) {
-      assert.equal(project.summary, extractedDescription);
-    }
-    assert.equal(
-      crypto.createHash("sha256").update(fs.readFileSync(aiPath)).digest("hex"),
-      privateReference.sha256
-    );
-    assert.ok(sw.includes(project.source.url));
+test("empty workspaces stay empty after local and cloud restoration", () => {
+  const {hooks}=loadCanvasLifecycleHooks();
+  hooks.loadState();
+  hooks.migrateLooseFilesToProjects();
+  const empty=hooks.getEmptyProjectAiAccountDocument("files");
+  assert.equal(Object.keys(empty.files).length,0);
+  assert.equal(empty.current,null);
+  assert.equal(hooks.applyProjectAiAccountDocument("files",empty),true);
+  const snapshot=hooks.getProjectAiAccountFilesSnapshot();
+  assert.equal(Object.keys(snapshot.files).length,0);
+  assert.equal(Object.keys(snapshot.miniProjects).length,0);
+  assert.equal(snapshot.current,null);
+});
 
-    const markers = extractDocumentationMarkers(
-      fs.readFileSync(sourcePath, "utf8")
-    );
-    for (const guide of project.guides) {
-      const guidePath = path.join(
-        __dirname,
-        "../public",
-        guide.url.replace(/^\/+/, "")
-      );
-      assert.ok(fs.existsSync(guidePath), guidePath);
-      assert.ok(sw.includes(guide.url), `${guide.url}: missing from service worker`);
+test("partial generation and description updates preserve the other stage and hide all service files", () => {
+  const {hooks}=loadCanvasLifecycleHooks();
+  const project=hooks.createEmptyProject();
+  hooks.editCanvas("User specification");
+  hooks.updateMiniProjectInstance(project.instanceId,{schemaVersion:1,id:project.id,title:"Blink",version:"Ver.1.0",canvasName:"Blink.md",projectPath:"Target_Projects/Blink Ver.1.0",files:[
+    {role:"source",name:"Blink.c",content:"int main(void) { while(1){} }"},
+    {role:"specification",name:"Blink.yaml",content:"microcontroller:\n  model: ATtiny1624\n",hidden:true},
+  ]});
+  let updated=hooks.getPublicMiniProjectInstance(project.instanceId);
+  assert.equal(updated.files.find(file=>file.role==="guide").content,"");
+  assert.equal(updated.files.find(file=>file.role==="source").name,"Blink.c");
+  assert.equal(updated.canvasName,"Blink.md");
+  assert.equal(updated.projectPath,"Target_Projects/Blink Ver.1.0");
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown,"User specification");
+  hooks.updateMiniProjectInstance(project.instanceId,{schemaVersion:1,id:project.id,title:"Blink",version:"Ver.1.0",files:[{role:"guide",name:"Blink_description.md",content:"# Code description",locale:"en"}]});
+  updated=hooks.getPublicMiniProjectInstance(project.instanceId);
+  assert.match(updated.files.find(file=>file.role==="source").content,/int main/);
+  assert.equal(updated.files.find(file=>file.role==="guide").content,"# Code description");
+  assert.equal(updated.files.find(file=>file.role==="specification").hidden,true);
+  const snapshot=hooks.getProjectAiAccountFilesSnapshot();
+  const resource=snapshot.miniProjects[project.instanceId].files.specification;
+  assert.equal(hooks.isHiddenMiniProjectFile(resource),true);
+  hooks.selectFile(resource);
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().current,snapshot.current);
+  assert.equal(hooks.getVisibleWorkspaceFileNames().length,1);
+});
 
-      const guideMarkdown = fs.readFileSync(guidePath, "utf8");
-      const headings = new Set(
-        extractMarkdownHeadings(guideMarkdown).map((heading) => heading.key)
-      );
-      for (const marker of markers) {
-        assert.ok(
-          headings.has(marker.key),
-          `${project.id}/${guide.locale}: ${marker.key}`
-        );
-      }
+test("legacy loose projects migrate without losing code, guides, resources, or answers", () => {
+  const storage=new Map([["ud_avr_programming_state_v2",JSON.stringify({schemaVersion:2,files:{"blink.c":"// user code","blink.md":"# User guide","blink.yaml":"resource: old","unused.txt":"keep"},current:"blink.c",miniProjects:{},fileGroups:{},authorship:{}})],
+    ["ud_avr_ai_project_instruction_v2",JSON.stringify({schemaVersion:2,revision:0,markdown:"Requirements",annotations:[{id:"q1",message:"Clock?",kind:"question",anchor:{quote:"Requirements",line:1},answer:"20 MHz",status:"open"}]})]]);
+  const {hooks}=loadCanvasLifecycleHooks(storage);
+  hooks.loadState();hooks.restoreProjectInstruction();hooks.migrateLooseFilesToProjects();hooks.selectFile("blink.c");
+  const snapshot=hooks.getProjectAiAccountFilesSnapshot();
+  assert.equal(Object.keys(snapshot.miniProjects).length,1);
+  assert.equal(snapshot.files["blink.c"],"// user code");
+  assert.equal(snapshot.files["blink.md"],"# User guide");
+  assert.equal(snapshot.files["blink.yaml"],"resource: old");
+  assert.equal(snapshot.files["unused.txt"],"keep");
+  assert.deepEqual(Array.from(hooks.getVisibleWorkspaceFileNames()),["blink.c"]);
+  assert.match(hooks.getProjectInstructionSnapshot().markdown,/20 MHz/);
+});
 
-      for (const image of guideMarkdown.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
-        const assetUrl = new URL(
-          image[1],
-          new URL(guide.assetBaseUrl || guide.url, "https://uartdebug.test")
-        ).pathname;
-        const assetPath = path.join(
-          __dirname,
-          "../public",
-          decodeURIComponent(assetUrl).replace(/^\/+/, "")
-        );
-        assert.ok(fs.existsSync(assetPath), assetPath);
-        assert.ok(sw.includes(assetUrl), `${assetUrl}: missing from service worker`);
-      }
-    }
-  }
-
-  const cpuClock = publicCatalog.projects.find(
-    (entry) => entry.id === "02_CPU_Clock"
-  );
-  const delayBlink = publicCatalog.projects.find(
-    (entry) => entry.id === "03_Delay-Based_Blink"
-  );
-  const cpuClockReference = privateCatalog.projects.find(
-    (entry) => entry.id === "02_CPU_Clock"
-  );
-  const delayBlinkReference = privateCatalog.projects.find(
-    (entry) => entry.id === "03_Delay-Based_Blink"
-  );
-
-  assert.equal(cpuClock.version, "1.2.3-b");
-  assert.equal(cpuClockReference.version, "1.2.3-a");
-  assert.equal(delayBlink.displayName, "03_Delay-Based_Blink");
-  assert.equal(delayBlink.version, "1.2.3-b");
-  assert.equal(
-    delayBlink.source.name,
-    "03_Delay-Based_Blink_1.2.3-b.c"
-  );
-  assert.equal(
-    delayBlink.guides[0].name,
-    "03_Delay-Based_Blink_help_1.2.3-b.md"
-  );
-  assert.equal(delayBlinkReference.version, "1.2.3-b");
-  assert.equal(
-    delayBlinkReference.file,
-    "03_Delay-Based_Blink/03_Delay-Based_Blink_AI_1.2.3-b.md"
-  );
-  const delayBlinkSourcePath = path.join(
-    __dirname,
-    "../public",
-    delayBlink.source.url.replace(/^\/+/, "")
-  );
-  assert.equal(
-    extractDocumentationMarkers(
-      fs.readFileSync(delayBlinkSourcePath, "utf8")
-    ).length,
-    14
-  );
+test("canonical projects without a description remain fresh until their program changes", () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  const project = hooks.installMiniProjectDefinition({ schemaVersion: 1, contract: "uartdebug-project/v2", id: "target", title: "Target", version: "Ver.1.0",
+    canvasName: "Target.md", projectPath: "Target_Projects/Target", canvas: { markdown: "# Project Target", locale: "ru" },
+    files: [{ role: "source", name: "Target.c", content: "#include <xc.h>\nint main(void) {}" }],
+  });
+  const request = hooks.getProjectAiRequestPayload("generate");
+  assert.equal(request.currentProject.guide, "");
+  assert.equal(request.currentProject.guideAuthorship, undefined);
+  assert.doesNotThrow(() => hooks.assertProjectAiUpdateIsFresh(request));
+  hooks.updateMiniProjectInstance(project.instanceId, { id: "target", title: "Target", version: "Ver.1.0", files: [{ role: "source", name: "Target.c", content: "Changed program" }] });
+  assert.throws(() => hooks.assertProjectAiUpdateIsFresh(request), /newer local edits/i);
 });

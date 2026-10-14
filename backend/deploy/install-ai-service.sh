@@ -34,12 +34,12 @@ required=(
   "${stage}/avr-canvas-contract.js"
   "${stage}/avr-documentation-lookup.js"
   "${stage}/avr-knowledge.js"
+  "${stage}/avr-materials.js"
   "${stage}/avr-compiler-contract.js"
   "${stage}/avr-compiler-readiness.js"
   "${stage}/avr-documentation-markers.js"
   "${stage}/package.json"
   "${stage}/package-lock.json"
-  "${stage}/ai/canvas-rules.md"
   "${stage}/deploy/uartdebug-ai.service"
   "${stage}/deploy/nginx-avr-ai-location.conf"
   "${stage}/deploy/nginx-avr-ai-oauth-callback-location.conf"
@@ -79,9 +79,8 @@ node -e '
   const fs = require("node:fs");
   const { loadKnowledge } = require(process.argv[1]);
   const knowledge = loadKnowledge();
-  if (!knowledge.devices.length || !knowledge.recipes.length) process.exit(1);
-  if (!fs.readFileSync(process.argv[2], "utf8").trim()) process.exit(1);
-' "${stage}/avr-knowledge.js" "${stage}/ai/canvas-rules.md" || {
+  if (!knowledge.devices.length || !knowledge.initialRules.length) process.exit(1);
+' "${stage}/avr-knowledge.js" || {
   echo "The staged AVR knowledge bundle or canvas rules are invalid" >&2
   exit 66
 }
@@ -154,16 +153,6 @@ if [ -f "${access_db_file}" ]; then
 fi
 
 if [ "${stage}" != "${backend_dir}" ]; then
-  install -d -o deploy -g deploy -m 0755 \
-    "${backend_dir}/ai" \
-    "${backend_dir}/ai/knowledge"
-  install -o deploy -g deploy -m 0644 \
-    "${stage}/ai/canvas-rules.md" \
-    "${backend_dir}/ai/canvas-rules.md"
-  cp -R "${stage}/ai/knowledge/." "${backend_dir}/ai/knowledge/"
-  chown -R deploy:deploy "${backend_dir}/ai/knowledge"
-  find "${backend_dir}/ai/knowledge" -type d -exec chmod 0755 {} +
-  find "${backend_dir}/ai/knowledge" -type f -exec chmod 0644 {} +
   install -o deploy -g deploy -m 0644 \
     "${stage}/ai-server.js" \
     "${backend_dir}/ai-server.js"
@@ -178,6 +167,7 @@ if [ "${stage}" != "${backend_dir}" ]; then
     "${stage}/avr-canvas-contract.js" \
     "${stage}/avr-documentation-lookup.js" \
     "${stage}/avr-knowledge.js" \
+    "${stage}/avr-materials.js" \
     "${backend_dir}/"
   install -o deploy -g deploy -m 0644 \
     "${stage}/avr-compiler-contract.js" \
@@ -257,7 +247,7 @@ curl --fail --silent --show-error --max-time 10 \
 node -e '
   const fs = require("fs");
   const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  if (value.contract !== "uartdebug-canvas/v1" || !value.rules || !value.knowledge) process.exit(1);
+  if (value.contract !== "uartdebug-project/v2" || !value.rules || !value.knowledge) process.exit(1);
   if (!Array.isArray(value.knowledge.devices) || !value.knowledge.devices.length) process.exit(1);
 ' "${status_body}"
 cat "${status_body}"

@@ -181,6 +181,45 @@ test("imports a C, localized guide, and public YAML bundle without legacy AI Mar
   assert.equal(normalized.files.aiSpec, undefined);
 });
 
+test("imports the canonical specification, program, hidden resources and code description", async () => {
+  const markdown = "# Project Blink\n\nProject version - Ver.2.0\n\n## Hardware\nATtiny1624 SOIC-14\n";
+  const parsed = await archive.parseMiniProjectArchive(makeZip([
+    { name: "Target_Projects/Blink Ver.2.0/Blink.md", content: markdown },
+    { name: "Target_Projects/Blink Ver.2.0/Blink.c", content: "#include <xc.h>\nint main(void) {}" },
+    { name: "Target_Projects/Blink Ver.2.0/Blink.yaml", content: "microcontroller:\n  model: ATtiny1624" },
+    { name: "Target_Projects/Blink Ver.2.0/Blink (description) (en).md", content: "# Actual code" },
+  ]));
+  const project = miniProjectCore.normalizeDefinition(parsed);
+  assert.equal(project.contract, "uartdebug-project/v2");
+  assert.equal(project.canvas.markdown, markdown);
+  assert.equal(project.canvasName, "Blink.md");
+  assert.equal(project.projectPath, "Target_Projects/Blink Ver.2.0");
+  assert.equal(project.version, "Ver.2.0");
+  assert.equal(project.files.specification.hidden, true);
+  assert.equal(project.files.guide.content, "# Actual code");
+});
+
+test("imports a specification-only draft without creating starter code or description", async () => {
+  const markdown = "# Project Empty\n\nProject version - Ver.1.0\n";
+  const project = miniProjectCore.normalizeDefinition(await archive.parseMiniProjectArchive(makeZip([
+    { name: "Empty Ver.1.0/Empty.md", content: markdown },
+  ])));
+  assert.equal(project.files.source.content, "");
+  assert.equal(project.files.guide.content, "");
+  assert.equal(project.canvas.markdown, markdown);
+});
+
+test("rejects multi-project canonical archives and unrelated executable files", async () => {
+  await expectCode(makeZip([
+    { name: "One/One.md", content: "# Project One" },
+    { name: "Two/Two.md", content: "# Project Two" },
+  ]), "INVALID_PROJECT");
+  await expectCode(makeZip([
+    { name: "One/One.md", content: "# Project One" },
+    { name: "One/start.js", content: "untrusted" },
+  ]), "UNSUPPORTED_PROJECT_FILE");
+});
+
 test("exports the browser UMD global", () => {
   const source = fs.readFileSync(
     path.join(__dirname, "../public/avr-mini-project-archive.js"),

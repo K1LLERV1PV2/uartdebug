@@ -12,7 +12,7 @@ const {
   isCompileSuccessEnvelope,
 } = require("./avr-compiler-contract");
 
-const DEFAULT_MODEL = "gpt-5.6-terra";
+const DEFAULT_MODEL = "gpt-6.1-sol";
 const DEFAULT_REASONING_EFFORT = "medium";
 const DEFAULT_TIMEOUT_MS = 120000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 24000;
@@ -64,9 +64,11 @@ function getRuntimeConfig(environment = process.env) {
     environment.OPENAI_REASONING_EFFORT,
     16,
   ).toLowerCase();
-  const reasoningEffort = ALLOWED_REASONING_EFFORTS.has(configuredEffort)
-    ? configuredEffort
-    : DEFAULT_REASONING_EFFORT;
+  const reasoningEffort =
+    ALLOWED_REASONING_EFFORTS.has(configuredEffort) &&
+    !(model.startsWith("gpt-6.1-sol") && configuredEffort === "none")
+      ? configuredEffort
+      : DEFAULT_REASONING_EFFORT;
   const maxOutputTokens = readInteger(
     environment.OPENAI_MAX_OUTPUT_TOKENS,
     1000,

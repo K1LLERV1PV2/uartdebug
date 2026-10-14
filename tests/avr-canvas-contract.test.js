@@ -1,112 +1,66 @@
 "use strict";
-
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   CANVAS_OUTPUT_SCHEMA,
-  GUIDE_VERIFICATION_MARKER,
   CanvasContractError,
   normalizeCanvas,
   validateCanvasOutput,
-  serializeProjectSpec,
+  parseProjectResources,
+  codeRegions,
+  validateSource,
+  projectIdentity,
 } = require("../backend/avr-canvas-contract");
-
 function canvas(overrides = {}) {
   return {
     schemaVersion: 2,
     revision: 8,
-    markdown: "# Задача\nМигать светодиодом на PA3.",
-    locale: "ru",
+    markdown:
+      "# Project blink\n\nProject version - Ver.1.0\n\n## Hardware requirements\nATtiny1624, SOIC-14, PA3 LED.\n\n## Software requirements\nSet PA3 high.",
+    locale: "en",
     annotations: [],
     target: { mcu: "attiny1624", packageName: "SOIC-14" },
     ...overrides,
   };
 }
-
 function annotation(overrides = {}) {
   return {
     id: "question-1",
     kind: "question",
-    anchor: { quote: "Мигать светодиодом", line: 2 },
-    message: "Какой период мигания?",
+    anchor: { quote: "PA3 LED", line: 5 },
+    message: "Which pin?",
     status: "open",
     answer: "",
     ...overrides,
   };
 }
-
-function resource(overrides = {}) {
-  return {
-    id: "led",
-    kind: "gpio",
-    pin: "PA3",
-    direction: "output",
-    instance: null,
-    route: null,
-    txPin: null,
-    rxPin: null,
-    baud: null,
-    periodUs: null,
-    prescaler: null,
-    clockSource: null,
-    periodCycles: null,
-    description: "Светодиод",
-    ...overrides,
-  };
+function source(user = "") {
+  return `// Project name: blink\n// Project version: Ver.1.0\n#include <xc.h>\n//+ Begin AI includes\n//- End AI includes\n//+ Begin AI globals\n//- End AI globals\n//+ Begin user globals\n${user}\n//- End user globals\nint main(void) {\n//+ Begin AI initialization\nPORTA.DIRSET = PIN3_bm;\n//- End AI initialization\n//+ Begin user initialization\n//- End user initialization\nwhile (1) {\n//+ Begin AI cyclic\n//- End AI cyclic\n//+ Begin user cyclic\n//- End user cyclic\n}\nreturn 0;\n}\n`;
 }
-
-function spec() {
-  return {
-    schemaVersion: 1,
-    language: "ru",
-    microcontroller: { model: "ATtiny1624", package: "SOIC-14" },
-    clock: { hz: 3333333 },
-    resources: [resource()],
-    includes: ["avr/io.h"],
-    description: "Мигание светодиода",
-  };
+function yaml() {
+  return 'microcontroller:\n  model: ATtiny1624\n  package: SOIC-14\nhardware_resources: {}\nsoftware_dependencies:\n  includes:\n    - "#include <xc.h>"\n';
 }
-
 function generation() {
   return {
     action: "generate",
-    message: "Готово",
-    canvas: { markdown: canvas().markdown, locale: "ru", annotations: [] },
+    message: "Code ready.",
+    canvas: { markdown: canvas().markdown, locale: "en", annotations: [] },
     project: {
-      title: "Светодиод",
-      summary: "Мигание на PA3",
-      version: "1.0.0",
-      source: {
-        name: "blink.c",
-        content: "//# Мигание\nint main(void) { for (;;) {} }\n",
-      },
-      guide: {
-        name: "blink.ru.md",
-        locale: "ru",
-        content: `# Мигание\nПодключите светодиод к PA3.\n\n${GUIDE_VERIFICATION_MARKER}\n`,
-        verificationMessages: {
-          passed: "Исходный код прошёл проверку серверным компилятором.",
-          skipped: "Проверка серверным компилятором не выполнялась.",
-          hardwareNotTested: "Этот проект не проверялся на физическом устройстве.",
-        },
-      },
-      spec: spec(),
+      title: "blink",
+      summary: "GPIO output",
+      version: "Ver.1.0",
+      source: { name: "blink.c", content: source() },
+      guide: null,
+      resources: { name: "blink.yaml", content: yaml() },
     },
   };
 }
-
-test("the output schema uses strict complete objects at every nesting level", () => {
-  function visit(schema) {
-    if (schema.type === "object") {
-      assert.equal(schema.additionalProperties, false);
-      assert.deepEqual(schema.required, Object.keys(schema.properties));
-      Object.values(schema.properties).forEach(visit);
-    }
-    if (schema.items) visit(schema.items);
-    if (schema.anyOf) schema.anyOf.forEach(visit);
-  }
-  visit(CANVAS_OUTPUT_SCHEMA);
-  assert.equal(CANVAS_OUTPUT_SCHEMA.properties.project.anyOf[1].type, "null");
+const options = (operation = "generate", overrides = {}) => ({
+  operation,
+  canvas: canvas(),
+  mcu: "attiny1624",
+  packageName: "SOIC-14",
+  ...overrides,
 });
 
 test("legacy instructions migrate without obsolete skill references or data loss", () => {
@@ -128,7 +82,13 @@ test("legacy instructions migrate without obsolete skill references or data loss
 test("canvas normalization preserves target, answers and valid authorship", () => {
   const input = canvas({
     annotations: [annotation({ answer: "Раз в секунду" })],
-    authorship: { schemaVersion: 1, lines: ["human", "ai"], updatedAt: 20 },
+    authorship: {
+      schemaVersion: 1,
+      lines: canvas()
+        .markdown.split("\n")
+        .map(() => "human"),
+      updatedAt: 20,
+    },
   });
   assert.deepEqual(normalizeCanvas(input), input);
   const withStaleAnchor = canvas({
@@ -156,292 +116,287 @@ test("invalid revisions, duplicate annotation IDs and unanswered resolutions are
     );
 });
 
-test("clarification preserves revision and must anchor questions in the resulting text", () => {
-  const output = {
+test("the response schema keeps complete strict objects without a fixed peripheral allowlist", () => {
+  function visit(schema) {
+    if (schema.type === "object") {
+      assert.equal(schema.additionalProperties, false);
+      assert.deepEqual(schema.required, Object.keys(schema.properties));
+      Object.values(schema.properties).forEach(visit);
+    }
+    if (schema.items) visit(schema.items);
+    if (schema.anyOf) schema.anyOf.forEach(visit);
+  }
+  visit(CANVAS_OUTPUT_SCHEMA);
+  assert.equal(
+    CANVAS_OUTPUT_SCHEMA.properties.canvas.properties.annotations.maxItems,
+    0,
+  );
+});
+test("empty analysis can ask canonical inline questions without artificial seed text", () => {
+  const raw = {
     action: "clarify",
-    message: "Нужно уточнение",
+    message: "Specify a project.",
     canvas: {
-      markdown: canvas().markdown,
-      locale: "ru",
-      annotations: [annotation()],
+      markdown:
+        "> ###### *[AI.1] Question.*\n>\n> What project should be developed?",
+      locale: "en",
+      annotations: [],
     },
     project: null,
   };
-  const result = validateCanvasOutput(output, { canvas: canvas() });
-  assert.equal(result.canvas.revision, 8);
-  assert.deepEqual(result.canvas.target, canvas().target);
-  assert.equal(result.canvas.annotations[0].id, "question-1");
-  output.canvas.annotations[0].anchor.quote = "Несуществующий текст";
-  assert.throws(
-    () => validateCanvasOutput(output, { canvas: canvas() }),
-    /quote text present/,
+  const result = validateCanvasOutput(
+    raw,
+    options("analyze", {
+      canvas: canvas({
+        markdown: "",
+        locale: "",
+        target: { mcu: "", packageName: "" },
+      }),
+    }),
   );
+  assert.match(result.canvas.markdown, /\[AI\.1\]/);
+  assert.equal(result.project, null);
+  assert.deepEqual(result.canvas.annotations, []);
 });
-
-test("generation returns synchronized C, documentation and a structured specification", () => {
-  const output = generation();
-  const result = validateCanvasOutput(output, {
-    canvas: canvas(),
+test("stage boundaries prohibit generation during analysis and specification edits during generation", () => {
+  assert.throws(() => validateCanvasOutput(generation(), options("analyze")));
+  const edited = generation();
+  edited.canvas.markdown += "\nAI changed requirements.";
+  assert.throws(() => validateCanvasOutput(edited, options()));
+  const raw = { ...generation(), action: "clarify", project: null };
+  raw.canvas.markdown += "\nChanged before asking.";
+  assert.throws(() => validateCanvasOutput(raw, options()));
+});
+test("generation matches name/version from the specification and exact selected hardware", () => {
+  assert.equal(
+    validateCanvasOutput(generation(), options()).project.source.name,
+    "blink.c",
+  );
+  assert.deepEqual(projectIdentity("# Проект LED\nВерсия проекта - Ver.2.3"), {
+    title: "LED",
+    version: "Ver.2.3",
+  });
+  assert.equal(projectIdentity("# Project LED\nProject version - 2.3"), null);
+  for (const mutate of [
+    (raw) => {
+      raw.project.title = "other";
+    },
+    (raw) => {
+      raw.project.version = "Ver.9.0";
+    },
+    (raw) => {
+      raw.project.resources.content = yaml().replace(
+        "ATtiny1624",
+        "ATtiny1627",
+      );
+    },
+    (raw) => {
+      raw.project.source.name = "../blink.c";
+    },
+    (raw) => {
+      raw.project.source.name = "CON.c";
+    },
+    (raw) => {
+      raw.canvas.locale = "ru";
+    },
+  ]) {
+    const raw = generation();
+    mutate(raw);
+    assert.throws(() => validateCanvasOutput(raw, options()));
+  }
+});
+test("resource YAML uses canonical mappings and preserves complete dependencies and extra fields", () => {
+  const content =
+    yaml().replace(
+      "hardware_resources: {}",
+      "hardware_resources:\n  ADC0:\n    mode: single",
+    ) + "application:\n  note: preserved\n";
+  const resources = parseProjectResources(content, {
     mcu: "attiny1624",
     packageName: "SOIC-14",
   });
-  assert.deepEqual(result.project, output.project);
-  assert.equal(result.canvas.locale, "ru");
-  assert.equal(result.canvas.revision, 8);
-  assert.equal(Object.hasOwn(result.project, "aiSpec"), false);
-});
-
-test("the model cannot silently remove a question, forge an answer or generate with blockers", () => {
-  const input = canvas({ annotations: [annotation()] });
-  assert.throws(
-    () => validateCanvasOutput(generation(), { canvas: input }),
-    /preserve annotation/,
-  );
-  const forged = generation();
-  forged.canvas.annotations = [
-    annotation({ status: "resolved", answer: "Invented by model" }),
-  ];
-  assert.throws(
-    () => validateCanvasOutput(forged, { canvas: input }),
-    /user answers/,
-  );
-  const blocked = generation();
-  blocked.canvas.annotations = [annotation()];
-  assert.throws(
-    () => validateCanvasOutput(blocked, { canvas: input }),
-    /Resolve open/,
-  );
-  const newlyForged = generation();
-  newlyForged.canvas.annotations = [
-    annotation({ status: "resolved", answer: "Model's invented answer" }),
-  ];
-  assert.throws(
-    () => validateCanvasOutput(newlyForged, { canvas: canvas() }),
-    /await the user's answer/,
-  );
-});
-
-test("answered questions can be resolved without losing identifiers or user text", () => {
-  const answered = annotation({ answer: "Каждую секунду" });
-  const output = generation();
-  output.canvas.annotations = [{ ...answered, status: "resolved" }];
-  const result = validateCanvasOutput(output, {
-    canvas: canvas({ annotations: [answered] }),
-  });
-  assert.equal(result.canvas.annotations[0].answer, "Каждую секунду");
-  assert.equal(result.canvas.annotations[0].status, "resolved");
-});
-
-test("action and project presence must agree and unexpected schema fields fail closed", () => {
-  for (const change of [
-    (output) => {
-      output.action = "clarify";
-    },
-    (output) => {
-      output.project = null;
-    },
-    (output) => {
-      output.project.aiSpec = {};
-    },
-    (output) => {
-      output.project.spec.microcontroller.extra = true;
-    },
-    (output) => {
-      delete output.project.spec.clock;
-    },
-  ]) {
-    const output = generation();
-    change(output);
-    assert.throws(
-      () => validateCanvasOutput(output, { canvas: canvas() }),
-      (error) => error instanceof CanvasContractError && error.status === 502,
-    );
-  }
-});
-
-test("selected hardware and language cannot drift during generation", () => {
-  for (const change of [
-    (project) => {
-      project.spec.microcontroller.model = "ATtiny1627";
-    },
-    (project) => {
-      project.spec.microcontroller.package = "VQFN-20";
-    },
-    (project) => {
-      project.guide.locale = "en";
-    },
-    (project) => {
-      project.spec.language = "en";
-    },
-  ]) {
-    const output = generation();
-    change(output.project);
-    assert.throws(
-      () => validateCanvasOutput(output, { canvas: canvas() }),
-      CanvasContractError,
-    );
-  }
-});
-
-test("a new canvas infers Russian from its content and may persist an incomplete target selection", () => {
-  const input = canvas({
-    locale: "",
-    target: { mcu: "attiny1624", packageName: "" },
-  });
-  assert.deepEqual(normalizeCanvas(input).target, input.target);
-  const output = generation();
-  const result = validateCanvasOutput(output, { canvas: input });
-  assert.equal(result.canvas.locale, "ru");
-  assert.equal(result.project.guide.locale, "ru");
-  assert.equal(result.project.spec.language, "ru");
-  assert.throws(
-    () => validateCanvasOutput(output, { canvas: canvas({ locale: "en" }) }),
-    /explicitly selected language/,
-  );
-  assert.equal(
-    normalizeCanvas(
-      canvas({ target: { mcu: "", packageName: "" }, locale: "" }),
-    ).locale,
-    "",
-  );
-});
-
-test("updates preserve file identities and documentation markers", () => {
-  assert.throws(
-    () =>
-      validateCanvasOutput(generation(), {
-        canvas: canvas(),
-        currentProject: { sourceName: "existing.c" },
-      }),
-    /sourceName/,
-  );
-  const output = generation();
-  output.project.guide.content = "# Other heading\n";
-  assert.throws(
-    () => validateCanvasOutput(output, { canvas: canvas() }),
-    /missing the source heading/,
-  );
-});
-
-test("guide verification uses one server-owned placeholder and complete localized templates", () => {
-  const output = generation();
-  const result = validateCanvasOutput(output, { canvas: canvas() });
-  assert.deepEqual(result.project.guide.verificationMessages, output.project.guide.verificationMessages);
-  assert.equal(result.project.guide.content.split(GUIDE_VERIFICATION_MARKER).length, 2);
+  assert.equal(resources.hardware_resources.ADC0.mode, "single");
+  assert.equal(resources.application.note, "preserved");
   for (const content of [
-    output.project.guide.content.replace(GUIDE_VERIFICATION_MARKER, ""),
-    `${output.project.guide.content}\n${GUIDE_VERIFICATION_MARKER}`,
-  ]) {
-    const invalid = generation();
-    invalid.project.guide.content = content;
-    assert.throws(() => validateCanvasOutput(invalid, { canvas: canvas() }), /exactly one verification placeholder/);
-  }
-  for (const field of ["passed", "skipped", "hardwareNotTested"]) {
-    const invalid = generation();
-    delete invalid.project.guide.verificationMessages[field];
-    assert.throws(() => validateCanvasOutput(invalid, { canvas: canvas() }), (error) => error instanceof CanvasContractError && error.status === 502);
-  }
+    "microcontroller: {}\nhardware_resources: {}",
+    yaml().replace('"#include <xc.h>"', '"xc.h"'),
+    yaml().replace("hardware_resources: {}", "hardware_resources: []"),
+    yaml() + "microcontroller: {}\n",
+    yaml().replace(
+      "hardware_resources: {}",
+      "hardware_resources: &shared {}\ncopy: *shared",
+    ),
+    yaml().replace("hardware_resources: {}", "hardware_resources: !unsafe {}"),
+  ])
+    assert.throws(() => parseProjectResources(content));
 });
-
-test("unsafe names and incomplete peripheral resources are rejected", () => {
-  for (const name of ["../blink.c", "C:blink.c", "NUL.c", "blink.txt"]) {
-    const output = generation();
-    output.project.source.name = name;
-    assert.throws(
-      () => validateCanvasOutput(output, { canvas: canvas() }),
-      /file names/,
-    );
-  }
-  for (const entry of [
-    resource({ pin: null }),
-    resource({ pin: "PA99" }),
-    resource({ kind: "uart" }),
-    resource({ kind: "timer" }),
-  ]) {
-    const output = generation();
-    output.project.spec.resources = [entry];
-    assert.throws(
-      () => validateCanvasOutput(output, { canvas: canvas() }),
-      CanvasContractError,
-    );
-  }
-});
-
-test("YAML serialization is canonical and quotes multiline, tag and key-like user text", () => {
-  const specification = spec();
-  specification.description = 'yes\nclock: 0\n!!js/function "unsafe"';
-  const yaml = serializeProjectSpec(specification);
-  assert.ok(
-    yaml.startsWith(
-      'schemaVersion: 1\nlanguage: "ru"\nmicrocontroller:\n  model: "ATtiny1624"\n',
+test("user C regions are preserved exactly; damaged, nested and temporary markers are rejected", () => {
+  const previous = source("int user_counter = 2;");
+  const raw = generation();
+  raw.project.source.content = previous.replace(
+    "PORTA.DIRSET = PIN3_bm;",
+    "PORTA.DIRSET = PIN4_bm;",
+  );
+  assert.doesNotThrow(() =>
+    validateCanvasOutput(
+      raw,
+      options("generate", {
+        currentProject: { sourceName: "blink.c", source: previous },
+      }),
     ),
   );
-  assert.ok(
-    yaml.includes(
-      'description: "yes\\nclock: 0\\n!!js/function \\"unsafe\\""\n',
+  raw.project.source.content = raw.project.source.content.replace(
+    "user_counter = 2",
+    "user_counter = 3",
+  );
+  assert.throws(() =>
+    validateCanvasOutput(
+      raw,
+      options("generate", {
+        currentProject: { sourceName: "blink.c", source: previous },
+      }),
     ),
   );
-  assert.ok(yaml.includes('resources:\n  -\n    id: "led"\n'));
-  assert.doesNotMatch(
-    yaml,
-    /\b(?:baud|instance|route|txPin|rxPin|periodUs|prescaler|clockSource|periodCycles): null/,
+  for (const value of [
+    source().replace("//- End AI globals", "//- End other"),
+    source().replace(
+      "//- End AI globals",
+      "//+ Begin nested\n//- End nested\n//- End AI globals",
+    ),
+    source() + "//X temporary instructions\n",
+  ])
+    assert.throws(() => validateSource(value, parseProjectResources(yaml())));
+});
+test("markers inside C literals and block comments are ignored and quoted includes remain usable", () => {
+  const value = source(
+    'const char *text = "//+ Begin fake user region\\n//- End fake user region";\n/*\n//+ Begin fake\n//- End fake\n*/',
   );
-  assert.ok(yaml.endsWith("\n"));
-  const reverse = Object.fromEntries(Object.entries(specification).reverse());
-  assert.equal(serializeProjectSpec(reverse), yaml);
+  assert.equal(codeRegions(value).length, 7);
+  assert.doesNotThrow(() =>
+    validateSource(value, parseProjectResources(yaml())),
+  );
+  const quoted = value.replace(
+    "#include <xc.h>",
+    '#include <xc.h>\n#include "user.h"',
+  );
+  const resources = parseProjectResources(yaml());
+  resources.software_dependencies.includes.push('#include "user.h"');
+  assert.doesNotThrow(() => validateSource(quoted, resources));
+  const continued = source(
+    'const char *text = "hello\\\n//+ Begin fake user region";',
+  );
+  assert.equal(codeRegions(continued).length, 7);
+});
+test("descriptions use actual C and cannot carry resource or source changes", () => {
+  const raw = generation();
+  raw.action = "describe";
+  raw.project.source = null;
+  raw.project.resources = null;
+  raw.project.guide = {
+    name: "blink (description).md",
+    locale: "en",
+    content: "# GPIO\nPA3 is configured as output.",
+  };
+  const opts = options("describe", {
+    currentProject: {
+      sourceName: "blink.c",
+      source: source(),
+      guideName: "blink (description).md",
+      guide: "",
+    },
+  });
+  assert.equal(
+    validateCanvasOutput(raw, opts).project.guide.name,
+    "blink (description).md",
+  );
+  assert.throws(() => validateCanvasOutput(raw, options("describe")));
+  raw.project.source = generation().project.source;
+  assert.throws(() => validateCanvasOutput(raw, opts));
 });
 
-test("resource schema constrains each peripheral to its applicable fields", () => {
-  const gpio = resource();
-  const uart = resource({ id: "serial", kind: "uart", pin: null, direction: null, instance: "USART0", route: "ALT1", txPin: "PA1", baud: 9600 });
-  const timer = resource({ id: "tick", kind: "timer", pin: null, direction: null, instance: "TCA0", periodUs: 1000000, prescaler: 256 });
-  const pit = resource({ id: "tick", kind: "rtc-pit", pin: null, direction: null, instance: "RTC", clockSource: "INT32K", periodCycles: 4096, periodUs: 125000 });
-  for (const entry of [gpio, uart, timer, { ...timer, pin: "PB1" }, pit, { ...pit, periodUs: null }]) {
-    const output = generation();
-    output.project.spec.resources = [entry];
-    assert.equal(validateCanvasOutput(output, { canvas: canvas() }).project.spec.resources[0].kind, entry.kind);
-  }
-  for (const entry of [
-    { ...timer, route: "SINGLE" },
-    { ...timer, direction: "output" },
-    { ...timer, baud: 9600 },
-    { ...gpio, instance: "TCA0" },
-    { ...gpio, route: "DEFAULT" },
-    { ...uart, pin: "PA1" },
-    { ...uart, route: "ALTERNATE" },
-    { ...uart, periodUs: 1000 },
-    { ...pit, pin: "PB1" },
-    { ...pit, prescaler: 128 },
-    { ...pit, instance: "RTC0" },
-    { ...pit, clockSource: "INT1K" },
-    { ...pit, periodCycles: 3 },
-    { ...gpio, periodCycles: 4096 },
+test("confirmed alternative output names use one complete safe pair from the specification", () => {
+  const specification = canvas().markdown.replace(
+    "Project version - Ver.1.0",
+    "Project version - Ver.1.0\nC program file - firmware.c\nProject resources file - allocations.yaml",
+  );
+  const raw = generation();
+  raw.canvas.markdown = specification;
+  raw.project.source.name = "firmware.c";
+  raw.project.resources.name = "allocations.yaml";
+  assert.doesNotThrow(() =>
+    validateCanvasOutput(
+      raw,
+      options("generate", { canvas: canvas({ markdown: specification }) }),
+    ),
+  );
+  for (const invalid of [
+    specification.replace("\nProject resources file - allocations.yaml", ""),
+    specification.replace("allocations.yaml", "../allocations.yaml"),
+    specification + "\nC program file - another.c",
   ]) {
-    const output = generation();
-    output.project.spec.resources = [entry];
-    assert.throws(() => validateCanvasOutput(output, { canvas: canvas() }), (error) => error instanceof CanvasContractError && error.status === 502);
-    assert.throws(() => serializeProjectSpec(output.project.spec), CanvasContractError);
+    const broken = structuredClone(raw);
+    broken.canvas.markdown = invalid;
+    assert.throws(() =>
+      validateCanvasOutput(
+        broken,
+        options("generate", { canvas: canvas({ markdown: invalid }) }),
+      ),
+    );
   }
 });
 
-test("RTC PIT YAML preserves an explicit unchanged CPU clock and fixed-cycle timing", () => {
-  const output = generation();
-  output.project.spec.clock.hz = null;
-  output.project.spec.resources = [resource({ pin: "PB1" }), resource({ id: "tick", kind: "rtc-pit", pin: null, direction: null, instance: "RTC", clockSource: "INT32K", periodCycles: 4096, periodUs: 125000 })];
-  const result = validateCanvasOutput(output, { canvas: canvas() });
-  const yaml = serializeProjectSpec(result.project.spec);
-  assert.match(yaml, /clock:\n  hz: null\n/);
-  assert.match(yaml, /kind: "rtc-pit"\n    instance: "RTC"\n    periodUs: 125000\n    clockSource: "INT32K"\n    periodCycles: 4096\n/);
-  assert.doesNotMatch(yaml, /(?:prescaler|route|baud|txPin|rxPin):/);
-  delete output.project.spec.clock.hz;
-  assert.throws(() => validateCanvasOutput(output, { canvas: canvas() }), CanvasContractError);
-});
-
-test("YAML serialization selects the peripheral variant before canonical ordering", () => {
-  const specification = spec();
-  const timer = resource({ id: "tick", kind: "timer", pin: null, direction: null, instance: "TCA0", periodUs: 1000000, prescaler: 256 });
-  specification.resources = [Object.fromEntries(Object.entries(timer).reverse())];
-  const yaml = serializeProjectSpec(specification);
-  assert.match(yaml, /resources:\n  -\n    id: "tick"\n    kind: "timer"\n    instance: "TCA0"\n    periodUs: 1000000\n    prescaler: 256\n/);
-  assert.doesNotMatch(yaml, /\b(?:route|direction|baud|txPin|rxPin):/);
+test("canonical pin declarations agree with the selected physical package without constraining unrelated resource shapes", () => {
+  const device = {
+    pinouts: {
+      "SOIC-14": { pins: { PB1: 8, PA3: 13 } },
+      "VQFN-20": { pins: { PB1: 14, PC2: 5 } },
+    },
+  };
+  const target = { mcu: "attiny1624", packageName: "SOIC-14", device };
+  const content = yaml().replace(
+    "hardware_resources: {}",
+    "hardware_resources:\n  gpio:\n    led:\n      pin_symbol: PB1\n      package_pin: 8\n      port: B\n      port_pin: 1\n  future_peripheral:\n    port: opaque_bus_label\n    arbitrary_modes:\n      - mode: custom\n",
+  );
+  assert.doesNotThrow(() => parseProjectResources(content, target));
+  assert.doesNotThrow(() =>
+    parseProjectResources(content.replace("port: B", "port: PORTB"), target),
+  );
+  assert.doesNotThrow(() =>
+    parseProjectResources(
+      content.replace("      package_pin: 8\n", ""),
+      target,
+    ),
+  );
+  assert.doesNotThrow(() =>
+    parseProjectResources(
+      content.replace("      pin_symbol: PB1\n", ""),
+      target,
+    ),
+  );
+  assert.doesNotThrow(() => parseProjectResources(yaml(), target));
+  for (const invalid of [
+    content.replace("pin_symbol: PB1", "pin_symbol: PC2"),
+    content.replace("package_pin: 8", "package_pin: 14"),
+    content.replace("port: B", "port: A"),
+    content.replace("port_pin: 1", "port_pin: 3"),
+    content.replace("port_pin: 1", "port_pin: 8"),
+    content.replace("pin_symbol: PB1", "pin_symbol: PA3"),
+  ])
+    assert.throws(() => parseProjectResources(invalid, target));
+  const differentPackage = content.replace(
+    "package: SOIC-14",
+    "package: VQFN-20",
+  );
+  assert.throws(() =>
+    parseProjectResources(differentPackage, {
+      ...target,
+      packageName: "VQFN-20",
+    }),
+  );
+  assert.doesNotThrow(() =>
+    parseProjectResources(
+      differentPackage.replace("package_pin: 8", "package_pin: 14"),
+      { ...target, packageName: "VQFN-20" },
+    ),
+  );
 });

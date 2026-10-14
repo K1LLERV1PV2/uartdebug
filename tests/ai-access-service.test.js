@@ -23,6 +23,26 @@ const {
 } = require("../backend/ai-access-service");
 const { MAX_PROVIDER_RESPONSES } = require("../backend/avr-ai-limits");
 
+test("GPT-6.1 Sol uses the current catalog while historical Terra rates remain available", async (t) => {
+  const standard = calculateUsageCostNanoUsd({ inputTokens: 1200, cachedInputTokens: 800,
+    cacheWriteTokens: 100, outputTokens: 55 });
+  assert.equal(standard.costNanoUsd, 300 * 2000 + 800 * 100 + 100 * 2500 + 55 * 10000);
+  const long = calculateUsageCostNanoUsd({ inputTokens: LONG_CONTEXT_THRESHOLD + 1, outputTokens: 1 });
+  assert.equal(long.costNanoUsd, (LONG_CONTEXT_THRESHOLD + 1) * 4000 + 15000);
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  assert.equal(service.priceCatalogVersion, "2026-10-14");
+  const login = await signIn(service, oauthClient, { code: "sol", sub: "sol-account", email: "sol@example.com" });
+  const context = await service.authorizeAiRequest(request(login.cookie), new MockResponse());
+  const budget = await service.reserveAiBudget(context, { model: "gpt-6.1-sol", inputTokens: 100, maxOutputTokens: 1000, minOutputTokens: 10 });
+  assert.equal(budget.model, "gpt-6.1-sol");
+  const stored = service.database.prepare("SELECT model, version, output_nano_usd_per_token FROM price_catalog WHERE model = ?").get("gpt-6.1-sol");
+  assert.equal(stored.version, "2026-10-14");
+  assert.equal(stored.output_nano_usd_per_token, 10000);
+  await service.releaseAiRequest(context, { providerCalled: false });
+  assert.equal(MODEL_PRICES["gpt-5.6-terra"].outputNanoUsdPerToken, 12000);
+});
+
 function providerMetering(responses) {
   const normalized = responses.map((response) => ({
     provider: "openai", model: "gpt-5.6-terra", ...response,
@@ -807,7 +827,7 @@ test("cost calculation uses exact nanoUSD arithmetic and token categories", () =
     cachedInputTokens: 800,
     cacheWriteTokens: 100,
     outputTokens: 55,
-  });
+  }, MODEL_PRICES["gpt-5.6-terra"]);
   assert.equal(result.tier, "standard");
   assert.equal(
     result.costNanoUsd,
@@ -849,7 +869,7 @@ test("long-context pricing starts above 272000 input tokens", () => {
   const boundary = calculateUsageCostNanoUsd({
     inputTokens: LONG_CONTEXT_THRESHOLD,
     outputTokens: 1,
-  });
+  }, MODEL_PRICES["gpt-5.6-terra"]);
   assert.equal(boundary.tier, "standard");
   assert.deepEqual(boundary.rates, {
     input: MODEL_PRICES["gpt-5.6-terra"].inputNanoUsdPerToken,
@@ -861,7 +881,7 @@ test("long-context pricing starts above 272000 input tokens", () => {
   const above = calculateUsageCostNanoUsd({
     inputTokens: LONG_CONTEXT_THRESHOLD + 1,
     outputTokens: 1,
-  });
+  }, MODEL_PRICES["gpt-5.6-terra"]);
   assert.equal(above.tier, "long_context");
   assert.equal(
     above.costNanoUsd,
@@ -1157,7 +1177,7 @@ test("confirmed cached usage replaces the maximum hold before the next AI step a
   const first = { responseId: "resp-confirmed-cache-1", usage: {
     inputTokens: 36_024, cachedInputTokens: 36_023, cacheWriteTokens: 1, outputTokens: 305,
   }};
-  assert.equal(calculateUsageCostNanoUsd(first.usage).costNanoUsd, 10_867_100);
+  assert.equal(calculateUsageCostNanoUsd(first.usage, MODEL_PRICES["gpt-5.6-terra"]).costNanoUsd, 10_867_100);
   const next = await service.extendAiBudgetReservation(context, {
     model: "gpt-5.6-terra", additionalInputTokens: 42_000,
     additionalMaxOutputTokens: 24_000, completedMetering: providerMetering([first]),
@@ -1352,9 +1372,9 @@ test("completed usage preserves concurrent holds across current-device, source-d
   }
 });
 
-test("four and thirteen provider responses settle with bounded stable ordered identities", async (t) => {
-  assert.equal(MAX_PROVIDER_RESPONSES, 13);
-  for (const count of [4, MAX_PROVIDER_RESPONSES]) {
+test("short, legacy and maximum provider histories settle with stable ordered identities", async (t) => {
+  assert.equal(MAX_PROVIDER_RESPONSES, 27);
+  for (const count of [4, 13, MAX_PROVIDER_RESPONSES]) {
     await t.test(`${count} responses`, async () => {
       const {service, oauthClient} = makeService({freeDeviceGrantCredits: "100"});
       try {
@@ -1377,7 +1397,7 @@ test("four and thirteen provider responses settle with bounded stable ordered id
   }
 });
 
-test("composite metering rejects fourteen responses and mixed or duplicated identities before settlement", async (t) => {
+test("composite metering rejects excessive, mixed or duplicated histories before settlement", async (t) => {
   const { service, oauthClient } = makeService();
   t.after(() => service.close());
   const login = await signIn(service, oauthClient, {code: "bundle-invalid", sub: "bundle-invalid", email: "bundle@example.com"});
@@ -1386,7 +1406,7 @@ test("composite metering rejects fourteen responses and mixed or duplicated iden
   await service.markAiProviderStarted(context);
   const first = {provider: "openai", model: "gpt-5.6-terra", responseId: "resp-composite-1", usage: {inputTokens: 1, outputTokens: 1}};
   for (const responses of [
-    Array.from({length: 14}, (_, index) => ({...first, responseId: `resp-limit-${index}`})),
+    Array.from({length: MAX_PROVIDER_RESPONSES + 1}, (_, index) => ({...first, responseId: `resp-limit-${index}`})),
     [first, {...first}],
     [first, {...first, responseId: "resp-composite-2", provider: "different"}],
     [first, {...first, responseId: "resp-composite-2", model: "different-model"}],

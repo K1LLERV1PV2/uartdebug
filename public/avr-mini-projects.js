@@ -50,6 +50,7 @@
     api: ROLES.AI_SPEC,
     yaml: ROLES.AI_SPEC,
     specification: ROLES.SPECIFICATION,
+    resources: ROLES.SPECIFICATION,
     metadata: ROLES.AI_SPEC,
     machine: ROLES.AI_SPEC,
     prompt: ROLES.AI_SPEC,
@@ -178,7 +179,11 @@
     }
 
     if (!filesByRole[ROLES.SOURCE]) {
-      throw new Error("Mini-project definition is missing a source file.");
+      if (definition.contract !== "uartdebug-project/v2" || typeof definition.canvas?.markdown !== "string") {
+        throw new Error("Mini-project definition is missing a source file.");
+      }
+      const name = normalizeFileName(String(definition.canvasName || title + ".md").replace(/\.md$/i, "") + ".c");
+      filesByRole[ROLES.SOURCE] = { role: ROLES.SOURCE, name, content: "", mediaType: "text/x-c", hidden: false };
     }
 
     const guideSelection = selectDefaultGuide(
@@ -196,6 +201,7 @@
 
     const normalized = {
       schemaVersion: SCHEMA_VERSION,
+      contract: "uartdebug-project/v2",
       id,
       title,
       summary,
@@ -204,6 +210,22 @@
       guides,
       defaultLocale: guideSelection.defaultLocale,
     };
+
+    if (definition.canvasName !== undefined) {
+      normalized.canvasName = normalizeFileName(definition.canvasName);
+      if (!/\.md$/i.test(normalized.canvasName)) {
+        throw new Error("Project specification must use the .md extension.");
+      }
+    }
+    if (definition.projectPath !== undefined) {
+      normalized.projectPath = normalizeProjectPath(definition.projectPath);
+    }
+    if (definition.canvas !== undefined) {
+      if (!definition.canvas || typeof definition.canvas.markdown !== "string") {
+        throw new Error("Project specification Markdown is invalid.");
+      }
+      normalized.canvas = cloneSafeMetadata(JSON.parse(JSON.stringify(definition.canvas)), "Project canvas");
+    }
 
     if (Object.prototype.hasOwnProperty.call(definition, "assets")) {
       if (!Array.isArray(definition.assets) && !isPlainObject(definition.assets)) {
@@ -345,6 +367,7 @@
       name,
       content: rawFile.content.replace(/\r\n?/g, "\n"),
       mediaType,
+      hidden: role !== ROLES.SOURCE,
     };
 
     if (rawFile.locale !== undefined && rawFile.locale !== null) {
@@ -417,6 +440,20 @@
     return name;
   }
 
+  function normalizeProjectPath(value) {
+    if (typeof value !== "string") throw new Error("Project path is invalid.");
+    const path = value.trim().replace(/\\/g, "/").replace(/\/$/, "");
+    const parts = path.split("/");
+    if (parts.length !== 2 || parts[0] !== "Target_Projects") {
+      throw new Error("Project path must name one folder inside Target_Projects.");
+    }
+    normalizeFileName(parts[1]);
+    if (/^(?:__proto__|prototype|constructor)$/i.test(parts[1])) {
+      throw new Error("Project folder name is invalid.");
+    }
+    return path;
+  }
+
   function normalizeRequiredText(value, label) {
     if (typeof value !== "string" || !value.trim()) {
       throw new TypeError(`${label} must be a non-empty string.`);
@@ -433,6 +470,7 @@
   }
 
   function normalizeVersion(value) {
+    if (value === "") return "";
     if (value === undefined || value === null) return 1;
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
       return value;
@@ -825,6 +863,8 @@
     normalizeRole,
     inferFileRole,
     normalizeDefinition,
+    normalizeFileName,
+    normalizeProjectPath,
     parseDocumentationMarker,
     createDocumentationMarkerScanner,
     normalizeHeadingKey,
