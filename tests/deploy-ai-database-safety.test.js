@@ -16,11 +16,13 @@ const read = (relativePath) =>
 
 test("staged canonical materials are checked using the AI service identity before release activation", () => {
   const workflow = read(".github/workflows/deploy.yml");
+  const helpers = read("backend/deploy/remote-deploy-helpers.sh");
   const boundary = workflow.indexOf('NOW="$(date +%Y%m%d-%H%M%S)');
   const preflight = workflow.slice(0, boundary);
   assert.ok(boundary > 0);
-  assert.match(preflight, /if \[ -f "\$\{BE_SRC\}\/avr-materials\.js" \]; then\s+run_sudo -u uartai \/usr\/bin\/node "\$\{BE_SRC\}\/deploy\/verify-materials\.js"/);
-  assert.match(preflight, /\/var\/lib\/uartdebug-ai\/materials\/current\/repository/);
+  assert.match(preflight, /verify_ai_release_knowledge "\$\{BE_SRC\}"/);
+  assert.match(helpers, /run_sudo -u uartai \/usr\/bin\/node "\$\{materials_backend\}\/deploy\/verify-materials\.js"/);
+  assert.match(helpers, /\/var\/lib\/uartdebug-ai\/materials\/current\/repository/);
 });
 
 test("deployment guards database schema before rollback symlink changes", () => {

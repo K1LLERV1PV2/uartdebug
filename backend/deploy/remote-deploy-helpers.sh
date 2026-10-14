@@ -9,6 +9,16 @@ run_sudo() {
   sudo -n "$@"
 }
 
+verify_ai_release_knowledge() {
+  local materials_backend="$1"
+  if [ -f "${materials_backend}/avr-materials.js" ]; then
+    run_sudo -u uartai /usr/bin/node "${materials_backend}/deploy/verify-materials.js" \
+      /var/lib/uartdebug-ai/materials/current/repository
+  else
+    /usr/bin/node -e 'require(process.argv[1]).loadKnowledge()' "${materials_backend}/avr-knowledge.js"
+  fi
+}
+
 print_backend_port_owner() {
   [ -n "${BACKEND_PORT:-}" ] || return 0
   echo "Backend port ${BACKEND_PORT} listeners:"
