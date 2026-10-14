@@ -57,6 +57,14 @@ awk '
     if (location_depth <= 0) in_ai_location = 0
     next
   }
+  # HTTP/2 counts each parallel request against limit_conn. Ordinary browser
+  # startup now reads status, the canonical project catalog and sign-in state.
+  # Keep a transport bound without using the paid-model concurrency limit here.
+  in_ai_location && /^[[:space:]]*limit_conn[[:space:]]+uartdebug_conn_per_ip[[:space:]]+[0-9]+;([[:space:]]*#.*)?[[:space:]]*$/ {
+    match($0, /^[[:space:]]*/)
+    printf "%slimit_conn uartdebug_conn_per_ip 16;\n", substr($0, 1, RLENGTH)
+    next
+  }
   {
     print
     if (in_ai_location) {
