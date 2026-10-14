@@ -14,6 +14,17 @@ const repositoryRoot = path.join(__dirname, "..");
 const read = (relativePath) =>
   fs.readFileSync(path.join(repositoryRoot, relativePath), "utf8");
 
+test("staged canonical materials are checked using the AI service identity before release activation", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  const helpers = read("backend/deploy/remote-deploy-helpers.sh");
+  const boundary = workflow.indexOf('NOW="$(date +%Y%m%d-%H%M%S)');
+  const preflight = workflow.slice(0, boundary);
+  assert.ok(boundary > 0);
+  assert.match(preflight, /verify_ai_release_knowledge "\$\{BE_SRC\}"/);
+  assert.match(helpers, /run_sudo -u uartai \/usr\/bin\/node "\$\{materials_backend\}\/deploy\/verify-materials\.js"/);
+  assert.match(helpers, /\/var\/lib\/uartdebug-ai\/materials\/current\/repository/);
+});
+
 test("deployment guards database schema before rollback symlink changes", () => {
   const workflow = read(".github/workflows/deploy.yml");
   const guard = read("backend/deploy/guard-ai-access-schema-rollback.sh");

@@ -229,7 +229,7 @@ jobs:
                 for canvas_module in avr-ai-service.js avr-ai-runtime.js avr-canvas-contract.js avr-documentation-lookup.js avr-knowledge.js; do
                   /usr/bin/node --check "${BE_SRC}/${canvas_module}"
                 done
-                /usr/bin/node -e 'require(process.argv[1]).loadKnowledge()' "${BE_SRC}/avr-knowledge.js"
+                verify_ai_release_knowledge "${BE_SRC}"
                 [ -f "${BE_SRC}/deploy/backup-ai-access-database.sh" ] || {
                   echo "Missing AI access-database backup helper in staged backend"
                   exit 1
@@ -398,8 +398,7 @@ jobs:
                     echo "Rollback release has no AI service unit; retaining the installed unit"
                   fi
                   if [ -f "${BE_DIR}/avr-materials.js" ]; then
-                    run_sudo /usr/bin/node "${BE_DIR}/deploy/verify-materials.js" \
-                      /var/lib/uartdebug-ai/materials/current/repository
+                    verify_ai_release_knowledge "${BE_DIR}"
                     run_sudo /bin/bash "${BE_DIR}/deploy/install-materials-sync.sh" "${BE_DIR}"
                     run_sudo install -d -o uartai -g uartai -m 0700 /var/lib/uartdebug-ai/documentation
                   elif [ -f "${BE_DIR}/avr-knowledge.js" ]; then
