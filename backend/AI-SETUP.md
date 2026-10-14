@@ -25,6 +25,8 @@ The default is gpt-6.1-sol, medium reasoning, Responses API, and AI_PRICE_CATALO
 
 POST /api/avr/ai/canvas accepts analyze, generate or describe. Empty review input is allowed. Generation verifies C using the compiler and bounded repairs. Review/description do not depend on compiler availability. Generated prose must not invent compilation or hardware results.
 
+nginx allows 16 simultaneous transport requests per IP for the AI routes so status, examples, sign-in and account synchronization can run together. Paid model requests are bounded separately by AI_MAX_CONCURRENT in the Node service (default 2).
+
 ## Canonical materials
 
 AI_MATERIALS_ROOT=/var/lib/uartdebug-ai/materials/current/repository points to the complete immutable private UartDebug2 snapshot. The manifest and indexes remain outside the mirror. The backend verifies its exact file set and SHA-256 digests, then pins one release per request.

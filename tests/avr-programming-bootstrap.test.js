@@ -1284,7 +1284,8 @@ test("keeps only technical AI concurrency safeguards", () => {
   assert.doesNotMatch(serverSource, /AI_(?:RATE|DAILY)_/);
   assert.doesNotMatch(serviceUnit, /AI_(?:RATE|DAILY)_/);
   assert.doesNotMatch(nginxLocation, /^\s*limit_req\s/m);
-  assert.match(nginxLocation, /^\s*limit_conn\s+uartdebug_conn_per_ip\s+2;/m);
+  assert.match(nginxLocation, /^\s*limit_conn\s+uartdebug_conn_per_ip\s+16;/m);
+  assert.match(oauthCallbackLocation, /^\s*limit_conn\s+uartdebug_conn_per_ip\s+16;/m);
   assert.match(
     oauthCallbackLocation,
     /location = \/api\/avr\/ai\/auth\/google\/callback\s*\{[\s\S]*?access_log off;/
@@ -1292,6 +1293,8 @@ test("keeps only technical AI concurrency safeguards", () => {
   assert.match(oauthLogRedaction, /BEGIN uartdebug-ai-oauth-callback/);
   assert.match(oauthLogRedaction, /unmanaged exact OAuth callback location/);
   assert.match(serverSource, /AI_MAX_CONCURRENT/);
+  assert.match(serverSource, /const DEFAULT_MAX_CONCURRENT\s*=\s*2;/);
+  assert.match(serverSource, /if \(concurrentRequests >= maxConcurrent\)/);
   assert.match(nginxCleanup, /zone=uartdebug_ai_per_ip/);
   assert.match(
     deployWorkflow,
@@ -1302,6 +1305,85 @@ test("keeps only technical AI concurrency safeguards", () => {
     /run_sudo \/bin\/bash[\s\\\n]+"\$\{BE_SRC\}\/deploy\/redact-oauth-callback-logging\.sh"/
   );
   assert.match(deployWorkflow, /run_sudo nginx -t/);
+});
+
+test("migrates only the AI transport limit and remains idempotent without changing compiler or callback limits", (t) => {
+  if (process.platform === "win32") {
+    t.skip("The privileged nginx migration is executed with isolated filesystem tools on Linux");
+    return;
+  }
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-ai-transport-"));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const bin = path.join(tempRoot, "bin");
+  fs.mkdirSync(bin);
+  // CI can exercise the actual awk migration without changing file owners.
+  fs.writeFileSync(path.join(bin, "install"), [
+    "#!/usr/bin/env bash",
+    "set -euo pipefail",
+    'test "$#" -eq 8',
+    'test "$1" = -o && test "$2" = root && test "$3" = -g && test "$4" = root',
+    'test "$5" = -m',
+    'mode="$6"',
+    "shift 6",
+    'cp -- "$1" "$2"',
+    'chmod "$mode" "$2"',
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const limitsFile = path.join(tempRoot, "limits.conf");
+  const siteFile = path.join(tempRoot, "site.conf");
+  const compilerZone = "limit_req_zone $binary_remote_addr zone=uartdebug_compile_per_ip:10m rate=5r/m;";
+  fs.writeFileSync(limitsFile, [
+    "limit_conn_zone $binary_remote_addr zone=uartdebug_conn_per_ip:10m;",
+    "limit_req_zone $binary_remote_addr zone=uartdebug_ai_per_ip:10m rate=5r/m;",
+    compilerZone,
+    "",
+  ].join("\n"));
+  const compilerBlock = [
+    "    location ^~ /api/avr/ {",
+    "        limit_req zone=uartdebug_compile_per_ip burst=5 nodelay;",
+    "        limit_conn uartdebug_conn_per_ip 3;",
+    "        proxy_pass http://127.0.0.1:8082;",
+    "    }",
+  ].join("\n");
+  const callbackBlock = [
+    "    location = /api/avr/ai/auth/google/callback {",
+    "        access_log off;",
+    "        limit_conn uartdebug_conn_per_ip 2;",
+    "        proxy_pass http://127.0.0.1:8083;",
+    "    }",
+  ].join("\n");
+  fs.writeFileSync(siteFile, [
+    "server {",
+    "    location ^~ /api/avr/ai/ {",
+    "        # Preserve braces in comments: } {",
+    "        limit_req zone=uartdebug_ai_per_ip burst=5 nodelay;",
+    "        limit_conn uartdebug_conn_per_ip 2;",
+    "        proxy_pass http://127.0.0.1:8083;",
+    "    }",
+    compilerBlock,
+    callbackBlock,
+    "}",
+    "",
+  ].join("\n"));
+  const script = path.join(__dirname, "../backend/deploy/remove-ai-request-limits.sh");
+  let firstSite;
+  let firstLimits;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = childProcess.spawnSync("bash", [script, limitsFile, siteFile], {
+      encoding: "utf8", env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const site = fs.readFileSync(siteFile, "utf8");
+    const limits = fs.readFileSync(limitsFile, "utf8");
+    assert.match(site, /location \^~ \/api\/avr\/ai\/ \{[\s\S]*?limit_conn uartdebug_conn_per_ip 16;/);
+    assert.doesNotMatch(site, /limit_req zone=uartdebug_ai_per_ip/);
+    assert.ok(site.includes(compilerBlock), "Compiler transport and rate limits must be preserved");
+    assert.ok(site.includes(callbackBlock), "The callback is managed by its separate exact-route installer");
+    assert.ok(limits.includes(compilerZone));
+    assert.doesNotMatch(limits, /zone=uartdebug_ai_per_ip/);
+    if (attempt === 0) { firstSite = site; firstLimits = limits; }
+    else { assert.equal(site, firstSite); assert.equal(limits, firstLimits); }
+  }
 });
 
 test("installs the release AI unit before restarting the service", () => {
