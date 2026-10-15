@@ -1082,3 +1082,64 @@ test("empty analysis repairs message-only output into inline questions and retai
     ["resp_empty_analysis", "resp_inline_analysis"],
   );
 });
+
+test("English analysis repairs Russian headings with localized policy after all canonical rules and accounts for both calls", async () => {
+  const raw = input("analyze");
+  raw.canvas.markdown = "";
+  raw.currentProject = null;
+  const canonical = knowledge();
+  canonical.initialRules.at(-1).text += "\n> ###### *[ИИ.N] Вопрос.*";
+  const question = "What is the project name?";
+  const localized = `> ###### *[AI.1] Question.*\n>\n> ${question}`;
+  let calls = 0;
+  const result = await service({
+    environment: { ...environment, AI_COMPILE_MAX_REPAIR_ATTEMPTS: "1" },
+    loadKnowledge: () => canonical,
+    fetch: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      calls += 1;
+      const policyIndex = body.instructions.indexOf("Web presentation adaptation for inline remarks");
+      assert.ok(policyIndex > 0);
+      for (const document of canonical.initialRules) {
+        const documentIndex = body.instructions.indexOf(document.text);
+        assert.ok(documentIndex >= 0, document.path);
+        assert.equal(body.instructions.lastIndexOf(document.text), documentIndex);
+        assert.ok(policyIndex > documentIndex + document.text.length, document.path);
+      }
+      assert.match(body.instructions.slice(policyIndex), /\[AI\.N\] Question/);
+      assert.match(body.instructions.slice(policyIndex), /\[ИИ\.N\] Вопрос/);
+      if (calls === 2) {
+        const repair = JSON.parse(body.input.at(-1).content);
+        assert.equal(repair.repairAttempt, 1);
+        assert.equal(repair.validationError.code, "invalid_generated_canvas");
+        assert.match(repair.validationError.message, /canvas language \(en\)/);
+      }
+      return response({
+        ...envelope({
+          action: "clarify",
+          message: "Provide the project name.",
+          canvas: {
+            markdown: calls === 1
+              ? `> ###### *[ИИ.1] Вопрос.*\n>\n> ${question}`
+              : localized,
+            locale: "en",
+            annotations: [],
+          },
+          project: null,
+        }),
+        id: calls === 1 ? "resp_mixed_heading" : "resp_localized_heading",
+      });
+    },
+  }).processCanvas(raw);
+  assert.equal(calls, 2);
+  assert.equal(result.canvas.markdown, localized);
+  assert.equal(result.canvas.locale, "en");
+  assert.equal(result.stage, "analyze");
+  assert.equal(result._metering.usage.inputTokens, 240);
+  assert.equal(result._metering.usage.outputTokens, 60);
+  assert.equal(result._metering.usage.totalTokens, 300);
+  assert.deepEqual(
+    result._metering.responses.map((item) => item.responseId),
+    ["resp_mixed_heading", "resp_localized_heading"],
+  );
+});

@@ -82,6 +82,213 @@ test("empty draft review requires inline remarks and accepts an explicitly autho
   assert.equal(validateCanvasOutput(raw, opts).canvas.markdown, raw.canvas.markdown);
 });
 
+test("review localizes all remark types for English and Russian regional locales", () => {
+  for (const [locale, prefix, types, body] of [
+    ["en", "AI", ["Question", "Information", "Error"], "Specify the project name."],
+    ["en-US", "AI", ["Question", "Information", "Error"], "Specify the project name."],
+    ["ru", "ИИ", ["Вопрос", "Информация", "Ошибка"], "Укажите имя проекта."],
+    ["ru-RU", "ИИ", ["Вопрос", "Информация", "Ошибка"], "Укажите имя проекта."],
+  ]) {
+    const markdown = types
+      .map((type, index) => `> ###### *[${prefix}.${index + 1}] ${type}.*\n>\n> ${body}`)
+      .join("\n\n");
+    const raw = {
+      action: "clarify",
+      message: body,
+      canvas: { markdown, locale, annotations: [] },
+      project: null,
+    };
+    const result = validateCanvasOutput(raw, options("analyze", {
+      canvas: canvas({ markdown: "", locale }),
+    }));
+    assert.equal(result.canvas.markdown, markdown, locale);
+    assert.equal(result.canvas.locale, locale);
+  }
+});
+
+test("review rejects mixed-language type labels and incorrectly localized new IDs", () => {
+  for (const [locale, heading] of [
+    ["en", "[ИИ.1] Вопрос"],
+    ["en-US", "[AI.1] Информация"],
+    ["ru-RU", "[ИИ.1] Error"],
+    ["en", "[ИИ.1] Question"],
+    ["ru", "[AI.1] Вопрос"],
+  ]) {
+    const raw = {
+      action: "clarify",
+      message: "Review the question.",
+      canvas: {
+        markdown: `> ###### *${heading}.*\n>\n> Project details?`,
+        locale,
+        annotations: [],
+      },
+      project: null,
+    };
+    assert.throws(
+      () => validateCanvasOutput(raw, options("analyze", {
+        canvas: canvas({ markdown: "", locale }),
+      })),
+      (error) => error instanceof CanvasContractError &&
+        error.code === "invalid_generated_canvas" && /canvas language/.test(error.message),
+      `${locale}: ${heading}`,
+    );
+  }
+});
+
+test("an empty draft without an explicit locale defaults to English", () => {
+  const raw = {
+    action: "clarify",
+    message: "Укажите имя проекта.",
+    canvas: {
+      markdown: "> ###### *[ИИ.1] Вопрос.*\n>\n> Укажите имя проекта.",
+      locale: "ru",
+      annotations: [],
+    },
+    project: null,
+  };
+  const opts = options("analyze", { canvas: canvas({ markdown: "", locale: "" }) });
+  assert.throws(() => validateCanvasOutput(raw, opts), /must use English/);
+  raw.canvas = {
+    markdown: "> ###### *[AI.1] Question.*\n>\n> What is the project name?",
+    locale: "en",
+    annotations: [],
+  };
+  assert.equal(validateCanvasOutput(raw, opts).canvas.locale, "en");
+});
+
+test("review can localize a legacy heading while retaining its complete ID, references and user answer", () => {
+  const answer = "> > **Пользователь:**\n> > Keep the label [ИИ.7], version Ver.2.0, and имя «Мой проект».";
+  const original = `${canvas().markdown}\n\n> ###### *[ИИ.7] Вопрос.*\n>\n> What is the project name?\n${answer}\n\nSee [ИИ.7] above.`;
+  const markdown = original.replace("[ИИ.7] Вопрос.*", "[ИИ.7] Question.*") +
+    "\n\n> ###### *[AI.8] Information.*\n>\n> The original reply has been retained.";
+  const raw = {
+    action: "clarify",
+    message: "Review complete.",
+    canvas: { markdown, locale: "en", annotations: [] },
+    project: null,
+  };
+  const result = validateCanvasOutput(raw, options("analyze", {
+    canvas: canvas({ markdown: original }),
+  }));
+  assert.equal(result.canvas.markdown, markdown);
+  assert.ok(result.canvas.markdown.includes(answer));
+  assert.ok(result.canvas.markdown.includes("See [ИИ.7] above."));
+  assert.match(result.canvas.markdown, /\[ИИ\.7\] Question/);
+  assert.match(result.canvas.markdown, /\[AI\.8\] Information/);
+});
+
+test("review preserves legacy IDs and allocates new numbers after existing remarks across prefixes", () => {
+  const original = `${canvas().markdown}\n\n> ###### *[ИИ.7] Вопрос.*\n>\n> What is the project name?`;
+  const raw = {
+    action: "clarify",
+    message: "Review complete.",
+    canvas: {
+      markdown: original.replace("[ИИ.7] Вопрос", "[AI.7] Question"),
+      locale: "en",
+      annotations: [],
+    },
+    project: null,
+  };
+  assert.throws(
+    () => validateCanvasOutput(raw, options("analyze", {
+      canvas: canvas({ markdown: original }),
+    })),
+    (error) => error instanceof CanvasContractError && error.code === "invalid_generated_canvas",
+  );
+
+  const existing = `${canvas().markdown}\n\n> ###### *[AI.9] Information.*\n>\n> Keep the chosen hardware.\n\n> ###### *[ИИ.12] Вопрос.*\n>\n> What is the project name?`;
+  const localized = existing.replace("[ИИ.12] Вопрос", "[ИИ.12] Question");
+  const opts = options("analyze", { canvas: canvas({ markdown: existing }) });
+  for (const number of [1, 10]) {
+    raw.canvas.markdown = `${localized}\n\n> ###### *[AI.${number}] Question.*\n>\n> What is the project version?`;
+    assert.throws(
+      () => validateCanvasOutput(raw, opts),
+      (error) => error instanceof CanvasContractError && error.code === "invalid_generated_canvas",
+    );
+  }
+  raw.canvas.markdown = `${localized}\n\n> ###### *[AI.13] Question.*\n>\n> What is the project version?`;
+  assert.equal(validateCanvasOutput(raw, opts).canvas.markdown, raw.canvas.markdown);
+});
+
+test("noncanonical user blockquotes are not treated as AI remarks", () => {
+  const quote = "> ###### *[REQ.1] Voltage requirement.*\n>\n> Supply the circuit with 3.3 V.";
+  const raw = {
+    action: "clarify",
+    message: "Review complete.",
+    canvas: { markdown: quote, locale: "en", annotations: [] },
+    project: null,
+  };
+  const opts = options("analyze", { canvas: canvas({ markdown: quote }) });
+  assert.equal(validateCanvasOutput(raw, opts).canvas.markdown, quote);
+  assert.throws(
+    () => validateCanvasOutput(raw, options("analyze", { canvas: canvas({ markdown: "" }) })),
+    /initial questions/,
+  );
+});
+
+test("remark validation ignores fenced, indented and nested quoted examples", () => {
+  const examples = [
+    "```markdown\n> ###### *[ИИ.1] Вопрос.*\n>\n> Example only.\n```",
+    "> ~~~markdown\n> ###### *[ИИ.1] Вопрос.*\n>\n> Example only.\n> ~~~",
+    "    > ###### *[ИИ.1] Вопрос.*\n    >\n    > Example only.",
+    ">     ###### *[ИИ.1] Вопрос.*\n>\n> Example only.",
+    "> > ###### *[ИИ.1] Вопрос.*\n> >\n> > Example only.",
+    "- ```markdown\n  > ###### *[ИИ.1] Вопрос.*\n  >\n  > Example only.\n  ````",
+  ];
+  const question = "> ###### *[AI.1] Question.*\n>\n> What is the project name?";
+  for (const example of examples) {
+    const raw = {
+      action: "clarify",
+      message: "Review the question.",
+      canvas: { markdown: `${example}\n\n${question}`, locale: "en", annotations: [] },
+      project: null,
+    };
+    const opts = options("analyze", { canvas: canvas({ markdown: "" }) });
+    assert.equal(validateCanvasOutput(raw, opts).canvas.markdown, raw.canvas.markdown);
+    raw.canvas.markdown = example;
+    assert.throws(() => validateCanvasOutput(raw, opts), /initial questions/);
+  }
+});
+
+test("review accepts localized labels beyond English and Russian", () => {
+  const markdown = "> ###### *[AI.1] Pregunta.*\n>\n> ¿Cuál es el nombre del proyecto?";
+  const raw = {
+    action: "clarify",
+    message: "Indique el nombre del proyecto.",
+    canvas: { markdown, locale: "es-MX", annotations: [] },
+    project: null,
+  };
+  const result = validateCanvasOutput(raw, options("analyze", {
+    canvas: canvas({ markdown: "", locale: "es-MX" }),
+  }));
+  assert.equal(result.canvas.markdown, markdown);
+  assert.equal(result.canvas.locale, "es-MX");
+});
+
+test("generation and description retain existing mixed-language remarks exactly", () => {
+  const markdown = canvas().markdown +
+    "\n\n> ###### *[ИИ.1] Вопрос.*\n>\n> What is the project name?";
+  for (const operation of ["generate", "describe"]) {
+    const raw = generation();
+    raw.canvas.markdown = markdown;
+    const opts = options(operation, { canvas: canvas({ markdown }) });
+    if (operation === "describe") {
+      raw.action = "describe";
+      raw.project.source = null;
+      raw.project.resources = null;
+      raw.project.guide = {
+        name: "blink (description).md",
+        locale: "en",
+        content: "# GPIO\nPA3 is configured as output.",
+      };
+      opts.currentProject = { source: source(), guide: "" };
+    }
+    assert.equal(validateCanvasOutput(raw, opts).canvas.markdown, markdown);
+    raw.canvas.markdown = markdown.replace("Вопрос", "Question");
+    assert.throws(() => validateCanvasOutput(raw, opts), /preserve the specification exactly/);
+  }
+});
+
 test("legacy instructions migrate without obsolete skill references or data loss", () => {
   const migrated = normalizeCanvas({
     schemaVersion: 1,

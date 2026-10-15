@@ -90,6 +90,89 @@ function normalizeLocale(value, generated = false) {
   return value;
 }
 
+// Read live, one-level remarks, excluding quoted examples and Markdown code.
+function inlineRemarks(markdown) {
+  const lines = markdown.split("\n");
+  const remarks = [];
+  let fence = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    let content = lines[index];
+    let depth = 0;
+    let quote;
+    while ((quote = /^ {0,3}>[ \t]?/.exec(content))) {
+      depth += 1;
+      content = content.slice(quote[0].length);
+    }
+    if (fence && depth < fence.depth) fence = null;
+    if (fence) {
+      const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(content);
+      if (
+        depth === fence.depth &&
+        closing?.[1][0] === fence.marker[0] &&
+        closing[1].length >= fence.marker.length
+      )
+        fence = null;
+      continue;
+    }
+    let fenceContent = content;
+    let listMarker;
+    while (
+      (listMarker = /^ {0,3}(?:[-+*]|[0-9]{1,9}[.)])[ \t]+/.exec(fenceContent))
+    )
+      fenceContent = fenceContent.slice(listMarker[0].length);
+    const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(fenceContent);
+    if (opening && !(opening[1][0] === "`" && opening[2].includes("`"))) {
+      fence = { marker: opening[1], depth };
+      continue;
+    }
+    if (depth !== 1) continue;
+    const heading =
+      /^ {0,3}#{6}[ \t]+\*\[((?:AI|ИИ)\.[0-9]{1,30})\][ \t]+([^*\r\n]+)\.\*[ \t]*$/.exec(content);
+    if (!heading) continue;
+    let bodyIndex = index + 1;
+    while (/^ {0,3}>[ \t]*$/.test(lines[bodyIndex] || "")) bodyIndex += 1;
+    const body = /^ {0,3}>[ \t]?(\S.*)$/.exec(lines[bodyIndex] || "")?.[1];
+    remarks.push({
+      id: heading[1],
+      type: heading[2],
+      hasBody: !!body && !body.startsWith(">") && !body.startsWith("###### "),
+    });
+  }
+  return remarks;
+}
+
+function validateRemarkLocale(markdown, input, locale) {
+  const remarks = inlineRemarks(markdown);
+  const language = locale.toLowerCase().split("-")[0];
+  const types = {
+    en: ["Question", "Information", "Error"],
+    ru: ["Вопрос", "Информация", "Ошибка"],
+  }[language];
+  const existingIds = new Set(inlineRemarks(input.markdown).map(({ id }) => id));
+  const largestNumber = [...existingIds].reduce((largest, id) => {
+    const number = BigInt(id.split(".")[1]);
+    return number > largest ? number : largest;
+  }, 0n);
+  const prefix = language === "ru" ? "ИИ" : "AI";
+  for (const remark of remarks) {
+    if (types && !types.includes(remark.type))
+      fail(
+        `Inline remark headings must use the canvas language (${locale}): ${types.join(", ")}. Translate the type label, preserving existing remark IDs and user answers.`,
+        true,
+      );
+    if (
+      !existingIds.has(remark.id) &&
+      (!new RegExp(`^${prefix}\\.[1-9][0-9]*$`).test(remark.id) ||
+        BigInt(remark.id.split(".")[1]) <= largestNumber)
+    )
+      fail(
+        `New inline remarks must use [${prefix}.N] for canvas language ${locale}. Preserve complete existing IDs and references; allocate new numbers after the largest existing number across prefixes.`,
+        true,
+      );
+  }
+  return remarks;
+}
+
 function normalizeAnnotations(
   annotations,
   markdown,
@@ -717,10 +800,19 @@ function validateCanvasOutput(raw, options = {}) {
     MAX_CANVAS_BYTES,
     { generated: true },
   );
+  const remarks =
+    operation === "analyze" ? validateRemarkLocale(markdown, input, locale) : [];
+  if (
+    operation === "analyze" &&
+    !input.locale &&
+    !input.markdown.trim() &&
+    locale.toLowerCase().split("-")[0] !== "en"
+  )
+    fail("An empty draft without a selected language must use English.", true);
   if (
     operation === "analyze" &&
     !input.markdown.trim() &&
-    !/^[ \t]*>[ \t]*#{6}[ \t]+\*\[[^\]\r\n]{1,40}\][ \t]+[^\r\n]+\*[ \t]*\r?\n(?:[ \t]*>[ \t]*\r?\n)*[ \t]*>[ \t]*\S[^\r\n]*/m.test(markdown)
+    !remarks.some((remark) => remark.hasBody)
   )
     fail(
       "Reviewing an empty draft must put initial questions in canonical inline Markdown remark blocks on that draft, not only in the service message. This stage explicitly authorizes those remarks before project identity is confirmed.",
