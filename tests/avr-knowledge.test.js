@@ -125,6 +125,32 @@ test("catalog publishes unified prepared projects and selected targets without e
   target.files[0].content = "changed";
   assert.notEqual(catalog.readProject("target-Project_One").files[0].content, "changed");
 });
+
+test("catalog shares project identity and latest compatible file resolution with the browser", (t) => {
+  const fixture = createMaterialsFixture(t, {
+    "Target_Projects/Project_One/Project_One.md": "```markdown\n# Project Example\nProject version - Ver.9.9\n```\n\n# Project Project_One\n\nProject version - Ver.1.0\n\n## Hardware requirements\nATtiny1624 SOIC-14.\n\n## Software requirements\nUse the latest compatible code.\n",
+    "Target_Projects/Project_One/Project_One Ver.1.0.2-a(3).c": "latest compatible code",
+    "Target_Projects/Project_One/Project_One Ver.1.0.2-a(2).c": "older copy",
+    "Target_Projects/Project_One/Project_One Ver.2.0.9.c": "incompatible code",
+    "Target_Projects/Project_One/Project_One (description) Ver.1.0.2 (ru).md": "# Описание программы\nАктуальный код.",
+    "Target_Projects/Project_One/AGENTS.md": "# Local rules\r\nExact project scope.\r\n",
+    "Target_Projects/Project_One/00_README.md": "Read the project's code before its description.",
+  });
+  const project = createProjectCatalog(loadMaterials({ root: fixture.root })).readProject("target-Project_One");
+  assert.equal(project.version, "Ver.1.0");
+  assert.equal(project.files.find((file) => file.role === "source").name, "Project_One Ver.1.0.2-a(3).c");
+  assert.equal(project.files.find((file) => file.role === "source").content, "latest compatible code");
+  assert.equal(project.files.find((file) => file.role === "guide" && file.locale === "ru").content, "# Описание программы\nАктуальный код.");
+  assert.deepEqual(project.projectDocuments, [
+    { name: "00_README.md", content: "Read the project's code before its description." },
+    { name: "AGENTS.md", content: "# Local rules\r\nExact project scope.\r\n" },
+  ]);
+});
+
+test("catalog reports unresolved file identities instead of silently selecting unrelated code", (t) => {
+  const fixture = createMaterialsFixture(t, { "Target_Projects/Project_One/Unconfirmed.c": "wrong code" });
+  assert.throws(() => createProjectCatalog(loadMaterials({ root: fixture.root })), /Canonical target project Target_Projects\/Project_One:.*complete alternative/);
+});
 test("prepared project regions preserve functional C and braces inside comments and strings", () => {
   const source = '#include <xc.h>\n#define F_CPU 3333333UL\nvoid init(void) { /* } */ }\nint main(void) { init(); while (1) { puts("}"); } return 0; }\n';
   const result = exampleSource(source, "Pattern");

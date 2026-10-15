@@ -1,10 +1,11 @@
 "use strict";
 
 const YAML = require("yaml");
+const projectFormat = require("./avr-project-format");
+const { PROJECT_STAGES } = require("./avr-project-policy");
 const MAX_CANVAS_BYTES = 128 * 1024;
 const MAX_ANNOTATIONS = 100;
 const safeId = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/;
-const localePattern = /^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/i;
 const object = (properties) => ({
   type: "object",
   additionalProperties: false,
@@ -20,7 +21,9 @@ const nullable = (schema) => ({ anyOf: [schema, { type: "null" }] });
 const enumeration = (...values) => ({ type: "string", enum: values });
 const fileSchema = object({ name: text(96, 1), content: text(128 * 1024, 1) });
 const CANVAS_OUTPUT_SCHEMA = object({
-  action: enumeration("clarify", "generate", "describe"),
+  action: enumeration(
+    ...new Set(Object.values(PROJECT_STAGES).map((stage) => stage.action)),
+  ),
   message: text(2000, 1),
   canvas: object({
     markdown: text(MAX_CANVAS_BYTES),
@@ -83,7 +86,7 @@ function normalizeLocale(value, generated = false) {
   if (
     typeof value !== "string" ||
     value.length > 35 ||
-    !localePattern.test(value)
+    !projectFormat.isLocaleTag(value)
   ) {
     fail("The canvas language must be a valid language tag.", generated);
   }
@@ -144,16 +147,16 @@ function inlineRemarks(markdown) {
 function validateRemarkLocale(markdown, input, locale) {
   const remarks = inlineRemarks(markdown);
   const language = locale.toLowerCase().split("-")[0];
-  const types = {
-    en: ["Question", "Information", "Error"],
-    ru: ["Вопрос", "Информация", "Ошибка"],
-  }[language];
+  const labels = projectFormat.remarkLabels(locale);
+  const types = ["en", "ru"].includes(language)
+    ? [labels.question, labels.information, labels.error]
+    : null;
   const existingIds = new Set(inlineRemarks(input.markdown).map(({ id }) => id));
   const largestNumber = [...existingIds].reduce((largest, id) => {
     const number = BigInt(id.split(".")[1]);
     return number > largest ? number : largest;
   }, 0n);
-  const prefix = language === "ru" ? "ИИ" : "AI";
+  const prefix = labels.prefix;
   for (const remark of remarks) {
     if (types && !types.includes(remark.type))
       fail(
@@ -273,7 +276,9 @@ function normalizeCanvas(input) {
     schemaVersion: 2,
     revision: input.revision,
     markdown,
-    locale: input.locale ? normalizeLocale(input.locale) : "",
+    locale: input.locale && String(input.locale).toLowerCase() !== "und"
+      ? normalizeLocale(input.locale)
+      : "",
     annotations: normalizeAnnotations(input.annotations ?? [], markdown),
   };
   if (input.target != null) {
@@ -395,57 +400,13 @@ function validateFileName(name, extension) {
   }
 }
 
-function projectIdentity(markdown) {
-  const names = [
-    ...markdown.matchAll(/^#\s+(?:Проект|Project)\s+(.+?)\s*$/gim),
-  ].map((match) => match[1].trim());
-  const versions = [
-    ...markdown.matchAll(
-      /^(?:Версия проекта|Project version)\s*[-:]\s*(Ver\.\d+\.\d+)\s*$/gim,
-    ),
-  ].map((match) => match[1]);
-  if (
-    !names.length ||
-    new Set(names).size !== 1 ||
-    !versions.length ||
-    new Set(versions).size !== 1
-  )
-    return null;
-  return { title: names[0], version: versions[0].replace(/^ver\./i, "Ver.") };
-}
-
+const projectIdentity = projectFormat.projectIdentity;
 function projectOutputNames(markdown, identity, currentProject = null) {
-  const cNames = [
-    ...markdown.matchAll(
-      /^(?:Файл программы C|C program file|C source file)\s*[-:]\s*(.+?)\s*$/gim,
-    ),
-  ].map((match) => match[1]);
-  const resourceNames = [
-    ...markdown.matchAll(
-      /^(?:Файл ресурсов проекта|Project resources file|Resource file)\s*[-:]\s*(.+?)\s*$/gim,
-    ),
-  ].map((match) => match[1]);
-  if (
-    (cNames.length || resourceNames.length) &&
-    (cNames.length !== 1 || resourceNames.length !== 1)
-  )
-    fail(
-      "Confirmed alternative output names must be one complete C/YAML pair.",
-      true,
-    );
-  const sourceName =
-    cNames[0] ||
-    (currentProject?.source?.trim()
-      ? currentProject.sourceName
-      : `${identity.title}.c`);
-  const resourcesName =
-    resourceNames[0] ||
-    (currentProject?.specification?.content?.trim()
-      ? currentProject.specification.name
-      : `${identity.title}.yaml`);
-  validateFileName(sourceName, /\.c$/i);
-  validateFileName(resourcesName, /\.yaml$/i);
-  return { sourceName, resourcesName };
+  try {
+    return projectFormat.projectOutputNames(markdown, identity, currentProject);
+  } catch (error) {
+    fail(error.message, true);
+  }
 }
 
 function parseProjectResources(content, target = {}) {
@@ -694,6 +655,13 @@ function codeRegions(source) {
   if (open) fail("Permanent C code region markers are incomplete.", true);
   return regions;
 }
+function userCodeEditsRequested(source) {
+  return codeRegions(source).some((region) =>
+    region.user && /\/\/X(?:\s|$)|\/\/[^\n]*!X(?:\s|$)/m.test(
+      sourceWithoutLiterals(region.content),
+    ),
+  );
+}
 function validateSource(
   source,
   resources,
@@ -791,6 +759,8 @@ function validateCanvasOutput(raw, options = {}) {
   assertSchema(raw, CANVAS_OUTPUT_SCHEMA);
   const input = normalizeCanvas(options.canvas);
   const operation = options.operation || "analyze";
+  if (!Object.hasOwn(PROJECT_STAGES, operation))
+    fail("Choose an authorized project stage.", true);
   const locale = normalizeLocale(raw.canvas.locale, true);
   if (input.locale && input.locale.toLowerCase() !== locale.toLowerCase())
     fail("Preserve the explicitly selected project language.", true);
@@ -829,12 +799,17 @@ function validateCanvasOutput(raw, options = {}) {
   } else {
     if (
       !raw.project ||
-      (raw.action === "generate"
-        ? operation !== "generate"
-        : operation !== "describe")
+      raw.action !== PROJECT_STAGES[operation].action
     )
       fail("The response does not match the authorized project stage.", true);
     const project = raw.project;
+    const outputRoles = ["source", "resources", "guide"].filter((role) => project[role] !== null);
+    const expectedRoles = PROJECT_STAGES[operation].outputRoles;
+    if (
+      outputRoles.length !== expectedRoles.length ||
+      outputRoles.some((role) => !expectedRoles.includes(role))
+    )
+      fail(`This stage must return only ${expectedRoles.join(" and ")}.`, true);
     validateFileName(`${project.title}.md`, /\.md$/i);
     const identity = projectIdentity(input.markdown);
     if (
@@ -847,8 +822,6 @@ function validateCanvasOutput(raw, options = {}) {
         true,
       );
     if (raw.action === "generate") {
-      if (!project.source || !project.resources || project.guide !== null)
-        fail("Code generation must return C and resource YAML only.", true);
       validateFileName(project.source.name, /\.c$/i);
       validateFileName(project.resources.name, /\.yaml$/i);
       const names = projectOutputNames(
@@ -872,12 +845,7 @@ function validateCanvasOutput(raw, options = {}) {
         identity,
       );
     } else {
-      if (
-        project.source !== null ||
-        project.resources !== null ||
-        !project.guide ||
-        !options.currentProject?.source?.trim()
-      )
+      if (!options.currentProject?.source?.trim())
         fail(
           "Description must use existing C and return documentation only.",
           true,
@@ -885,14 +853,19 @@ function validateCanvasOutput(raw, options = {}) {
       validateFileName(project.guide.name, /\.md$/i);
       normalizeLocale(project.guide.locale, true);
       const hasDescription = !!options.currentProject.guide?.trim();
-      const expectedLocale =
-        hasDescription && options.currentProject.guideLocale
-          ? options.currentProject.guideLocale
-          : locale;
+      const selectedLocale = options.currentProject.guideLocale;
+      const expectedLocale = hasDescription
+        ? selectedLocale && selectedLocale.toLowerCase() !== "und"
+          ? selectedLocale
+          : null
+        : locale;
       const expectedName = hasDescription
         ? options.currentProject.guideName
         : `${identity.title} (description).md`;
-      if (project.guide.locale.toLowerCase() !== expectedLocale.toLowerCase())
+      if (
+        project.guide.locale.toLowerCase() === "und" ||
+        (expectedLocale && project.guide.locale.toLowerCase() !== expectedLocale.toLowerCase())
+      )
         fail(
           "Preserve the selected description language or use the specification language for a new description.",
           true,
@@ -923,5 +896,6 @@ module.exports = {
   projectOutputNames,
   parseProjectResources,
   codeRegions,
+  userCodeEditsRequested,
   validateSource,
 };

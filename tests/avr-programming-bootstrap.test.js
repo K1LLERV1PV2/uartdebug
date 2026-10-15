@@ -10,12 +10,14 @@ const vm = require("node:vm");
 const { parseHTML } = require("../frontend/markdown-runtime/node_modules/linkedom");
 
 const core = require("../public/avr-mini-projects.js");
+const projectFormat = require("../public/avr-project-format.js");
 
 function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
   const windowListeners = new Map();
   const documentListeners = new Map();
   const fakeWindow = {
     UartDebugAvrMiniProjectCore: core,
+    UartDebugAvrProjectFormat: projectFormat,
     addEventListener(type, listener) {
       windowListeners.set(type, listener);
     },
@@ -250,7 +252,7 @@ test("migrates legacy annotation questions and answers into Markdown exactly onc
   const canvas = hooks.normalizeProjectInstructionDocument({ schemaVersion:2,revision:1,markdown,locale:"en",annotations:[annotation],target:{mcu:"attiny1624",packageName:"SOIC-14"} });
   assert.match(canvas.markdown, /Blink the LED\.\n\n> ###### \*\[AI\.1\] Question\.\*/);
   assert.match(canvas.markdown, /> > \*\*User:\*\* 1 Hz\n> > Keep the pin\./);
-  assert.match(canvas.markdown, /Resolved in the previous canvas/);
+  assert.match(canvas.markdown, /Resolved in the previous specification/);
   assert.equal(canvas.annotations.length,0);
   assert.equal(hooks.normalizeProjectInstructionDocument(canvas).markdown,canvas.markdown);
   assert.equal(hooks.resolveCanvasAnnotationLine(annotation,"New line\n"+markdown),3);
@@ -2315,4 +2317,100 @@ test("canonical projects without a description remain fresh until their program 
   assert.doesNotThrow(() => hooks.assertProjectAiUpdateIsFresh(request));
   hooks.updateMiniProjectInstance(project.instanceId, { id: "target", title: "Target", version: "Ver.1.0", files: [{ role: "source", name: "Target.c", content: "Changed program" }] });
   assert.throws(() => hooks.assertProjectAiUpdateIsFresh(request), /newer local edits/i);
+});
+
+test("project-local rules stay hidden, survive reload, and follow only the selected project", () => {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  const documents = [{ name: "AGENTS.md", content: "! Keep the UART ISR short.\r\n" }, { name: "00_README.md", content: "# Устройство\r\nRead only this project.\r\n" }];
+  const first = hooks.installMiniProjectDefinition({ id: "first", title: "First", version: "Ver.1.0", canvas: { markdown: "# Project First\n\nProject version - Ver.1.0\n", locale: "en" },
+    projectDocuments: documents, files: [{ role: "source", name: "First.c", content: "int main(void) {}" }] });
+  assert.equal(JSON.stringify(hooks.getProjectAiRequestPayload().currentProject.projectDocuments), JSON.stringify(documents));
+  assert.equal(first.files.some(file => ["AGENTS.md", "00_README.md"].includes(file.name)), false);
+  const second = hooks.createEmptyProject();
+  assert.equal(hooks.getProjectAiRequestPayload().currentProject.projectDocuments.length, 0);
+  hooks.selectFile(first.files.find(file => file.role === "source").storageName);
+  hooks.updateMiniProjectInstance(first.instanceId, { id: "first", title: "First", files: [{ role: "source", name: "First.c", content: "int main(void) { return 0; }" }] });
+  const reloaded = loadCanvasLifecycleHooks(storage).hooks;
+  reloaded.loadState();
+  reloaded.restoreProjectInstruction();
+  assert.equal(JSON.stringify(reloaded.getProjectAiRequestPayload().currentProject.projectDocuments), JSON.stringify(documents));
+  const snapshot = reloaded.getProjectAiAccountFilesSnapshot();
+  assert.equal(Object.keys(snapshot.files).some(name => /(?:AGENTS|00_README)\.md$/.test(name)), false);
+  reloaded.selectFile(second.files.find(file => file.role === "source").storageName);
+  assert.equal(reloaded.getProjectAiRequestPayload().currentProject.projectDocuments.length, 0);
+});
+
+test("legacy Russian remarks migrate with localized headings and preserve answers exactly", () => {
+  const hooks = loadAvrFrontendFunctionHooks(["normalizeProjectInstructionDocument"]);
+  const markdown = "# Проект Светодиод\n\nНастроить светодиод.";
+  const answer = "100 мс\nНе менять вывод.";
+  const result = hooks.normalizeProjectInstructionDocument({ markdown, locale: "ru-RU", annotations: [{ id: "legacy", kind: "question", message: "Какой период?", answer, status: "resolved" }] });
+  assert.match(result.markdown, /\[ИИ\.1\] Вопрос\./);
+  assert.match(result.markdown, /> > \*\*Пользователь:\*\* 100 мс\n> > Не менять вывод\./);
+  assert.match(result.markdown, /Решено в предыдущей версии спецификации\./);
+  assert.doesNotMatch(result.markdown, /Question|User|Resolved/);
+  assert.equal(hooks.normalizeProjectInstructionDocument(result).markdown, result.markdown);
+});
+
+test("preserved Russian remark identifiers do not choose the language of new English migrated remarks", () => {
+  const hooks = loadAvrFrontendFunctionHooks(["normalizeProjectInstructionDocument"]);
+  const markdown = "# Project Blink\n\nProject version - Ver.1.0\n\nUse the selected microcontroller.\n\n> ###### *[ИИ.7] Information.*\n>\n> Keep the legacy identifier.\n";
+  const result = hooks.normalizeProjectInstructionDocument({ markdown, locale: "", annotations: [{ id: "legacy", kind: "question", message: "Which pin?", answer: "PA3", status: "open" }] });
+  assert.match(result.markdown, /\[ИИ\.7\] Information\./);
+  assert.match(result.markdown, /\[AI\.8\] Question\./);
+  assert.match(result.markdown, /\*\*User:\*\* PA3/);
+});
+
+test("a first Russian description replaces the selected empty English placeholder atomically", () => {
+  for (const placeholderName of ["Blink (description).md", "Untitled project (description).md"]) {
+    const { hooks } = loadCanvasLifecycleHooks();
+    const project = hooks.installMiniProjectDefinition({ id: "blink", title: "Blink", version: "Ver.1.0", defaultLocale: "en",
+      canvas: { markdown: "# Project Blink\n\nProject version - Ver.1.0\n", locale: "ru" },
+      files: [{ role: "source", name: "Blink.c", content: "int main(void) {}" },
+        { role: "guide", name: placeholderName, content: "", locale: "en" },
+        { role: "guide", name: "Blink (description) (fr).md", content: "Description française existante.", locale: "fr" }],
+    });
+    const oldPlaceholder = project.files.find(file => file.role === "guide" && file.locale === "en");
+    hooks.updateMiniProjectInstance(project.instanceId, { id: "blink", title: "Blink", version: "Ver.1.0", files: [
+      { role: "guide", name: "Blink (description).md", content: "# Описание\n\nТекущий код.\n", locale: "ru" },
+    ] });
+    const updated = hooks.getPublicMiniProjectInstance(project.instanceId);
+    assert.equal(updated.files.find(file => file.role === "guide" && file.locale === "ru").storageName, oldPlaceholder.storageName);
+    assert.equal(updated.files.find(file => file.role === "guide" && file.locale === "ru").name, "Blink (description).md");
+    assert.equal(updated.files.find(file => file.role === "guide" && file.locale === "fr").content, "Description française existante.");
+    assert.equal(updated.files.some(file => file.role === "guide" && file.locale === "en"), false);
+    assert.equal(updated.selectedLocale, "ru");
+    assert.equal(updated.files.find(file => file.role === "source").content, "int main(void) {}");
+  }
+});
+
+test("a description with unknown language changes its locale without creating a second artifact", () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  const project = hooks.installMiniProjectDefinition({ id: "blink", title: "Blink", version: "Ver.1.0", defaultLocale: "und",
+    files: [{ role: "source", name: "Blink.c", content: "int main(void) {}" },
+      { role: "guide", name: "Blink (description).md", content: "# Descripción del código\n\nEl programa termina.\n", locale: "und" },
+      { role: "guide", name: "Blink (description) (fr).md", content: "Description française existante.", locale: "fr" }],
+  });
+  const oldGuide = project.files.find(file => file.role === "guide" && file.locale === "und");
+  hooks.updateMiniProjectInstance(project.instanceId, { id: "blink", title: "Blink", version: "Ver.1.0", files: [
+    { role: "guide", name: "Blink (description).md", content: "# Descripción del código\n\nEl código actual termina.\n", locale: "es" },
+  ] });
+  const updated = hooks.getPublicMiniProjectInstance(project.instanceId);
+  const guides = updated.files.filter(file => file.role === "guide");
+  assert.equal(guides.length, 2);
+  assert.equal(guides.find(file => file.locale === "es").storageName, oldGuide.storageName);
+  assert.equal(guides.find(file => file.locale === "es").name, oldGuide.name);
+  assert.equal(guides.find(file => file.locale === "fr").content, "Description française existante.");
+  assert.equal(updated.selectedLocale, "es");
+  assert.equal(updated.files.some(file => file.locale === "und"), false);
+});
+
+test("an imported guide without language metadata uses und instead of an invalid synthetic language", () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  const project = hooks.installMiniProjectDefinition({ id: "blink", title: "Blink", files: [
+    { role: "source", name: "Blink.c", content: "int main(void) {}" },
+    { role: "guide", name: "Blink (description).md", content: "Descripción del programa." },
+  ] });
+  assert.equal(project.files.find(file => file.role === "guide").locale, "und");
+  assert.equal(hooks.getProjectAiRequestPayload("describe").currentProject.guideLocale, "und");
 });

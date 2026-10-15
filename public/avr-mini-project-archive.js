@@ -5,7 +5,9 @@
     typeof module === "object" && module.exports
       ? require("./avr-mini-projects.js")
       : root?.UartDebugAvrMiniProjectCore;
-  const archive = factory(miniProjectCore);
+  const projectFormat = typeof module === "object" && module.exports
+    ? require("./avr-project-format.js") : root?.UartDebugAvrProjectFormat;
+  const archive = factory(miniProjectCore, projectFormat);
 
   if (typeof module === "object" && module.exports) {
     module.exports = archive;
@@ -14,7 +16,7 @@
   if (root) {
     root.UartDebugAvrMiniProjectArchive = archive;
   }
-})(typeof window !== "undefined" ? window : null, function (miniProjectCore) {
+})(typeof window !== "undefined" ? window : null, function (miniProjectCore, projectFormat) {
   "use strict";
 
   if (
@@ -730,54 +732,79 @@
     const entries = extractedFiles.map(file => ({ ...file,
       relativePath: stripSharedRoot(file.path, root), baseName: basename(file.path),
     }));
+    const projectDocuments = entries.filter(file => /^(?:AGENTS|00_README)\.md$/.test(file.baseName));
     const specs = entries.filter(file => /\.md$/i.test(file.baseName) &&
       !/(?:_help|_ai|[._]description|\(description\)|\.guide)(?:[^/]*)\.md$/i.test(file.baseName) &&
       !/^(?:AGENTS|00_README|README)\.md$/i.test(file.baseName));
     if (!specs.length) return null;
-    requireExactlyOne(specs, "project specification Markdown");
-    const specification = specs[0];
     const sourceEntries = entries.filter(file => /\.c$/i.test(file.baseName));
     const resourceEntries = entries.filter(file => /\.ya?ml$/i.test(file.baseName));
-    if (sourceEntries.length > 1 || resourceEntries.length > 1) {
-      fail("INVALID_PROJECT", "A project archive must contain one project, not several versions or programs.");
-    }
     const guideEntries = entries.filter(file => /(?:[._]description|\(description\)|\.guide)(?:[^/]*)\.md$/i.test(file.baseName));
     const images = entries.filter(file => Object.hasOwn(IMAGE_EXTENSIONS, extensionOf(file.baseName.toLowerCase())));
-    const allowed = new Set([specification, ...sourceEntries, ...resourceEntries, ...guideEntries, ...images]);
+    const allowed = new Set([...specs, ...sourceEntries, ...resourceEntries, ...guideEntries, ...images, ...projectDocuments]);
     if (entries.some(file => !allowed.has(file))) {
       fail("UNSUPPORTED_PROJECT_FILE", "The archive contains files outside the selected project structure.");
     }
-    const coreEntries = [specification, ...sourceEntries, ...resourceEntries, ...guideEntries];
+    const coreEntries = [...specs, ...sourceEntries, ...resourceEntries, ...guideEntries, ...projectDocuments];
     if (new Set(coreEntries.map(file => canonicalPathKey(dirname(file.relativePath)))).size !== 1) {
       fail("INVALID_PROJECT", "All project documents must be in the same project folder.");
     }
-    const markdown = decodeProjectText(specification, limits);
-    const stem = specification.baseName.replace(/\.md$/i, "");
-    const titleMatch = /^#\s+(?:Project|\u041f\u0440\u043e\u0435\u043a\u0442)\s+(.+)$/im.exec(markdown);
-    const title = titleMatch?.[1]?.trim() || stem;
-    const versionMatch = /\bVer\.(\d+\.\d+)(?![.\d])/i.exec(markdown);
-    const version = versionMatch ? "Ver." + versionMatch[1] : "";
-    const source = sourceEntries[0];
-    const resources = resourceEntries[0];
-    const guides = guideEntries.map(file => ({ role: "guide", name: file.baseName,
-      content: decodeProjectText(file, limits), locale: extractGuideLocale(file.baseName), mediaType: "text/markdown", hidden: true,
-    }));
-    if (!guides.length) guides.push({ role: "guide", name: stem + " (description).md", content: "", locale: "en", mediaType: "text/markdown", hidden: true });
-    const assets = images.map(file => buildImageAsset({ ...file, extension: extensionOf(file.baseName.toLowerCase()) }, limits));
+    const projectFolder = dirname(coreEntries[0].relativePath);
+    if (projectFolder && images.some(file => !canonicalPathKey(file.relativePath).startsWith(canonicalPathKey(projectFolder) + "/"))) {
+      fail("INVALID_PROJECT", "Project images must be inside the selected project folder.");
+    }
+    let selected;
+    let documents;
+    try {
+      selected = projectFormat.resolveProjectFiles(coreEntries.filter(file => !projectDocuments.includes(file)).map(file => ({
+        ...file, name: file.baseName, content: decodeProjectText(file, limits),
+      })));
+      documents = projectFormat.normalizeProjectDocuments(projectDocuments.map(file => ({
+        name: file.baseName, content: decodeProjectText(file, limits, true),
+      })));
+    } catch (error) {
+      if (error instanceof MiniProjectArchiveError) throw error;
+      fail("INVALID_PROJECT", error.message);
+    }
+    const specification = selected.specification;
+    if (!specification) fail("INVALID_PROJECT", "The archive has no unambiguous project specification.");
+    const markdown = specification.content;
+    const stem = projectFormat.parseProjectFilename(specification.name)?.baseName || specification.name.replace(/\.md$/i, "");
+    const title = selected.identity?.title || stem;
+    const version = selected.identity?.version || "";
+    const source = selected.source;
+    const resources = selected.resources;
+    const guides = selected.guides.map(file => {
+      const parsed = projectFormat.parseProjectFilename(file.name);
+      const locale = parsed?.variant || projectFormat.inferLocale(file.content, "und");
+      return { role: "guide", name: file.name, content: file.content, locale, mediaType: "text/markdown", hidden: true };
+    });
+    for (const guide of guides) {
+      if (guide.name === selected.guide?.name && guides.some(other => other !== guide && other.locale.toLowerCase() === guide.locale.toLowerCase())) {
+        const language = guide.locale;
+        guide.locale = language + "-x-default";
+        guide.label = language + " (default)";
+      }
+    }
+    if (!guides.length) guides.push({ role: "guide", name: title + " (description).md", content: "", locale: projectFormat.inferLocale(markdown, "en"), mediaType: "text/markdown", hidden: true });
+    const assets = images.map(file => buildImageAsset({ ...file,
+      relativePath: stripSharedRoot(file.relativePath, projectFolder),
+      extension: extensionOf(file.baseName.toLowerCase()),
+    }, limits));
     return {
       schemaVersion: 1, contract: "uartdebug-project/v2", id: stem, title, version, summary: "",
-      defaultLocale: guides[0].locale, canvasName: specification.baseName,
+      defaultLocale: guides.find(file => file.name === selected.guide?.name)?.locale || guides[0].locale, canvasName: specification.name,
       projectPath: "Target_Projects/" + title + (version ? " " + version : ""),
-      canvas: { markdown, locale: "" }, assets,
+      canvas: { markdown, locale: "" }, assets, projectDocuments: documents, importWarnings: selected.warnings || [],
       files: [
-        { role: "source", name: source?.baseName || stem + ".c", content: source ? decodeProjectText(source, limits) : "", mediaType: "text/x-c" },
+        { role: "source", name: source?.name || selected.alternatives?.sourceName || title + ".c", content: source?.content || "", mediaType: "text/x-c" },
         ...guides,
-        ...(resources ? [{ role: "specification", name: resources.baseName, content: decodeProjectText(resources, limits), mediaType: "application/yaml", hidden: true }] : []),
+        ...(resources ? [{ role: "specification", name: resources.name, content: resources.content, mediaType: "application/yaml", hidden: true }] : []),
       ],
     };
   }
 
-  function decodeProjectText(entry, limits) {
+  function decodeProjectText(entry, limits, preserve = false) {
     if (entry.data.byteLength > limits.maxTextBytes) {
       fail("TEXT_TOO_LARGE", `Text file exceeds the size limit: ${entry.relativePath}`);
     }
@@ -787,11 +814,91 @@
 
     let text;
     try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(entry.data);
+      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: preserve }).decode(entry.data);
     } catch {
       fail("INVALID_TEXT", `Text file is not valid UTF-8: ${entry.relativePath}`);
     }
-    return text.replace(/^\ufeff/, "").replace(/\r\n?/g, "\n");
+    return preserve ? text : text.replace(/^\ufeff/, "").replace(/\r\n?/g, "\n");
+  }
+
+  function createProjectArchive(project) {
+    const normalized = miniProjectCore.normalizeDefinition(project);
+    const folder = normalized.projectPath || "Target_Projects/" + normalized.title;
+    const encoder = new TextEncoder();
+    const entries = [];
+    const seen = new Set();
+    const add = (name, data) => {
+      const path = folder + "/" + name;
+      validateArchivePath(path, false, DEFAULT_LIMITS);
+      const key = canonicalPathKey(path);
+      if (seen.has(key)) fail("DUPLICATE_PATH", "Project files have a duplicate export name: " + name);
+      seen.add(key);
+      if (data.byteLength > DEFAULT_LIMITS.maxEntryUncompressedBytes) fail("ENTRY_TOO_LARGE", "Project file exceeds the export limit: " + name);
+      entries.push({ path, data });
+    };
+    add(normalized.canvasName || normalized.title + ".md", encoder.encode(normalized.canvas?.markdown || ""));
+    const files = [normalized.files.source, normalized.files.specification, ...normalized.guides].filter(Boolean);
+    for (const file of files) add(file.name, encoder.encode(file.content));
+    for (const document of normalized.projectDocuments) add(document.name, encoder.encode(document.content));
+    const assets = [...(Array.isArray(normalized.assets) ? normalized.assets : Object.values(normalized.assets || {})),
+      ...normalized.guides.flatMap(guide => Array.isArray(guide.assets) ? guide.assets : Object.values(guide.assets || {}))];
+    for (const asset of assets) {
+      if (!asset?.path || seen.has(canonicalPathKey(folder + "/" + asset.path))) continue;
+      const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=]+)$/.exec(asset.dataUrl || "");
+      if (!match) fail("INVALID_IMAGE", "Project image is unavailable for export: " + asset.path);
+      const bytes = Uint8Array.from(atob(match[2]), value => value.charCodeAt(0));
+      if (detectImageMediaType(bytes) !== match[1]) fail("INVALID_IMAGE", "Project image contents are invalid: " + asset.path);
+      add(asset.path, bytes);
+    }
+    if (entries.length > DEFAULT_LIMITS.maxEntries) fail("TOO_MANY_ENTRIES", "Project has too many files to export.");
+    const chunks = [];
+    const central = [];
+    let offset = 0;
+    for (const entry of entries) {
+      const name = encoder.encode(entry.path);
+      const crc = crc32(entry.data);
+      const local = new Uint8Array(30 + name.length);
+      const view = dataViewFor(local);
+      view.setUint32(0, SIGNATURES.LOCAL_FILE, true);
+      view.setUint16(4, 20, true);
+      view.setUint16(6, 0x0800, true);
+      view.setUint16(12, 0x21, true);
+      view.setUint32(14, crc, true);
+      view.setUint32(18, entry.data.length, true);
+      view.setUint32(22, entry.data.length, true);
+      view.setUint16(26, name.length, true);
+      local.set(name, 30);
+      const record = new Uint8Array(46 + name.length);
+      const recordView = dataViewFor(record);
+      recordView.setUint32(0, SIGNATURES.CENTRAL_FILE, true);
+      recordView.setUint16(4, 20, true);
+      recordView.setUint16(6, 20, true);
+      recordView.setUint16(8, 0x0800, true);
+      recordView.setUint16(14, 0x21, true);
+      recordView.setUint32(16, crc, true);
+      recordView.setUint32(20, entry.data.length, true);
+      recordView.setUint32(24, entry.data.length, true);
+      recordView.setUint16(28, name.length, true);
+      recordView.setUint32(42, offset, true);
+      record.set(name, 46);
+      chunks.push(local, entry.data);
+      central.push(record);
+      offset += local.length + entry.data.length;
+    }
+    const centralSize = central.reduce((size, entry) => size + entry.length, 0);
+    const end = new Uint8Array(22);
+    const endView = dataViewFor(end);
+    endView.setUint32(0, SIGNATURES.END_OF_CENTRAL_DIRECTORY, true);
+    endView.setUint16(8, entries.length, true);
+    endView.setUint16(10, entries.length, true);
+    endView.setUint32(12, centralSize, true);
+    endView.setUint32(16, offset, true);
+    const total = offset + centralSize + end.length;
+    if (total > DEFAULT_LIMITS.maxArchiveBytes) fail("ARCHIVE_TOO_LARGE", "Project exceeds the archive export limit.");
+    const output = new Uint8Array(total);
+    let cursor = 0;
+    for (const chunk of [...chunks, ...central, end]) { output.set(chunk, cursor); cursor += chunk.length; }
+    return output;
   }
 
   function buildImageAsset(entry, limits) {
@@ -917,7 +1024,7 @@
     );
     if (!match) return "en";
     const locale = match[1].replace(/_/g, "-");
-    if (!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(locale)) {
+    if (!projectFormat.isLocaleTag(locale)) {
       fail("INVALID_PROJECT", `Invalid guide locale in file name: ${fileName}.`);
     }
     return locale
@@ -1168,5 +1275,6 @@
     DEFAULT_LIMITS,
     MiniProjectArchiveError,
     parseMiniProjectArchive,
+    createProjectArchive,
   });
 });
