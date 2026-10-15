@@ -1,7 +1,9 @@
 (function (root, factory) {
   "use strict";
 
-  const core = factory();
+  const projectFormat = typeof module === "object" && module.exports
+    ? require("./avr-project-format.js") : root?.UartDebugAvrProjectFormat;
+  const core = factory(projectFormat);
 
   if (typeof module === "object" && module.exports) {
     module.exports = core;
@@ -10,7 +12,7 @@
   if (root) {
     root.UartDebugAvrMiniProjectCore = core;
   }
-})(typeof window !== "undefined" ? window : null, function () {
+})(typeof window !== "undefined" ? window : null, function (projectFormat) {
   "use strict";
 
   const SCHEMA_VERSION = 1;
@@ -209,6 +211,7 @@
       files,
       guides,
       defaultLocale: guideSelection.defaultLocale,
+      projectDocuments: projectFormat.normalizeProjectDocuments(definition.projectDocuments),
     };
 
     if (definition.canvasName !== undefined) {
@@ -536,10 +539,7 @@
     }
 
     const locale = value.trim().replace(/_/g, "-");
-    if (
-      locale.length > 48 ||
-      !/^[a-z]{2,8}(?:-[a-z0-9]{1,8})*$/i.test(locale)
-    ) {
+    if (!projectFormat.isLocaleTag(locale)) {
       throw new Error(`${label} is invalid: ${value}.`);
     }
 

@@ -7,6 +7,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const core = require("../public/avr-mini-projects.js");
+const projectFormat = require("../public/avr-project-format.js");
 
 test("preserves canonical project folders and Markdown specifications separately from resources", () => {
   const project = core.normalizeDefinition({ schemaVersion: 1, id: "controller", title: "Controller", version: "Ver.2.1",
@@ -41,7 +42,7 @@ test("exports schema version and installs the browser UMD global", () => {
     path.join(__dirname, "../public/avr-mini-projects.js"),
     "utf8"
   );
-  const context = { window: {} };
+  const context = { window: { UartDebugAvrProjectFormat: projectFormat } };
   vm.runInNewContext(source, context);
 
   assert.equal(

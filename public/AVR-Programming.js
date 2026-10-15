@@ -70,6 +70,7 @@
 
   const $ = (id) => document.getElementById(id);
   const miniProjectCore = window.UartDebugAvrMiniProjectCore;
+  const projectFormat = window.UartDebugAvrProjectFormat;
   let resolveMiniProjectBridgeReady = null;
   const miniProjectBridgeReady = new Promise((resolve) => {
     resolveMiniProjectBridgeReady = resolve;
@@ -1184,7 +1185,7 @@
         )
           .trim()
           .replace(/_/g, "-");
-        if (!/^[a-z]{2,8}(?:-[a-z0-9]{1,8})*$/i.test(locale)) {
+        if (!projectFormat.isLocaleTag(locale)) {
           locale = "und";
         }
         const baseLocale = locale;
@@ -1259,6 +1260,7 @@
         origin,
         canvasName: String(rawProject.canvasName || getFileStem(roleFiles.source) + ".md"),
         projectPath: String(rawProject.projectPath || "Target_Projects/" + getSafeProjectFolderName(rawProject.title || definitionId, instanceId)),
+        projectDocuments: projectFormat.normalizeProjectDocuments(rawProject.projectDocuments),
         fileNames: createDictionary(rawProject.fileNames),
         files: roleFiles,
         mediaTypes,
@@ -1736,6 +1738,7 @@
       origin: project.origin,
       canvasName: project.canvasName,
       projectPath: project.projectPath,
+      projectDocuments: projectFormat.normalizeProjectDocuments(project.projectDocuments),
       canvas: normalizeProjectInstructionDocument(project.canvas),
       defaultLocale: project.defaultLocale || "",
       selectedLocale: project.selectedLocale || project.defaultLocale || "",
@@ -1823,7 +1826,7 @@
         );
         if (projectFile.role === miniProjectCore.ROLES.GUIDE) {
           let locale =
-            projectFile.locale || definition.defaultLocale || `guide-${Object.keys(guides).length + 1}`;
+            projectFile.locale || definition.defaultLocale || "und";
           const baseLocale = locale;
           let suffix = 2;
           while (guides[locale]) {
@@ -1866,6 +1869,7 @@
         origin: String(origin || "local"),
         canvasName: definition.canvasName || getFileStem(definition.files.source.name) + ".md",
         projectPath: definition.projectPath || "Target_Projects/" + getSafeProjectFolderName(definition.title, definition.id),
+        projectDocuments: definition.projectDocuments,
         fileNames: Object.fromEntries(pendingFiles.map((file, index) => [file.name, definitionFiles[index].name])),
         files: roleFiles,
         mediaTypes,
@@ -1926,13 +1930,22 @@
     const incoming = Array.isArray(rawDefinition?.files) ? rawDefinition.files : [];
     if (!incoming.length) throw new Error("The response has no project files.");
     const live = getPublicMiniProjectInstance(id);
+    const incomingGuides = incoming.filter(file => file.role === "guide");
+    const replacedGuides = live.files.filter(file => file.role === "guide" &&
+      incomingGuides.some(guide =>
+        guide.name.toLowerCase() === file.name.toLowerCase() && (!file.content.trim() || file.locale === "und") ||
+        !file.content.trim() && incomingGuides.length === 1 && file.locale === existing.selectedLocale));
+    const replacedGuideNames = new Set(replacedGuides.map(file => file.storageName));
     const incomingKeys = new Set(incoming.map(file => file.role === "guide"
       ? "guide:" + (file.locale || existing.selectedLocale || "en") : file.role));
-    const merged = live.files.filter(file => !incomingKeys.has(file.role === "guide"
+    const merged = live.files.filter(file => !replacedGuideNames.has(file.storageName) && !incomingKeys.has(file.role === "guide"
       ? "guide:" + (file.locale || existing.selectedLocale || "en") : file.role));
+    const defaultLocale = rawDefinition.defaultLocale || existing.defaultLocale || "en";
+    const allGuides = [...merged, ...incomingGuides].filter(file => file.role === "guide");
     const definition = miniProjectCore.normalizeDefinition({
       ...live, ...rawDefinition, files: [...merged, ...incoming],
-      defaultLocale: rawDefinition.defaultLocale || existing.defaultLocale || "en",
+      defaultLocale: allGuides.some(file => file.locale === defaultLocale)
+        ? defaultLocale : incomingGuides[0]?.locale || allGuides[0]?.locale || "en",
     });
     const previous = { files, fileAuthorship, fileGroups, miniProjects, current };
     if (editor && current && hasFile(current)) files[current] = editor.getValue();
@@ -1943,6 +1956,10 @@
       const project = miniProjects[id];
       const author = origin === "ai" ? "ai" : "original";
       const reserved = new Set();
+      const reusableGuideNames = [...replacedGuideNames];
+      for (const [locale, guide] of Object.entries(project.guides || {})) {
+        if (replacedGuideNames.has(guide.fileName)) delete project.guides[locale];
+      }
       for (const rawFile of incoming) {
         const role = miniProjectCore.normalizeRole(rawFile.role);
         const locale = rawFile.locale || project.selectedLocale || project.defaultLocale || "en";
@@ -1950,6 +1967,7 @@
           : definition.files[role];
         if (!file) throw new Error("The response has an invalid project file.");
         let name = role === "guide" ? project.guides?.[locale]?.fileName : project.files[role];
+        if (role === "guide" && !name) name = reusableGuideNames.shift();
         if (!name || !hasFile(name)) {
           name = uniqueReservedFileName(file.name, reserved);
           reserved.add(name);
@@ -1969,6 +1987,11 @@
           project.selectedLocale = project.defaultLocale = locale;
           project.files.guide = name;
         } else project.files[role] = name;
+      }
+      for (const name of reusableGuideNames) {
+        delete files[name];
+        delete fileAuthorship[name];
+        delete project.fileNames[name];
       }
       project.title = definition.title;
       project.displayName = rawDefinition.displayName || definition.title;
@@ -2146,6 +2169,9 @@
         limits: MINI_PROJECT_ARCHIVE_WORKSPACE_LIMITS,
       });
       installMiniProjectDefinition(definition, { origin: "archive" });
+      if (definition.importWarnings?.length) {
+        reportProjectCanvasMessage("system", definition.importWarnings.join("\n"));
+      }
       return;
     }
 
@@ -2254,7 +2280,8 @@
     input.type = "text";
     input.value = edit.value || "";
     input.spellcheck = false;
-    input.setAttribute("aria-label", "Rename project");
+    input.setAttribute("aria-label", "Project display name");
+    input.title = "Changes the project label only. The specification defines its name and file names.";
 
     const error = document.createElement("div");
     error.className = "file-inline-error";
@@ -3026,7 +3053,7 @@
     if (renameBtn) {
       renameBtn.hidden = false;
       renameBtn.textContent = isMiniProjectSource
-        ? "Rename project"
+        ? "Change display name"
         : "Rename";
     }
     if (deleteBtn) {
@@ -3035,7 +3062,10 @@
         ? "Delete project"
         : "Delete";
     }
-    if (downloadBtn) downloadBtn.hidden = false;
+    if (downloadBtn) {
+      downloadBtn.hidden = false;
+      downloadBtn.textContent = isMiniProjectSource ? "Download project ZIP" : "Download";
+    }
 
     const downloadHexBtn = menu.querySelector(
       'button[data-action="download-hex"]'
@@ -3678,12 +3708,13 @@
     const originalMarkdown = typeof source.markdown === "string"
       ? source.markdown : DEFAULT_PROJECT_INSTRUCTION;
     const legacyAnnotations = normalizeCanvasAnnotations(source.annotations);
-    const markdown = migrateCanvasAnnotationsToMarkdown(originalMarkdown, legacyAnnotations);
+    const locale = projectFormat.isLocaleTag(source.locale) && source.locale.toLowerCase() !== "und" ? source.locale : "";
+    const markdown = migrateCanvasAnnotationsToMarkdown(originalMarkdown, legacyAnnotations, locale);
     return {
       schemaVersion: 2,
       revision: Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
       markdown,
-      locale: typeof source.locale === "string" ? source.locale : "",
+      locale,
       annotations: [],
       ...(source.target && typeof source.target === "object" ? { target: {
         mcu: String(source.target.mcu || "").toLowerCase(),
@@ -3695,17 +3726,18 @@
     };
   }
 
-  function migrateCanvasAnnotationsToMarkdown(markdown, annotations) {
+  function migrateCanvasAnnotationsToMarkdown(markdown, annotations, locale = "") {
     if (!annotations.length) return markdown;
+    const labels = projectFormat.remarkLabels(locale || projectFormat.inferLocale(projectFormat.specificationText(markdown), "en"));
     let number = Math.max(0, ...Array.from(markdown.matchAll(/\[(?:AI|\u0418\u0418)\.(\d+)\]/g), match => Number(match[1])));
     const insertions = new Map();
     for (const annotation of annotations) {
       number += 1;
-      const type = annotation.kind === "error" ? "Error" : annotation.kind === "information" ? "Information" : "Question";
-      const block = [`> ###### *[AI.${number}] ${type}.*`, ">",
+      const type = annotation.kind === "error" ? labels.error : annotation.kind === "information" ? labels.information : labels.question;
+      const block = [`> ###### *[${labels.prefix}.${number}] ${type}.*`, ">",
         ...annotation.message.split("\n").map(line => "> " + line),
-        ...(annotation.answer ? [">", "> > **User:** " + annotation.answer.replace(/\n/g, "\n> > ")] : []),
-        ...(annotation.status === "resolved" ? [">", "> Resolved in the previous canvas."] : []),
+        ...(annotation.answer ? [">", "> > **" + labels.user + ":** " + annotation.answer.replace(/\n/g, "\n> > ")] : []),
+        ...(annotation.status === "resolved" ? [">", "> " + labels.resolved] : []),
       ].join("\n");
       const line = resolveCanvasAnnotationLine(annotation, markdown);
       const lines = markdown.split("\n");
@@ -6698,6 +6730,7 @@
         version: project.version,
         canvasName: project.canvasName,
         projectPath: project.projectPath,
+        projectDocuments: project.projectDocuments,
         sourceAuthorship: getFileAuthorship(source.storageName || source.name),
         ...(guide ? { guideAuthorship: getFileAuthorship(guide.storageName || guide.name) } : {}),
         ...(specification ? { specification: { name: specification.name, content: specification.content } } : {}),
@@ -7629,11 +7662,19 @@
 
   function downloadFile(name) {
     if (!name || !hasFile(name)) return;
+    const linked = getMiniProjectForFile(name);
+    const project = linked ? getPublicMiniProjectInstance(linked.instanceId) : null;
+    const isProject = linked?.role === miniProjectCore.ROLES.SOURCE;
     const type = /\.ya?ml$/i.test(name) ? "application/yaml" : /\.md$/i.test(name) ? "text/markdown" : "text/plain";
-    const blob = new Blob([getLiveFileContent(name)], { type: `${type};charset=utf-8` });
+    const content = isProject ? window.UartDebugAvrMiniProjectArchive.createProjectArchive({
+      ...project,
+      canvas: name === current ? getProjectInstructionSnapshot() : project.canvas,
+    }) : getLiveFileContent(name);
+    const blob = new Blob([content], { type: isProject ? "application/zip" : `${type};charset=utf-8` });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = getMiniProjectForFile(name)?.project.fileNames?.[name] || name;
+    a.download = isProject ? String(project.projectPath || project.title).split("/").pop() + ".zip"
+      : linked?.project.fileNames?.[name] || name;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

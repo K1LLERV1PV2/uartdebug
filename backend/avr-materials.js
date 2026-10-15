@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { parse: parseYaml, stringify: stringifyYaml } = require("yaml");
+const { resolveProjectFiles, parseProjectFilename, inferLocale, normalizeProjectDocuments } = require("./avr-project-format");
 
 const REPOSITORY = "Sergey-Bulanov/UartDebug2";
 const DEVICE_ROOT = "MCU_Knowledge_Base/AVR/tinyAVR_2_series/ATtiny1624_1626_1627";
@@ -380,27 +381,33 @@ function createProjectCatalog(knowledge = loadMaterials()) {
   }
   const targetDirectories = [...new Set(knowledge.files.filter((file) => file.startsWith("Target_Projects/") && file.split("/").length === 3).map((file) => file.split("/")[1]))];
   for (const directory of targetDirectories) {
-    const name = directory.replace(/ Ver\.\d+\.\d+$/, "");
     const projectPath = `Target_Projects/${directory}`;
-    const specPath = `${projectPath}/${name}.md`;
-    if (!Object.hasOwn(knowledge.manifest.files, specPath)) continue;
+    const projectEntries = knowledge.files.filter((file) => file.startsWith(`${projectPath}/`) && file.split("/").length === 3 && /\.(?:md|c|yaml)$/i.test(file))
+      .map((file) => ({ name: path.posix.basename(file), content: read(file), path: file }));
+    if (!projectEntries.some((entry) => /\.md$/i.test(entry.name) && !["AGENTS.md", "00_README.md"].includes(entry.name))) continue;
+    let selected;
+    try {
+      selected = resolveProjectFiles(projectEntries);
+    } catch (error) {
+      throw Error(`Canonical target project ${projectPath}: ${error.message}`);
+    }
+    const specPath = selected.specification.path;
+    const name = selected.identity?.title || directory.replace(/ Ver\.\d+\.\d+$/, "");
     const markdown = read(specPath);
     const files = [];
-    const sourcePath = `${projectPath}/${name}.c`;
-    const yamlPath = `${projectPath}/${name}.yaml`;
-    const guidePath = `${projectPath}/${name} (description).md`;
-    for (const [role, filePath] of [["source", sourcePath], ["specification", yamlPath], ["guide", guidePath]]) {
-      if (Object.hasOwn(knowledge.manifest.files, filePath)) files.push({ role, name: path.posix.basename(filePath), content: read(filePath),
-        ...(role === "guide" ? { locale: /[А-Яа-яЁё]/.test(read(filePath)) ? "ru" : "en" } : {}) });
+    const locale = inferLocale(markdown);
+    for (const [role, entry] of [["source", selected.source], ["specification", selected.resources], ...selected.guides.map((guide) => ["guide", guide])]) {
+      if (entry) files.push({ role, name: entry.name, content: entry.content,
+        ...(role === "guide" ? { locale: parseProjectFilename(entry.name).variant || inferLocale(entry.content, locale) } : {}) });
     }
-    const locale = /[А-Яа-яЁё]/.test(markdown) ? "ru" : "en";
-    const resources = Object.hasOwn(knowledge.manifest.files, yamlPath) ? parseYaml(read(yamlPath)) : null;
+    const resources = selected.resources ? parseYaml(selected.resources.content) : null;
     const target = resources?.microcontroller && typeof resources.microcontroller.model === "string" &&
       typeof resources.microcontroller.package === "string" ?
       { mcu: resources.microcontroller.model, packageName: resources.microcontroller.package } : undefined;
     register({ id: `target-${directory}`, title: name, summary: "Target project supplied in the materials repository.",
-      version: /\bVer\.\d+\.\d+\b/.exec(markdown)?.[0] || "", defaultLocale: locale,
-      canvasName: path.posix.basename(specPath), projectPath, canvas: { markdown, locale, ...(target ? { target } : {}) }, files },
+      version: selected.identity?.version || "", defaultLocale: locale,
+      canvasName: path.posix.basename(specPath), projectPath, canvas: { markdown, locale, ...(target ? { target } : {}) }, files,
+      projectDocuments: normalizeProjectDocuments(projectEntries.filter((entry) => ["AGENTS.md", "00_README.md"].includes(entry.name))) },
     "target", { repository: knowledge.repository, commit: knowledge.version, sourcePath: specPath,
       sha256: knowledge.manifest.files[specPath].sha256, derived: false });
   }

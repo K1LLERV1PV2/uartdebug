@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20260924-ui-v1";
+const CACHE_NAME = "uartdebug-shell-20261015-project-rules-v1";
 const APP_SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -19,6 +19,7 @@ const APP_SHELL_ASSETS = [
   "/uart.css",
   "/uart.js",
   "/AVR-Programming.css",
+  "/avr-project-format.js",
   "/avr-mini-projects.js",
   "/avr-mini-project-archive.js",
   "/AVR-Programming.js",

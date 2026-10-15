@@ -76,6 +76,7 @@ def main():
         "home.css": 1,
         "legal.css": 2,
         "avr-mini-projects.js": 1,
+        "avr-project-format.js": 1,
         "avr-mini-project-archive.js": 1,
     }
     revisioned_page_asset_patterns = [

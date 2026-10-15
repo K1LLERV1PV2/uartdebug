@@ -10,8 +10,9 @@
     "start": "node compile-server.js",
     "start:compiler": "node compile-server.js",
     "start:ai": "node ai-server.js",
+    "eval:project-policy": "node evals/project-policy-smoke.js",
     "test": "node --test ../tests/*.test.js",
-    "check": "node --check avr-compiler-contract.js && node --check avr-compiler-readiness.js && node --check compile-capacity-guard.js && node --check compile-server.js && node --check ai-server.js && node --check ai-access-service.js && node --check avr-ai-service.js && node --check avr-ai-runtime.js && node --check avr-canvas-contract.js && node --check avr-documentation-lookup.js && node --check avr-methodology.js && node --check avr-knowledge.js && node --check avr-materials.js && node --check materials-sync-auth.js && node --check materials-sync-server.js && node --check deploy/verify-materials.js"
+    "check": "node --check avr-compiler-contract.js && node --check avr-compiler-readiness.js && node --check compile-capacity-guard.js && node --check compile-server.js && node --check ai-server.js && node --check ai-access-service.js && node --check avr-ai-service.js && node --check avr-ai-runtime.js && node --check avr-canvas-contract.js && node --check avr-documentation-lookup.js && node --check avr-methodology.js && node --check avr-knowledge.js && node --check avr-materials.js && node --check avr-project-format.js && node --check avr-project-policy.js && node --check evals/project-policy-smoke.js && node build-project-format.js --check && node --check materials-sync-auth.js && node --check materials-sync-server.js && node --check deploy/verify-materials.js"
   },
   "engines": {
     "node": ">=22.13.0"

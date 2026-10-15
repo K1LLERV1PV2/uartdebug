@@ -497,6 +497,18 @@ test("generation returns only C and hidden canonical YAML while preserving the s
   assert.equal(result.project.projectPath, "Target_Projects/led Ver.1.0");
   assert.equal(result.canvas.markdown, canvas().markdown);
   assert.equal(result.verification.hardware, "not-tested");
+  const draft = input();
+  draft.currentProject = {
+    instanceId: "blank-draft",
+    id: "empty-project",
+    canvasName: "Untitled project.md",
+    sourceName: "Untitled project.c",
+    source: "",
+    guide: "",
+  };
+  const created = await service().processCanvas(draft);
+  assert.equal(created.project.canvasName, "led.md");
+  assert.equal(created.project.files[0].name, "led.c");
 });
 test("updates retain instance identity and existing logical output names", async () => {
   const raw = input();
@@ -1098,7 +1110,7 @@ test("English analysis repairs Russian headings with localized policy after all 
     fetch: async (_url, request) => {
       const body = JSON.parse(request.body);
       calls += 1;
-      const policyIndex = body.instructions.indexOf("Web presentation adaptation for inline remarks");
+      const policyIndex = body.instructions.indexOf("UARTDebug browser project integration policy");
       assert.ok(policyIndex > 0);
       for (const document of canonical.initialRules) {
         const documentIndex = body.instructions.indexOf(document.text);

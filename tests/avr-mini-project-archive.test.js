@@ -9,6 +9,7 @@ const zlib = require("node:zlib");
 
 const archive = require("../public/avr-mini-project-archive.js");
 const miniProjectCore = require("../public/avr-mini-projects.js");
+const projectFormat = require("../public/avr-project-format.js");
 
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -209,6 +210,92 @@ test("imports a specification-only draft without creating starter code or descri
   assert.equal(project.canvas.markdown, markdown);
 });
 
+test("canonical ZIP imports select compatible file versions, revisions and copies using shared rules", async () => {
+  const markdown = "# Project Blink\n\nProject version - Ver.2.0\n";
+  const parsed = await archive.parseMiniProjectArchive(makeZip([
+    { name: "Blink/Blink Ver.2.0.1.md", content: markdown + "\nOld requirements." },
+    { name: "Blink/Blink Ver.2.0.2-a.md", content: markdown + "\nCurrent requirements." },
+    { name: "Blink/Blink.c", content: "old unversioned program" },
+    { name: "Blink/Blink Ver.2.0.2-a.c", content: "old revision" },
+    { name: "Blink/Blink Ver.2.0.2-b.c", content: "first copy" },
+    { name: "Blink/Blink Ver.2.0.2-b(3).c", content: "current program" },
+    { name: "Blink/Blink Ver.3.0.9.c", content: "incompatible program" },
+    { name: "Blink/Blink Ver.2.0.2.yaml", content: "current: resources" },
+  ]));
+  assert.equal(parsed.canvasName, "Blink Ver.2.0.2-a.md");
+  assert.match(parsed.canvas.markdown, /Current requirements/);
+  assert.equal(parsed.files.find(file => file.role === "source").name, "Blink Ver.2.0.2-b(3).c");
+  assert.equal(parsed.files.find(file => file.role === "source").content, "current program");
+  assert.equal(parsed.files.find(file => file.role === "specification").name, "Blink Ver.2.0.2.yaml");
+  assert.match(parsed.importWarnings.join("\n"), /copy/i);
+  assert.ok(parsed.importWarnings.some(warning => warning.includes("Blink Ver.2.0.2-b(3).c")));
+});
+
+test("canonical ZIP rules are separate hidden inputs and untagged Russian descriptions retain their language", async () => {
+  const documents = [{ name: "AGENTS.md", content: "\ufeff! Do not block the ISR.\r\n" }, { name: "00_README.md", content: "# Указатель\r\nПравила проекта.\r\n" }];
+  const parsed = await archive.parseMiniProjectArchive(makeZip([
+    { name: "Blink/Blink.md", content: "# Project Blink\n\nProject version - Ver.1.0\n" },
+    { name: "Blink/Blink.c", content: "int main(void) {}" },
+    { name: "Blink/Blink (description).md", content: "# Описание кода\n\nПрограмма переключает светодиод.\n" },
+    ...documents.map(document => ({ name: "Blink/" + document.name, content: document.content })),
+  ]));
+  const normalized = miniProjectCore.normalizeDefinition(parsed);
+  assert.equal(normalized.files.guide.locale, "ru");
+  assert.equal(normalized.defaultLocale, "ru");
+  assert.deepEqual(normalized.projectDocuments, documents);
+  assert.equal(Object.values(normalized.files).some(file => /AGENTS|00_README/.test(file.name)), false);
+  const exported = archive.createProjectArchive(parsed);
+  const reimported = await archive.parseMiniProjectArchive(exported);
+  assert.equal(reimported.canvas.markdown, parsed.canvas.markdown);
+  assert.deepEqual(reimported.projectDocuments, documents);
+  assert.equal(reimported.files.find(file => file.role === "guide").locale, "ru");
+  assert.equal(reimported.files.find(file => file.role === "source").content, "int main(void) {}");
+});
+
+test("canonical ZIP import rejects hidden-rule scope, UTF-8 and byte-limit violations", async () => {
+  const draft = { name: "Blink/Blink.md", content: "# Project Blink\n\nProject version - Ver.1.0\n" };
+  await expectCode(makeZip([draft, { name: "Blink/Rules.md", content: "unrecognized rules" }]), "INVALID_PROJECT");
+  await expectCode(makeZip([draft, { name: "Blink/notes/AGENTS.md", content: "nested rules" }]), "INVALID_PROJECT");
+  await expectCode(makeZip([draft, { name: "Blink/AGENTS.md", content: "я".repeat(16 * 1024 + 1), method: 0 }]), "INVALID_PROJECT");
+  await expectCode(makeZip([draft, { name: "Blink/00_README.md", content: Buffer.from([0xff]) }]), "INVALID_TEXT");
+  await expectCode(makeZip([draft, { name: "Blink/AGENTS.md", content: "rules\0injection" }]), "INVALID_TEXT");
+});
+
+test("canonical ZIP export round-trips resources and referenced image bytes", async () => {
+  const source = "#include <xc.h>\nint main(void) {}\n";
+  const yaml = "microcontroller:\n  model: ATtiny1624\n";
+  const project = await archive.parseMiniProjectArchive(makeZip([
+    { name: "Blink/Blink.md", content: "# Project Blink\n\nProject version - Ver.1.0\n\n![Board](images/board.png)\n" },
+    { name: "Blink/Blink.c", content: source },
+    { name: "Blink/Blink.yaml", content: yaml },
+    { name: "Blink/images/board.png", content: PNG_1X1 },
+  ]));
+  const result = await archive.parseMiniProjectArchive(archive.createProjectArchive(project));
+  assert.equal(result.files.find(file => file.role === "source").content, source);
+  assert.equal(result.files.find(file => file.role === "specification").content, yaml);
+  assert.equal(result.assets[0].path, "images/board.png");
+  assert.equal(result.assets[0].dataUrl, project.assets[0].dataUrl);
+});
+
+test("an untagged default and explicit Russian description remain separate variants across ZIP roundtrip", async () => {
+  const markdown = "# Project Blink\n\nProject version - Ver.1.0\n";
+  const entries = [
+    { name: "Blink/Blink.md", content: markdown },
+    { name: "Blink/Blink (description).md", content: "# Описание по умолчанию\n\nПервый вариант.\n" },
+    { name: "Blink/Blink (description) (ru).md", content: "# Русский вариант\n\nВторой вариант.\n" },
+  ];
+  const parsed = await archive.parseMiniProjectArchive(makeZip(entries));
+  const normalized = miniProjectCore.normalizeDefinition(parsed);
+  assert.equal(normalized.defaultLocale, "ru-x-default");
+  assert.equal(normalized.files.guide.name, "Blink (description).md");
+  assert.equal(normalized.files.guide.label, "ru (default)");
+  assert.equal(normalized.guides.length, 2);
+  assert.equal(normalized.guides.find(guide => guide.locale === "ru").content, entries[2].content);
+  const reimported = miniProjectCore.normalizeDefinition(await archive.parseMiniProjectArchive(archive.createProjectArchive(parsed)));
+  assert.equal(reimported.defaultLocale, "ru-x-default");
+  assert.deepEqual(reimported.guides.map(guide => [guide.name, guide.content, guide.locale]), normalized.guides.map(guide => [guide.name, guide.content, guide.locale]));
+});
+
 test("rejects multi-project canonical archives and unrelated executable files", async () => {
   await expectCode(makeZip([
     { name: "One/One.md", content: "# Project One" },
@@ -226,7 +313,7 @@ test("exports the browser UMD global", () => {
     "utf8"
   );
   const context = {
-    window: { UartDebugAvrMiniProjectCore: miniProjectCore },
+    window: { UartDebugAvrMiniProjectCore: miniProjectCore, UartDebugAvrProjectFormat: projectFormat },
     Uint8Array,
     Uint32Array,
     DataView,
