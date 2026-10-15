@@ -419,3 +419,60 @@ test("canonical pin declarations agree with the selected physical package withou
     ),
   );
 });
+
+test("nested PORT pin keys bind physical_pin and package_pin aliases to the selected package", () => {
+  const target = {
+    mcu: "attiny1624",
+    packageName: "SOIC-14",
+    device: { pinouts: { "SOIC-14": { pins: { PB1: 8, PA6: 4 } } } },
+  };
+  const content = yaml().replace(
+    "hardware_resources: {}",
+    "hardware_resources:\n  PORTB:\n    pins:\n      PB1:\n        physical_pin: 8\n        direction: output\n        external_driver:\n          port: opaque_bus_label\n  future_peripheral:\n    port: opaque_bus_label\n    arbitrary_modes:\n      - mode: custom\n",
+  );
+  assert.doesNotThrow(() => parseProjectResources(content, target));
+  assert.doesNotThrow(() =>
+    parseProjectResources(
+      content.replace("physical_pin: 8", "physical_pin: 8\n        package_pin: 8"),
+      target,
+    ),
+  );
+  assert.doesNotThrow(() =>
+    parseProjectResources(
+      content.replace("physical_pin: 8", "package_pin: 8"),
+      target,
+    ),
+  );
+  for (const invalid of [
+    // Pin 4 exists, but it belongs to PA6 rather than the enclosing PB1.
+    content.replace("physical_pin: 8", "physical_pin: 4"),
+    content.replace("physical_pin: 8", "physical_pin: 8\n        package_pin: 4"),
+    content.replace("physical_pin: 8", "physical_pin: 8\n        pin_symbol: PA6"),
+    content.replace("physical_pin: 8", "physical_pin: 8\n        port: A"),
+    content.replace("physical_pin: 8", "physical_pin: 8\n        port_pin: 4"),
+    content.replace("direction: output", "direction: output\n        coordinates:\n          physical_pin: 4"),
+    content.replace("PB1:", "PB4:"),
+    content.replace("PORTB:", "PORTA:"),
+  ])
+    assert.throws(() => parseProjectResources(invalid, target));
+});
+
+test("flat physical_pin aliases retain explicit coordinate and package validation", () => {
+  const target = {
+    mcu: "attiny1624",
+    packageName: "SOIC-14",
+    device: { pinouts: { "SOIC-14": { pins: { PB1: 8, PA6: 4 } } } },
+  };
+  const content = yaml().replace(
+    "hardware_resources: {}",
+    "hardware_resources:\n  led:\n    port: B\n    port_pin: 1\n    physical_pin: 8",
+  );
+  assert.doesNotThrow(() => parseProjectResources(content, target));
+  for (const physical of [4, 9, "eight"])
+    assert.throws(() =>
+      parseProjectResources(
+        content.replace("physical_pin: 8", `physical_pin: ${physical}`),
+        target,
+      ),
+    );
+});

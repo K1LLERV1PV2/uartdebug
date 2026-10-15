@@ -1462,12 +1462,7 @@ body.is-row-resizing * {
 }
 
 .canvas-split-container .ui-panel-header .custom-select-trigger {
-  padding: 0 40px 0 14px;
   font-size: 14px;
-}
-
-.canvas-split-container .ui-panel-header .custom-select-trigger::after {
-  right: 14px;
 }
 
 .editor-workspace.is-collapsed {

@@ -451,20 +451,51 @@ function validateHardwarePins(hardware, device, packageName) {
     ([name]) => name.toLowerCase() === packageName.toLowerCase(),
   )?.[1]?.pins;
   if (!pinout) fail("The selected package pin map is unavailable.", true);
-  const pending = [hardware];
+  const pending = [{ entry: hardware, port: null, symbol: null, namedPin: false }];
   while (pending.length) {
-    const entry = pending.pop();
+    const {
+      entry,
+      port: enclosingPort,
+      symbol: enclosingSymbol,
+      namedPin,
+    } = pending.pop();
     if (Array.isArray(entry)) {
-      pending.push(...entry);
+      pending.push(
+        ...entry.map((value) => ({
+          entry: value,
+          port: enclosingPort,
+          symbol: enclosingSymbol,
+          namedPin,
+        })),
+      );
       continue;
     }
     if (!isObject(entry)) continue;
+    // Canonical nested pin keys identify the same pin as explicit coordinates.
+    // Other resource keys remain opaque so future peripherals keep their shape.
+    for (const [key, value] of Object.entries(entry)) {
+      const portKey = /^PORT([A-Z])$/.exec(key);
+      const pinKey = /^P[A-Z]\d+$/.test(key);
+      pending.push({
+        entry: value,
+        port: portKey ? portKey[1] : enclosingPort,
+        symbol: portKey ? null : pinKey ? key : enclosingSymbol,
+        namedPin: pinKey,
+      });
+    }
     const present = (key) => Object.hasOwn(entry, key) && entry[key] !== null;
-    if (!["pin_symbol", "package_pin", "port_pin"].some(present)) {
-      pending.push(...Object.values(entry));
+    if (
+      !namedPin &&
+      !["pin_symbol", "package_pin", "physical_pin", "port_pin"].some(present)
+    ) {
       continue;
     }
-    let symbol = null;
+    let symbol = enclosingSymbol;
+    if (symbol && !Object.hasOwn(pinout, symbol))
+      fail(
+        "A nested pin key is unavailable in the selected device package.",
+        true,
+      );
     if (present("pin_symbol")) {
       if (
         typeof entry.pin_symbol !== "string" ||
@@ -474,10 +505,15 @@ function validateHardwarePins(hardware, device, packageName) {
           "A declared pin_symbol is unavailable in the selected device package.",
           true,
         );
+      if (symbol && symbol !== entry.pin_symbol)
+        fail(
+          "The declared pin_symbol disagrees with its enclosing pin key.",
+          true,
+        );
       symbol = entry.pin_symbol;
     }
     const coordinates = symbol && /^P([A-Z])(\d+)$/.exec(symbol);
-    let port = null;
+    let port = enclosingPort;
     if (present("port")) {
       if (
         typeof entry.port !== "string" ||
@@ -487,10 +523,15 @@ function validateHardwarePins(hardware, device, packageName) {
           "A declared port must use its canonical port letter or PORT name.",
           true,
         );
+      if (port && port !== entry.port.replace(/^PORT/, ""))
+        fail("The declared port disagrees with its enclosing PORT key.", true);
       port = entry.port.replace(/^PORT/, "");
-      if (symbol && (!coordinates || coordinates[1] !== port))
-        fail("The declared port disagrees with pin_symbol.", true);
     }
+    if (symbol && port && (!coordinates || coordinates[1] !== port))
+      fail(
+        "The declared port disagrees with pin_symbol or its enclosing pin key.",
+        true,
+      );
     if (present("port_pin")) {
       if (
         !Number.isSafeInteger(entry.port_pin) ||
@@ -508,8 +549,14 @@ function validateHardwarePins(hardware, device, packageName) {
           );
       }
     }
-    if (present("package_pin")) {
-      const physical = entry.package_pin;
+    if (
+      present("package_pin") &&
+      present("physical_pin") &&
+      entry.package_pin !== entry.physical_pin
+    )
+      fail("The declared package_pin and physical_pin must agree.", true);
+    for (const key of ["package_pin", "physical_pin"].filter(present)) {
+      const physical = entry[key];
       if (
         !Number.isSafeInteger(physical) ||
         physical <= 0 ||
@@ -517,11 +564,10 @@ function validateHardwarePins(hardware, device, packageName) {
         (symbol && pinout[symbol] !== physical)
       )
         fail(
-          "The declared package_pin disagrees with the selected package pin map.",
+          `The declared ${key} disagrees with the selected package pin map.`,
           true,
         );
     }
-    pending.push(...Object.values(entry));
   }
 }
 
