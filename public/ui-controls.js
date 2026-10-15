@@ -101,6 +101,7 @@
     const label = custom?.querySelector(".custom-select-value");
     if (!custom || !label) return;
     custom.style.removeProperty("--custom-select-width");
+    if (custom.classList.contains("is-icon-value")) return;
     const textWidth = Math.ceil(label.scrollWidth);
     custom.style.setProperty(
       "--custom-select-width",
@@ -114,8 +115,20 @@
     if (!list || !label) return;
 
     list.innerHTML = "";
-    label.textContent = getSelectDisplayText(select) || "Select option";
-    label.title = label.textContent;
+    const displayText = getSelectDisplayText(select) || "Select option";
+    const placeholderIcon = select.dataset.placeholderIcon &&
+      select.value === (select.dataset.placeholderValue || "")
+      ? document.getElementById(select.dataset.placeholderIcon)?.content?.querySelector("svg")
+      : null;
+    custom.classList.toggle("is-icon-value", !!placeholderIcon);
+    label.textContent = displayText;
+    if (placeholderIcon) label.replaceChildren(placeholderIcon.cloneNode(true));
+    label.setAttribute("aria-hidden", "true");
+    const trigger = custom.querySelector(".custom-select-trigger");
+    const accessibleLabel = select.getAttribute("aria-label") ||
+      select.labels?.[0]?.textContent?.trim() || "Select option";
+    trigger?.setAttribute("aria-label", `${accessibleLabel}: ${displayText}`);
+    trigger?.setAttribute("data-tooltip", `${accessibleLabel}: ${displayText}`);
     updateCustomSelectIntrinsicWidth(custom);
 
     const addOption = (option) => {

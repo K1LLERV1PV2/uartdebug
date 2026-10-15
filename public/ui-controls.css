@@ -128,7 +128,7 @@
   align-items: center;
   width: 100%;
   height: var(--ui-control-height);
-  padding: 0 40px 0 14px;
+  padding: var(--custom-select-trigger-padding, 0 40px 0 14px);
   overflow: hidden;
   border: 1px solid rgba(129, 159, 141, 0.34);
   border-radius: var(--ui-control-radius);
@@ -145,7 +145,7 @@
 
 .custom-select-trigger::after {
   position: absolute;
-  right: 14px;
+  right: var(--custom-select-arrow-inset, 14px);
   width: 0;
   height: 0;
   border-right: 5px solid transparent;
@@ -160,6 +160,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.custom-select.is-icon-value {
+  --custom-select-trigger-padding: 0 25px 0 11px;
+  --custom-select-arrow-inset: 10px;
+  width: calc(var(--ui-control-height) + 14px);
+}
+
+.custom-select-value > svg {
+  display: block;
+  width: 20px;
+  height: 20px;
 }
 
 .custom-select-trigger:hover,
