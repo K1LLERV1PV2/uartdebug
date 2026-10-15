@@ -43,6 +43,9 @@ test("one policy covers stage adaptation without changing repository source lang
   assert.ok(policy.includes("> ###### *[ИИ.N] Вопрос.*"));
   assert.match(policy, /preserving every complete existing ID/);
   assert.match(policy, /Never force an entire non-English specification into English/);
+  assert.match(policy, /Reusable_Target_Projects is a separate read-only reference library/);
+  assert.match(policy, /read Reusable_Target_Projects\/00_README\.md, then the chosen project's 00_README\.md before its relevant C variant/);
+  assert.match(policy, /Comparison controls are experiments, not recommended implementations/);
 });
 
 test("preflight messages follow regional English and Russian project locales", () => {

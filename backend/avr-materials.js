@@ -76,7 +76,7 @@ function titleOf(text, file) {
 
 function defaultReadable(file) {
   if (file === "AGENTS.md" || file.startsWith("Project_Rules/")) return /\.md$/i.test(file);
-  return file.startsWith("MCU_Knowledge_Base/") &&
+  return (file.startsWith("MCU_Knowledge_Base/") || file.startsWith("Reusable_Target_Projects/")) &&
     !/(?:^|\/)Problems(?: Ver\.[^/]*)?(?: \([^/]+\))?\.md$/i.test(file) && /\.(?:md|yaml|yml|json|c|h|svg)$/i.test(file);
 }
 
@@ -155,7 +155,8 @@ function loadMaterials(input = {}) {
   const document = (file) => {
     const text = read(file);
     const kind = file === "AGENTS.md" || file.startsWith("Project_Rules/") ? "project-rule" :
-      file.endsWith("00_README.md") ? "knowledge-map" : "reference";
+      file.endsWith("00_README.md") ? "knowledge-map" :
+        file.startsWith("Reusable_Target_Projects/") ? "reusable-example" : "reference";
     return { id: file, path: file, sourcePath: file, title: titleOf(text, file), kind,
       text, sha256: manifest.files[file].sha256, bytes: manifest.files[file].bytes,
       revision: manifest.commit, mediaType: file.endsWith(".json") ? "application/json" :

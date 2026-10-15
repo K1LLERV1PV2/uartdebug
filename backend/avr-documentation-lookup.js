@@ -17,7 +17,7 @@ const LOOKUP_TOOL = {
   name: "read_avr_documentation",
   strict: true,
   description:
-    "Browse, search and read the pinned UartDebug2 repository knowledge maps, programming rules, reviewed references, prepared examples, structured JSON/YAML, extracted official PDFs and DFP definitions. Repository-relative paths are document IDs. Notes, Problems.md, temporary files and unselected target projects are excluded. External HTML requires a prior search across ALL local documents for the same query plus an explicit necessary gap; at most two network requests are allowed.",
+    "Browse, search and read the pinned UartDebug2 repository knowledge maps, programming rules, reviewed references, prepared examples including the read-only Reusable_Target_Projects library, structured JSON/YAML, extracted official PDFs and DFP definitions. Repository-relative paths are document IDs. Notes, Problems.md, temporary files and unselected ordinary Target_Projects are excluded. External HTML requires a prior search across ALL local documents for the same query plus an explicit necessary gap; at most two network requests are allowed.",
   parameters: {
     type: "object",
     additionalProperties: false,

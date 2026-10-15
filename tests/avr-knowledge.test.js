@@ -3,6 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { loadKnowledge, resolveKnowledge, calculateTimerPeriod, calculateUsartBaud, calculateRtcPitPeriod, RTC_PIT_PERIOD_CYCLES } = require("../backend/avr-knowledge");
 const { loadMaterials, createProjectCatalog, REQUIRED_RULES, INITIAL_KNOWLEDGE, defaultReadable, exampleSource } = require("../backend/avr-materials");
 const { createDocumentationLookup } = require("../backend/avr-documentation-lookup");
@@ -85,6 +86,59 @@ test("notes, temporary material, problem ledgers and unselected target projects 
   }
   const result = await lookup.lookup({ operation: "search", query: "SECRET_NOTE SECRET_TARGET SECRET_PROBLEM SECRET_TEMP" });
   assert.equal(result.code, "local_documentation_not_found");
+});
+
+test("curated reusable maps and code are readable references without exposing unrelated projects or problem ledgers", async (t) => {
+  const rootMap = "Reusable_Target_Projects/00_README.md";
+  const projectMap = "Reusable_Target_Projects/Autobaud/00_README.md";
+  const sourcePath = "Reusable_Target_Projects/Autobaud/Autobaud.c";
+  const longSource = "#include <xc.h>\n" + Array.from({ length: 900 }, (_, index) => `// Измерение ${index}: bounded foreground distribution analysis and original hardware-validation limits.\n`).join("") + "// Final reusable_autobaud_tail_marker.\n";
+  const fixture = createMaterialsFixture(t, {
+    [rootMap]: "# Reusable projects\n\nRead [Autobaud](Autobaud/). Reuse patterns only for a verified configuration.\n",
+    [projectMap]: "# Autobaud\n\nRead [Autobaud.c](Autobaud.c). Original validation does not test the new board.\n",
+    [sourcePath]: longSource,
+    "Reusable_Target_Projects/Problems.md": "SECRET_REUSABLE_PROBLEM",
+    "Reusable_Target_Projects/Autobaud/Problems Ver.1.0 (ru).md": "SECRET_REUSABLE_PROBLEM",
+    "Reusable_Target_Projects/Autobaud/firmware.bin": "BINARY_REUSABLE_PAYLOAD",
+  });
+  const knowledge = loadMaterials({ root: fixture.root });
+  assert.deepEqual(knowledge.initialKnowledge.map((document) => document.path), INITIAL_KNOWLEDGE);
+  assert.equal(knowledge.documents.find((document) => document.id === sourcePath).kind, "reusable-example");
+  assert.equal(knowledge.documents.find((document) => document.id === rootMap).kind, "knowledge-map");
+  const lookup = createDocumentationLookup({ knowledge, enabled: false });
+  for (const documentId of [rootMap, projectMap]) {
+    const read = await lookup.lookup({ operation: "read", documentId });
+    assert.equal(read.ok, true);
+    assert.equal(read.results[0].text, fixture.files[documentId]);
+    const search = await lookup.lookup({ operation: "search", documentId, query: "Autobaud" });
+    assert.equal(search.ok, true);
+    assert.equal(search.results[0].documentId, documentId);
+  }
+  const tail = await lookup.lookup({ operation: "search", documentId: sourcePath, query: "reusable_autobaud_tail_marker" });
+  assert.equal(tail.ok, true);
+  assert.match(tail.results[0].text, /reusable_autobaud_tail_marker/);
+  assert.ok(tail.results[0].startByte > 0);
+  let sectionId = "";
+  let reconstructed = "";
+  let sections = 0;
+  do {
+    const result = await lookup.lookup({ operation: "read", documentId: sourcePath, sectionId });
+    assert.equal(result.ok, true);
+    assert.equal(result.results[0].sha256, fixture.manifest.files[sourcePath].sha256);
+    assert.ok(Buffer.byteLength(result.results[0].text) <= 12000);
+    reconstructed += result.results[0].text;
+    sectionId = result.nextSectionId;
+    sections++;
+  } while (sectionId);
+  assert.ok(sections > 2);
+  assert.equal(reconstructed, longSource);
+  assert.equal(crypto.createHash("sha256").update(reconstructed).digest("hex"), fixture.manifest.files[sourcePath].sha256);
+  for (const documentId of ["Reusable_Target_Projects/Problems.md", "Reusable_Target_Projects/Autobaud/Problems Ver.1.0 (ru).md", "Reusable_Target_Projects/Autobaud/firmware.bin", "Notes/private.md", "Target_Projects/Project_One/Project_One.md", "Temporary_References/tmp/pdfs/scratch.md"]) {
+    assert.equal((await lookup.lookup({ operation: "read", documentId })).code, "local_document_unknown", documentId);
+  }
+  const excluded = await lookup.lookup({ operation: "search", query: "SECRET_REUSABLE_PROBLEM BINARY_REUSABLE_PAYLOAD SECRET_NOTE SECRET_TARGET SECRET_TEMP" });
+  assert.equal(excluded.code, "local_documentation_not_found");
+  assert.equal(createProjectCatalog(knowledge).listProjects().length, 2, "reusable references do not become installable target projects");
 });
 test("resolver uses current maps and selected pin facts without the obsolete recipe restrictions", (t) => {
   const fixture = createMaterialsFixture(t);
