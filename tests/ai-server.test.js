@@ -1342,7 +1342,7 @@ test("profile writes share the account-save rate limit and never spend AI credit
   assert.equal(saves, 2);
 });
 
-test("serves independently revisioned account workspace snapshots", async (t) => {
+test("serves a complete project workspace with one revision and a legacy migration precondition", async (t) => {
   const calls = [];
   const emptyRecord = (schemaVersion) => ({
     revision: 0,
@@ -1365,13 +1365,13 @@ test("serves independently revisioned account workspace snapshots", async (t) =>
         accountKey: context.accountKey,
         documents: {
           chats: emptyRecord(1),
-          files: emptyRecord(2),
+          files: emptyRecord(3),
           instruction: emptyRecord(1),
         },
       };
     },
     writeAccountWorkspace(context, type, body) {
-      calls.push(["write", context.accountHash, type, body.baseRevision]);
+      calls.push(["write", context.accountHash, type, body.baseRevision, body.expectedLegacyInstructionRevision]);
       return {
         type,
         accountKey: context.accountKey,
@@ -1399,7 +1399,7 @@ test("serves independently revisioned account workspace snapshots", async (t) =>
   assert.equal(readResponse.status, 200);
   const readBody = await readResponse.json();
   assert.equal(readBody.ok, true);
-  assert.equal(readBody.documents.files.schemaVersion, 2);
+  assert.equal(readBody.documents.files.schemaVersion, 3);
   assert.equal(readBody.documents.instruction.revision, 0);
   assert.equal(
     readBody.accountKey,
@@ -1407,14 +1407,13 @@ test("serves independently revisioned account workspace snapshots", async (t) =>
   );
   assert.equal("accountHash" in readBody, false);
 
-  const instruction = {
-    schemaVersion: 1,
-    revision: 2,
-    markdown: "# Project\n",
-    skillRefs: [],
+  const workspace = {
+    schemaVersion: 3,
+    files: {}, authorship: {}, fileGroups: {}, miniProjects: {}, current: null,
+    draftCanvas: { schemaVersion: 2, revision: 0, markdown: "", locale: "", annotations: [] },
   };
   const writeResponse = await fetch(
-    `${baseUrl}/api/avr/ai/account/workspace/instruction`,
+    `${baseUrl}/api/avr/ai/account/workspace/files`,
     {
       method: "PUT",
       headers: {
@@ -1424,21 +1423,22 @@ test("serves independently revisioned account workspace snapshots", async (t) =>
       body: JSON.stringify({
         baseRevision: 0,
         expectedAccountKey: "public_account_key_12345678901234567890",
-        data: instruction,
+        expectedLegacyInstructionRevision: 0,
+        data: workspace,
       }),
     }
   );
   assert.equal(writeResponse.status, 200);
   const writeBody = await writeResponse.json();
   assert.equal(writeBody.ok, true);
-  assert.equal(writeBody.type, "instruction");
+  assert.equal(writeBody.type, "files");
   assert.equal(writeBody.document.revision, 1);
-  assert.deepEqual(writeBody.document.data, instruction);
+  assert.deepEqual(writeBody.document.data, workspace);
   assert.deepEqual(calls, [
     ["authenticate", "GET"],
     ["read", "private-account-hash"],
     ["authenticate", "PUT"],
-    ["write", "private-account-hash", "instruction", 0],
+    ["write", "private-account-hash", "files", 0, 0],
   ]);
 });
 

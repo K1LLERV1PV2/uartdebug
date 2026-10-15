@@ -101,36 +101,37 @@ Before enabling required sign-in in production:
 Google's console labels can change; the security properties above are the
 configuration requirements, regardless of where Google places them in its UI.
 
-## Account-scoped AVR workspace and canvas storage
+## Account-scoped project storage
 
 Google sign-in provides the account boundary for optional server-side
-continuity. While a valid Uart Debug session exists, the service stores two
-active revisioned documents for that account in the access SQLite database:
+continuity. The current browser synchronizes one complete schema-3 project
+snapshot through the existing account route named `files`. It includes C source,
+hidden resource YAML, descriptions and translations, assets, logical filenames,
+groups, selection and project metadata. Each project keeps its own schema-2
+canvas with requirements, language, MCU/package, inline questions/answers and
+authorship. The unfinished `draftCanvas` is stored in this same snapshot.
 
-- one complete AVR file-workspace snapshot, including C source, YAML
-  specifications, guides, file names, groups, current-file state and mini-project
-  metadata needed to reconstruct the file list;
-- one project canvas containing requirements, locale, selected MCU/package,
-  anchored annotations, user answers and document revision.
-
-Chat history saved by earlier releases remains in its separate `chats` record.
-Its storage route is retained for compatibility, but the current browser does
-not present chats or send their history as AI context. The canvas continues to
-use the account route named `instruction`; schema 2 replaces `skillRefs` with
-annotations, locale and target. Legacy schema-1 instructions can be read and
-migrated. Once a schema-2 canvas is saved, a legacy client cannot downgrade it:
-the server returns `account_data_schema_downgrade` instead of losing annotations.
+Older `files` schema-2 and standalone `instruction` records are migration input.
+Existing project canvases, including explicitly empty ones, are preserved. Only
+the formerly active legacy project lacking a canvas may inherit the old shared
+instruction. The initial consolidated save checks the file revision and the
+last-read `expectedLegacyInstructionRevision` in the same transaction, so an old
+tab cannot change the instruction between read and migration unnoticed. Once
+schema 3 is saved, older file schemas and separate instruction writes are
+rejected. Legacy instruction and chat records remain available for recovery;
+the current browser does not synchronize them or use chat history as AI context.
 
 The server derives the account from the authenticated session. A client-supplied
 account ID must never select another account's data. Without Google sign-in,
-the workspace and canvas remain browser-local. The canvas is kept in
-`localStorage` for unsigned and offline use. Interface preferences and Web
+the project workspace remains browser-local in a single `localStorage` envelope
+for unsigned and offline use. Interface preferences and Web
 Serial traffic remain excluded from account synchronization.
 
-Account documents are bounded before storage. The file snapshot ceiling is
+Account documents are bounded before storage. The entire project snapshot ceiling is
 4 MiB, with at most 256 files, 256 file groups and 128 mini-project records.
-The account canvas snapshot is limited to 256 KiB, including at most 128 KiB
-of requirements text and 100 annotations. Preserved legacy chat snapshots keep
+Each canvas keeps its text/annotation validation limits, including at most 128 KiB
+of requirements text and 100 annotations. Legacy standalone instruction records
+retain their 256 KiB ceiling. Preserved legacy chat snapshots keep
 their 1 MiB aggregate ceiling, up to 100 chats and 128 KiB per message.
 The AI request path validates canvas and project fields independently.
 
@@ -142,7 +143,7 @@ stale tab cannot cross an account switch. This is optimistic concurrency, not
 real-time merging of simultaneous edits.
 
 Before replacing a browser-local document with a cloud copy, the client keeps a
-bounded local recovery snapshot for `files` or `instruction`. An account
+bounded local recovery snapshot for the complete project workspace. An account
 transition must be recorded durably before local documents are replaced; if
 browser storage rejects that marker or a recovery copy, synchronization pauses
 without uploading the previous account's data.
@@ -277,8 +278,8 @@ The access database belongs at
 `/var/lib/uartdebug-ai/data/ai-access.sqlite`, outside versioned releases. It may
 contain HMAC-derived Google account IDs, Google profile names and user-edited display names, masked emails,
 installation HMACs, sessions, grants, reservations, ledger rows, retained legacy chat
-history, the latest account-scoped AVR file-workspace snapshot, and the separate
-latest canvas snapshot.
+history, the latest complete project snapshot, and legacy standalone canvas
+records retained for migration/recovery.
 It must not contain the Google client secret, Google tokens that are no longer
 needed, raw installation tokens, or the OpenAI API key.
 
@@ -293,6 +294,11 @@ intact; restarting schema-4 or later code does not repeat the session reset.
 Schema 5 adds the optional display-name override without expiring current
 sessions or changing account IDs, workspace snapshots, grants or usage. Rollback to
 older code requires its matching verified database backup.
+Schema 6 marks support for the unified project snapshot without rewriting legacy
+rows or expiring sessions. The browser consolidates them on its next account
+sync; the first write checks both legacy revisions. Deployment creates a verified
+database backup before activation, and the rollback guard refuses schema-5 code
+against the schema-6 database.
 
 There is currently no self-service account-data export or deletion UI. Signing
 out, clearing browser storage, or revoking the OAuth connection does not delete

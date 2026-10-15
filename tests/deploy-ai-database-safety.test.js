@@ -194,7 +194,8 @@ test("canvas smoke check verifies retired routes and avoids paid generation", as
   );
 });
 
-test("the rollback guard blocks a canvas database from a pre-canvas backend", (t) => {
+for (const [liveSchema, targetSchema] of [[3, 2], [6, 5]]) {
+test(`the rollback guard blocks schema ${liveSchema} from a schema ${targetSchema} backend`, (t) => {
   const bash =
     process.platform === "win32"
       ? "C:\\Program Files\\Git\\bin\\bash.exe"
@@ -214,7 +215,7 @@ test("the rollback guard blocks a canvas database from a pre-canvas backend", (t
   for (const root of roots)
     fs.mkdirSync(path.join(root, release), { recursive: true });
   const targetService = path.join(roots[1], release, "ai-access-service.js");
-  fs.writeFileSync(targetService, "const SCHEMA_VERSION = 2;\n");
+  fs.writeFileSync(targetService, `const SCHEMA_VERSION = ${targetSchema};\n`);
   const database = path.join(temporaryDirectory, "live.sqlite");
   fs.writeFileSync(
     database,
@@ -224,7 +225,7 @@ test("the rollback guard blocks a canvas database from a pre-canvas backend", (t
   fs.mkdirSync(bin);
   fs.writeFileSync(
     path.join(bin, "sqlite3"),
-    "#!/usr/bin/env bash\nprintf '3\\n'\n",
+    `#!/usr/bin/env bash\nprintf '${liveSchema}\\n'\n`,
     { mode: 0o755 },
   );
   const posix = (value) =>
@@ -254,18 +255,19 @@ test("the rollback guard blocks a canvas database from a pre-canvas backend", (t
       assert.equal(error.status, 78);
       assert.match(
         error.stderr,
-        /live AI database schema 3 is newer than target AI_ACCESS_SCHEMA_VERSION 2/,
+        new RegExp(`live AI database schema ${liveSchema} is newer than target AI_ACCESS_SCHEMA_VERSION ${targetSchema}`),
       );
       assert.match(error.stderr, /restore the matching verified pre-migration/);
       assert.equal(error.stdout, "");
       return true;
     },
   );
-  fs.writeFileSync(targetService, "const SCHEMA_VERSION = 3;\n");
+  fs.writeFileSync(targetService, `const SCHEMA_VERSION = ${liveSchema};\n`);
   const output = execFileSync(bash, args, executionOptions);
   assert.equal(output.trim().split(/\r?\n/).length, 3);
   assert.match(output, /backend\/20260924-120000-abcdef0/);
 });
+}
 
 test("release verification detects mismatched running knowledge or rules", async (t) => {
   const directory = fs.mkdtempSync(

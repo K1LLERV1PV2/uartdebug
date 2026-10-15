@@ -20,8 +20,6 @@
     "ud_avr_ai_local_dirty_v1";
   const STORAGE_PROJECT_AI_FILES_RECOVERY =
     "ud_avr_ai_files_recovery_v1";
-  const STORAGE_PROJECT_AI_INSTRUCTION_RECOVERY =
-    "ud_avr_ai_instruction_recovery_v1";
   const STORAGE_DEVICE_PANEL_STATE =
     "ud_avr_programming_device_panel_state_v2";
   const PROJECT_AI_AUTH_SESSION_URL = "/api/avr/ai/auth/session";
@@ -124,6 +122,7 @@
   // The unassigned specification is a draft before project creation. Project
   // specifications travel with their project in the workspace/account snapshot.
   let unassignedProjectInstructionDocument = null;
+  let workspaceDraftCanvasRestored = false;
   let projectInstructionInstanceId = null;
   let projectInstructionScopeEpoch = 0;
   let projectInstructionStorageReadFailed = false;
@@ -137,7 +136,6 @@
   let devicePanelHeight = DEVICE_PANEL_EXPANDED_HEIGHT;
   let devicePanelTransitionTimer = null;
   let projectAiAccountFilesSaveTimer = null;
-  let projectAiAccountInstructionSaveTimer = null;
   let projectAiAccountWorkspacePromise = null;
   let projectAiAccountWorkspaceRetryTimer = null;
   let projectAiAccountWorkspaceRetryCount = 0;
@@ -147,16 +145,16 @@
   let projectAiAccountSync = {
     ready: false,
     accountKey: "",
-    revisions: { files: 0, instruction: 0 },
-    dirty: { files: false, instruction: false },
-    saving: { files: false, instruction: false },
-    conflicts: { files: false, instruction: false },
-    mutations: { files: 0, instruction: 0 },
-    retries: { files: 0, instruction: 0 },
+    revisions: { files: 0 },
+    dirty: { files: false },
+    saving: { files: false },
+    conflicts: { files: false },
+    mutations: { files: 0 },
+    retries: { files: 0 },
+    legacyInstructionRevision: null,
   };
   let projectAiLocalDirty = {
     files: false,
-    instruction: false,
   };
   let projectAiRequestInFlight = false;
   let projectAiAuthSession = null;
@@ -986,13 +984,14 @@
 
   function loadState() {
     let loadedEnvelope = false;
+    workspaceDraftCanvasRestored = false;
     try {
       const rawState = localStorage.getItem(STORAGE_STATE);
       if (rawState) {
         const state = JSON.parse(rawState);
         if (
           state &&
-          state.schemaVersion === 2 &&
+          [2, 3].includes(state.schemaVersion) &&
           state.files &&
           typeof state.files === "object" &&
           !Array.isArray(state.files)
@@ -1011,6 +1010,10 @@
               ? state.miniProjects
               : {};
           current = typeof state.current === "string" ? state.current : null;
+          if (state.schemaVersion === 3 && state.draftCanvas && typeof state.draftCanvas === "object") {
+            unassignedProjectInstructionDocument = normalizeProjectInstructionDocument(state.draftCanvas);
+            workspaceDraftCanvasRestored = true;
+          }
           loadedEnvelope = true;
         }
       }
@@ -1062,68 +1065,36 @@
   }
 
   function persistState({ throwOnError = false } = {}) {
-    const serializedFiles = JSON.stringify(files);
-    let envelopeError = null;
-    let legacyMirrorsUpdated = false;
-
     try {
       localStorage.setItem(
         STORAGE_STATE,
-        JSON.stringify({
-          schemaVersion: 2,
-          files,
-          authorship: fileAuthorship,
-          fileGroups,
-          miniProjects,
-          current,
-        })
+        JSON.stringify(getProjectAiAccountFilesSnapshot({ captureLive: false }))
       );
     } catch (error) {
-      envelopeError = error;
       console.warn("Failed to persist AVR workspace state:", error);
+      if (throwOnError) throw error;
+      return false;
     }
-
+    // The envelope is the only live workspace store. Old split keys are read
+    // solely for migration and are discarded only after the atomic write.
     try {
-      localStorage.setItem(STORAGE_KEY, serializedFiles);
-      localStorage.setItem(LEGACY_STORAGE_KEY, serializedFiles);
-      localStorage.setItem(STORAGE_GROUPS, JSON.stringify(fileGroups));
-      if (envelopeError) {
-        localStorage.setItem(
-          STORAGE_MINI_PROJECTS,
-          JSON.stringify(miniProjects)
-        );
-      } else {
-        localStorage.removeItem(STORAGE_MINI_PROJECTS);
+      for (const key of [STORAGE_KEY, LEGACY_STORAGE_KEY, STORAGE_GROUPS,
+        STORAGE_MINI_PROJECTS, STORAGE_CURRENT, LEGACY_STORAGE_CURRENT,
+        STORAGE_PROJECT_INSTRUCTION, STORAGE_PROJECT_INSTRUCTION_LEGACY]) {
+        if (projectInstructionStorageReadFailed && [STORAGE_PROJECT_INSTRUCTION, STORAGE_PROJECT_INSTRUCTION_LEGACY].includes(key)) continue;
+        localStorage.removeItem(key);
       }
-      if (current) {
-        localStorage.setItem(STORAGE_CURRENT, current);
-        localStorage.setItem(LEGACY_STORAGE_CURRENT, current);
-      } else {
-        localStorage.removeItem(STORAGE_CURRENT);
-        localStorage.removeItem(LEGACY_STORAGE_CURRENT);
-      }
-      legacyMirrorsUpdated = true;
     } catch (error) {
-      console.warn("Failed to update legacy AVR storage mirrors:", error);
+      console.warn("Failed to remove migrated AVR storage keys:", error);
     }
-
-    if (envelopeError && legacyMirrorsUpdated) {
-      try {
-        localStorage.removeItem(STORAGE_STATE);
-      } catch (error) {
-        console.warn("Failed to discard stale AVR workspace state:", error);
-      }
-    }
-
-    if (envelopeError && throwOnError) throw envelopeError;
+    workspaceDraftCanvasRestored = true;
     if (
-      !envelopeError &&
       projectAiBootComplete &&
       !projectAiAccountWorkspaceApplying
     ) {
       markProjectAiAccountDocumentDirty("files");
     }
-    return !envelopeError;
+    return true;
   }
 
   function normalizeMiniProjectInstances() {
@@ -3773,7 +3744,7 @@
 
   function getUnassignedProjectInstructionSnapshot() {
     return normalizeProjectInstructionDocument(
-      unassignedProjectInstructionDocument || projectInstructionDocument
+      unassignedProjectInstructionDocument || (projectInstructionInstanceId ? null : projectInstructionDocument)
     );
   }
 
@@ -3931,31 +3902,31 @@
 
   function restoreProjectInstruction() {
     try {
-      const stored = window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION);
+      const stored = workspaceDraftCanvasRestored ? null
+        : window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION);
+      if (workspaceDraftCanvasRestored) {
+        projectInstructionDocument = getUnassignedProjectInstructionSnapshot();
+        // A failed legacy import remains recoverable after unrelated project
+        // edits have saved the canonical envelope. Never use it as a fallback.
+        const unreadableLegacy = window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION)
+          ?? window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION_LEGACY);
+        if (unreadableLegacy !== null) parseStoredProjectInstruction(unreadableLegacy);
+      }
       if (stored !== null) {
         projectInstructionDocument = parseStoredProjectInstruction(stored);
-      } else {
+      } else if (!workspaceDraftCanvasRestored) {
         const legacyStored = window.localStorage.getItem(
           STORAGE_PROJECT_INSTRUCTION_LEGACY
         );
         if (legacyStored !== null) {
           const legacyDocument = parseStoredProjectInstruction(legacyStored);
           projectInstructionDocument = legacyDocument;
-          try {
-            window.localStorage.setItem(
-              STORAGE_PROJECT_INSTRUCTION,
-              JSON.stringify(projectInstructionDocument)
-            );
-          } catch {
-            console.warn(
-              "The migrated project instruction could not be saved locally."
-            );
-          }
         }
       }
       projectInstructionStorageReadFailed = false;
     } catch {
-      projectInstructionDocument = normalizeProjectInstructionDocument(null);
+      projectInstructionDocument = workspaceDraftCanvasRestored
+        ? getUnassignedProjectInstructionSnapshot() : normalizeProjectInstructionDocument(null);
       projectInstructionStorageReadFailed = true;
       setProjectInstructionSaveState("Stored instruction is unreadable", {
         error: true,
@@ -3968,6 +3939,9 @@
     const linkedProject = getMiniProjectForFile(current);
     if (linkedProject && !linkedProject.project.canvas && !projectInstructionStorageReadFailed) {
       linkedProject.project.canvas = getProjectInstructionSnapshot();
+    }
+    for (const project of Object.values(miniProjects)) {
+      if (!project.canvas) project.canvas = normalizeProjectInstructionDocument(null);
     }
     activateCurrentProjectCanvas({ savePrevious: false, legacyFallback: true });
   }
@@ -3995,17 +3969,13 @@
       unassignedProjectInstructionDocument = getProjectInstructionSnapshot();
     }
     if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
-      markProjectAiAccountDocumentDirty(project ? "files" : "instruction");
+      markProjectAiAccountDocumentDirty("files");
     }
 
     const save = () => {
       job.timer = null;
       try {
-        if (project) persistState({ throwOnError: true });
-        else window.localStorage.setItem(
-          STORAGE_PROJECT_INSTRUCTION,
-          JSON.stringify(getUnassignedProjectInstructionSnapshot())
-        );
+        persistState({ throwOnError: true });
       } catch {
         job.attempts += 1;
         const retrying = job.attempts < 3;
@@ -4999,10 +4969,15 @@
       const parsed = JSON.parse(
         window.localStorage.getItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC) || "null"
       );
-      if (!parsed || ![1, 2].includes(parsed.schemaVersion) || !parsed.accountKey) {
+      if (!parsed || ![1, 2, 3].includes(parsed.schemaVersion) || !parsed.accountKey) {
         return null;
       }
-      return parsed;
+      return {
+        ...parsed,
+        revisions: { files: parsed.revisions?.files },
+        dirty: { files: parsed.dirty?.files === true || parsed.dirty?.instruction === true },
+        conflicts: { files: parsed.conflicts?.files === true || parsed.conflicts?.instruction === true },
+      };
     } catch {
       return null;
     }
@@ -5013,13 +4988,10 @@
       const stored = JSON.parse(
         window.localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY) || "null"
       );
-      for (const kind of ["files", "instruction"]) {
-        projectAiLocalDirty[kind] = stored?.dirty?.[kind] === true;
-      }
+      projectAiLocalDirty.files = stored?.dirty?.files === true || stored?.dirty?.instruction === true;
     } catch {
       projectAiLocalDirty = {
         files: true,
-        instruction: true,
       };
     }
   }
@@ -5029,7 +5001,7 @@
       window.localStorage.setItem(
         STORAGE_PROJECT_AI_LOCAL_DIRTY,
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 3,
           dirty: projectAiLocalDirty,
           updatedAt: Date.now(),
         })
@@ -5040,7 +5012,7 @@
   }
 
   function setProjectAiLocalDirty(kind, dirty) {
-    if (!["files", "instruction"].includes(kind)) return;
+    if (kind !== "files") return;
     projectAiLocalDirty[kind] = dirty === true;
     persistProjectAiLocalDirtyState();
   }
@@ -5049,7 +5021,9 @@
     const stored = readStoredProjectAiAccountSync();
     if (!stored) return;
     projectAiAccountSync.accountKey = String(stored.accountKey || "");
-    for (const kind of ["files", "instruction"]) {
+    projectAiAccountSync.legacyInstructionRevision = Number.isSafeInteger(stored.legacyInstructionRevision)
+      ? stored.legacyInstructionRevision : null;
+    for (const kind of ["files"]) {
       const revision = Number(stored.revisions?.[kind]);
       projectAiAccountSync.revisions[kind] =
         Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
@@ -5065,11 +5039,12 @@
       window.localStorage.setItem(
         STORAGE_PROJECT_AI_ACCOUNT_SYNC,
         JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: 3,
           accountKey: projectAiAccountSync.accountKey,
           revisions: projectAiAccountSync.revisions,
           dirty: projectAiAccountSync.dirty,
           conflicts: projectAiAccountSync.conflicts,
+          legacyInstructionRevision: projectAiAccountSync.legacyInstructionRevision,
           updatedAt: Date.now(),
         })
       );
@@ -5080,20 +5055,26 @@
     }
   }
 
-  function getProjectAiAccountFilesSnapshot() {
-    if (editor && current && hasFile(current)) {
+  function getProjectAiAccountFilesSnapshot({ captureLive = true } = {}) {
+    if (captureLive && editor && current && hasFile(current)) {
       files[current] = editor.getValue();
     }
     for (const fileName of Object.keys(files)) {
       setFileAuthorship(fileName, fileAuthorship[fileName], files[fileName]);
     }
+    if (captureLive && projectInstructionInstanceId && miniProjects[projectInstructionInstanceId]) {
+      miniProjects[projectInstructionInstanceId].canvas = getProjectInstructionSnapshot();
+    } else if (captureLive && !projectInstructionInstanceId) {
+      unassignedProjectInstructionDocument = getProjectInstructionSnapshot();
+    }
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       files: cloneJsonMetadata(files, {}),
       authorship: cloneJsonMetadata(fileAuthorship, {}),
       fileGroups: cloneJsonMetadata(fileGroups, {}),
       miniProjects: cloneJsonMetadata(miniProjects, {}),
       current: typeof current === "string" ? current : null,
+      draftCanvas: getUnassignedProjectInstructionSnapshot(),
     };
   }
 
@@ -5110,7 +5091,7 @@
       );
     }
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       files: normalizedFiles,
       authorship: normalizedAuthorship,
       fileGroups: createDictionary(cloneJsonMetadata(source.fileGroups, {})),
@@ -5118,22 +5099,35 @@
         cloneJsonMetadata(source.miniProjects, {})
       ),
       current: typeof source.current === "string" ? source.current : null,
+      draftCanvas: normalizeProjectInstructionDocument(source.draftCanvas),
     };
+  }
+
+  function migrateLegacyProjectAiAccountSnapshot(rawData, legacyInstruction) {
+    const source = rawData && typeof rawData === "object" ? rawData : {};
+    const snapshot = normalizeProjectAiAccountFilesSnapshot(source);
+    if (source.schemaVersion !== 3) {
+      snapshot.draftCanvas = normalizeProjectInstructionDocument(legacyInstruction);
+    }
+    for (const project of Object.values(snapshot.miniProjects)) {
+      if (!project || typeof project !== "object") continue;
+      const active = Object.values(project.files || {}).includes(snapshot.current)
+        || Object.values(project.guides || {}).some(guide => guide?.fileName === snapshot.current);
+      project.canvas = normalizeProjectInstructionDocument(project.canvas
+        || (source.schemaVersion !== 3 && active ? snapshot.draftCanvas : null));
+    }
+    return snapshot;
   }
 
   function getProjectAiAccountDocumentSnapshot(kind) {
     if (kind === "files") return getProjectAiAccountFilesSnapshot();
-    if (kind === "instruction") return getUnassignedProjectInstructionSnapshot();
     throw new TypeError(`Unsupported account document: ${kind}`);
   }
 
   function projectAiAccountDocumentsMatch(kind, remoteData) {
     try {
       const localData = getProjectAiAccountDocumentSnapshot(kind);
-      const normalizedRemote =
-        kind === "instruction"
-            ? normalizeProjectInstructionDocument(remoteData)
-            : normalizeProjectAiAccountFilesSnapshot(remoteData);
+      const normalizedRemote = normalizeProjectAiAccountFilesSnapshot(remoteData);
       return JSON.stringify(localData) === JSON.stringify(normalizedRemote);
     } catch {
       return false;
@@ -5143,16 +5137,14 @@
   function getEmptyProjectAiAccountDocument(kind) {
     if (kind === "files") {
       return {
-        schemaVersion: 2,
+        schemaVersion: 3,
         files: {},
         authorship: {},
         fileGroups: {},
         miniProjects: {},
         current: null,
+        draftCanvas: normalizeProjectInstructionDocument(null),
       };
-    }
-    if (kind === "instruction") {
-      return normalizeProjectInstructionDocument(null);
     }
     throw new TypeError(`Unsupported account document: ${kind}`);
   }
@@ -5162,13 +5154,10 @@
     data,
     sourceAccountKey = projectAiAccountSync.accountKey
   ) {
-    if (kind !== "files" && kind !== "instruction") {
+    if (kind !== "files") {
       throw new TypeError(`Unsupported account document: ${kind}`);
     }
-    const storageKeyBase =
-      kind === "files"
-        ? STORAGE_PROJECT_AI_FILES_RECOVERY
-        : STORAGE_PROJECT_AI_INSTRUCTION_RECOVERY;
+    const storageKeyBase = STORAGE_PROJECT_AI_FILES_RECOVERY;
     const recoveryScope =
       String(sourceAccountKey || "browser-local")
         .replace(/[^A-Za-z0-9_-]/g, "")
@@ -5182,6 +5171,9 @@
           sourceAccountKey: recoveryScope,
           savedAt: Date.now(),
           data,
+          ...(projectInstructionStorageReadFailed ? { unreadableDraft:
+            window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION)
+              ?? window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION_LEGACY) } : {}),
         })
       );
       const scopedCopies = [];
@@ -5214,7 +5206,8 @@
   function applyProjectAiAccountFilesSnapshot(rawData) {
     if (
       !rawData ||
-      rawData.schemaVersion !== 2 ||
+      rawData.schemaVersion !== 3 ||
+      !rawData.draftCanvas ||
       !rawData.files ||
       typeof rawData.files !== "object" ||
       Array.isArray(rawData.files)
@@ -5227,6 +5220,11 @@
       fileGroups,
       miniProjects,
       current,
+      unassignedProjectInstructionDocument,
+      projectInstructionDocument,
+      projectInstructionInstanceId,
+      workspaceDraftCanvasRestored,
+      projectInstructionStorageReadFailed,
     };
     files = createDictionary(cloneJsonMetadata(rawData.files, {}));
     fileAuthorship = createDictionary(
@@ -5238,15 +5236,24 @@
     fileGroups = createDictionary(cloneJsonMetadata(rawData.fileGroups, {}));
     miniProjects = createDictionary(cloneJsonMetadata(rawData.miniProjects, {}));
     current = typeof rawData.current === "string" ? rawData.current : null;
+    unassignedProjectInstructionDocument = normalizeProjectInstructionDocument(rawData.draftCanvas);
+    workspaceDraftCanvasRestored = true;
+    projectInstructionStorageReadFailed = false;
     normalizeFileGroups();
     normalizeMiniProjectInstances();
     if (current && !hasFile(current)) current = null;
     migrateLooseFilesToProjects();
     if (!current) current = getVisibleWorkspaceFileNames()[0] || null;
+    const activeProject = getMiniProjectForFile(current);
+    projectInstructionInstanceId = activeProject?.instanceId || null;
+    projectInstructionDocument = normalizeProjectInstructionDocument(activeProject
+      ? activeProject.project.canvas : unassignedProjectInstructionDocument);
     try {
       persistState({ throwOnError: true });
     } catch (error) {
-      ({ files, fileAuthorship, fileGroups, miniProjects, current } =
+      ({ files, fileAuthorship, fileGroups, miniProjects, current,
+        unassignedProjectInstructionDocument, projectInstructionDocument,
+        projectInstructionInstanceId, workspaceDraftCanvasRestored, projectInstructionStorageReadFailed } =
         previousWorkspace);
       console.warn("The cloud AVR workspace could not be saved locally:", error);
       return false;
@@ -5260,7 +5267,7 @@
       documentationEditSaveTimer = null;
     }
     for (const scope of projectInstructionSaveJobs.keys()) {
-      if (scope !== null) cancelProjectInstructionSave(scope);
+      cancelProjectInstructionSave(scope);
     }
     renderOutliner();
     if (editor) {
@@ -5271,7 +5278,7 @@
       scheduleMarkdownLivePreview("editor");
     }
     updateEditorFileWatermark(current || "");
-    activateCurrentProjectCanvas({ savePrevious: false, legacyFallback: true });
+    activateCurrentProjectCanvas({ savePrevious: false });
     refreshDocumentationPane();
     scheduleDocumentationMarkerRefresh();
     resetHexArtifact();
@@ -5284,27 +5291,6 @@
     try {
       if (kind === "files") {
         if (!applyProjectAiAccountFilesSnapshot(data)) return false;
-      } else if (kind === "instruction") {
-        const nextInstruction = normalizeProjectInstructionDocument(data);
-        try {
-          window.localStorage.setItem(
-            STORAGE_PROJECT_INSTRUCTION,
-            JSON.stringify(nextInstruction)
-          );
-        } catch (error) {
-          console.warn(
-            "The cloud Project instruction could not be saved locally:",
-            error
-          );
-          return false;
-        }
-        cancelProjectInstructionSave(null);
-        projectInstructionStorageReadFailed = false;
-        unassignedProjectInstructionDocument = nextInstruction;
-        const linkedProject = getMiniProjectForFile(current);
-        if (!linkedProject || !linkedProject.project.canvas) {
-          activateCurrentProjectCanvas({ savePrevious: false, legacyFallback: true });
-        }
       } else {
         return false;
       }
@@ -5330,20 +5316,19 @@
   }
 
   function scheduleProjectAiAccountDocumentSave(kind, delay = 700) {
+    if (kind !== "files") return;
     if (!projectAiAccountSync.ready || projectAiAccountSync.conflicts[kind]) return;
-    const currentTimer = kind === "files" ? projectAiAccountFilesSaveTimer : projectAiAccountInstructionSaveTimer;
+    const currentTimer = projectAiAccountFilesSaveTimer;
     if (currentTimer) window.clearTimeout(currentTimer);
     const timer = window.setTimeout(() => {
-      if (kind === "files") projectAiAccountFilesSaveTimer = null;
-      else projectAiAccountInstructionSaveTimer = null;
+      projectAiAccountFilesSaveTimer = null;
       void saveProjectAiAccountDocument(kind);
     }, delay);
-    if (kind === "files") projectAiAccountFilesSaveTimer = timer;
-    else projectAiAccountInstructionSaveTimer = timer;
+    projectAiAccountFilesSaveTimer = timer;
   }
 
   function markProjectAiAccountDocumentDirty(kind) {
-    if (!["files", "instruction"].includes(kind)) return;
+    if (kind !== "files") return;
     projectAiAccountSync.dirty[kind] = true;
     projectAiAccountSync.mutations[kind] += 1;
     setProjectAiLocalDirty(kind, true);
@@ -5352,10 +5337,7 @@
   }
 
   function getProjectAiAccountConflictMessage(kind) {
-    if (kind === "instruction") {
-      return "Project instruction changed in another tab or device. The local copy was kept and cloud saving was paused to avoid overwriting it.";
-    }
-    return "The AVR file workspace changed in another tab or device. The local copy was kept and cloud saving was paused to avoid overwriting it.";
+    return "Projects changed in another tab or browser. The local copy was kept and cloud saving was paused to avoid overwriting it.";
   }
 
   function getProjectAiAccountSaveFailureMessage(kind, result, status) {
@@ -5368,6 +5350,7 @@
 
   async function saveProjectAiAccountDocument(kind) {
     if (
+      kind !== "files" ||
       !projectAiAccountSync.ready ||
       !projectAiAccountSync.dirty[kind] ||
       projectAiAccountSync.saving[kind] ||
@@ -5393,6 +5376,8 @@
         body: JSON.stringify({
           baseRevision,
           expectedAccountKey: accountKey,
+          ...(Number.isSafeInteger(projectAiAccountSync.legacyInstructionRevision)
+            ? { expectedLegacyInstructionRevision: projectAiAccountSync.legacyInstructionRevision } : {}),
           data,
         }),
       });
@@ -5458,11 +5443,13 @@
         throw new Error(`Account ${kind} save returned an invalid revision.`);
       }
       projectAiAccountSync.revisions[kind] = revision;
+      projectAiAccountSync.legacyInstructionRevision = null;
       projectAiAccountSync.dirty[kind] =
         projectAiAccountSync.mutations[kind] !== mutation;
       projectAiAccountSync.retries[kind] = 0;
       if (!projectAiAccountSync.dirty[kind]) {
         setProjectAiLocalDirty(kind, false);
+        setProjectAiAccountStatus("Projects synchronized with your account.", "success");
       }
       persistProjectAiAccountSyncState();
     } catch (error) {
@@ -5509,13 +5496,11 @@
     projectAiAccountWorkspaceRetryCount = 0;
     for (const timer of [
       projectAiAccountFilesSaveTimer,
-      projectAiAccountInstructionSaveTimer,
     ]) {
       if (timer) window.clearTimeout(timer);
     }
     projectAiAccountFilesSaveTimer = null;
-    projectAiAccountInstructionSaveTimer = null;
-    for (const kind of ["files", "instruction"]) {
+    for (const kind of ["files"]) {
       projectAiAccountSync.saving[kind] = false;
       projectAiAccountSync.retries[kind] = 0;
     }
@@ -5530,22 +5515,15 @@
           ([name, content]) => name !== "main.c" || String(content || "").length > 0
         ) ||
         Object.keys(snapshot.fileGroups || {}).length > 0 ||
-        Object.keys(snapshot.miniProjects || {}).length > 0
-      );
-    }
-    if (kind === "instruction") {
-      const snapshot = getUnassignedProjectInstructionSnapshot();
-      return (
-        String(snapshot.markdown || "").trim().length > 0 ||
-        (Array.isArray(snapshot.annotations) && snapshot.annotations.length > 0)
+        Object.keys(snapshot.miniProjects || {}).length > 0 ||
+        String(snapshot.draftCanvas.markdown || "").trim().length > 0
       );
     }
     return false;
   }
 
   function getProjectAiAccountDocumentLabel(kind) {
-    if (kind === "instruction") return "Project instruction";
-    return "AVR files";
+    return "Projects";
   }
 
   function expireProjectAiWorkspaceSession(message) {
@@ -5638,12 +5616,20 @@
       const differentKnownAccount =
         !!stored?.accountKey && stored.accountKey !== accountKey;
       const documents = result.documents || result.workspace || result;
+      const remoteFiles = normalizeProjectAiRemoteDocument(documents.files);
+      const legacyInstruction = normalizeProjectAiRemoteDocument(documents.instruction);
+      const migrationRequired = remoteFiles.data?.schemaVersion !== 3;
+      projectAiAccountSync.legacyInstructionRevision = migrationRequired
+        ? legacyInstruction.revision : null;
+      if (migrationRequired && (remoteFiles.data !== null || legacyInstruction.data !== null)) {
+        remoteFiles.data = migrateLegacyProjectAiAccountSnapshot(remoteFiles.data, legacyInstruction.data);
+      }
       projectAiAccountSync.accountKey = accountKey;
       const localRecoveryAccountKey =
         String(stored?.accountKey || "").trim() || "browser-local";
 
       if (!sameAccount) {
-        for (const kind of ["files", "instruction"]) {
+        for (const kind of ["files"]) {
           projectAiAccountSync.revisions[kind] = 0;
           projectAiAccountSync.dirty[kind] = false;
           projectAiAccountSync.conflicts[kind] = true;
@@ -5659,14 +5645,9 @@
         }
       }
 
-      const remoteDocuments = Object.fromEntries(
-        ["files", "instruction"].map((kind) => [
-          kind,
-          normalizeProjectAiRemoteDocument(documents[kind]),
-        ])
-      );
+      const remoteDocuments = { files: remoteFiles };
       const missingImportCandidates = differentKnownAccount
-        ? ["files", "instruction"].filter(
+        ? ["files"].filter(
             (kind) =>
               remoteDocuments[kind].revision === 0 &&
               remoteDocuments[kind].data === null &&
@@ -5687,7 +5668,7 @@
 
       const pendingConflicts = [];
 
-      for (const kind of ["files", "instruction"]) {
+      for (const kind of ["files"]) {
         const remote = remoteDocuments[kind];
         const storedRevision = sameAccount ? Number(stored.revisions?.[kind]) : 0;
         const mutationChangedDuringRequest =
@@ -5707,7 +5688,7 @@
         projectAiAccountSync.conflicts[kind] = false;
         projectAiAccountSync.retries[kind] = 0;
 
-        if (remote.revision === 0 || remote.data === null) {
+        if (remote.data === null) {
           projectAiAccountSync.revisions[kind] = 0;
           if (rememberedConflict) {
             const label = getProjectAiAccountDocumentLabel(kind);
@@ -5895,13 +5876,20 @@
       }
 
       if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
+      // Accepting a legacy cloud copy is a migration, not a completed sync.
+      // Save the consolidated envelope with the files revision and the legacy
+      // instruction revision captured by the same GET.
+      if (migrationRequired && !projectAiAccountSync.conflicts.files) {
+        projectAiAccountSync.dirty.files = true;
+        setProjectAiLocalDirty("files", true);
+      }
       projectAiAccountSync.ready = true;
       if (projectAiAccountWorkspaceRetryTimer) {
         window.clearTimeout(projectAiAccountWorkspaceRetryTimer);
         projectAiAccountWorkspaceRetryTimer = null;
       }
       projectAiAccountWorkspaceRetryCount = 0;
-      const pausedKinds = ["files", "instruction"].filter(
+      const pausedKinds = ["files"].filter(
         (kind) => projectAiAccountSync.conflicts[kind]
       );
       if (pausedKinds.length) {
@@ -5911,11 +5899,13 @@
             .join(", ")}. Local data was not overwritten.`,
           "error"
         );
+      } else if (projectAiAccountSync.dirty.files) {
+        setProjectAiAccountStatus("Projects are saved locally; synchronizing your account…", "");
       } else {
-        setProjectAiAccountStatus("Account workspace synchronized.", "success");
+        setProjectAiAccountStatus("Projects synchronized with your account.", "success");
       }
       persistProjectAiAccountSyncState();
-      for (const kind of ["files", "instruction"]) {
+      for (const kind of ["files"]) {
         if (projectAiAccountSync.dirty[kind]) {
           scheduleProjectAiAccountDocumentSave(kind, 60);
         }
@@ -7613,10 +7603,21 @@
     });
     if (!confirmed) return;
 
+    if (!hasFile(name) || (linkedProject && miniProjects[linkedProject.instanceId] !== linkedProject.project)) return;
+
     const namesToDelete = deleteWholeProject
       ? getMiniProjectLocalFileNames(linkedProject.project)
       : [name];
     const deletedCurrent = namesToDelete.includes(current);
+    if (deleteWholeProject) cancelProjectInstructionSave(linkedProject.instanceId);
+    if (deletedCurrent && saveTimer) {
+      window.clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    if (documentationEditSaveTimer) {
+      window.clearTimeout(documentationEditSaveTimer);
+      documentationEditSaveTimer = null;
+    }
     for (const fileName of namesToDelete) {
       delete files[fileName];
       delete fileAuthorship[fileName];
@@ -7628,6 +7629,11 @@
     } else {
       removeMiniProjectFile(name);
     }
+    if (!getVisibleWorkspaceFileNames().length) {
+      cancelProjectInstructionSave(null);
+      unassignedProjectInstructionDocument = normalizeProjectInstructionDocument(null);
+      projectInstructionStorageReadFailed = false;
+    }
     if (deletedCurrent) {
       current = getVisibleWorkspaceFileNames()[0] || null;
       activateCurrentProjectCanvas({ savePrevious: false });
@@ -7638,7 +7644,7 @@
         localStorage.removeItem(STORAGE_CURRENT);
         localStorage.removeItem(LEGACY_STORAGE_CURRENT);
       } catch {}
-      if (Object.keys(files).length === 0 && editor) {
+      if (editor) {
         editor.setValue("");
         editor.setOption("readOnly", "nocursor");
       }

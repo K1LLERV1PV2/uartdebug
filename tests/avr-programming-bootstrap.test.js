@@ -292,7 +292,9 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
     "createEmptyProject", "installMiniProjectDefinition", "updateMiniProjectInstance",
     "selectFile", "getProjectInstructionSnapshot", "getProjectAiAccountFilesSnapshot",
     "getProjectAiAccountDocumentSnapshot", "applyProjectAiAccountDocument",
-    "restoreProjectInstruction", "loadState", "persistState", "persistProjectInstruction",
+    "restoreProjectInstruction", "loadState", "persistState", "persistProjectInstruction", "deleteFile",
+    "migrateLegacyProjectAiAccountSnapshot", "initializeProjectAiAccountWorkspace", "saveProjectAiAccountDocument",
+    "resetProjectAiAccountWorkspaceRuntime", "restoreProjectAiLocalDirtyState", "restoreProjectAiAccountSyncState",
     "getPublicMiniProjectInstance", "getVisibleWorkspaceFileNames", "migrateLooseFilesToProjects", "getEmptyProjectAiAccountDocument", "isHiddenMiniProjectFile",
     "getProjectAiRequestPayload", "assertProjectAiUpdateIsFresh",
     "assertProjectAiInstructionIsFresh", "canvasScope() { return projectInstructionScopeEpoch; }",
@@ -305,6 +307,25 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
       updateProjectInstructionFromUser(markdown, createMarkdownAuthorship(markdown, "human"));
       persistProjectInstruction({ immediate: true, recover: true });
     }`,
+    `queueCanvas(markdown) {
+      updateProjectInstructionFromUser(markdown, createMarkdownAuthorship(markdown, "human"));
+      persistProjectInstruction({ recover: true });
+    }`,
+    `confirm(value) { showSiteConfirm = async () => value; }`,
+    `account(accountKey, ready = false) {
+      projectAiBootComplete = true;
+      projectAiAuthSession = { authenticated: true, accountKey };
+      projectAiAccountSync.accountKey = accountKey;
+      projectAiAccountSync.ready = ready;
+    }`,
+    `syncState() { return JSON.parse(JSON.stringify(projectAiAccountSync)); }`,
+    `setCanvasDocument(canvas) { projectInstructionDocument = normalizeProjectInstructionDocument(canvas); }`,
+    `codeEditor(markdown) {
+      let value = markdown;
+      editor = { getValue: () => value, setValue(next) { value = next; }, setOption() {}, refresh() {} };
+    }`,
+    `codeValue() { return editor?.getValue(); }`,
+    `pendingCanvasScopes() { return [...projectInstructionSaveJobs.keys()]; }`,
   ], {
     document,
     window: {
@@ -312,11 +333,14 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
         getItem: (key) => storage.get(key) ?? null,
         setItem: options.setItem || ((key, value) => storage.set(key, String(value))),
         removeItem: (key) => storage.delete(key),
+        get length() { return storage.size; },
+        key: (index) => [...storage.keys()][index] ?? null,
       },
       requestAnimationFrame: () => 1,
       setTimeout: options.setTimeout || (() => 1),
       clearTimeout: options.clearTimeout || (() => {}),
     },
+    fetch: options.fetch,
   });
   hooks.prepare();
   return { hooks, storage, document };
@@ -338,7 +362,8 @@ test("new projects have empty canvases and project switches restore each saved d
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "First project's requirements");
   const snapshot = hooks.getProjectAiAccountFilesSnapshot();
   assert.equal(snapshot.miniProjects[second.instanceId].canvas.markdown, "Second project's requirements");
-  assert.equal(hooks.getProjectAiAccountDocumentSnapshot("instruction").markdown, "Loose-file draft");
+  assert.equal(snapshot.schemaVersion, 3);
+  assert.equal(snapshot.draftCanvas.markdown, "Loose-file draft");
 
   const reloaded = loadCanvasLifecycleHooks(storage).hooks;
   reloaded.loadState();
@@ -367,8 +392,9 @@ test("tutorial imports start blank while AI creation and updates retain their ca
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Add a timer");
 });
 
-test("account project canvases survive round trips independently of the loose-file canvas", () => {
+test("account snapshots restore project canvases and the workspace draft atomically", () => {
   const { hooks } = loadCanvasLifecycleHooks();
+  hooks.editCanvas("Cloud workspace draft");
   hooks.createEmptyProject();
   hooks.editCanvas("Project requirements");
   const accountFiles = hooks.getProjectAiAccountFilesSnapshot();
@@ -377,16 +403,18 @@ test("account project canvases survive round trips independently of the loose-fi
   assert.equal(hooks.applyProjectAiAccountDocument("files", accountFiles), true);
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Project requirements");
   assert.equal(hooks.applyProjectAiAccountDocument("instruction", {
-    schemaVersion: 2, revision: 3, markdown: "Cloud loose-file draft", annotations: [],
-  }), true);
+    schemaVersion: 2, revision: 3, markdown: "Stale standalone draft", annotations: [],
+  }), false);
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Project requirements");
-  assert.equal(hooks.getProjectAiAccountDocumentSnapshot("instruction").markdown, "Cloud loose-file draft");
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().draftCanvas.markdown, "Cloud workspace draft");
 });
 
 test("migrates the former shared canvas to the active legacy project without copying it to new projects", () => {
   const { hooks, storage } = loadCanvasLifecycleHooks();
   const legacy = hooks.createEmptyProject();
   const files = hooks.getProjectAiAccountFilesSnapshot();
+  files.schemaVersion = 2;
+  delete files.draftCanvas;
   delete files.miniProjects[legacy.instanceId].canvas;
   storage.set("ud_avr_programming_state_v2", JSON.stringify(files));
   storage.set("ud_avr_ai_project_instruction_v2", JSON.stringify({
@@ -446,10 +474,385 @@ test("switching projects preserves failed-save warnings and retries the original
 test("restoring a workspace keeps an unreadable loose-canvas warning visible", () => {
   const { hooks, storage, document } = loadCanvasLifecycleHooks();
   hooks.createEmptyProject();
+  const legacy = JSON.parse(storage.get("ud_avr_programming_state_v2"));
+  legacy.schemaVersion = 2;
+  delete legacy.draftCanvas;
+  storage.set("ud_avr_programming_state_v2", JSON.stringify(legacy));
   storage.set("ud_avr_ai_project_instruction_v2", "unreadable");
+  hooks.loadState();
   hooks.restoreProjectInstruction();
   assert.match(document.getElementById("projectInstructionSaveState").textContent, /unreadable/);
   assert.equal(storage.get("ud_avr_ai_project_instruction_v2"), "unreadable");
+  hooks.persistState();
+  const reloaded = loadCanvasLifecycleHooks(storage);
+  reloaded.hooks.loadState();
+  reloaded.hooks.restoreProjectInstruction();
+  assert.match(reloaded.document.getElementById("projectInstructionSaveState").textContent, /unreadable/);
+  assert.equal(storage.get("ud_avr_ai_project_instruction_v2"), "unreadable");
+});
+
+test("deleting the last project cancels its save and clears the hidden workspace draft durably", async () => {
+  const timers = new Map();
+  let nextTimer = 0;
+  const { hooks, storage } = loadCanvasLifecycleHooks(new Map(), {
+    setTimeout(callback) { timers.set(++nextTimer, callback); return nextTimer; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  hooks.editCanvas("Old unassigned architecture");
+  const project = hooks.createEmptyProject();
+  hooks.queueCanvas("Pending project specification");
+  assert.ok(hooks.pendingCanvasScopes().includes(project.instanceId));
+  hooks.confirm(true);
+  await hooks.deleteFile(project.files.find(file => file.role === "source").name);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().draftCanvas.markdown, "");
+  assert.equal(hooks.pendingCanvasScopes().length, 0);
+  for (const callback of timers.values()) callback();
+  const saved = JSON.parse(storage.get("ud_avr_programming_state_v2"));
+  assert.equal(saved.schemaVersion, 3);
+  assert.equal(saved.draftCanvas.markdown, "");
+  assert.equal(Object.keys(saved.miniProjects).length, 0);
+  const reloaded = loadCanvasLifecycleHooks(storage).hooks;
+  reloaded.loadState();
+  reloaded.restoreProjectInstruction();
+  assert.equal(reloaded.getProjectInstructionSnapshot().markdown, "");
+  assert.equal(reloaded.getVisibleWorkspaceFileNames().length, 0);
+});
+
+test("deletion cancellation preserves all drafts and deleting one project keeps the surviving canvas", async () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  hooks.editCanvas("Workspace draft");
+  const first = hooks.createEmptyProject();
+  hooks.editCanvas("First project");
+  const second = hooks.createEmptyProject();
+  hooks.editCanvas("Second project");
+  const firstSource = first.files.find(file => file.role === "source").name;
+  const secondSource = second.files.find(file => file.role === "source").name;
+  hooks.confirm(false);
+  await hooks.deleteFile(secondSource);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Second project");
+  assert.equal(hooks.getVisibleWorkspaceFileNames().length, 2);
+  hooks.confirm(true);
+  await hooks.deleteFile(secondSource);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "First project");
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().current, firstSource);
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().draftCanvas.markdown, "Workspace draft");
+});
+
+test("deleting the last visible project clears the editor while retaining hidden legacy files", async () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  const project = hooks.createEmptyProject();
+  const sourceName = project.files.find(file => file.role === "source").name;
+  const snapshot = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
+  snapshot.files["legacy-note.txt"] = "Retained recovery content";
+  assert.equal(hooks.applyProjectAiAccountDocument("files", snapshot), true);
+  hooks.codeEditor("// Deleted project's code");
+  hooks.confirm(true);
+  await hooks.deleteFile(sourceName);
+  assert.equal(hooks.getVisibleWorkspaceFileNames().length, 0);
+  assert.equal(hooks.codeValue(), "");
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().files["legacy-note.txt"], "Retained recovery content");
+});
+
+test("an empty workspace saves a new draft and empty submissions remain valid", () => {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  hooks.editCanvas("New draft without a project");
+  const reloaded = loadCanvasLifecycleHooks(storage).hooks;
+  reloaded.loadState();
+  reloaded.restoreProjectInstruction();
+  assert.equal(reloaded.getProjectInstructionSnapshot().markdown, "New draft without a project");
+  reloaded.editCanvas("");
+  assert.equal(reloaded.getProjectAiRequestPayload().canvas.markdown, "");
+  assert.equal(reloaded.getProjectAiRequestPayload().currentProject, undefined);
+});
+
+test("a canonical empty draft wins over a legacy standalone canvas before or after cloud restore", () => {
+  for (const restoreBeforeCloud of [true, false]) {
+    const { hooks, storage } = loadCanvasLifecycleHooks();
+    storage.set("ud_avr_ai_project_instruction_v2", JSON.stringify({
+      schemaVersion: 2, revision: 9, markdown: "Stale architecture", annotations: [],
+    }));
+    if (restoreBeforeCloud) hooks.restoreProjectInstruction();
+    assert.equal(hooks.applyProjectAiAccountDocument("files", hooks.getEmptyProjectAiAccountDocument("files")), true);
+    if (!restoreBeforeCloud) hooks.restoreProjectInstruction();
+    assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
+    assert.equal(hooks.getProjectAiAccountFilesSnapshot().draftCanvas.markdown, "");
+    const reloaded = loadCanvasLifecycleHooks(storage).hooks;
+    reloaded.loadState();
+    reloaded.restoreProjectInstruction();
+    assert.equal(reloaded.getProjectInstructionSnapshot().markdown, "");
+  }
+});
+
+test("accepting a cloud snapshot cancels a queued unassigned draft save", () => {
+  const timers = new Map();
+  let nextTimer = 0;
+  const { hooks } = loadCanvasLifecycleHooks(new Map(), {
+    setTimeout(callback) { timers.set(++nextTimer, callback); return nextTimer; },
+    clearTimeout(id) { timers.delete(id); },
+  });
+  hooks.queueCanvas("Queued local draft");
+  assert.deepEqual(Array.from(hooks.pendingCanvasScopes()), [null]);
+  assert.equal(hooks.applyProjectAiAccountDocument("files", hooks.getEmptyProjectAiAccountDocument("files")), true);
+  assert.equal(hooks.pendingCanvasScopes().length, 0);
+  assert.equal(timers.size, 0);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
+});
+
+test("one account snapshot preserves code, YAML, descriptions, metadata, assets, and latest canvas", () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  hooks.editCanvas("Workspace draft");
+  const project = hooks.installMiniProjectDefinition({
+    schemaVersion: 1, id: "bundle", title: "Bundle", version: "Ver.2.0",
+    canvasName: "Bundle.md", projectPath: "Target_Projects/Bundle Ver.2.0",
+    projectDocuments: [{ name: "AGENTS.md", content: "Use a nonblocking loop." }],
+    assets: [{ path: "Images/Board.svg", mediaType: "image/svg+xml", content: "<svg xmlns=\"http://www.w3.org/2000/svg\"/>" }],
+    files: [
+      { role: "source", name: "Bundle.c", content: "int main(void) { for (;;) {} }" },
+      { role: "specification", name: "Bundle.yaml", content: "model: ATtiny1624", hidden: true },
+      { role: "guide", name: "Bundle_description.md", locale: "en", content: "# Description" },
+    ],
+  });
+  hooks.setCanvasDocument({ schemaVersion: 2, revision: 4, markdown: "Latest unsaved edit", locale: "en",
+    target: { mcu: "attiny1624", packageName: "SOIC14" }, annotations: [], authorship: { lines: ["human"] } });
+  const snapshot = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
+  assert.equal(snapshot.miniProjects[project.instanceId].canvas.markdown, "Latest unsaved edit");
+  const target = loadCanvasLifecycleHooks().hooks;
+  assert.equal(target.applyProjectAiAccountDocument("files", snapshot), true);
+  assert.equal(JSON.stringify(target.getProjectAiAccountFilesSnapshot()), JSON.stringify(snapshot));
+  assert.equal(target.getPublicMiniProjectInstance(project.instanceId).files.find(file => file.role === "specification").hidden, true);
+});
+
+test("cloud project restoration cannot copy the old editor into the restored source", () => {
+  const remote = loadCanvasLifecycleHooks().hooks;
+  const project = remote.installMiniProjectDefinition({ schemaVersion: 1, id: "cloud-project", title: "Cloud project",
+    files: [{ role: "source", name: "Cloud.c", content: "// Cloud source" }] });
+  remote.editCanvas("Cloud specification");
+  const cloud = remote.getProjectAiAccountFilesSnapshot();
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  hooks.createEmptyProject();
+  hooks.editCanvas("Local specification");
+  hooks.codeEditor("// Unsynced old editor source");
+  assert.equal(hooks.applyProjectAiAccountDocument("files", cloud), true);
+  const source = project.files.find(file => file.role === "source").name;
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().files[source], "// Cloud source");
+  assert.equal(JSON.parse(storage.get("ud_avr_programming_state_v2")).files[source], "// Cloud source");
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Cloud specification");
+});
+
+function accountSyncStorage(accountKey, revision, overrides = {}) {
+  return new Map([["ud_avr_ai_account_sync_v1", JSON.stringify({ schemaVersion: 1, accountKey,
+    revisions: { files: revision, instruction: 800 }, dirty: { files: false, instruction: false },
+    conflicts: { files: false, instruction: false }, ...overrides })]]);
+}
+
+function jsonResponse(data, status = 200) {
+  return { ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => data };
+}
+
+test("legacy account document order does not affect consolidation or the first atomic save", async () => {
+  const fixture = loadCanvasLifecycleHooks().hooks;
+  const active = fixture.createEmptyProject();
+  const other = fixture.createEmptyProject();
+  fixture.selectFile(active.files.find(file => file.role === "source").name);
+  const oldFiles = JSON.parse(JSON.stringify(fixture.getProjectAiAccountFilesSnapshot()));
+  oldFiles.schemaVersion = 2;
+  delete oldFiles.draftCanvas;
+  delete oldFiles.miniProjects[active.instanceId].canvas;
+  oldFiles.miniProjects[other.instanceId].canvas.markdown = "";
+  const oldInstruction = { schemaVersion: 2, revision: 4, markdown: "Legacy active specification", annotations: [] };
+  for (const kinds of [["files", "instruction"], ["instruction", "files"]]) {
+    const accountKey = "account-migration";
+    const requests = [];
+    const stored = accountSyncStorage(accountKey, 7);
+    const { hooks, storage } = loadCanvasLifecycleHooks(stored, { fetch: async (url, init) => {
+      requests.push({ url, ...init });
+      if (init.method === "GET") return jsonResponse({ ok: true, accountKey, documents: Object.fromEntries(kinds.map(kind => [kind,
+        { revision: kind === "files" ? 7 : 19, data: kind === "files" ? oldFiles : oldInstruction }])) });
+      return jsonResponse({ ok: true, document: { revision: 8 } });
+    } });
+    hooks.restoreProjectAiAccountSyncState();
+    hooks.account(accountKey);
+    await hooks.initializeProjectAiAccountWorkspace();
+    assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Legacy active specification");
+    assert.equal(hooks.getProjectAiAccountFilesSnapshot().miniProjects[other.instanceId].canvas.markdown, "");
+    assert.equal(hooks.syncState().dirty.files, true, "Migration must be written even after adopting cloud data");
+    await hooks.saveProjectAiAccountDocument("files");
+    const writes = requests.filter(request => request.method === "PUT");
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].url, "/api/avr/ai/account/workspace/files");
+    const body = JSON.parse(writes[0].body);
+    assert.equal(body.baseRevision, 7, "Independent instruction revision must not replace the files revision");
+    assert.equal(body.expectedLegacyInstructionRevision, 19);
+    assert.equal(body.data.schemaVersion, 3);
+    assert.equal(body.data.draftCanvas.markdown, "Legacy active specification");
+    assert.equal(hooks.syncState().dirty.files, false);
+    const sync = JSON.parse(storage.get("ud_avr_ai_account_sync_v1"));
+    assert.equal(sync.schemaVersion, 3);
+    assert.deepEqual(sync.revisions, { files: 8 });
+  }
+});
+
+test("legacy dirty flags are combined without replacing the files revision", () => {
+  const storage = accountSyncStorage("same-account", 3, {
+    dirty: { files: false, instruction: true }, conflicts: { files: false, instruction: true },
+  });
+  storage.set("ud_avr_ai_local_dirty_v1", JSON.stringify({ dirty: { files: false, instruction: true } }));
+  const { hooks } = loadCanvasLifecycleHooks(storage);
+  hooks.restoreProjectAiAccountSyncState();
+  hooks.restoreProjectAiLocalDirtyState();
+  assert.equal(hooks.syncState().revisions.files, 3);
+  assert.equal(hooks.syncState().dirty.files, true);
+  assert.equal(hooks.syncState().conflicts.files, true);
+  assert.deepEqual(Object.keys(hooks.syncState().revisions), ["files"]);
+});
+
+test("an unsaved legacy instruction marker pauses the entire project reconciliation", async () => {
+  const accountKey = "dirty-legacy-account";
+  const storage = accountSyncStorage(accountKey, 3, { dirty: { files: false, instruction: true } });
+  const requests = [];
+  const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async (url, init) => {
+    requests.push({ url, ...init });
+    return jsonResponse({ ok: true, accountKey, documents: {
+      files: { revision: 3, data: { schemaVersion: 2, files: {}, authorship: {}, fileGroups: {}, miniProjects: {}, current: null } },
+      instruction: { revision: 90, data: { schemaVersion: 2, revision: 9, markdown: "Older cloud draft" } },
+    } });
+  } });
+  hooks.editCanvas("Newer local draft");
+  hooks.restoreProjectAiAccountSyncState();
+  hooks.account(accountKey);
+  hooks.confirm(false);
+  await hooks.initializeProjectAiAccountWorkspace();
+  await hooks.saveProjectAiAccountDocument("files");
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Newer local draft");
+  assert.equal(hooks.syncState().conflicts.files, true);
+  assert.equal(hooks.syncState().revisions.files, 3);
+  assert.equal(requests.length, 1);
+});
+
+test("canonical account saves send draft and projects together and retain edits made during a save", async () => {
+  let finishSave;
+  const requests = [];
+  const { hooks } = loadCanvasLifecycleHooks(new Map(), { fetch: (url, init) => {
+    requests.push({ url, ...init });
+    return new Promise(resolve => { finishSave = resolve; });
+  } });
+  hooks.account("same-account", true);
+  hooks.createEmptyProject();
+  hooks.editCanvas("Submitted draft");
+  const pending = hooks.saveProjectAiAccountDocument("files");
+  hooks.editCanvas("Newer draft");
+  finishSave(jsonResponse({ ok: true, document: { revision: 1 } }));
+  await pending;
+  assert.equal(hooks.syncState().revisions.files, 1);
+  assert.equal(hooks.syncState().dirty.files, true);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Newer draft");
+  assert.equal(requests.length, 1);
+  const body = JSON.parse(requests[0].body);
+  assert.equal(body.data.schemaVersion, 3);
+  assert.equal(Object.values(body.data.miniProjects)[0].canvas.markdown, "Submitted draft");
+  assert.equal(body.data.draftCanvas.markdown, "");
+  assert.equal(body.expectedLegacyInstructionRevision, undefined);
+});
+
+test("stale account save responses cannot acknowledge another account's projects", async () => {
+  let finishSave;
+  const { hooks } = loadCanvasLifecycleHooks(new Map(), { fetch: () => new Promise(resolve => { finishSave = resolve; }) });
+  hooks.account("first-account", true);
+  hooks.editCanvas("First account draft");
+  const pending = hooks.saveProjectAiAccountDocument("files");
+  hooks.resetProjectAiAccountWorkspaceRuntime();
+  hooks.account("second-account", true);
+  hooks.editCanvas("Second account draft");
+  finishSave(jsonResponse({ ok: true, document: { revision: 50 } }));
+  await pending;
+  assert.equal(hooks.syncState().revisions.files, 0);
+  assert.equal(hooks.syncState().dirty.files, true);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Second account draft");
+});
+
+test("deleting the final project saves an empty account envelope instead of skipping sync", async () => {
+  const writes = [];
+  const { hooks } = loadCanvasLifecycleHooks(new Map(), { fetch: async (url, init) => {
+    writes.push({ url, ...init });
+    return jsonResponse({ ok: true, document: { revision: writes.length } });
+  } });
+  hooks.account("same-account", true);
+  hooks.editCanvas("Old standalone draft");
+  const project = hooks.createEmptyProject();
+  hooks.editCanvas("Project draft");
+  await hooks.saveProjectAiAccountDocument("files");
+  hooks.confirm(true);
+  await hooks.deleteFile(project.files.find(file => file.role === "source").name);
+  assert.equal(hooks.syncState().dirty.files, true);
+  await hooks.saveProjectAiAccountDocument("files");
+  assert.equal(writes.length, 2);
+  const deleted = JSON.parse(writes[1].body);
+  assert.equal(deleted.baseRevision, 1);
+  assert.deepEqual(deleted.data.files, {});
+  assert.deepEqual(deleted.data.miniProjects, {});
+  assert.equal(deleted.data.draftCanvas.markdown, "");
+  assert.equal(deleted.data.current, null);
+  assert.equal(hooks.syncState().dirty.files, false);
+});
+
+test("legacy instruction-only accounts migrate with the files revision zero", async () => {
+  const accountKey = "instruction-only";
+  const requests = [];
+  const { hooks } = loadCanvasLifecycleHooks(accountSyncStorage(accountKey, 0), { fetch: async (url, init) => {
+    requests.push({ url, ...init });
+    return init.method === "GET" ? jsonResponse({ ok: true, accountKey, documents: {
+      files: { revision: 0, data: null },
+      instruction: { revision: 31, data: { schemaVersion: 2, revision: 9, markdown: "Existing account draft" } },
+    } }) : jsonResponse({ ok: true, document: { revision: 1 } });
+  } });
+  hooks.restoreProjectAiAccountSyncState();
+  hooks.account(accountKey);
+  await hooks.initializeProjectAiAccountWorkspace();
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Existing account draft");
+  await hooks.saveProjectAiAccountDocument("files");
+  const body = JSON.parse(requests[1].body);
+  assert.equal(body.baseRevision, 0);
+  assert.equal(body.expectedLegacyInstructionRevision, 31);
+  assert.equal(body.data.draftCanvas.markdown, "Existing account draft");
+  assert.deepEqual(body.data.miniProjects, {});
+});
+
+test("canonical cloud data ignores stale instruction rows and never starts a second save", async () => {
+  const accountKey = "canonical-account";
+  const fixture = loadCanvasLifecycleHooks().hooks;
+  const canonical = fixture.getEmptyProjectAiAccountDocument("files");
+  const requests = [];
+  const { hooks } = loadCanvasLifecycleHooks(accountSyncStorage(accountKey, 4), { fetch: async (url, init) => {
+    requests.push({ url, ...init });
+    return jsonResponse({ ok: true, accountKey, documents: {
+      instruction: { revision: 99, data: { schemaVersion: 2, revision: 50, markdown: "Stale hidden architecture" } },
+      files: { revision: 4, data: canonical },
+    } });
+  } });
+  hooks.restoreProjectAiAccountSyncState();
+  hooks.account(accountKey);
+  await hooks.initializeProjectAiAccountWorkspace();
+  await hooks.saveProjectAiAccountDocument("files");
+  await hooks.saveProjectAiAccountDocument("instruction");
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
+  assert.equal(hooks.syncState().dirty.files, false);
+  assert.equal(hooks.syncState().legacyInstructionRevision, null);
+  assert.equal(requests.length, 1);
+});
+
+test("failed canonical local writes keep legacy migration sources and do not acknowledge sync", () => {
+  const legacyInstruction = JSON.stringify({ schemaVersion: 2, revision: 7, markdown: "Recoverable legacy draft" });
+  const storage = new Map([["ud_avr_ai_project_instruction_v2", legacyInstruction]]);
+  const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
+    if (key === "ud_avr_programming_state_v2") throw new Error("Storage quota");
+    storage.set(key, String(value));
+  } });
+  hooks.restoreProjectInstruction();
+  assert.equal(hooks.persistState(), false);
+  assert.equal(storage.get("ud_avr_ai_project_instruction_v2"), legacyInstruction);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Recoverable legacy draft");
 });
 
 test("sends only the canvas and selected target without chat history or skill refs", () => {

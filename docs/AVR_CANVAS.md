@@ -31,7 +31,11 @@ The model receives AGENTS.md, AGENTS_Add_On.md, Project_Description.md and Base_
 
 The server validates structured output before application. Resource YAML contains ordered microcontroller, hardware_resources and software_dependencies mappings with full include directives; duplicate keys, aliases and custom tags are rejected. C checks cover project identity, required regions, xc.h as the first directive, main/loop structure and exactly preserved user region contents. Generated C is compiled with bounded repair attempts. Compilation does not establish hardware correctness.
 
-The browser rejects responses if the account, selected project, specification revision, target or relevant project contents changed during the request. Partial stage output is merged into the current project. Account snapshots retain optimistic revision and identity checks.
+The browser rejects responses if the account, selected project, specification revision, target or relevant project contents changed during the request. Partial stage output is merged into the current project.
+
+The browser and account save one schema-3 project-workspace envelope: source, descriptions, hidden YAML, per-project specification/target/authorship, assets, metadata and current selection. The unfinished `draftCanvas` is part of the same envelope. The account route retains its `files` name for compatibility, with one server revision and one identity/conflict/recovery flow. No separate instruction save runs in the current browser.
+
+Legacy file and instruction records are read only for migration. Existing project canvases, including explicitly empty ones, take precedence; only the formerly active project lacking a canvas can inherit the old shared instruction. The first consolidated write checks both the file revision and `expectedLegacyInstructionRevision` atomically. After that write, legacy file-schema and standalone-instruction writes are rejected. Legacy instruction and chat records remain available for recovery and never override an explicit schema-3 draft. Deleting the final visible project clears that draft, cancels pending saves for the deleted project and saves the empty state. A newly typed draft still survives reload.
 
 Curated examples are derived from User_Examples. Their functional C tokens are retained; structural markers and project metadata are adapters outside the mirror. Repository target samples require sign-in. Raw knowledge and rules are not public file routes.
 

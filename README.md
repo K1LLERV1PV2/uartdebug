@@ -58,7 +58,7 @@ Editing, guides, and imported files work without connected hardware. Compilation
 The old README described the entire project as client-only. That is true for serial communication, but not for every AVR feature:
 
 - UART and UPDI bytes travel directly between the browser and the serial port selected in the browser permission prompt.
-- Without Google sign-in, working files and the canvas remain in browser storage. After sign-in they synchronize as two independently revisioned account snapshots. Existing legacy chat records are preserved; the canvas UI does not use them.
+- Without Google sign-in, projects remain in browser storage. After sign-in, all project specifications, C source, descriptions, hidden resources, assets and selection state synchronize in one revisioned account snapshot. An unfinished draft is part of that same snapshot. Legacy split saves migrate without overwriting existing project specifications.
 - Stale-revision and account-identity checks prevent a delayed AI or synchronization response from replacing newer edits.
 - Compiling sends source and linked project files to the compiler service, which removes temporary build files after the request.
 - Account synchronization does not send the workspace to Google or OpenAI. Pressing Process sends the current canvas, annotations, selected target and current project files to the configured OpenAI Responses API with `store: false`.
@@ -115,7 +115,7 @@ Project rules, technical references and examples are maintained in the private `
 
 The first paragraph below `## Short Project Description` in a built-in guide becomes its Add file description. Add its public assets to [public/sw.js](public/sw.js). Built-in projects are copied into the browser workspace before editing.
 
-The canvas uses schema 2 and retains independent local/account revisions. Schema-1 instructions migrate without losing their text. Old `skillRefs` have no active role. Delayed processing responses cannot overwrite a newer canvas revision.
+Each project's canvas uses schema 2; the complete project workspace uses schema 3 and one account revision. Older local/account saves migrate without losing their text. Deleting the last project leaves an explicitly empty draft, which takes precedence over old standalone instructions. Old `skillRefs` have no active role. Delayed processing responses cannot overwrite a newer canvas revision.
 
 ## Local development
 
