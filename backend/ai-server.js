@@ -12,7 +12,7 @@ const {
 } = require("./ai-access-service");
 const { loadMaterials, createProjectCatalog } = require("./avr-materials");
 
-const AI_SERVER_VERSION = "20261014-project-v2";
+const AI_SERVER_VERSION = "20261016-unified-project-storage";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;

@@ -10,14 +10,14 @@ const { MAX_PROVIDER_RESPONSES } = require("./avr-ai-limits");
 
 const COMPLETED_PROVIDER_USAGE = Symbol("completedProviderUsage");
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const DEVICE_COOKIE = "__Host-ud_device";
 const SESSION_COOKIE = "__Host-ud_session";
 const INSTALLATION_SECRET_HEADER = "x-uartdebug-installation";
 const ACCOUNT_WORKSPACE_TYPES = Object.freeze(["chats", "files", "instruction"]);
 const ACCOUNT_WORKSPACE_SCHEMA_VERSIONS = Object.freeze({
   chats: 1,
-  files: 2,
+  files: 3,
   instruction: 2,
 });
 const WORKSPACE_AUTHORSHIP_VALUES = new Set(["original", "human", "ai"]);
@@ -369,14 +369,20 @@ class AiAccessService {
 
   readAccountWorkspace(context) {
     const accountHash = readWorkspaceAccountHash(context);
+    const projects = this._readAccountWorkspaceRecord(accountHash, "files");
+    const consolidated = projects.schemaVersion === 3 && projects.data !== null;
+    const documents = {
+      chats: this._readAccountWorkspaceRecord(accountHash, "chats"),
+      files: projects,
+      // Retain the old row for recovery without validating or exposing it as
+      // an active document once the complete project snapshot is canonical.
+      instruction: consolidated
+        ? { revision: 0, schemaVersion: 2, updatedAt: null, data: null }
+        : this._readAccountWorkspaceRecord(accountHash, "instruction"),
+    };
     return {
       accountKey: readWorkspaceAccountKey(context),
-      documents: Object.fromEntries(
-        ACCOUNT_WORKSPACE_TYPES.map((dataType) => [
-          dataType,
-          this._readAccountWorkspaceRecord(accountHash, dataType),
-        ])
-      ),
+      documents,
     };
   }
 
@@ -396,6 +402,18 @@ class AiAccessService {
     let record;
 
     this._transaction(() => {
+      if (dataType === "instruction") {
+        const consolidated = this.database.prepare(
+          "SELECT schema_version FROM account_workspace_snapshots WHERE account_hash = ? AND data_type = 'files'"
+        ).get(accountHash);
+        if (Number(consolidated?.schema_version) >= 3) {
+          throw new AiAccessError(
+            409,
+            "account_workspace_migration_required",
+            "Projects now save their specification, code, description and resources together. Refresh the application before saving again."
+          );
+        }
+      }
       const existing = this.database
         .prepare(
           `SELECT revision, schema_version, created_at
@@ -417,6 +435,21 @@ class AiAccessService {
           "account_data_schema_downgrade",
           "This workspace uses a newer canvas format. Refresh the application before saving again."
         );
+      }
+      if (dataType === "files" && input.schemaVersion === 3 &&
+          Number(existing?.schema_version || 0) < 3) {
+        const legacyInstruction = this.database.prepare(
+          "SELECT revision FROM account_workspace_snapshots WHERE account_hash = ? AND data_type = 'instruction'"
+        ).get(accountHash);
+        const legacyRevision = Number(legacyInstruction?.revision || 0);
+        if ((legacyRevision > 0 || input.expectedLegacyInstructionRevision !== undefined) &&
+            input.expectedLegacyInstructionRevision !== legacyRevision) {
+          throw new AiAccessError(
+            409,
+            "account_data_revision_conflict",
+            "The legacy project draft changed in another session. Reload the complete project workspace before saving again."
+          );
+        }
       }
 
       const revision = currentRevision + 1;
@@ -2558,7 +2591,7 @@ function normalizeAccountWorkspaceWrite(dataType, rawInput) {
   }
   if (
     Object.keys(rawInput).some(
-      (key) => !["baseRevision", "expectedAccountKey", "data"].includes(key)
+      (key) => !["baseRevision", "expectedAccountKey", "expectedLegacyInstructionRevision", "data"].includes(key)
     )
   ) {
     throw new AiAccessError(
@@ -2583,9 +2616,19 @@ function normalizeAccountWorkspaceWrite(dataType, rawInput) {
       "expectedAccountKey must identify the account workspace being saved."
     );
   }
+  const hasLegacyRevision = Object.prototype.hasOwnProperty.call(rawInput, "expectedLegacyInstructionRevision");
+  if (hasLegacyRevision && (dataType !== "files" || rawInput.data?.schemaVersion !== 3 ||
+      !Number.isSafeInteger(rawInput.expectedLegacyInstructionRevision) || rawInput.expectedLegacyInstructionRevision < 0)) {
+    throw new AiAccessError(
+      400,
+      "invalid_account_revision",
+      "expectedLegacyInstructionRevision must be a non-negative integer for the unified project migration."
+    );
+  }
   return {
     baseRevision,
     expectedAccountKey,
+    ...(hasLegacyRevision ? { expectedLegacyInstructionRevision: rawInput.expectedLegacyInstructionRevision } : {}),
     ...normalizeAccountWorkspaceData(dataType, rawInput.data),
   };
 }
@@ -2599,8 +2642,10 @@ function normalizeAccountWorkspaceData(dataType, rawData) {
     );
   }
   const schemaVersion = Number(rawData.schemaVersion);
-  if (schemaVersion !== ACCOUNT_WORKSPACE_SCHEMA_VERSIONS[dataType] &&
-      !(dataType === "instruction" && schemaVersion === 1)) {
+  if ((dataType === "files" && schemaVersion === 3 && rawData.schemaVersion !== 3) ||
+      (schemaVersion !== ACCOUNT_WORKSPACE_SCHEMA_VERSIONS[dataType] &&
+      !(dataType === "instruction" && schemaVersion === 1) &&
+      !(dataType === "files" && schemaVersion === 2))) {
     throw new AiAccessError(
       400,
       "invalid_account_data_schema",
@@ -2763,6 +2808,7 @@ function validateAccountFiles(data) {
     "miniProjects",
     "current",
     "authorship",
+    ...(data.schemaVersion === 3 ? ["draftCanvas"] : []),
   ]);
   if (
     Object.keys(data).some((key) => !allowedKeys.has(key)) ||
@@ -2812,6 +2858,66 @@ function validateAccountFiles(data) {
       !Object.prototype.hasOwnProperty.call(data.files, data.current))
   ) {
     throwInvalidAccountData("The current file must identify a stored file.");
+  }
+  if (data.schemaVersion === 3) validateAccountProjects(data);
+}
+
+function validateAccountProjects(data) {
+  if (!isPlainJsonObject(data.draftCanvas) || data.draftCanvas.schemaVersion !== 2) {
+    throwInvalidAccountData("The project workspace must include its draft canvas.");
+  }
+  validateAccountInstruction(data.draftCanvas);
+  const owners = new Map();
+  const sources = new Set();
+  for (const [instanceId, project] of Object.entries(data.miniProjects)) {
+    if (!instanceId || instanceId.length > 128 ||
+        ["__proto__", "prototype", "constructor"].includes(instanceId.toLowerCase()) ||
+        !isPlainJsonObject(project) || !isPlainJsonObject(project.files) ||
+        typeof project.files.source !== "string" || !/\.c$/i.test(project.files.source) ||
+        !isPlainJsonObject(project.canvas) || project.canvas.schemaVersion !== 2) {
+      throwInvalidAccountData("The project workspace contains an invalid project.");
+    }
+    validateAccountInstruction(project.canvas);
+    const projectRoles = new Map();
+    const claimFile = (name, role) => {
+      if (typeof name !== "string" || !Object.prototype.hasOwnProperty.call(data.files, name)) {
+        throwInvalidAccountData("Project files must identify stored file contents.");
+      }
+      if (owners.has(name) && owners.get(name) !== instanceId) {
+        throwInvalidAccountData("A stored file cannot belong to multiple projects.");
+      }
+      if (projectRoles.has(name) && projectRoles.get(name) !== role) {
+        throwInvalidAccountData("A stored project file cannot have multiple roles.");
+      }
+      owners.set(name, instanceId);
+      projectRoles.set(name, role);
+    };
+    for (const [role, name] of Object.entries(project.files)) {
+      if (!["source", "guide", "aiSpec", "specification"].includes(role)) {
+        throwInvalidAccountData("The project contains an unsupported file role.");
+      }
+      claimFile(name, role);
+    }
+    sources.add(project.files.source);
+    if (project.guides != null) {
+      if (!isPlainJsonObject(project.guides)) {
+        throwInvalidAccountData("The project descriptions are invalid.");
+      }
+      for (const guide of Object.values(project.guides)) {
+        if (!isPlainJsonObject(guide)) {
+          throwInvalidAccountData("The project description is invalid.");
+        }
+        claimFile(guide.fileName, "guide");
+      }
+    }
+    for (const key of ["defaultLocale", "selectedLocale"]) {
+      if (project[key] && !Object.prototype.hasOwnProperty.call(project.guides || {}, project[key])) {
+        throwInvalidAccountData("The selected project description must identify a stored guide.");
+      }
+    }
+  }
+  if (data.current != null && !sources.has(data.current)) {
+    throwInvalidAccountData("The active project must identify a stored project source.");
   }
 }
 
@@ -3143,6 +3249,12 @@ function migrateDatabase(database) {
           ADD COLUMN display_name_override TEXT NOT NULL DEFAULT '';
         PRAGMA user_version = 5;
       `);
+    }
+    if (version < 6) {
+      // Files-v3 snapshots make the complete project and standalone draft one
+      // revisioned document. Older servers cannot safely read or write them.
+      // Retain legacy rows unchanged for browser migration and recovery.
+      database.exec("PRAGMA user_version = 6;");
     }
     database.exec("COMMIT");
   } catch (error) {

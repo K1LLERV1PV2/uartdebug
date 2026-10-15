@@ -60,13 +60,14 @@
           <li>
             <strong>Signed-in workspace synchronization.</strong> After Google
             sign-in, Uart Debug may store a complete snapshot of
-            the AVR file workspace and the project canvas in
-            account-scoped SQLite. The file snapshot can contain file names, file
-            contents, C source, YAML specifications, guide edits, grouping, and
-            the file-list state needed to restore the workspace. The canvas is
-            stored separately. Chat history saved by earlier versions may remain
+            the AVR project workspace in account-scoped SQLite. One snapshot
+            contains project specifications, selected devices, file names and
+            contents, C source, internal YAML resources, descriptions, assets,
+            grouping, the unfinished draft and the selection needed to restore
+            the workspace together. Older separate canvas records and chat
+            history may remain
             in the account records, but the canvas workflow does not use it as AI
-            context. Writes are bounded and independently revisioned; stale
+            context. Project writes are bounded and share one revision; stale
             revisions are rejected rather than silently replacing newer account
             data. Before a cloud copy replaces browser-local data, the browser may
             keep a bounded local recovery copy for conflict and account-switch
@@ -146,8 +147,8 @@
             Automated expiry for these records is still under development.
           </li>
           <li>
-            Retained legacy chat history, the latest AVR workspace snapshot, and
-            the latest canvas snapshot are retained with the account data
+            The latest AVR project snapshot and retained legacy chat and canvas
+            records are kept with the account data
             until replaced or removed through an operator-handled data request.
             Automatic expiry and a self-service deletion/export interface are not
             currently available.

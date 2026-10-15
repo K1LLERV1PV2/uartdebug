@@ -2258,7 +2258,7 @@ test("account workspace validates authentication, schemas, and payload limits", 
   assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.instruction, 256 * 1024);
 });
 
-test("AI access database migrates to schema 5 with canvas storage and editable profile names", (t) => {
+test("AI access database migrates to schema 6 with unified project storage and editable profile names", (t) => {
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "uartdebug-ai-schema-")
   );
@@ -2274,10 +2274,10 @@ test("AI access database migrates to schema 5 with canvas storage and editable p
     service.close();
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   });
-  assert.equal(AI_ACCESS_SCHEMA_VERSION, 5);
+  assert.equal(AI_ACCESS_SCHEMA_VERSION, 6);
   assert.equal(
     Number(service.database.prepare("PRAGMA user_version").get().user_version),
-    5
+    6
   );
   const table = service.database
     .prepare(
@@ -2330,6 +2330,156 @@ test("canvas v2 and a public YAML specification survive account synchronization"
   }), (error) => error.code === "invalid_account_data");
 });
 
+function unifiedProjectsFixture() {
+  const canvas = (markdown) => ({
+    schemaVersion: 2, revision: 2, locale: "en", markdown, annotations: [],
+    target: { mcu: "attiny1624", packageName: "SOIC-14" },
+    authorship: { schemaVersion: 1, lines: ["human"], updatedAt: 1 },
+  });
+  return {
+    schemaVersion: 3,
+    files: { "blink.c": "int main(void) {}", "blink.md": "# Description", "blink.yaml": "device: ATtiny1624" },
+    fileGroups: {},
+    miniProjects: { blink: {
+      files: { source: "blink.c", guide: "blink.md", specification: "blink.yaml" },
+      guides: { en: { fileName: "blink.md", locale: "en" } },
+      defaultLocale: "en", selectedLocale: "en", canvas: canvas("Blink the LED."),
+    } },
+    current: "blink.c", draftCanvas: canvas("Next project draft"),
+  };
+}
+
+test("unified projects save the full bundle under one revision and close legacy split writes", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "unified", sub: "unified-account", email: "unified@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  assert.equal(service.readAccountWorkspace(context).documents.files.schemaVersion, 3);
+  const unified = unifiedProjectsFixture();
+  const legacyFiles = structuredClone(unified);
+  legacyFiles.schemaVersion = 2;
+  delete legacyFiles.draftCanvas;
+  const legacyInstruction = structuredClone(unified.draftCanvas);
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: legacyFiles });
+  service.writeAccountWorkspace(context, "instruction", { baseRevision: 0, expectedAccountKey: context.accountKey, data: legacyInstruction });
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 1, expectedAccountKey: context.accountKey, data: unified,
+  }), (error) => error.status === 409 && error.code === "account_data_revision_conflict");
+  const latestLegacyInstruction = { ...legacyInstruction, markdown: "A newer draft from an older tab" };
+  service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 1, expectedAccountKey: context.accountKey, data: latestLegacyInstruction,
+  });
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 1, expectedAccountKey: context.accountKey, expectedLegacyInstructionRevision: 1, data: unified,
+  }), (error) => error.status === 409 && error.code === "account_data_revision_conflict");
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, legacyFiles);
+  assert.deepEqual(service.readAccountWorkspace(context).documents.instruction.data, latestLegacyInstruction);
+  const oldInstructionRow = service.database.prepare("SELECT * FROM account_workspace_snapshots WHERE data_type = 'instruction'").get();
+  const beforeCredits = service.database.prepare("SELECT grant_nano_usd, spent_nano_usd FROM google_accounts").all();
+  const saved = service.writeAccountWorkspace(context, "files", {
+    baseRevision: 1, expectedAccountKey: context.accountKey, expectedLegacyInstructionRevision: 2, data: unified,
+  });
+  assert.equal(saved.document.revision, 2);
+  assert.equal(saved.document.schemaVersion, 3);
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, unified);
+  assert.deepEqual(service.readAccountWorkspace(context).documents.instruction, {
+    revision: 0, schemaVersion: 2, updatedAt: null, data: null,
+  });
+  assert.deepEqual(service.database.prepare("SELECT * FROM account_workspace_snapshots WHERE data_type = 'instruction'").get(), oldInstructionRow);
+  assert.throws(() => service.writeAccountWorkspace(context, "instruction", {
+    baseRevision: 1, expectedAccountKey: context.accountKey, data: legacyInstruction,
+  }), (error) => error.status === 409 && error.code === "account_workspace_migration_required");
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 2, expectedAccountKey: context.accountKey, data: legacyFiles,
+  }), (error) => error.status === 409 && error.code === "account_data_schema_downgrade");
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 1, expectedAccountKey: context.accountKey,
+    data: { ...unified, draftCanvas: { ...unified.draftCanvas, markdown: "Stale draft" } },
+  }), (error) => error.status === 409 && error.code === "account_data_revision_conflict");
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, unified);
+  assert.deepEqual(service.database.prepare("SELECT grant_nano_usd, spent_nano_usd FROM google_accounts").all(), beforeCredits);
+  assert.equal(service.writeAccountWorkspace(context, "files", {
+    baseRevision: 2, expectedAccountKey: context.accountKey,
+    expectedLegacyInstructionRevision: 0, data: unified,
+  }).document.revision, 3, "A completed migration no longer depends on the inactive legacy row");
+});
+
+test("invalid unified bundles cannot replace any part of the saved project workspace", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "bundle-validation", sub: "bundle-validation-account", email: "bundles@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const unified = unifiedProjectsFixture();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: unified });
+  const invalidChanges = [
+    (data) => { delete data.draftCanvas; },
+    (data) => { data.draftCanvas.schemaVersion = 1; },
+    (data) => { data.draftCanvas.authorship.lines = []; },
+    (data) => { delete data.miniProjects.blink.canvas; },
+    (data) => { data.miniProjects.blink.canvas.annotations = [{ id: "invalid" }]; },
+    (data) => { delete data.files["blink.yaml"]; },
+    (data) => { data.miniProjects.copy = structuredClone(data.miniProjects.blink); },
+    (data) => { data.miniProjects.blink.files.guide = "blink.c"; },
+    (data) => { data.miniProjects.blink.files.unexpected = "blink.yaml"; },
+    (data) => { data.miniProjects.blink.guides.en.fileName = "missing.md"; },
+    (data) => { data.miniProjects.blink.selectedLocale = "ru"; },
+    (data) => { data.current = "blink.yaml"; },
+    (data) => { data.files["orphan.c"] = ""; data.current = "orphan.c"; },
+  ];
+  for (const change of invalidChanges) {
+    const data = structuredClone(unified);
+    change(data);
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey, data,
+    }), (error) => error.status === 400 && error.code === "invalid_account_data");
+    assert.equal(service.readAccountWorkspace(context).documents.files.revision, 1);
+    assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, unified);
+  }
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 1, expectedAccountKey: context.accountKey,
+    data: { ...unified, schemaVersion: "3" },
+  }), (error) => error.code === "invalid_account_data_schema");
+  for (const revision of [-1, 1.1, "0", null]) {
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey,
+      expectedLegacyInstructionRevision: revision, data: unified,
+    }), (error) => error.code === "invalid_account_revision");
+  }
+  // Legacy hidden, unclaimed files remain recoverable without becoming active.
+  const withRecovery = structuredClone(unified);
+  withRecovery.files["old-notes.md"] = "Unclaimed legacy text";
+  withRecovery.current = null;
+  withRecovery.miniProjects = {};
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: withRecovery });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, withRecovery);
+});
+
+test("schema-5 unified-storage migration preserves legacy bytes, sessions and credits", async (t) => {
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-projects-migration-"));
+  const databasePath = path.join(temporaryDirectory, "ai-access.sqlite");
+  const initial = makeService({ databasePath });
+  const login = await signIn(initial.service, initial.oauthClient, { code: "unified-migration", sub: "unified-migration-account", email: "migration@example.com" });
+  const context = initial.service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const legacy = unifiedProjectsFixture();
+  legacy.schemaVersion = 2;
+  delete legacy.draftCanvas;
+  initial.service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: legacy });
+  initial.service.writeAccountWorkspace(context, "instruction", { baseRevision: 0, expectedAccountKey: context.accountKey, data: legacy.miniProjects.blink.canvas });
+  const snapshots = initial.service.database.prepare("SELECT * FROM account_workspace_snapshots ORDER BY data_type").all();
+  const sessions = initial.service.database.prepare("SELECT * FROM auth_sessions").all();
+  const accounts = initial.service.database.prepare("SELECT * FROM google_accounts").all();
+  initial.service.database.exec("PRAGMA user_version = 5;");
+  initial.service.close();
+  const { service } = makeService({ databasePath });
+  t.after(() => { service.close(); fs.rmSync(temporaryDirectory, { recursive: true, force: true }); });
+  assert.equal(service.database.prepare("PRAGMA user_version").get().user_version, 6);
+  assert.deepEqual(service.database.prepare("SELECT * FROM account_workspace_snapshots ORDER BY data_type").all(), snapshots);
+  assert.deepEqual(service.database.prepare("SELECT * FROM auth_sessions").all(), sessions);
+  assert.deepEqual(service.database.prepare("SELECT * FROM google_accounts").all(), accounts);
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, legacy);
+  assert.equal(service.authenticateAccountRequest(request(login.cookie), new MockResponse()).accountKey, context.accountKey);
+});
+
 test("schema-2 migration preserves credits and legacy workspace bytes through profile reauthentication", async (t) => {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-canvas-migration-"));
   const databasePath = path.join(temporaryDirectory, "ai-access.sqlite");
@@ -2348,7 +2498,7 @@ test("schema-2 migration preserves credits and legacy workspace bytes through pr
   initial.service.close();
   const { service: migrated, oauthClient } = makeService({ databasePath });
   t.after(() => { migrated.close(); fs.rmSync(temporaryDirectory, { recursive: true, force: true }); });
-  assert.equal(migrated.database.prepare("PRAGMA user_version").get().user_version, 5);
+  assert.equal(migrated.database.prepare("PRAGMA user_version").get().user_version, 6);
   const expired = await migrated.getPublicStatus(request(login.cookie), new MockResponse());
   assert.equal(expired.authenticated, false);
   assert.deepEqual(migrated.database.prepare("SELECT * FROM account_workspace_snapshots").get(), snapshot);
@@ -2383,7 +2533,7 @@ test("schema-4 editable-name migration preserves active sessions, identity, work
   const devices = initial.service.database.prepare("SELECT * FROM devices").all();
   initial.service.close();
   const upgraded = makeService({ databasePath }).service;
-  assert.equal(upgraded.database.prepare("PRAGMA user_version").get().user_version, 5);
+  assert.equal(upgraded.database.prepare("PRAGMA user_version").get().user_version, 6);
   assert.deepEqual({ ...upgraded.database.prepare("SELECT * FROM google_accounts").get() }, { ...account, display_name_override: "" });
   assert.deepEqual(upgraded.database.prepare("SELECT * FROM auth_sessions").all(), sessions);
   assert.deepEqual(upgraded.database.prepare("SELECT * FROM account_workspace_snapshots").all(), snapshots);
