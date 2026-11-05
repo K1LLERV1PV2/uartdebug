@@ -51,30 +51,17 @@ node -e '
   const fs = require("fs");
   const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   if (value.ok !== true) process.exit(1);
-  if (value.mode !== "public" && value.mode !== "google") process.exit(1);
-  if (value.mode === "google" && value.configured !== true) process.exit(1);
+  if (value.mode !== "google" || value.configured !== true || value.authEnabled !== true || value.authRequired !== true) process.exit(1);
+  if (value.authenticated !== false) process.exit(1);
 ' "${auth_file}"
 
-if ! grep -q '"configured":false' "${status_file}"; then
-  echo "OpenAI is configured; the paid assistant smoke test was intentionally skipped." >&2
-  public_code="skipped"
-else
-  public_code="$(
-    curl --silent --show-error \
-      --output "${public_file}" \
-      --write-out '%{http_code}' \
-      --max-time 15 \
-      --request POST \
-      --header "Origin: ${base_url}" \
-      --header 'Content-Type: application/json' \
-      --data-binary '{"canvas":{"schemaVersion":2,"revision":0,"markdown":"Service smoke test","locale":"en","annotations":[],"target":{"mcu":"attiny1624","packageName":"SOIC-14"}},"mcu":"attiny1624","packageName":"SOIC-14"}' \
-      "${base_url}/api/avr/ai/canvas"
-  )"
-  [ "${public_code}" = "503" ]
-  grep -q '"code":"api_key_not_configured"' "${public_file}"
-fi
+# Verify the account boundary without ever starting a paid provider request.
+public_code="$(curl --silent --show-error --max-time 15 \
+  --output "${public_file}" --write-out '%{http_code}' \
+  "${base_url}/api/avr/ai/account/workspace")"
+[ "${public_code}" = "401" ]
 
-printf 'status=%s retired-routes=%s auth=%s canvas-without-key=%s\n' \
+printf 'status=%s retired-routes=%s auth=%s anonymous-workspace=%s\n' \
   "${status_code}" \
   "${retired_code}" \
   "${auth_code}" \

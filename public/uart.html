@@ -6,41 +6,28 @@
     <meta name="theme-color" content="#222f3c" />
     <link rel="canonical" href="https://uartdebug.com/uart" />
     <title>UART Terminal - Uart Debug</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="/manifest.webmanifest?v=20261105-security-release-v1" />
     <!-- Link global and UART-specific styles. -->
-    <link rel="stylesheet" href="ui-theme.css?v=20260924-shared-ui-v1" />
-    <link rel="stylesheet" href="uart.css?v=20260924-shared-ui-v1" />
-    <link rel="stylesheet" href="ui-controls.css?v=20260924-shared-ui-v1" />
-    <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
+    <link rel="stylesheet" href="ui-theme.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="uart.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="ui-controls.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="ui-notifications.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="ui-tooltips.css?v=20261105-security-release-v1" />
     <!-- Include Chart.js. -->
-    <script src="vendor/chart.umd.js"></script>
-    <script defer src="ui-tooltips.js?v=20260616-responsive-actions-v1"></script>
-    <script defer src="ui-controls.js?v=20260924-shared-ui-v1"></script>
-    <script defer src="uart.js?v=20260924-shared-ui-v1"></script>
+    <script src="vendor/chart.umd.js?v=20261105-security-release-v1"></script>
+    <script defer src="ui-tooltips.js?v=20261105-security-release-v1"></script>
+    <script defer src="ui-controls.js?v=20261105-security-release-v1"></script>
+    <script defer src="ui-notifications.js?v=20261105-security-release-v1"></script>
+    <script defer src="uart.js?v=20261105-security-release-v1"></script>
   </head>
   <body class="terminal-page">
-    <div
-      class="serial-port-hint"
-      id="serialPortHint"
-      role="status"
-      aria-live="polite"
-      hidden
-    >
-      <span>Plug USB&#8209;UART<br />Choose the new port</span>
-    </div>
     <main>
       <div class="feature-panel">
-        <!-- Web Serial API support warning. -->
-        <div class="api-support-warning" id="apiWarning">
-          <strong>Attention:</strong> Your browser does not support the
-          Web&nbsp;Serial API. To work with UART you need a modern browser based
-          on Chromium (Chrome, Edge, Opera).
-        </div>
 
         <!-- Connection section. -->
         <section class="uart-section terminal-device-section">
           <div
-            class="connection-panel terminal-device-panel"
+            class="connection-panel terminal-device-panel ui-panel"
             aria-label="UART adapter"
           >
             <button
@@ -91,7 +78,7 @@
             </div>
 
             <button
-              class="settings-btn terminal-settings-btn"
+              class="settings-btn terminal-settings-btn ui-icon-button"
               id="settingsBtn"
               type="button"
               title="Connection settings"
@@ -118,7 +105,7 @@
         <!-- Terminal and oscilloscope section. -->
         <div class="uart-sessions-split" id="uartSessionsSplit">
           <section
-            class="uart-section uart-session is-locked"
+            class="uart-section uart-session ui-panel is-locked"
             id="uartTxSession"
             data-terminal-session="tx"
             aria-disabled="true"
@@ -215,7 +202,7 @@
                   <div class="cycle-interval">
                     <input
                       type="number"
-                      class="loop-interval-input"
+                      class="loop-interval-input ui-text-input"
                       id="loopIntervalInput"
                       min="10"
                       max="10000"
@@ -231,7 +218,7 @@
               <div class="terminal-shell" id="txTerminalShell">
                 <div class="terminal-actions" id="terminalActionsTx">
                   <button
-                    class="icon-btn"
+                    class="icon-btn ui-icon-button"
                     id="clearBtn"
                     title="Clear TxD log"
                     aria-label="Clear TxD log"
@@ -248,7 +235,7 @@
                     </svg>
                   </button>
                   <button
-                    class="icon-btn"
+                    class="icon-btn ui-icon-button"
                     id="saveLogBtn"
                     title="Save TxD log"
                     aria-label="Save TxD log"
@@ -272,10 +259,10 @@
                 >
                   Stopped
                 </div>
-                <div class="terminal-container" id="terminalSent"></div>
+                <div class="terminal-container scroll-frame ui-scroll-region" id="terminalSent" role="region" aria-label="TxD log" tabindex="0"></div>
               </div>
               <div
-                class="generator-panel"
+                class="generator-panel scroll-frame ui-scroll-region"
                 id="txGeneratorPanel"
                 style="display: none"
               >
@@ -309,6 +296,7 @@
                         <input
                           type="number"
                           id="genSamples"
+                          class="ui-text-input"
                           min="4"
                           max="4096"
                           step="1"
@@ -320,6 +308,7 @@
                         <input
                           type="number"
                           id="genAmplitude"
+                          class="ui-text-input"
                           step="1"
                           value="200"
                         />
@@ -329,6 +318,7 @@
                         <input
                           type="number"
                           id="genOffset"
+                          class="ui-text-input"
                           step="1"
                           value="128"
                         />
@@ -338,6 +328,7 @@
                         <input
                           type="number"
                           id="genDuty"
+                          class="ui-text-input"
                           min="1"
                           max="99"
                           step="1"
@@ -353,7 +344,7 @@
             <div class="terminal-input-panel">
               <input
                 type="text"
-                class="terminal-input"
+                class="terminal-input ui-text-input"
                 id="terminalInput"
                 placeholder="Text string"
                 disabled
@@ -372,7 +363,7 @@
           ></div>
 
           <section
-            class="uart-section uart-session is-locked"
+            class="uart-section uart-session ui-panel is-locked"
             id="uartRxSession"
             data-terminal-session="rx"
             aria-disabled="true"
@@ -465,7 +456,7 @@
               <div class="terminal-shell" id="rxTerminalShell">
                 <div class="terminal-actions" id="terminalActionsRx">
                   <button
-                    class="icon-btn"
+                    class="icon-btn ui-icon-button"
                     id="clearBtnRx"
                     title="Clear RxD log"
                     aria-label="Clear RxD log"
@@ -482,7 +473,7 @@
                     </svg>
                   </button>
                   <button
-                    class="icon-btn"
+                    class="icon-btn ui-icon-button"
                     id="saveLogBtnRx"
                     title="Save RxD log"
                     aria-label="Save RxD log"
@@ -506,10 +497,10 @@
                 >
                   Receiving
                 </div>
-                <div class="terminal-container" id="terminalReceived"></div>
+                <div class="terminal-container scroll-frame ui-scroll-region" id="terminalReceived" role="region" aria-label="RxD log" tabindex="0"></div>
               </div>
               <div
-                class="oscilloscope-container"
+                class="oscilloscope-container scroll-frame"
                 id="oscilloscopeContainer"
                 style="display: none"
               >
@@ -520,7 +511,7 @@
                     style="display: none"
                   >
                     <button
-                      class="icon-btn"
+                      class="icon-btn ui-icon-button"
                       id="oscilloFullscreenBtn"
                       title="Fullscreen"
                       aria-label="Fullscreen"
@@ -537,7 +528,7 @@
                       </svg>
                     </button>
                     <button
-                      class="icon-btn"
+                      class="icon-btn ui-icon-button"
                       id="oscilloResetBtn"
                       title="Reset zoom and pan"
                       aria-label="Reset zoom and pan"
@@ -554,7 +545,7 @@
                       </svg>
                     </button>
                     <button
-                      class="icon-btn"
+                      class="icon-btn ui-icon-button"
                       id="oscilloClearBtn"
                       title="Clear graph"
                       aria-label="Clear graph"
@@ -571,7 +562,7 @@
                       </svg>
                     </button>
                     <button
-                      class="icon-btn"
+                      class="icon-btn ui-icon-button"
                       id="oscilloDownloadBtn"
                       title="Download graph"
                       aria-label="Download graph"
@@ -603,8 +594,8 @@
         </div>
 
         <!-- Connection settings modal. -->
-        <div class="modal-overlay" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle" hidden>
-          <div class="modal-content">
+        <div class="modal-overlay ui-modal" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle" hidden>
+          <div class="modal-content ui-dialog-card">
             <div class="modal-header ui-dialog-header">
               <h3 id="settingsModalTitle" class="editor-title">Connection settings</h3>
               <button
@@ -625,7 +616,7 @@
               </button>
             </div>
 
-            <div class="modal-body settings-grid">
+            <div class="modal-body settings-grid ui-dialog-body">
               <div class="connection-control">
                 <label for="modalBaudRate">Baud rate</label>
                 <select id="modalBaudRate">
@@ -669,7 +660,7 @@
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
-          navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(function (error) {
+          navigator.serviceWorker.register("/sw.js?v=20261105-security-release-v1", { updateViaCache: "none" }).catch(function (error) {
             console.error("Service worker registration failed:", error);
           });
         });

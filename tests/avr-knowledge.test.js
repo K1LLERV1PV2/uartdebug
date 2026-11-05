@@ -5,7 +5,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { loadKnowledge, resolveKnowledge, calculateTimerPeriod, calculateUsartBaud, calculateRtcPitPeriod, RTC_PIT_PERIOD_CYCLES } = require("../backend/avr-knowledge");
-const { loadMaterials, createProjectCatalog, REQUIRED_RULES, INITIAL_KNOWLEDGE, defaultReadable, exampleSource } = require("../backend/avr-materials");
+const { loadMaterials, createProjectCatalog, REQUIRED_RULES, INITIAL_KNOWLEDGE, defaultReadable } = require("../backend/avr-materials");
+const { prepareProjectCatalog, exampleSource } = require("../backend/avr-project-catalog-build");
 const { createDocumentationLookup } = require("../backend/avr-documentation-lookup");
 const { validateSource, parseProjectResources, projectIdentity } = require("../backend/avr-canvas-contract");
 const { createMaterialsFixture } = require("./helpers/avr-materials-fixture");
@@ -138,6 +139,7 @@ test("curated reusable maps and code are readable references without exposing un
   }
   const excluded = await lookup.lookup({ operation: "search", query: "SECRET_REUSABLE_PROBLEM BINARY_REUSABLE_PAYLOAD SECRET_NOTE SECRET_TARGET SECRET_TEMP" });
   assert.equal(excluded.code, "local_documentation_not_found");
+  prepareProjectCatalog({ root: fixture.root });
   assert.equal(createProjectCatalog(knowledge).listProjects().length, 2, "reusable references do not become installable target projects");
 });
 test("resolver uses current maps and selected pin facts without the obsolete recipe restrictions", (t) => {
@@ -155,6 +157,7 @@ test("resolver uses current maps and selected pin facts without the obsolete rec
 test("catalog publishes unified prepared projects and selected targets without exposing the source tree", (t) => {
   const fixture = createMaterialsFixture(t);
   const knowledge = loadMaterials({ root: fixture.root });
+  prepareProjectCatalog({ root: fixture.root });
   const catalog = createProjectCatalog(knowledge);
   assert.equal(catalog.listProjects({ includeTargets: false }).length, 1);
   assert.equal(catalog.listProjects().length, 2);
@@ -190,7 +193,8 @@ test("catalog shares project identity and latest compatible file resolution with
     "Target_Projects/Project_One/AGENTS.md": "# Local rules\r\nExact project scope.\r\n",
     "Target_Projects/Project_One/00_README.md": "Read the project's code before its description.",
   });
-  const project = createProjectCatalog(loadMaterials({ root: fixture.root })).readProject("target-Project_One");
+  prepareProjectCatalog({ root: fixture.root });
+  const project = createProjectCatalog({ root: fixture.root }).readProject("target-Project_One");
   assert.equal(project.version, "Ver.1.0");
   assert.equal(project.files.find((file) => file.role === "source").name, "Project_One Ver.1.0.2-a(3).c");
   assert.equal(project.files.find((file) => file.role === "source").content, "latest compatible code");
@@ -203,8 +207,70 @@ test("catalog shares project identity and latest compatible file resolution with
 
 test("catalog reports unresolved file identities instead of silently selecting unrelated code", (t) => {
   const fixture = createMaterialsFixture(t, { "Target_Projects/Project_One/Unconfirmed.c": "wrong code" });
-  assert.throws(() => createProjectCatalog(loadMaterials({ root: fixture.root })), /Canonical target project Target_Projects\/Project_One:.*complete alternative/);
+  assert.throws(() => prepareProjectCatalog({ root: fixture.root }), /Canonical target project Target_Projects\/Project_One:.*complete alternative/);
 });
+
+test("project catalog preparation is explicit and leaves every mirrored byte and manifest intact", (t) => {
+  const fixture = createMaterialsFixture(t);
+  const manifestBefore = fs.readFileSync(fixture.manifestPath);
+  assert.throws(() => createProjectCatalog({ root: fixture.root }), /ENOENT/);
+  const prepared = prepareProjectCatalog({ root: fixture.root });
+  assert.equal(prepared.path, path.join(fixture.directory, "project-catalog.json"));
+  assert.equal(prepared.projects, 2);
+  assert.deepEqual(fs.readFileSync(fixture.manifestPath), manifestBefore);
+  for (const [file, content] of Object.entries(fixture.files)) {
+    assert.equal(fs.readFileSync(path.join(fixture.root, file), "utf8"), content);
+  }
+  assert.equal(loadMaterials({ root: fixture.root }).files.length, Object.keys(fixture.files).length);
+});
+
+test("catalog requests read ready projects without reopening source material or running conversion", (t) => {
+  const fixture = createMaterialsFixture(t);
+  prepareProjectCatalog({ root: fixture.root });
+  const read = fs.readFileSync;
+  const originalReads = [];
+  fs.readFileSync = function (file, ...options) {
+    if (typeof file === "string" && file.startsWith(fixture.root + path.sep)) originalReads.push(file);
+    return read.call(this, file, ...options);
+  };
+  try {
+    const first = createProjectCatalog({ root: fixture.root });
+    assert.equal(first.listProjects().length, 2);
+    assert.equal(first.readProject("example-01_Minimum").files.length, 3);
+    assert.strictEqual(createProjectCatalog({ root: fixture.root }), first, "one catalog instance is reused for the pinned artifact");
+    assert.deepEqual(originalReads, []);
+  } finally { fs.readFileSync = read; }
+});
+
+test("a prepared catalog is rejected after its release binding or entries are changed", (t) => {
+  const fixture = createMaterialsFixture(t);
+  const { path: catalogPath } = prepareProjectCatalog({ root: fixture.root });
+  const original = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+  for (const changed of [
+    { ...original, commit: "9".repeat(40) },
+    { ...original, manifestSha256: "9".repeat(64) },
+    { ...original, projects: [...original.projects, original.projects[0]] },
+    { ...original, projects: [{ ...original.projects[0], provenance: { ...original.projects[0].provenance, sha256: "9".repeat(64) } }] },
+  ]) {
+    fs.writeFileSync(catalogPath, JSON.stringify(changed));
+    assert.throws(() => createProjectCatalog({ root: fixture.root }), /catalog|prepared project/);
+  }
+  fs.writeFileSync(catalogPath, JSON.stringify(original));
+  assert.equal(createProjectCatalog({ root: fixture.root }).listProjects().length, 2);
+  fixture.manifest.deployment = { runId: "changed" };
+  fs.writeFileSync(fixture.manifestPath, JSON.stringify(fixture.manifest));
+  assert.throws(() => createProjectCatalog({ root: fixture.root }), /does not match/);
+});
+
+test("unreviewed examples fail preparation without publishing an incomplete catalog", (t) => {
+  const fixture = createMaterialsFixture(t, {
+    "MCU_Knowledge_Base/AVR/User_Examples/11_Unreviewed.c": "#include <xc.h>\n#define F_CPU 3333333UL\nint main(void) { while (1) {} return 0; }\n",
+  });
+  assert.throws(() => prepareProjectCatalog({ root: fixture.root }), /Unreviewed example.*canonical project/);
+  assert.equal(fs.existsSync(path.join(fixture.directory, "project-catalog.json")), false);
+  assert.deepEqual(fs.readdirSync(fixture.directory).sort(), ["manifest.json", "repository"]);
+});
+
 test("prepared project regions preserve functional C and braces inside comments and strings", () => {
   const source = '#include <xc.h>\n#define F_CPU 3333333UL\nvoid init(void) { /* } */ }\nint main(void) { init(); while (1) { puts("}"); } return 0; }\n';
   const result = exampleSource(source, "Pattern");

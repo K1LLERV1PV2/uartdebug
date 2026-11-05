@@ -9,6 +9,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { createMaterialsIdentityVerifier, AUDIENCE } = require("../backend/materials-sync-auth");
 const { createMaterialsSyncServer } = require("../backend/materials-sync-server");
+const { createMaterialsFixture } = require("./helpers/avr-materials-fixture");
 
 const COMMIT = "a".repeat(40);
 const seconds = 1_800_000_000;
@@ -131,12 +132,12 @@ test("anonymous traffic from one address cannot exhaust another deployment addre
     headers: { ...f.headers, "X-Real-IP": "192.0.2.2" } })).status, 200);
 });
 
-const REQUIRED = ["AGENTS.md", "Project_Rules/AGENTS_Add_On.md", "Project_Rules/Project_Description.md",
-  "Project_Rules/Base_project_rules.md", "MCU_Knowledge_Base/00_README.md",
-  "MCU_Knowledge_Base/AVR/00_README.md", "MCU_Knowledge_Base/AVR/AVR_Programming_General_Rules.md"];
 function archive(root, commit, additions = [], omitted = []) {
   const filename = path.join(root, `${crypto.randomUUID()}.tar.gz`);
-  const entries = REQUIRED.filter((name) => !omitted.includes(name)).map((name) => ({ name, content: "# Canonical rules\n" })).concat(additions);
+  const fixture = createMaterialsFixture();
+  const entries = Object.entries(fixture.files).filter(([name]) => !omitted.includes(name))
+    .map(([name, content]) => ({ name, content })).concat(additions);
+  fs.rmSync(fixture.directory, { recursive: true, force: true });
   const config = path.join(root, `${crypto.randomUUID()}.json`);
   fs.writeFileSync(config, JSON.stringify({ entries, commit, filename }));
   execFileSync(process.platform === "win32" ? "python" : "python3", ["-c", [
@@ -164,10 +165,15 @@ test("archive installer preserves paths/content, hashes every file and atomicall
   const content = "Русский текст\r\n#include <xc.h>\n";
   const first = archive(root, COMMIT, [{ name: "Target_Projects/Тест Ver.1.0/Тест.c", content }, { name: "Notes/old.md", content: "old" }]);
   const result = install(root, first, COMMIT, ["--run-id", "10"]);
-  assert.equal(result.files, REQUIRED.length + 2);
+  const fixture = createMaterialsFixture(t);
+  assert.equal(result.files, Object.keys(fixture.files).length + 2);
   const current = path.join(root, "materials/current");
   assert.equal(fs.readFileSync(path.join(current, "repository/Target_Projects/Тест Ver.1.0/Тест.c"), "utf8"), content);
   const manifest = JSON.parse(fs.readFileSync(path.join(current, "manifest.json")));
+  const catalog = JSON.parse(fs.readFileSync(path.join(current, "project-catalog.json")));
+  assert.equal(catalog.commit, COMMIT);
+  assert.equal(catalog.projects.length, 2);
+  assert.equal(catalog.manifestSha256, crypto.createHash("sha256").update(fs.readFileSync(path.join(current, "manifest.json"))).digest("hex"));
   assert.equal(manifest.files["Target_Projects/Тест Ver.1.0/Тест.c"].sha256, crypto.createHash("sha256").update(content).digest("hex"));
   const next = "b".repeat(40);
   install(root, archive(root, next), next, ["--run-id", "11"]);
@@ -213,4 +219,38 @@ test("reactivating an existing immutable release retains the newest workflow wat
   assert.throws(() => install(root, nextArchive, next, ["--run-id", "12"]));
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, "materials/current/manifest.json"), "utf8")).commit, COMMIT);
   assert.equal(JSON.parse(fs.readFileSync(path.join(root, "materials/activation.json"), "utf8")).runId, "12");
+});
+
+test("local preparation upgrades an old release catalog without changing its original manifest", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-material-catalog-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = archive(root, COMMIT);
+  install(root, source, COMMIT, ["--run-id", "10", "--no-activate"]);
+  const release = path.join(root, `materials/releases/${COMMIT}`);
+  const manifest = fs.readFileSync(path.join(release, "manifest.json"));
+  fs.unlinkSync(path.join(release, "project-catalog.json"));
+  install(root, source, COMMIT, ["--run-id", "12", "--no-activate"]);
+  assert.deepEqual(fs.readFileSync(path.join(release, "manifest.json")), manifest);
+  const catalog = JSON.parse(fs.readFileSync(path.join(release, "project-catalog.json")));
+  assert.equal(catalog.projects.length, 2);
+  assert.equal(catalog.manifestSha256, crypto.createHash("sha256").update(manifest).digest("hex"));
+  assert.equal(fs.existsSync(path.join(root, "materials/current")), false);
+});
+
+test("an unreviewed example aborts installation before a release can be activated", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-material-catalog-invalid-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const activation = process.platform === "win32" ? ["--no-activate"] : [];
+  install(root, archive(root, COMMIT), COMMIT, activation);
+  const previous = fs.readFileSync(path.join(root, `materials/releases/${COMMIT}/project-catalog.json`));
+  const next = "b".repeat(40);
+  const invalid = archive(root, next, [{ name: "MCU_Knowledge_Base/AVR/User_Examples/11_Unreviewed.c",
+    content: "#include <xc.h>\n#define F_CPU 3333333UL\nint main(void) { while (1) {} return 0; }\n" }]);
+  assert.throws(() => install(root, invalid, next, activation));
+  assert.equal(fs.existsSync(path.join(root, `materials/releases/${next}`)), false);
+  assert.deepEqual(fs.readFileSync(path.join(root, `materials/releases/${COMMIT}/project-catalog.json`)), previous);
+  assert.deepEqual(fs.readdirSync(path.join(root, "materials/releases")), [COMMIT]);
+  if (process.platform !== "win32") {
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "materials/current/manifest.json"))).commit, COMMIT);
+  }
 });

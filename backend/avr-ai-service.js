@@ -26,6 +26,7 @@ const {
 } = runtime;
 const {
   CANVAS_OUTPUT_SCHEMA,
+  CHAT_OUTPUT_SCHEMA,
   normalizeCanvas,
   validateCanvasOutput,
   projectIdentity,
@@ -33,6 +34,7 @@ const {
   codeRegions,
   userCodeEditsRequested,
 } = require("./avr-canvas-contract");
+const { normalizeChatInput } = require("./avr-conversation-contract");
 const {
   specificationText,
   normalizeProjectDocuments,
@@ -192,6 +194,19 @@ function normalizeRequest(raw) {
   }
   return { operation, canvas, mcu, packageName, currentProject };
 }
+function normalizeChatRequest(raw) {
+  let conversation;
+  try {
+    conversation = normalizeChatInput(raw);
+  } catch (error) {
+    fail(400, "invalid_chat_request", error.message);
+  }
+  return {
+    ...normalizeRequest({ ...raw, operation: "analyze" }),
+    operation: "chat",
+    ...conversation,
+  };
+}
 function specificationTarget(markdown, devices) {
   const hardware =
     /^##\s+(?:Требования к аппаратной части|Аппаратные требования|Hardware requirements|Requisitos de hardware|Exigences matérielles|Hardwareanforderungen)\s*\n([\s\S]*?)(?=^##\s|$(?![\s\S]))/im.exec(
@@ -298,7 +313,7 @@ function createAvrAiService(options = {}) {
         environment.AI_EXTERNAL_DOCUMENTATION_ENABLED === "1",
     };
   }
-  function rules(knowledge) {
+  function rules(knowledge, conversation = false) {
     const documents = knowledge.initialRules || [];
     if (
       documents.length !== 4 ||
@@ -312,10 +327,11 @@ function createAvrAiService(options = {}) {
     const sources = documents.map((document) =>
       `Repository project rules (${document.path}):\n${document.text}`,
     ).join("\n\n");
-    const policy = buildProjectPolicy();
+    const policies = [buildProjectPolicy(), buildProjectPolicy({ conversation: true })];
+    const policy = policies[conversation ? 1 : 0];
     return {
       packageId: `UartDebug2@${knowledge.version}`,
-      digest: hash(`${sources}\n\n${policy}`),
+      digest: hash(`${sources}\n\n${policies.join("\n\n")}`),
       sources,
       policy,
     };
@@ -397,7 +413,7 @@ function createAvrAiService(options = {}) {
       },
     };
   }
-  async function processCanvas(raw, context = {}) {
+  async function processProject(raw, context = {}, conversation = false) {
     const cfg = config();
     if (!cfg.enabled)
       fail(503, "ai_disabled", "The AI assistant is currently disabled.");
@@ -407,12 +423,13 @@ function createAvrAiService(options = {}) {
         "api_key_not_configured",
         "The OpenAI API key is not configured on the server.",
       );
-    const input = normalizeRequest(raw);
+    const input = conversation ? normalizeChatRequest(raw) : normalizeRequest(raw);
+    const explicitTarget = { mcu: input.mcu, packageName: input.packageName };
     const knowledge = await knowledgeLoader();
     const language = input.canvas.locale || inferLocale(specificationText(input.canvas.markdown), "en");
     const clarify = (key) => canvasResult(input, localizedMessage(key, language));
     if (
-      input.operation !== "analyze" &&
+      !conversation && input.operation !== "analyze" &&
       !projectIdentity(input.canvas.markdown)
     )
       return clarify("identity");
@@ -461,6 +478,15 @@ function createAvrAiService(options = {}) {
     }
     if (input.operation === "generate" && (!input.mcu || !input.packageName))
       return clarify("targetMissing");
+    if (conversation) {
+      const specified = specificationTarget(input.canvas.markdown, knowledge.devices);
+      const mentioned = specificationTarget(`## Hardware requirements\n${input.message}`, knowledge.devices);
+      if (!specified.ambiguous) {
+        input.mcu ||= (!mentioned.ambiguous ? mentioned.mcu : "") || specified.mcu;
+        input.packageName ||= (!mentioned.ambiguous ? mentioned.packageName : "") || specified.packageName;
+        input.canvas.target = { mcu: input.mcu, packageName: input.packageName };
+      }
+    }
     const selected =
       input.mcu && input.packageName
         ? await knowledgeResolver({
@@ -494,7 +520,7 @@ function createAvrAiService(options = {}) {
         healthUrl: cfg.compileHealthUrl,
         timeoutMs: cfg.compileHealthTimeoutMs,
       });
-    const ruleData = rules(knowledge);
+    const ruleData = rules(knowledge, conversation);
     const lookup = createDocumentationLookup({
       knowledge,
       fetch: options.documentationFetch || globalThis.fetch,
@@ -516,18 +542,22 @@ function createAvrAiService(options = {}) {
         "Registered official document roots: " + DOCUMENT_ROOTS.join(" "),
         `At most ${MAX_DOCUMENTATION_LOOKUPS} local documentation steps and two external network requests are allowed. Follow required section continuations within this limit.`,
         ruleData.policy,
-        `Selected stage: ${input.operation}. ${JSON.stringify(PROJECT_STAGES[input.operation])}`,
+        conversation
+          ? "This is a chat request. Select reply, clarify (specification), generate, or describe from the latest message under the integration policy. The supplied artifacts are the current state; do not restore old versions from conversation history."
+          : `Selected stage: ${input.operation}. ${JSON.stringify(PROJECT_STAGES[input.operation])}`,
       ].join("\n\n"),
-      input: [{ role: "user", content: JSON.stringify(input) }],
+      input: conversation
+        ? [...input.history, { role: "user", content: JSON.stringify({ ...input, history: undefined }) }]
+        : [{ role: "user", content: JSON.stringify(input) }],
       tools: [LOOKUP_TOOL],
       tool_choice: "auto",
       parallel_tool_calls: false,
       text: {
         format: {
           type: "json_schema",
-          name: "uartdebug_project",
+          name: conversation ? "uartdebug_conversation" : "uartdebug_project",
           strict: true,
-          schema: CANVAS_OUTPUT_SCHEMA,
+          schema: conversation ? CHAT_OUTPUT_SCHEMA : CANVAS_OUTPUT_SCHEMA,
         },
       },
     };
@@ -545,6 +575,7 @@ function createAvrAiService(options = {}) {
       mustGenerateAfterRepair = false,
       nextStep = input.operation,
       previousErrorCode = null;
+    let repairCanvas = null;
     const stages = [],
       references = [];
     async function callModel(body, stageId) {
@@ -725,16 +756,59 @@ function createAvrAiService(options = {}) {
           continue;
         }
         let output;
+        let outputOperation = input.operation;
+        let outputInput = input;
+        let outputKnowledge = selected;
         try {
-          output = validateCanvasOutput(parseStructuredOutput(response), {
-            ...input,
+          const parsed = parseStructuredOutput(response);
+          if (conversation) {
+            outputOperation = { reply: "chat", clarify: "analyze", generate: "generate", describe: "describe" }[parsed?.action];
+            if (input.requestSource === "review" && ["generate", "describe"].includes(outputOperation))
+              fail(502, "invalid_generated_canvas", "The Review specification shortcut cannot change code, resources or descriptions. Reply in the chat or review the specification only.");
+            if (outputOperation === "generate") {
+              const specified = specificationTarget(parsed.canvas?.markdown || input.canvas.markdown, knowledge.devices);
+              const mcu = explicitTarget.mcu || specified.mcu || input.mcu;
+              const packageName = explicitTarget.packageName || specified.packageName || input.packageName;
+              if (!mcu || !packageName || specified.ambiguous ||
+                  (specified.mcu && specified.mcu !== mcu) ||
+                  (specified.packageName && specified.packageName.toLowerCase() !== packageName.toLowerCase())) {
+                fail(502, "invalid_generated_canvas", "Code generation requires one supported, consistent microcontroller and package. Ask for the missing target in the chat.");
+              }
+              outputKnowledge = mcu === input.mcu && packageName === input.packageName ? selected :
+                await knowledgeResolver({ mcu, packageName, knowledge });
+              if (!outputKnowledge.supported)
+                fail(502, "invalid_generated_canvas", "The generated project needs applicable canonical local materials for its microcontroller and package.");
+              outputInput = { ...input, mcu, packageName, canvas: { ...input.canvas, target: { mcu, packageName } } };
+              if (input.currentProject?.source && userCodeEditsRequested(input.currentProject.source)) {
+                fail(502, "invalid_generated_canvas", "Protected user code contains pending instructions. Explain that these regions must be edited manually.");
+              }
+            }
+          }
+          if (repairCanvas && (parsed.canvas?.markdown !== repairCanvas.markdown || parsed.canvas?.locale !== repairCanvas.locale))
+            fail(502, "invalid_ai_repair_response", "Compiler repair must preserve the validated specification exactly.");
+          output = validateCanvasOutput(parsed, {
+            ...outputInput,
+            operation: outputOperation,
+            conversation,
             device:
-              input.operation === "generate"
+              outputOperation === "generate"
                 ? knowledge.devices.find(
-                    (device) => device.mcu.toLowerCase() === input.mcu,
+                    (device) => device.mcu.toLowerCase() === outputInput.mcu,
                   )
                 : undefined,
           });
+          if (output.action === "reply") {
+            if (mustGenerateAfterRepair)
+              fail(502, "invalid_ai_repair_response", "Compiler repair must return complete C and resource YAML.");
+            return {
+              ok: true, kind: "chat", stage: "chat", message: output.message,
+              baseRevision: input.canvas.revision,
+              knowledge: selected.manifest,
+              references,
+              progress: toPublicProgress(stages, "completed"),
+              _metering: metering,
+            };
+          }
           if (output.action === "clarify") {
             if (mustGenerateAfterRepair)
               fail(
@@ -743,13 +817,13 @@ function createAvrAiService(options = {}) {
                 "Compiler repair must return complete C and resource YAML.",
               );
             return {
-              ...canvasResult(input, output.message),
+              ...canvasResult({ ...outputInput, operation: outputOperation }, output.message),
               canvas: {
                 ...output.canvas,
                 revision: input.canvas.revision + 1,
-                target: input.canvas.target,
+                target: outputInput.canvas.target,
               },
-              knowledge: selected.manifest,
+              knowledge: outputKnowledge.manifest,
               references,
               progress: toPublicProgress(stages, "completed"),
               _metering: metering,
@@ -779,7 +853,9 @@ function createAvrAiService(options = {}) {
                   repairAttempt: repairAttempts,
                   validationError: { code: error.code, message: error.message },
                   instruction:
-                    "Correct this response within the same authorized project stage. Preserve the input specification during generate/describe and preserve every user C region. Return clarify if a required decision is missing.",
+                    conversation
+                      ? "Correct this response within the latest user's authorized request. A generate response may create or update the specification for that same requested work; preserve unrelated requirements and every user C region. A describe response preserves the specification exactly. If a required decision is missing, return reply with canvas null/project null and ask in the chat. Do not create new inline question blocks."
+                      : "Correct this response within the same authorized project stage. Preserve the input specification during generate/describe and preserve every user C region. Return clarify if a required decision is missing.",
                 }),
               },
             ],
@@ -789,14 +865,20 @@ function createAvrAiService(options = {}) {
           continue;
         }
         let compilation = { ok: true };
-        if (input.operation === "generate" && cfg.compileVerificationEnabled) {
+        if (outputOperation === "generate" && cfg.compileVerificationEnabled) {
+          if (conversation && context.compilerReady !== true)
+            await assertCompilerReady({
+              compileFetchImpl: compileHealthFetchImpl,
+              healthUrl: cfg.compileHealthUrl,
+              timeoutMs: cfg.compileHealthTimeoutMs,
+            });
           compileAttempts++;
           nextStep = "compilation";
           previousErrorCode = null;
           const stage = await beginProgressStage(context, stages, {
             id: "compilation",
             attempt: compileAttempts,
-            mcu: input.mcu,
+            mcu: outputInput.mcu,
           });
           try {
             compilation = await verifyGeneratedProjectCompilation({
@@ -804,7 +886,7 @@ function createAvrAiService(options = {}) {
               compileUrl: cfg.compileUrl,
               timeoutMs: cfg.compileTimeoutMs,
               generated: output.project,
-              mcu: input.mcu,
+              mcu: outputInput.mcu,
             });
           } catch (error) {
             await finishProgressStage(context, stage, "failed", {
@@ -832,6 +914,7 @@ function createAvrAiService(options = {}) {
           nextStep = "compiler-repair";
           previousErrorCode = "generated_project_does_not_compile";
           mustGenerateAfterRepair = true;
+          repairCanvas = output.canvas;
           request = {
             ...request,
             input: [
@@ -842,8 +925,9 @@ function createAvrAiService(options = {}) {
                 content: JSON.stringify({
                   repairAttempt: repairAttempts,
                   compilerDiagnostics: compilation.diagnostics,
+                  specification: output.canvas,
                   instruction:
-                    "Repair only the C and resource YAML. Preserve the exact input specification and user C regions. Return generate for the same project identity and selected target.",
+                    "Repair only the C and resource YAML. Preserve the exact validated specification supplied here and user C regions. Return generate for the same project identity and selected target.",
                 }),
               },
             ],
@@ -855,7 +939,7 @@ function createAvrAiService(options = {}) {
         return {
           ok: true,
           kind: "project",
-          stage: input.operation,
+          stage: outputOperation,
           operation: input.currentProject ? "update" : "create",
           targetInstanceId: input.currentProject?.instanceId || null,
           message: output.message,
@@ -863,28 +947,28 @@ function createAvrAiService(options = {}) {
           canvas: {
             ...output.canvas,
             revision: input.canvas.revision + 1,
-            target: input.canvas.target,
+            target: outputInput.canvas.target,
           },
           project: publicProject(
             output.project,
-            { ...input, canvas: output.canvas },
-            selected.manifest,
+            { ...outputInput, canvas: output.canvas },
+            outputKnowledge.manifest,
             randomUUID,
           ),
-          knowledge: selected.manifest,
+          knowledge: outputKnowledge.manifest,
           references,
           verification: {
             schemaVersion: 1,
             status:
-              input.operation === "generate"
+              outputOperation === "generate"
                 ? cfg.compileVerificationEnabled
                   ? "passed"
                   : "skipped"
                 : "not-requested",
             resources:
-              input.operation === "generate" ? "passed" : "not-requested",
-            mcu: input.mcu,
-            packageName: input.packageName,
+              outputOperation === "generate" ? "passed" : "not-requested",
+            mcu: outputInput.mcu,
+            packageName: outputInput.packageName,
             compileAttempts,
             repairAttempts,
             hardware: "not-tested",
@@ -920,7 +1004,8 @@ function createAvrAiService(options = {}) {
     }
   }
   return {
-    processCanvas,
+    processCanvas(raw, context) { return processProject(raw, context); },
+    processChat(raw, context) { return processProject(raw, context, true); },
     getStatus,
     getRuntimeConfig: config,
     authorizeAccessToken(token) {
@@ -933,12 +1018,17 @@ function createAvrAiService(options = {}) {
       normalizeRequest(raw);
       return true;
     },
+    validateChatRequestInput(raw) {
+      normalizeChatRequest(raw);
+      return true;
+    },
   };
 }
 module.exports = {
   AiServiceError,
   createAvrAiService,
   normalizeRequest,
+  normalizeChatRequest,
   CONTRACT,
   extractOpenAiMetering,
 };

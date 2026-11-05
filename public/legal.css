@@ -28,11 +28,10 @@ body {
 }
 
 .legal-document {
+  --ui-panel-bg: var(--ui-surface-solid);
+  --ui-panel-shadow: var(--ui-shadow);
+
   padding: clamp(22px, 5vw, 48px);
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius);
-  background: var(--ui-surface-solid);
-  box-shadow: var(--ui-shadow);
 }
 
 .legal-document h1,

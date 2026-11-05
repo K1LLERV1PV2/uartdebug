@@ -1,5 +1,7 @@
 # Перенос методики программирования AVR — база 1.3.0
 
+> Historical report: this records an earlier implementation. Paths, versions and flows below may be obsolete. Current behavior is described in [the project workspace](AVR_CANVAS.md) and [materials deployment](AI_MATERIALS_DEPLOYMENT.md).
+
 Дата подготовки: 24–25 сентября 2026 года.
 
 Методика из `UartDebug2_1.zip` перенесена в отдельную локальную библиотеку серверного агента. Она дополняет восемь существующих рецептов и учебные минипроекты: теперь доступны подробные правила построения программы, работы с периферией и объяснения результата.

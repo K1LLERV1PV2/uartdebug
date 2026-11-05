@@ -134,6 +134,31 @@ function getRuntimeConfig(environment = process.env) {
   };
 }
 
+// Headers do not complete a request: keep the deadline active while JSON is
+// received too. Callers retain their own HTTP and malformed-body contracts.
+async function fetchJsonWithTimeout(fetchImpl, url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(url, { ...options, signal: controller.signal });
+    let body = null;
+    let invalidJson = false;
+    try {
+      body = await response.json();
+    } catch (error) {
+      controller.signal.throwIfAborted();
+      if (error?.name === "AbortError") throw error;
+      invalidJson = true;
+    }
+    return { response, body, invalidJson };
+  } catch (error) {
+    controller.signal.throwIfAborted();
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function assertCompilerReady({ compileFetchImpl, healthUrl, timeoutMs }) {
   if (typeof compileFetchImpl !== "function") {
     throw new AiServiceError(
@@ -142,15 +167,12 @@ async function assertCompilerReady({ compileFetchImpl, healthUrl, timeoutMs }) {
       "The AVR compiler service is unavailable.",
     );
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
+  let result;
   try {
-    response = await compileFetchImpl(healthUrl, {
+    result = await fetchJsonWithTimeout(compileFetchImpl, healthUrl, {
       method: "GET",
       headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
+    }, timeoutMs);
   } catch (error) {
     throw new AiServiceError(
       error?.name === "AbortError" ? 504 : 503,
@@ -161,14 +183,8 @@ async function assertCompilerReady({ compileFetchImpl, healthUrl, timeoutMs }) {
         ? "The AVR compiler readiness check timed out."
         : "The AVR compiler service is unavailable.",
     );
-  } finally {
-    clearTimeout(timeout);
   }
-
-  let body = null;
-  try {
-    body = await response.json();
-  } catch {}
+  const { response, body } = result;
   if (!response.ok) {
     throw new AiServiceError(
       503,
@@ -197,11 +213,9 @@ async function verifyGeneratedProjectCompilation({
   generated,
   mcu,
 }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
+  let result;
   try {
-    response = await compileFetchImpl(compileUrl, {
+    result = await fetchJsonWithTimeout(compileFetchImpl, compileUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -211,8 +225,7 @@ async function verifyGeneratedProjectCompilation({
         mcu,
         optimize: "O1",
       }),
-      signal: controller.signal,
-    });
+    }, timeoutMs);
   } catch (error) {
     throw new AiServiceError(
       error?.name === "AbortError" ? 504 : 503,
@@ -223,14 +236,9 @@ async function verifyGeneratedProjectCompilation({
         ? "The AVR compiler check timed out."
         : "The AVR compiler service is unavailable.",
     );
-  } finally {
-    clearTimeout(timeout);
   }
-
-  let body = null;
-  try {
-    body = await response.json();
-  } catch {
+  const { response, body, invalidJson } = result;
+  if (invalidJson) {
     throw new AiServiceError(
       503,
       "compiler_invalid_response",
@@ -481,20 +489,17 @@ function attachUncertainProviderUsage(error) {
 }
 
 async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
+  let result;
 
   try {
-    response = await fetchImpl(OPENAI_RESPONSES_URL, {
+    result = await fetchJsonWithTimeout(fetchImpl, OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
+    }, timeoutMs);
   } catch (error) {
     if (error?.name === "AbortError") {
       throw new AiServiceError(
@@ -508,14 +513,8 @@ async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody }) {
       "openai_unavailable",
       "The OpenAI API is temporarily unavailable.",
     );
-  } finally {
-    clearTimeout(timeout);
   }
-
-  let responseJson = null;
-  try {
-    responseJson = await response.json();
-  } catch {}
+  const { response, body: responseJson } = result;
 
   if (!response.ok) {
     const status =
@@ -558,20 +557,17 @@ async function requestOpenAiInputTokenCount({
   timeoutMs,
   requestBody,
 }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
+  let result;
 
   try {
-    response = await fetchImpl(OPENAI_INPUT_TOKENS_URL, {
+    result = await fetchJsonWithTimeout(fetchImpl, OPENAI_INPUT_TOKENS_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(toInputTokenCountRequest(requestBody)),
-      signal: controller.signal,
-    });
+    }, timeoutMs);
   } catch (error) {
     if (error?.name === "AbortError") {
       throw new AiServiceError(
@@ -585,14 +581,8 @@ async function requestOpenAiInputTokenCount({
       "openai_token_count_unavailable",
       "The AI input-token check is temporarily unavailable.",
     );
-  } finally {
-    clearTimeout(timeout);
   }
-
-  let responseJson = null;
-  try {
-    responseJson = await response.json();
-  } catch {}
+  const { response, body: responseJson } = result;
   if (!response.ok) {
     throw new AiServiceError(
       response.status === 429 ? 429 : response.status >= 500 ? 502 : 503,

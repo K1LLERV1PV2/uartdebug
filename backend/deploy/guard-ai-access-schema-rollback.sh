@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 5 ]; then
-  echo "usage: guard-ai-access-schema-rollback.sh <public-releases> <backend-releases> <python-releases> <release-name-or-empty> <live-database-file>" >&2
+if [ "$#" -ne 4 ]; then
+  echo "usage: guard-ai-access-schema-rollback.sh <public-releases> <backend-releases> <release-name-or-empty> <live-database-file>" >&2
   exit 64
 fi
 
 public_releases="$1"
 backend_releases="$2"
-python_releases="$3"
-release_name="$4"
-access_database="$5"
+release_name="$3"
+access_database="$4"
 
 if [ -n "${release_name}" ]; then
   if ! printf '%s\n' "${release_name}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$' ||
@@ -38,7 +37,6 @@ select_release() {
 
 target_public="$(select_release "${public_releases}")"
 target_backend="$(select_release "${backend_releases}")"
-target_python="$(select_release "${python_releases}")"
 
 if [ -n "${target_backend}" ] && [ -f "${access_database}" ]; then
   [ -f "${target_backend}/ai-access-service.js" ] || {
@@ -83,4 +81,4 @@ if [ -n "${target_backend}" ] && [ -f "${access_database}" ]; then
   echo "Rollback schema guard passed: live schema ${live_ai_access_schema_version}, target supports ${target_ai_access_schema_version}." >&2
 fi
 
-printf '%s\n%s\n%s\n' "${target_public}" "${target_backend}" "${target_python}"
+printf '%s\n%s\n' "${target_public}" "${target_backend}"

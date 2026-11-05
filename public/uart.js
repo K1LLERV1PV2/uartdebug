@@ -2,6 +2,9 @@
 let port = null;
 let reader = null;
 let writer = null;
+let serialOperationEpoch = 0;
+let serialConnectPromise = null;
+let serialCleanupPromise = null;
 let currentView = "terminal";
 let isReceiving = true;
 let oscilloscopeData = [];
@@ -93,14 +96,19 @@ let terminalLayoutState = {
   order: ["tx", "rx"],
   sizes: { tx: 50, rx: 50 },
 };
-let terminalLayoutDrag = null;
-let terminalLayoutResize = null;
 let terminalLayoutRefreshFrame = null;
-let serialPortHint = null;
+let serialPortHintNotificationId = null;
 let txTerminalWatermark = null;
 let txGeneratorWatermark = null;
 let rxTerminalWatermark = null;
 let rxGraphicWatermark = null;
+
+function notifyUart(message, { title = "UART", tone = "error", key, details = "", diagnostics = "" } = {}) {
+  return window.UartDebugNotifications?.notify({
+    title, message: String(message || ""), details: details || String(message || ""),
+    diagnostics, tone, key, source: "UART terminal", pending: false,
+  });
+}
 
 // Initialize on page load
 document.addEventListener("DOMContentLoaded", function () {
@@ -152,7 +160,6 @@ function initializeElements() {
   oscilloscopeCanvas = document.getElementById("oscilloscopeCanvas");
   oscilloscopeContainer = document.getElementById("oscilloscopeContainer");
   cycleCheckbox = document.getElementById("cycleCheckbox");
-  serialPortHint = document.getElementById("serialPortHint");
   txTerminalWatermark = document.getElementById("txTerminalWatermark");
   txGeneratorWatermark = document.getElementById("txGeneratorWatermark");
   rxTerminalWatermark = document.getElementById("rxTerminalWatermark");
@@ -290,11 +297,24 @@ function initializeTerminalLayout() {
   terminalLayoutState = loadTerminalLayoutState();
   applyTerminalLayout();
 
-  terminalLayoutResizer?.addEventListener(
-    "pointerdown",
-    handleTerminalResizePointerDown
-  );
-  terminalLayoutResizer?.addEventListener("keydown", handleTerminalResizeKey);
+  window.UartDebugControls.bindPanelResizer(terminalLayoutResizer, {
+    axis: "x",
+    enabled: () => uartSessionsSplit.getBoundingClientRect().width > 0,
+    start: () => {
+      uartSessionsSplit.classList.add("is-terminal-resizing");
+      return { width: uartSessionsSplit.getBoundingClientRect().width,
+        firstSize: terminalLayoutState.sizes[terminalLayoutState.order[0]] };
+    },
+    move: (delta, state) => {
+      const firstId = terminalLayoutState.order[0];
+      adjustTerminalLayoutSize(state.firstSize + delta / state.width * 100 - terminalLayoutState.sizes[firstId]);
+    },
+    finish: () => {
+      uartSessionsSplit.classList.remove("is-terminal-resizing");
+      saveTerminalLayoutState();
+    },
+    key: handleTerminalResizeKey,
+  });
 }
 
 function loadTerminalLayoutState() {
@@ -303,6 +323,9 @@ function loadTerminalLayoutState() {
     return normalizeTerminalLayoutState(raw ? JSON.parse(raw) : null);
   } catch (error) {
     console.warn("Unable to load terminal layout:", error);
+    notifyUart("The terminal layout could not be restored. Default sizes were used.", {
+      title: "Layout", tone: "warning", key: "uart-layout-storage", diagnostics: error?.stack || String(error),
+    });
     return normalizeTerminalLayoutState(null);
   }
 }
@@ -315,6 +338,9 @@ function saveTerminalLayoutState() {
     );
   } catch (error) {
     console.warn("Unable to save terminal layout:", error);
+    notifyUart("The terminal layout could not be saved in this browser.", {
+      title: "Layout", tone: "warning", key: "uart-layout-storage", diagnostics: error?.stack || String(error),
+    });
   }
 }
 
@@ -399,217 +425,14 @@ function getTerminalLayoutPanel(id) {
   return document.querySelector(`[data-terminal-session="${id}"]`);
 }
 
-function getOtherTerminalPanelId(id) {
-  return TERMINAL_LAYOUT_PANEL_IDS.find((panelId) => panelId !== id);
-}
-
-function handleTerminalDragPointerDown(event) {
-  if (event.button !== 0 || !uartSessionsSplit) return;
-  if (isTerminalHeaderInteractiveTarget(event.target)) return;
-
-  const panelId =
-    event.currentTarget.closest(".uart-session")?.dataset.terminalSession;
-  const panel = getTerminalLayoutPanel(panelId);
-  if (!panel) return;
-
-  event.preventDefault();
-  terminalLayoutDrag = {
-    panelId,
-    placement: null,
-  };
-
-  panel.classList.add("is-terminal-drag-source");
-  document.body.classList.add("is-terminal-layout-active");
-  uartSessionsSplit.classList.add("is-terminal-dragging");
-  updateTerminalDropPlacement(event.clientX, event.clientY);
-
-  document.addEventListener("pointermove", handleTerminalDragPointerMove);
-  document.addEventListener("pointerup", handleTerminalDragPointerUp);
-  document.addEventListener("pointercancel", cancelTerminalDrag);
-}
-
-function isTerminalHeaderInteractiveTarget(target) {
-  return !!target.closest(
-    "button, input, select, textarea, label, a, .custom-select, .checkbox-label, .radio-group, .view-toggle, .mode-controls, .data-mode-controls"
-  );
-}
-
-function handleTerminalDragPointerMove(event) {
-  if (!terminalLayoutDrag) return;
-  event.preventDefault();
-  updateTerminalDropPlacement(event.clientX, event.clientY);
-}
-
-function handleTerminalDragPointerUp(event) {
-  if (!terminalLayoutDrag) return;
-  event.preventDefault();
-
-  const { panelId, placement } = terminalLayoutDrag;
-  if (placement) {
-    const otherPanelId = getOtherTerminalPanelId(panelId);
-    terminalLayoutState.layout = placement.layout;
-    terminalLayoutState.order =
-      placement.position === "start"
-        ? [panelId, otherPanelId]
-        : [otherPanelId, panelId];
-    applyTerminalLayout();
-    saveTerminalLayoutState();
-  }
-
-  cancelTerminalDrag();
-}
-
-function cancelTerminalDrag() {
-  if (!terminalLayoutDrag) return;
-
-  getTerminalLayoutPanel(terminalLayoutDrag.panelId)?.classList.remove(
-    "is-terminal-drag-source"
-  );
-  terminalLayoutDrag = null;
-  clearTerminalDropClasses();
-  uartSessionsSplit?.classList.remove("is-terminal-dragging");
-  document.body.classList.remove("is-terminal-layout-active");
-  document.removeEventListener("pointermove", handleTerminalDragPointerMove);
-  document.removeEventListener("pointerup", handleTerminalDragPointerUp);
-  document.removeEventListener("pointercancel", cancelTerminalDrag);
-}
-
-function updateTerminalDropPlacement(clientX, clientY) {
-  if (!terminalLayoutDrag || !uartSessionsSplit) return;
-
-  const rect = uartSessionsSplit.getBoundingClientRect();
-  const xRatio = clampToRange((clientX - rect.left) / rect.width, 0, 1);
-  const yRatio = clampToRange((clientY - rect.top) / rect.height, 0, 1);
-  const horizontalBias = Math.abs(xRatio - 0.5);
-  const verticalBias = Math.abs(yRatio - 0.5);
-
-  const useHorizontal = horizontalBias >= verticalBias;
-  const layout = useHorizontal ? "row" : "column";
-  const position = useHorizontal
-    ? xRatio < 0.5
-      ? "start"
-      : "end"
-    : yRatio < 0.5
-      ? "start"
-      : "end";
-
-  terminalLayoutDrag.placement = { layout, position };
-  setTerminalDropClass(layout, position);
-}
-
-function setTerminalDropClass(layout, position) {
-  if (!uartSessionsSplit) return;
-  clearTerminalDropClasses();
-
-  const className =
-    layout === "row"
-      ? position === "start"
-        ? "terminal-drop-left"
-        : "terminal-drop-right"
-      : position === "start"
-        ? "terminal-drop-top"
-        : "terminal-drop-bottom";
-
-  uartSessionsSplit.classList.add(className);
-}
-
-function clearTerminalDropClasses() {
-  uartSessionsSplit?.classList.remove(
-    "terminal-drop-left",
-    "terminal-drop-right",
-    "terminal-drop-top",
-    "terminal-drop-bottom"
-  );
-}
-
-function handleTerminalResizePointerDown(event) {
-  if (event.button !== 0 || !uartSessionsSplit || terminalLayoutResize) return;
-
-  event.preventDefault();
-  terminalLayoutResize = { pointerId: event.pointerId };
-  document.body.classList.add("is-terminal-layout-active");
-  uartSessionsSplit.classList.add("is-terminal-resizing");
-  try { terminalLayoutResizer?.setPointerCapture?.(event.pointerId); } catch {}
-  updateTerminalLayoutSize(event.clientX, event.clientY);
-
-  document.addEventListener("pointermove", handleTerminalResizePointerMove);
-  document.addEventListener("pointerup", handleTerminalResizePointerUp);
-  document.addEventListener("pointercancel", cancelTerminalResize);
-  terminalLayoutResizer?.addEventListener("lostpointercapture", cancelTerminalResize);
-  window.addEventListener("blur", cancelTerminalResize);
-}
-
-function handleTerminalResizePointerMove(event) {
-  if (!terminalLayoutResize || event.pointerId !== terminalLayoutResize.pointerId) return;
-  event.preventDefault();
-  updateTerminalLayoutSize(event.clientX, event.clientY);
-}
-
-function handleTerminalResizePointerUp(event) {
-  if (!terminalLayoutResize || event.pointerId !== terminalLayoutResize.pointerId) return;
-  event.preventDefault();
-  updateTerminalLayoutSize(event.clientX, event.clientY);
-  cancelTerminalResize(event);
-}
-
-function cancelTerminalResize(event) {
-  if (!terminalLayoutResize ||
-      (event?.pointerId != null && event.pointerId !== terminalLayoutResize.pointerId)) return;
-  const pointerId = terminalLayoutResize.pointerId;
-  terminalLayoutResize = null;
-  uartSessionsSplit?.classList.remove("is-terminal-resizing");
-  document.body.classList.remove("is-terminal-layout-active");
-  document.removeEventListener("pointermove", handleTerminalResizePointerMove);
-  document.removeEventListener("pointerup", handleTerminalResizePointerUp);
-  document.removeEventListener("pointercancel", cancelTerminalResize);
-  terminalLayoutResizer?.removeEventListener("lostpointercapture", cancelTerminalResize);
-  window.removeEventListener("blur", cancelTerminalResize);
-  try {
-    if (terminalLayoutResizer?.hasPointerCapture?.(pointerId)) {
-      terminalLayoutResizer.releasePointerCapture(pointerId);
-    }
-  } catch {}
-  saveTerminalLayoutState();
-}
-
-function updateTerminalLayoutSize(clientX, clientY) {
-  if (!uartSessionsSplit) return;
-
-  const rect = uartSessionsSplit.getBoundingClientRect();
-  const [firstId, secondId] = terminalLayoutState.order;
-  const isRow = terminalLayoutState.layout === "row";
-  const axisSize = isRow ? rect.width : rect.height;
-  const axisPosition = isRow ? clientX - rect.left : clientY - rect.top;
-  if (!Number.isFinite(axisPosition) || !Number.isFinite(axisSize) || axisSize <= 0) return;
-  const firstSize = clampToRange(
-    (axisPosition / axisSize) * 100,
-    TERMINAL_LAYOUT_MIN_PANEL_SIZE,
-    TERMINAL_LAYOUT_MAX_PANEL_SIZE
-  );
-
-  terminalLayoutState.sizes[firstId] = firstSize;
-  terminalLayoutState.sizes[secondId] = 100 - firstSize;
-  applyTerminalLayout();
-}
-
-function handleTerminalResizeKey(event) {
-  const isRow = terminalLayoutState.layout === "row";
-  const increaseKeys = isRow ? ["ArrowRight"] : ["ArrowDown"];
-  const decreaseKeys = isRow ? ["ArrowLeft"] : ["ArrowUp"];
-
-  if (increaseKeys.includes(event.key)) {
-    adjustTerminalLayoutSize(4);
-  } else if (decreaseKeys.includes(event.key)) {
-    adjustTerminalLayoutSize(-4);
-  } else if (event.key === "Home" || event.key === "End") {
+function handleTerminalResizeKey(command) {
+  if (command.endpoint) {
     const firstId = terminalLayoutState.order[0];
-    const endpoint = event.key === "Home" ? TERMINAL_LAYOUT_MIN_PANEL_SIZE : TERMINAL_LAYOUT_MAX_PANEL_SIZE;
+    const endpoint = command.endpoint === "start" ? TERMINAL_LAYOUT_MIN_PANEL_SIZE : TERMINAL_LAYOUT_MAX_PANEL_SIZE;
     adjustTerminalLayoutSize(endpoint - terminalLayoutState.sizes[firstId]);
   } else {
-    return;
+    adjustTerminalLayoutSize(command.direction * (command.accelerated ? 8 : 4));
   }
-
-  event.preventDefault();
   saveTerminalLayoutState();
 }
 
@@ -623,12 +446,6 @@ function adjustTerminalLayoutSize(delta) {
 
   terminalLayoutState.sizes[firstId] = firstSize;
   terminalLayoutState.sizes[secondId] = 100 - firstSize;
-  applyTerminalLayout();
-}
-
-function resetTerminalLayoutSize() {
-  terminalLayoutState.sizes.tx = 50;
-  terminalLayoutState.sizes.rx = 50;
   applyTerminalLayout();
 }
 
@@ -650,7 +467,10 @@ function scheduleTerminalLayoutRefresh() {
  */
 function checkWebSerialSupport() {
   if (!("serial" in navigator)) {
-    document.getElementById("apiWarning").classList.add("show");
+    notifyUart("This browser cannot access a serial adapter.", {
+      title: "Web Serial unavailable", tone: "warning", key: "serial-unavailable",
+      details: "Use a desktop Chromium browser with the Web Serial API and open UARTDebug over HTTPS or localhost.",
+    });
     hideSerialPortHint();
     connectBtn.disabled = true;
     updateConnectButtonLabels("Unavailable", "Web Serial unavailable");
@@ -662,7 +482,6 @@ function checkWebSerialSupport() {
 
 function canShowSerialPortHint() {
   return !!(
-    serialPortHint &&
     !port &&
     "serial" in navigator &&
     connectBtn &&
@@ -673,14 +492,15 @@ function canShowSerialPortHint() {
 function showSerialPortHint() {
   if (!canShowSerialPortHint()) return;
 
-  serialPortHint.hidden = false;
-  serialPortHint.classList.add("show");
+  serialPortHintNotificationId = notifyUart("Choose your serial adapter in the browser's port picker.", {
+    title: "Select serial port", tone: "info", key: "uart-port-selection",
+  });
 }
 
 function hideSerialPortHint() {
-  if (!serialPortHint) return;
-  serialPortHint.classList.remove("show");
-  serialPortHint.hidden = true;
+  if (!serialPortHintNotificationId) return;
+  window.UartDebugNotifications?.dismiss?.(serialPortHintNotificationId);
+  serialPortHintNotificationId = null;
 }
 
 function handleConnectIntent(event) {
@@ -723,113 +543,119 @@ function isSerialPortSelectionDismissed(error) {
  * Connect to serial port
  */
 async function connectSerial({ quietPortSelectionErrors = false } = {}) {
-  let selectedPort = null;
-
-  try {
-    selectedPort = await navigator.serial.requestPort();
-  } catch (error) {
-    hideSerialPortHint();
-    if (!quietPortSelectionErrors || !isSerialPortSelectionDismissed(error)) {
-      console.error("Connection error:", error);
+  if (serialConnectPromise) return await serialConnectPromise;
+  if (port) return true;
+  const epoch = ++serialOperationEpoch;
+  const task = (async () => {
+    let selectedPort = null, selectedReader = null, selectedWriter = null, opened = false;
+    // An old read loop may still be releasing its captured stream locks.
+    if (serialCleanupPromise) await serialCleanupPromise;
+    if (epoch !== serialOperationEpoch) return false;
+    try {
+      selectedPort = await navigator.serial.requestPort();
+    } catch (error) {
+      hideSerialPortHint();
+      if (epoch !== serialOperationEpoch) return false;
+      const cancelled = isSerialPortSelectionDismissed(error);
+      if (!quietPortSelectionErrors || !cancelled) {
+        notifyUart(cancelled ? "No serial port was selected." : "The serial port could not be selected.", {
+          title: "Connection", tone: cancelled ? "info" : "error",
+          details: cancelled ? "Choose a serial adapter to connect." : "Check browser permission for serial ports and try again.",
+          diagnostics: error?.stack || String(error),
+        });
+      }
+      return false;
     }
-    return false;
-  }
-
-  hideSerialPortHint();
-
-  try {
-    port = selectedPort;
-
-    // Get connection parameters with safe defaults
-    const baudRate = parseInt(
-      document.getElementById("baudRate")?.value || 115200
-    );
-    const dataBitsElement = document.getElementById("dataBits");
-    const stopBitsElement = document.getElementById("stopBits");
-    const parityElement = document.getElementById("parity");
-
-    const dataBits = dataBitsElement ? parseInt(dataBitsElement.value) : 8;
-    const stopBits = stopBitsElement ? parseInt(stopBitsElement.value) : 1;
-    const parity = parityElement ? parityElement.value : "none";
-
-    // Open port with parameters
-    await port.open({
-      baudRate,
-      dataBits,
-      stopBits,
-      parity,
-      bufferSize: 4096,
-    });
-
-    // Setup reader and writer directly
-    reader = port.readable.getReader();
-    writer = port.writable.getWriter();
-
-    // Update UI
-    updateConnectionStatus(true, getPortLabel(port));
-    clearTerminals();
-
-    // Start reading
-    readLoop();
-    return true;
-  } catch (error) {
-    port = null;
-    console.error("Connection error:", error);
-    // addToTerminal('error', `Connection failed: ${error.message}`, terminalSent);
-    return false;
-  }
+    hideSerialPortHint();
+    if (epoch !== serialOperationEpoch) return false;
+    try {
+      const baudRate = parseInt(document.getElementById("baudRate")?.value || 115200);
+      await selectedPort.open({
+        baudRate,
+        dataBits: parseInt(document.getElementById("dataBits")?.value || 8),
+        stopBits: parseInt(document.getElementById("stopBits")?.value || 1),
+        parity: document.getElementById("parity")?.value || "none",
+        bufferSize: 4096,
+      });
+      opened = true;
+      if (epoch !== serialOperationEpoch) {
+        await releaseSerialResources(selectedPort, null, null);
+        return false;
+      }
+      selectedReader = selectedPort.readable.getReader();
+      selectedWriter = selectedPort.writable.getWriter();
+      port = selectedPort;
+      reader = selectedReader;
+      writer = selectedWriter;
+      updateConnectionStatus(true, getPortLabel(port));
+      clearTerminals();
+      void readLoop(selectedPort, selectedReader);
+      notifyUart(`Connected to ${getPortLabel(port)} at ${baudRate} baud.`, { title: "Connection", tone: "success" });
+      return true;
+    } catch (error) {
+      if (port === selectedPort) {
+        port = null; reader = null; writer = null;
+        updateConnectionStatus(false);
+      }
+      const cleanupErrors = await releaseSerialResources(opened ? selectedPort : null, selectedReader, selectedWriter);
+      if (epoch === serialOperationEpoch) notifyUart("The serial port could not be opened.", {
+        title: "Connection", details: "Check that the adapter is connected and is not open in another application. Then try connecting again.",
+        diagnostics: [error, ...cleanupErrors].map(value => value?.stack || String(value)).join("\n\n"),
+      });
+      return false;
+    }
+  })();
+  serialConnectPromise = task;
+  try { return await task; }
+  finally { if (serialConnectPromise === task) serialConnectPromise = null; }
 }
 
-/**
- * Disconnect from serial port
- */
-async function disconnectSerial() {
-  try {
-    // Stop reading
-    if (reader) {
-      try {
-        await reader.cancel();
-        reader.releaseLock();
-      } catch (e) {
-        console.log("Reader release:", e);
-      }
-      reader = null;
-    }
-
-    // Stop writing
-    if (writer) {
-      try {
-        writer.releaseLock();
-      } catch (e) {
-        console.log("Writer release:", e);
-      }
-      writer = null;
-    }
-
-    stopLoopSend();
-
-    // Reset RX coalescing buffer/timer
-    pendingReceiveStop = false;
-    rxPausedByteParity = 0;
-    rxResumeDiscardBytes = 0;
-    resetOscilloscopeAutoAlignState();
-    rxBuffer = new Uint8Array(0);
-    if (rxFlushTimer) {
-      clearTimeout(rxFlushTimer);
-      rxFlushTimer = null;
-    }
-
-    // Close port
-    if (port) {
-      await port.close();
-      port = null;
-    }
-
-    // Update UI
-    updateConnectionStatus(false);
-  } catch (error) {
-    console.error("Disconnection error:", error);
+async function releaseSerialResources(closingPort, closingReader, closingWriter) {
+  const errors = [];
+  if (closingReader) {
+    try { await closingReader.cancel(); } catch (error) { errors.push(error); }
+    try { closingReader.releaseLock(); } catch (error) { errors.push(error); }
   }
+  if (closingWriter) {
+    try { closingWriter.releaseLock(); } catch (error) { errors.push(error); }
+  }
+  if (closingPort) {
+    try { await closingPort.close(); } catch (error) { errors.push(error); }
+  }
+  return errors;
+}
+
+async function disconnectSerial({ expectedPort = port, unexpected = false, error = null } = {}) {
+  // Completion of a previous read session must never close its replacement.
+  if (expectedPort && port !== expectedPort) return;
+  ++serialOperationEpoch;
+  const closingPort = port, closingReader = reader, closingWriter = writer;
+  port = null; reader = null; writer = null;
+  stopLoopSend();
+  pendingReceiveStop = false;
+  rxPausedByteParity = 0;
+  rxResumeDiscardBytes = 0;
+  resetOscilloscopeAutoAlignState();
+  rxBuffer = new Uint8Array(0);
+  if (rxFlushTimer) { clearTimeout(rxFlushTimer); rxFlushTimer = null; }
+  updateConnectionStatus(false);
+  if (!closingPort && !closingReader && !closingWriter) return;
+  const previousCleanup = serialCleanupPromise;
+  const cleanup = (async () => {
+    if (previousCleanup) await previousCleanup;
+    return await releaseSerialResources(closingPort, closingReader, closingWriter);
+  })();
+  serialCleanupPromise = cleanup;
+  const warnings = await cleanup;
+  if (serialCleanupPromise === cleanup) serialCleanupPromise = null;
+  const diagnostics = [error, ...warnings].filter(Boolean).map(value => value?.stack || String(value)).join("\n\n");
+  if (unexpected) notifyUart("The serial connection was lost.", {
+    title: "Connection", details: "Check the adapter and cable, then connect again.", diagnostics,
+  });
+  else if (warnings.length) notifyUart("The serial port could not be closed completely.", {
+    title: "Connection", details: "Reconnect the adapter before connecting again.", diagnostics,
+  });
+  else notifyUart("Serial adapter disconnected.", { title: "Connection", tone: "info" });
 }
 
 /**
@@ -840,6 +666,7 @@ function setUartSessionLocked(locked) {
   uartSessions.forEach((session) => {
     session.classList.toggle("is-locked", !!locked);
     session.setAttribute("aria-disabled", locked ? "true" : "false");
+    session.inert = !!locked;
   });
 }
 
@@ -985,10 +812,12 @@ function getPortLabel(port) {
 /**
  * Read data from serial port
  */
-async function readLoop() {
+async function readLoop(activePort = port, activeReader = reader) {
+  let failure = null;
   try {
-    while (port && reader) {
-      const { value, done } = await reader.read();
+    while (port === activePort && reader === activeReader && activeReader) {
+      const { value, done } = await activeReader.read();
+      if (port !== activePort || reader !== activeReader) return;
       if (done) {
         break;
       }
@@ -996,8 +825,11 @@ async function readLoop() {
       handleReceivedData(value);
     }
   } catch (error) {
-    console.error("Read error:", error);
-    addToTerminal("error", `Read error: ${error.message}`, terminalReceived);
+    failure = error;
+  } finally {
+    if (activePort && port === activePort && reader === activeReader) {
+      await disconnectSerial({ expectedPort: activePort, unexpected: true, error: failure });
+    }
   }
 }
 
@@ -1062,6 +894,14 @@ function flushRxBufferToTerminal() {
 /**
  * Send data to serial port
  */
+function parseHexBytes(input) {
+  const value = String(input ?? "").trim();
+  if (!value || !/^[0-9A-Fa-f]{2}(?:\s+[0-9A-Fa-f]{2})*$/.test(value)) {
+    throw new Error("Enter complete HEX bytes separated by whitespace, for example: 37 AB 02 FD 7C.");
+  }
+  return Uint8Array.from(value.split(/\s+/), byte => Number.parseInt(byte, 16));
+}
+
 async function sendData() {
   if (!port || !writer || !terminalInput.value.trim()) {
     return;
@@ -1069,11 +909,9 @@ async function sendData() {
 
   const inputMode = getTxMode();
   const inputValue = terminalInput.value;
-
+  const activeWriter = writer;
+  let dataToSend, displayText;
   try {
-    let dataToSend;
-    let displayText;
-
     if (inputMode === "ascii") {
       // ASCII mode: always append \r\n
       const textWithLineEnding = inputValue + "\r\n";
@@ -1081,44 +919,21 @@ async function sendData() {
       dataToSend = encoder.encode(textWithLineEnding);
       displayText = textWithLineEnding;
     } else {
-      // HEX mode: never append \r\n
-      // Strict validation: only accept format "XX XX XX" where X is hex digit (0-F)
-      const trimmedInput = inputValue.trim();
-
-      // Check if empty
-      if (!trimmedInput) {
-        throw new Error("HEX string is empty");
-      }
-
-      // Valid pattern: hex bytes (2 chars) separated by single spaces
-      // Examples: "AB", "AB CD", "AB CD EF"
-      const hexPattern = /^[0-9A-Fa-f]{2}(\s[0-9A-Fa-f]{2})*$/;
-
-      if (!hexPattern.test(trimmedInput)) {
-        throw new Error("Example: 37 AB 02 fD 7c");
-      }
-
-      // Parse hex bytes
-      const hexBytes = trimmedInput.split(" ");
-      const bytes = [];
-
-      for (const hexByte of hexBytes) {
-        const byteValue = parseInt(hexByte, 16);
-        bytes.push(byteValue);
-      }
-
-      dataToSend = new Uint8Array(bytes);
+      dataToSend = parseHexBytes(inputValue);
       displayText = formatHexData(dataToSend);
     }
-
-    // Send data
-    await writer.write(dataToSend);
-
-    // Display in terminal
+  } catch (error) {
+    notifyUart("The HEX data is not valid.", { tone: "warning", details: error.message });
+    return;
+  }
+  try {
+    await activeWriter.write(dataToSend);
+    if (writer !== activeWriter) return;
     addToTerminal("sent", displayText, terminalSent);
   } catch (error) {
-    console.error("Data format error:", error);
-    addToTerminal("error", `Data format error: ${error.message}`, terminalSent);
+    if (writer === activeWriter) notifyUart("The data could not be sent.", {
+      details: "Check the serial connection and try again.", diagnostics: error?.stack || String(error),
+    });
   }
 }
 
@@ -1141,6 +956,10 @@ function visualizeCRLFWithBreaks(str) {
 }
 
 function addToTerminal(type, data, targetTerminal) {
+  if (type === "error") {
+    notifyUart(data);
+    return;
+  }
   const line = document.createElement("div");
   line.className = `terminal-line ${type}`;
 
@@ -1822,6 +1641,9 @@ function initOscilloscope() {
   // Check if Chart.js is loaded
   if (typeof Chart === "undefined") {
     console.error("Chart.js is not loaded");
+    notifyUart("The graph could not be loaded. Received serial data remains available in Data view.", {
+      title: "Graph unavailable", key: "uart-chart-unavailable",
+    });
     return;
   }
   ensureOscilloscopeInfoTooltipElement();
@@ -2000,11 +1822,6 @@ function initOscilloscope() {
   // Reset zoom and pan when reinitializing
   chartZoom = { x: 1, y: 1 };
   chartPan = { x: 0, y: 0 };
-}
-
-function byteToHex(v) {
-  const n = Math.max(0, Math.min(255, Math.round(v)));
-  return n.toString(16).padStart(2, "0").toUpperCase();
 }
 
 function ensureOscilloscopeInfoTooltipElement() {
@@ -2319,13 +2136,12 @@ function startLoopSend() {
   // Read the interval from the input.
   const intervalMs = getNormalizedLoopIntervalMs(TX_TEXT_INTERVAL_MS);
 
-  // Send once immediately.
-  sendDataLoop();
-
   // Start the repeating send timer.
   loopInterval = setInterval(() => {
     sendDataLoop();
   }, intervalMs);
+  // Install the timer first so validation/write failures can stop this cycle.
+  void sendDataLoop();
 
   updateRunButtonState();
 }
@@ -2470,41 +2286,36 @@ function startGeneratorStream(looping) {
 
 async function sendGeneratorByte() {
   if (!writer || !generatorStream || generatorStream.sending) return;
-
-  const payload = generatorStream.payload;
+  const stream = generatorStream, activeWriter = writer;
+  const payload = stream.payload;
   if (!payload || payload.length === 0) return;
 
-  generatorStream.sending = true;
+  stream.sending = true;
   try {
-    const byte = payload[generatorStream.index];
-    await writer.write(new Uint8Array([byte]));
-
-    if (!generatorStream.logged) {
-      addToTerminal("sent", generatorStream.label, terminalSent);
-      generatorStream.logged = true;
+    const byte = payload[stream.index];
+    await activeWriter.write(new Uint8Array([byte]));
+    if (generatorStream !== stream || writer !== activeWriter) return;
+    if (!stream.logged) {
+      addToTerminal("sent", stream.label, terminalSent);
+      stream.logged = true;
     }
-
-    generatorStream.index += 1;
-
-    if (generatorStream.index >= payload.length) {
-      if (generatorStream.loop) {
-        generatorStream.index = 0;
+    stream.index += 1;
+    if (stream.index >= payload.length) {
+      if (stream.loop) {
+        stream.index = 0;
       } else {
         stopLoopSend();
       }
     }
   } catch (error) {
-    console.error("Generator send error:", error);
-    addToTerminal(
-      "error",
-      `Generator send failed: ${error.message}`,
-      terminalSent
-    );
-    stopLoopSend();
-  } finally {
-    if (generatorStream) {
-      generatorStream.sending = false;
+    if (generatorStream === stream && writer === activeWriter) {
+      notifyUart("The generated data could not be sent.", {
+        details: "Check the serial connection and run the generator again.", diagnostics: error?.stack || String(error),
+      });
+      stopLoopSend();
     }
+  } finally {
+    stream.sending = false;
   }
 }
 /**
@@ -2515,25 +2326,13 @@ async function sendDataLoop() {
 
   const inputMode = getTxMode();
   const inputValue = terminalInput.value.trim();
-
   if (!inputValue) return;
-
+  const activeWriter = writer;
+  let dataToSend, displayText;
   try {
-    let dataToSend;
-    let displayText;
-
     if (inputMode === "hex") {
-      // HEX mode
-      const hexValues = inputValue.match(/[0-9A-Fa-f]{1,2}/g);
-      if (!hexValues) {
-        addToTerminal("error", "Invalid HEX format", terminalSent);
-        return;
-      }
-
-      dataToSend = new Uint8Array(hexValues.map((hex) => parseInt(hex, 16)));
-      displayText = hexValues
-        .map((hex) => hex.toUpperCase().padStart(2, "0"))
-        .join(" ");
+      dataToSend = parseHexBytes(inputValue);
+      displayText = formatHexData(dataToSend);
     } else {
       // ASCII mode
       const encoder = new TextEncoder();
@@ -2542,11 +2341,14 @@ async function sendDataLoop() {
       // addToTerminal applies visualizeCRLFWithBreaks.
       displayText = textWithLineEnding;
     }
-
-    // Send data
-    await writer.write(dataToSend);
-
-    // Display in terminal
+  } catch (error) {
+    notifyUart("The HEX data is not valid.", { tone: "warning", details: error.message });
+    stopLoopSend();
+    return;
+  }
+  try {
+    await activeWriter.write(dataToSend);
+    if (writer !== activeWriter) return;
     if (inputMode === "hex") {
       addToTerminal("sent hex-mode", displayText, terminalSent);
     } else {
@@ -2555,9 +2357,12 @@ async function sendDataLoop() {
 
     // Keep the input intact during loop sending.
   } catch (error) {
-    console.error("Send error:", error);
-    addToTerminal("error", `Send failed: ${error.message}`, terminalSent);
-    stopLoopSend(); // Stop the loop on send errors.
+    if (writer === activeWriter) {
+      notifyUart("The data could not be sent.", {
+        details: "Check the serial connection and try again.", diagnostics: error?.stack || String(error),
+      });
+      stopLoopSend();
+    }
   }
 }
 

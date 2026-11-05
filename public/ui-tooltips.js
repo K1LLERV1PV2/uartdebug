@@ -2,6 +2,8 @@
   const TOOLTIP_ATTR = "data-ui-tooltip";
   const TOOLTIP_SOURCE_ATTR = "data-ui-tooltip-source";
   const TOOLTIP_SHOW_DELAY_MS = 550;
+  // Focusable views keep their accessible names without turning them into
+  // hover hints. Automatic ARIA hints belong to actionable controls.
   const SELECTOR = [
     "[data-tooltip]",
     "[data-ui-tooltip]",
@@ -10,7 +12,6 @@
     "input[aria-label]",
     "select[aria-label]",
     "[role='button'][aria-label]",
-    "[tabindex][aria-label]",
   ].join(",");
 
   let tooltipEl = null;
@@ -45,7 +46,7 @@
     if (!element?.matches) return "";
     if (
       !element.matches(
-        "button[aria-label], input[aria-label], select[aria-label], [role='button'][aria-label], [tabindex][aria-label]"
+        "button[aria-label], input[aria-label], select[aria-label], [role='button'][aria-label]"
       )
     ) {
       return "";
@@ -95,6 +96,11 @@
   function shouldSuppressTooltip(element, text) {
     if (!text || element.closest?.("[data-tooltip-disabled]")) {
       return true;
+    }
+
+    if (element.scrollWidth > element.clientWidth + 1 ||
+        element.scrollHeight > element.clientHeight + 1) {
+      return false;
     }
 
     const visibleText = getElementVisibleText(element);

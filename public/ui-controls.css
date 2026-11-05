@@ -1,9 +1,164 @@
+/* Shared window surfaces. Content classes own layout, spacing and typography;
+   these foundations own the frame, its focus indicator and scrolling. */
+:where(.ui-panel, .scroll-frame, .ui-dialog-card, .custom-select-menu),
+.CodeMirror-hints {
+  --ui-panel-border: var(--ui-border);
+  --ui-panel-radius: var(--ui-radius);
+  --ui-panel-bg: var(--ui-window-bg);
+  --ui-panel-shadow: none;
+
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--ui-panel-border, var(--ui-border));
+  border-radius: var(--ui-panel-radius, var(--ui-radius));
+  background: var(--ui-panel-bg, var(--ui-window-bg));
+  box-shadow: var(--ui-panel-shadow, none);
+}
+
+.scroll-frame {
+  --ui-panel-bg: var(--scroll-frame-bg, var(--ui-window-bg));
+  --ui-panel-border: var(--scroll-frame-border, var(--ui-border));
+
+  overflow: hidden;
+}
+
+/* Only the actual editable frame takes content focus. A parent panel keeps
+   its ordinary border, and header buttons retain their own focus indicators. */
+:where(.ui-panel, .scroll-frame):focus-visible,
+.scroll-frame:has(.CodeMirror-focused, textarea:focus, [contenteditable]:focus) {
+  border-color: var(--ui-panel-focus-border, var(--ui-border-hover));
+  outline: none;
+  box-shadow: var(--ui-panel-focus-shadow, 0 0 0 3px rgba(70, 255, 120, 0.08));
+}
+
+.scroll-frame .CodeMirror-code[contenteditable]:focus-visible {
+  outline: none;
+}
+
+.ui-scroll-region,
+.ui-dialog-body,
+.CodeMirror-hints {
+  min-width: 0;
+  min-height: 0;
+  overflow: var(--ui-scroll-overflow, auto);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+:where(.ui-scroll-region, .ui-dialog-body):not(textarea, [contenteditable]):focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--ui-panel-focus-border, var(--ui-border-hover));
+}
+
+:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-scrollbar-thumb, rgba(70, 255, 120, 0.55)) var(--ui-scrollbar-track, var(--ui-surface-deep));
+}
+
+:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar {
+  width: var(--ui-scrollbar-size, 8px);
+  height: var(--ui-scrollbar-size, 8px);
+}
+
+:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar-track {
+  background: var(--ui-scrollbar-track, var(--ui-surface-deep));
+}
+
+:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--ui-scrollbar-thumb, rgba(70, 255, 120, 0.55));
+}
+
+:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar-thumb:hover {
+  background: var(--ui-scrollbar-thumb-hover, rgba(70, 255, 120, 0.72));
+}
+
+body.is-column-resizing,
+body.is-column-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.is-row-resizing,
+body.is-row-resizing * {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
+
 /* Shared action, select, and dialog controls. */
+.ui-icon-button,
+.ui-dialog-close {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: var(--ui-icon-size, 28px);
+  min-width: var(--ui-icon-size, 28px);
+  height: var(--ui-icon-size, 28px);
+  min-height: var(--ui-icon-size, 28px);
+  padding: var(--ui-icon-padding, 4px);
+  place-items: center;
+  border: 1px solid var(--ui-icon-border, var(--ui-border));
+  border-radius: var(--ui-icon-radius, 10px);
+  background: var(--ui-icon-background, rgba(39, 174, 96, 0.1));
+  color: var(--ui-text-soft);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease,
+    color 140ms ease, opacity 140ms ease, transform 140ms ease;
+}
+
+.ui-icon-button:hover:not(:disabled),
+.ui-icon-button:focus-visible,
+.ui-dialog-close:hover:not(:disabled),
+.ui-dialog-close:focus-visible {
+  border-color: var(--ui-icon-hover-border, var(--ui-border-hover));
+  background: var(--ui-icon-hover-background, var(--ui-surface-strong));
+  color: var(--ui-text);
+}
+
+.ui-icon-button:focus-visible,
+.ui-dialog-close:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.ui-icon-button:active:not(:disabled),
+.ui-dialog-close:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.ui-icon-button:is(.active, [aria-pressed="true"]) {
+  border-color: var(--ui-accent);
+  background: var(--ui-surface-strong);
+  color: var(--ui-text);
+}
+
+.ui-icon-button:disabled,
+.ui-dialog-close:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ui-icon-button--quiet {
+  --ui-icon-border: transparent;
+  --ui-icon-radius: 8px;
+  --ui-icon-background: transparent;
+  --ui-icon-hover-border: rgba(129, 159, 141, 0.22);
+  --ui-icon-hover-background: rgba(129, 159, 141, 0.08);
+}
+
+/* More menus use the same glyph metrics in every panel and record. */
+.ui-menu-trigger {
+  --ui-icon-padding: 0;
+  font: 400 16px/1 var(--ui-font);
+}
+
 .ui-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: auto !important;
+  width: auto;
   min-width: 132px;
   height: var(--ui-control-height);
   margin: 0 !important;
@@ -192,8 +347,18 @@
   opacity: 0.62;
 }
 
-.custom-select.is-disabled .custom-select-trigger {
+.custom-select.is-disabled .custom-select-trigger,
+.custom-select-trigger:disabled {
   cursor: not-allowed;
+}
+
+.custom-select-menu,
+.ui-context-menu,
+.CodeMirror-hints {
+  --ui-panel-border: rgba(129, 159, 141, 0.28);
+  --ui-panel-radius: var(--ui-control-radius);
+  --ui-panel-bg: var(--ui-surface-dark);
+  --ui-panel-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
 }
 
 .custom-select-menu {
@@ -206,10 +371,6 @@
   min-width: 280px;
   max-height: min(360px, calc(100vh - 180px));
   overflow: hidden;
-  border: 1px solid rgba(129, 159, 141, 0.28);
-  border-radius: var(--ui-control-radius);
-  background: var(--ui-surface-dark);
-  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.42);
 }
 
 .custom-select-menu[popover] {
@@ -228,17 +389,35 @@
   display: block;
 }
 
-.custom-select-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ui-control-gap);
-  max-height: inherit;
+.ui-menu-list,
+.CodeMirror-hints {
+  display: block;
   padding: 6px;
-  overflow: auto;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ui-accent) var(--ui-surface-deep);
 }
+
+.ui-menu-list > :not([hidden]) ~ :not([hidden]),
+.CodeMirror-hints > :not([hidden]) ~ :not([hidden]) {
+  margin-top: var(--ui-control-gap);
+}
+
+.custom-select-list { max-height: inherit; }
+
+.ui-context-menu {
+  position: fixed;
+  z-index: 2000;
+  display: none;
+  min-width: 168px;
+}
+
+.ui-context-menu[popover] {
+  inset: auto;
+  margin: 0;
+}
+
+.ui-context-menu[popover]:popover-open { display: block; }
+
+.custom-select-option { overflow-wrap: anywhere; }
+.custom-select-option-label { min-width: 0; overflow-wrap: inherit; }
 
 .custom-select-group-label {
   padding: 8px 8px 5px;
@@ -250,7 +429,8 @@
   text-transform: uppercase;
 }
 
-.custom-select-option {
+.ui-list-item,
+.CodeMirror-hint {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -258,29 +438,158 @@
   min-height: 34px;
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: var(--ui-radius-small);
   background: transparent;
   color: var(--ui-text);
+  font: 600 13px/1.3 var(--ui-font);
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.ui-list-item[hidden] { display: none !important; }
+
+.ui-list-item:hover:not(:disabled):not([aria-disabled="true"]),
+.CodeMirror-hint:hover {
+  border-color: var(--ui-list-hover-border, rgba(129, 159, 141, 0.28));
+  background: var(--ui-list-hover-background, rgba(39, 174, 96, 0.13));
+}
+
+.ui-list-item:is([aria-selected="true"], [aria-pressed="true"], .active),
+li.CodeMirror-hint-active {
+  border-color: rgba(70, 255, 120, 0.34);
+  background: rgba(39, 174, 96, 0.18);
+  color: var(--ui-text);
+}
+
+.ui-list-item--record {
+  --ui-list-hover-border: rgba(129, 159, 141, 0.28);
+  --ui-list-hover-background: rgba(39, 174, 96, 0.11);
+  min-height: 44px;
+  padding: 7px;
+  border-radius: 10px;
+  font: 400 13px/1.5 var(--ui-font);
+  user-select: none;
+}
+
+.ui-list-item--record:is([aria-selected="true"], [aria-pressed="true"], .active) {
+  --ui-list-hover-border: rgba(70, 255, 120, 0.34);
+  --ui-list-hover-background: rgba(39, 174, 96, 0.18);
+}
+
+.ui-list-item-title {
+  color: inherit;
+  font: inherit;
+}
+
+.ui-record-main {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.custom-select-option:hover,
-.custom-select-option:focus {
-  border-color: rgba(129, 159, 141, 0.28);
-  background: rgba(39, 174, 96, 0.13);
-  outline: none;
+.ui-record-main:focus-visible { outline: none; }
+
+.ui-list-item--record:has(.ui-record-main:focus-visible) {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
 }
 
-.custom-select-option[aria-selected="true"] {
-  border-color: rgba(70, 255, 120, 0.34);
-  background: rgba(39, 174, 96, 0.18);
+.CodeMirror-hint {
+  font-family: var(--ui-font-mono);
+  white-space: pre;
 }
 
-.custom-select-option:disabled {
+.ui-list-item:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
+}
+
+.ui-list-item:is(:disabled, [aria-disabled="true"]) {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.ui-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--ui-modal-overlay, rgba(7, 13, 20, 0.68));
+  backdrop-filter: var(--ui-modal-backdrop, blur(8px));
+}
+
+.ui-modal[hidden] {
+  display: none !important;
+}
+
+.ui-dialog-card {
+  --ui-panel-bg: var(--ui-dialog-bg, var(--ui-window-bg));
+  --ui-panel-border: var(--ui-dialog-border, rgba(129, 159, 141, 0.24));
+  --ui-panel-shadow: var(--ui-dialog-shadow, 0 20px 60px rgba(7, 13, 20, 0.32));
+
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 460px);
+  max-width: 100%;
+  max-height: calc(100vh - 40px);
+  overflow: hidden;
+  color: var(--ui-text);
+  font-family: var(--ui-font);
+}
+
+.ui-dialog-body {
+  flex: 0 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 18px;
+  color: var(--ui-text-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ui-dialog-columns {
+  display: grid;
+  grid-template-columns: var(--ui-dialog-sidebar-width, 280px) minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
+.ui-dialog-columns > * {
+  min-width: 0;
+  min-height: 0;
+  padding: 18px;
+}
+
+.ui-dialog-sidebar {
+  border-right: 1px solid var(--ui-border);
+}
+
+.ui-empty-state {
+  margin: 0;
+  color: var(--ui-text-muted);
+  font: 13px/1.5 var(--ui-font);
+}
+
+.ui-dialog-actions {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: var(--ui-control-gap);
+  padding: 0 18px 18px;
 }
 
 .ui-dialog-header {
@@ -305,26 +614,9 @@
 }
 
 .ui-dialog-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  padding: 0;
-  border: 1px solid rgba(129, 159, 141, 0.24);
-  border-radius: 10px;
-  background: rgba(39, 174, 96, 0.1);
-  color: var(--ui-text-soft);
+  --ui-icon-size: 36px;
+  --ui-icon-padding: 0;
   font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-  transition:
-    background 140ms ease,
-    border-color 140ms ease,
-    color 140ms ease,
-    transform 140ms ease;
 }
 
 .ui-dialog-close svg {
@@ -332,36 +624,102 @@
   height: 18px;
 }
 
-.ui-dialog-close:hover,
-.ui-dialog-close:focus-visible {
-  border-color: var(--ui-border-hover);
-  background: var(--ui-surface-strong);
-  color: var(--ui-text);
-  outline: none;
-  transform: translateY(-1px);
-}
 .ui-text-input {
   width: 100%;
   min-width: 0;
-  height: var(--ui-control-height);
-  padding: 0 14px;
+  height: var(--ui-input-height, var(--ui-control-height));
+  padding: var(--ui-input-padding, 0 14px);
   border: 1px solid var(--ui-control-border);
   border-radius: var(--ui-control-radius);
   background: var(--ui-control-bg);
   color: var(--ui-text);
-  font: 600 14px/1 var(--ui-font);
+  font: var(--ui-input-font, 600 14px/1 var(--ui-font));
+  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
 }
 
 .ui-text-input:hover:not(:disabled),
-.ui-text-input:focus-visible {
-  border-color: var(--ui-border-hover);
+.ui-text-input:focus {
+  border-color: var(--ui-input-focus-border, var(--ui-border-hover));
+}
+
+.ui-text-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ui-input-focus-color, rgba(70, 255, 120, 0.14));
 }
 
 .ui-text-input:disabled {
   opacity: 0.64;
-  cursor: progress;
+  cursor: not-allowed;
 }
 
 .ui-text-input[aria-invalid="true"] {
+  --ui-input-focus-color: rgba(232, 95, 92, 0.14);
+  --ui-input-focus-border: var(--ui-danger);
   border-color: var(--ui-danger);
 }
+
+.ui-text-input--embedded {
+  --ui-input-height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.ui-text-input--embedded:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Optional inside-field captions and status use the standard select behavior. */
+.custom-select.has-control-caption .custom-select-trigger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 12px auto 12px;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  gap: 3px;
+  overflow: hidden;
+}
+.custom-select-caption,
+.custom-select-status {
+  grid-column: 1;
+  min-width: 0;
+  width: 100%;
+  height: 12px;
+  color: var(--ui-text-muted);
+  font: 500 11px/12px var(--ui-font);
+  white-space: nowrap;
+}
+.custom-select-caption { grid-row: 1; }
+.custom-select.has-control-caption .custom-select-value {
+  grid-column: 1;
+  grid-row: 2;
+  display: block;
+  width: min(100%, var(--ui-captioned-value-width, 100%));
+  min-width: 0;
+  overflow: visible;
+  color: inherit;
+  font: inherit;
+  line-height: 16px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+.custom-select-status { grid-row: 3; color: var(--ui-text-soft); }
+.custom-select.has-control-caption:is([data-connection-state="warning"], [data-connection-state="error"], [data-connection-state="busy"]) .custom-select-value { visibility: hidden; }
+.custom-select.has-control-caption:is([data-connection-state="warning"], [data-connection-state="error"], [data-connection-state="busy"]) .custom-select-status {
+  grid-row: 2;
+  align-self: center;
+  height: auto;
+  width: min(100%, calc(var(--ui-captioned-value-width, 100%) - 4px));
+  color: var(--ui-warning);
+  font: 500 12px/14px var(--ui-font);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.custom-select.has-control-caption[data-connection-state="error"] .custom-select-status { color: var(--ui-danger-text); }
+.custom-select.has-control-caption:is([data-connection-state="warning"], [data-connection-state="busy"]) .custom-select-trigger { border-color: var(--ui-warning); }
+.custom-select.has-control-caption[data-connection-state="error"] .custom-select-trigger { border-color: var(--ui-danger); }
+
+.custom-select.has-control-caption .custom-select-trigger::after { top: 50%; margin-top: -3px; }

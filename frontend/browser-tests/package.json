@@ -1,0 +1,15 @@
+{
+  "name": "@uartdebug/browser-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop browser regressions against a local fixture server.",
+  "scripts": {
+    "test": "playwright test --config=playwright.config.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

@@ -10,9 +10,9 @@ const {
   AiAccessError,
   createAiAccessService,
 } = require("./ai-access-service");
-const { loadMaterials, createProjectCatalog } = require("./avr-materials");
+const { createProjectCatalog } = require("./avr-materials");
 
-const AI_SERVER_VERSION = "20261016-unified-project-storage";
+const AI_SERVER_VERSION = "20261105-project-chat-security";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -24,7 +24,6 @@ const DEFAULT_AUTH_START_MAX_GLOBAL = 1000;
 const DEFAULT_WORKSPACE_WRITE_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_WORKSPACE_WRITES_PER_ACCOUNT = 1200;
 const ACCOUNT_WORKSPACE_BODY_LIMITS = Object.freeze({
-  chats: 1024 * 1024 + 64 * 1024,
   files: 4 * 1024 * 1024 + 64 * 1024,
   instruction: 256 * 1024 + 16 * 1024,
 });
@@ -48,7 +47,7 @@ function createAiHttpServer(options = {}) {
     });
   const ownsAccessService = !options.accessService;
   const getProjectCatalog = options.getProjectCatalog || (() =>
-    createProjectCatalog(loadMaterials({ root: environment.AI_MATERIALS_ROOT })));
+    createProjectCatalog({ root: environment.AI_MATERIALS_ROOT }));
   const now = options.now || (() => Date.now());
   const log = options.log || console;
   const allowedOrigins = new Set(
@@ -258,7 +257,7 @@ function createAiHttpServer(options = {}) {
     }
 
     const accountWorkspaceMatch = requestUrl.pathname.match(
-      /^\/api\/avr\/ai\/account\/workspace\/(chats|files|instruction)$/
+      /^\/api\/avr\/ai\/account\/workspace\/(files|instruction)$/
     );
     if (req.method === "PUT" && accountWorkspaceMatch) {
       if (!String(req.headers.origin || "").trim()) {
@@ -422,8 +421,9 @@ function createAiHttpServer(options = {}) {
 
     if (
       req.method === "POST" &&
-      requestUrl.pathname === "/api/avr/ai/canvas"
+      ["/api/avr/ai/canvas", "/api/avr/ai/chat"].includes(requestUrl.pathname)
     ) {
+      const chatRequest = requestUrl.pathname === "/api/avr/ai/chat";
       if (
         requireBrowserOrigin &&
         !String(req.headers.origin || "").trim()
@@ -477,7 +477,11 @@ function createAiHttpServer(options = {}) {
       }
 
       try {
-        const validateInput = aiService.validateRequestInput;
+        const validateInput = chatRequest
+          ? aiService.validateChatRequestInput : aiService.validateRequestInput;
+        if (chatRequest && typeof validateInput !== "function") {
+          throw new AiServiceError(503, "ai_unavailable", "The AI assistant is unavailable.");
+        }
         if (typeof validateInput === "function") {
           validateInput.call(aiService, requestBody);
         }
@@ -519,6 +523,7 @@ function createAiHttpServer(options = {}) {
           );
         }
         if (
+          !chatRequest &&
           requestBody.operation === "generate" &&
           status.compilerVerification?.enabled === true &&
           status.compilerVerification?.ready !== true
@@ -570,8 +575,8 @@ function createAiHttpServer(options = {}) {
       let usageRecorded = false;
       let ndjsonStarted = false;
       try {
-        const processCanvas = aiService.processCanvas;
-        if (typeof processCanvas !== "function") {
+        const processRequest = chatRequest ? aiService.processChat : aiService.processCanvas;
+        if (typeof processRequest !== "function") {
           throw new AiServiceError(
             503,
             "ai_unavailable",
@@ -582,7 +587,7 @@ function createAiHttpServer(options = {}) {
           beginNdjson(res);
           ndjsonStarted = true;
         }
-        const result = await processCanvas.call(aiService, requestBody, {
+        const result = await processRequest.call(aiService, requestBody, {
           requestId,
           safetyIdentifier: accessContext?.safetyIdentifier || "",
           compilerReady:
@@ -948,10 +953,17 @@ function readJsonBody(req, maxBytes) {
 
 function normalizeServiceError(error) {
   if (error instanceof AiServiceError) {
+    // Validation messages also instruct the automatic repair loop. They are
+    // useful internally, but should not be presented as instructions to users.
+    const publicMessage = error.code === "invalid_generated_canvas"
+      ? "The AI could not complete this request correctly. Try again."
+      : error.code === "invalid_ai_repair_response"
+        ? "The AI could not correct the generated project. Try again."
+        : "";
     return {
       status: Number(error.status) || 500,
       code: error.code || "ai_error",
-      message: error.message || "AI generation failed.",
+      message: publicMessage || error.message || "AI generation failed.",
     };
   }
   return {

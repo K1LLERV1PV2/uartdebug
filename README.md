@@ -7,7 +7,7 @@ Browser-based tools for working with UART connections and tinyAVR microcontrolle
 Uart Debug combines two related tools in one installable web app:
 
 - **UART Terminal** communicates directly with a serial adapter through the Web Serial API.
-- **AVR Programming** provides a browser editor, guided mini-projects, server-side XC8 compilation, and UPDI flashing. Its optional AI assistant works on a shared specification canvas and creates or updates synchronized C, YAML and documentation files.
+- **AVR Programming** provides a browser editor, guided mini-projects, server-side XC8 compilation, and UPDI flashing. Its optional AI assistant works with the selected project's specification, C, hidden YAML and documentation. A project chat sits beside those documents.
 
 The repository is under active development. Hardware access requires a browser that implements Web Serial and a secure context (`https://` or `localhost`).
 
@@ -28,19 +28,21 @@ The repository is under active development. Hardware access requires a browser t
 - Edit C source and related project files in a CodeMirror workspace. Markdown
   files, project guides, and the specification canvas share one safe
   CommonMark/GFM parser and live-rendering behavior.
-- Keep working copies in the browser, organize files into groups, and, after
-  Google sign-in, synchronize the AVR file workspace with the signed-in
-  account.
-- Import individual source, guide, firmware, or Uart Debug mini-project ZIP files.
-- Browse localized, image-capable Markdown guides beside the editor.
+- Work with complete projects in the browser and synchronize the entire workspace after Google sign-in.
+- Import and export project ZIPs containing specifications, source, descriptions, internal resources and assets.
+- Edit image-capable Markdown descriptions beside the code with the same live Markdown editor as the specification. Built-in examples start in English; AI output follows the user's project language. Imported text retains its language.
 - Follow `//# Heading` through `//###### Heading` comment links from C code to matching guide sections.
 - Compile supported tinyAVR projects with Microchip XC8 on the compiler service.
 - Detect a supported chip and flash Intel HEX over UPDI from the browser.
-- Write requirements in your language on each project's shared canvas. The Process button asks necessary questions beside the text or generates the current project. Add file → Empty project starts a blank canvas and a minimal C/Markdown project.
+- Use Chat beside Project Specification, C Code and Code Description in the desktop workspace. Ask questions, review requirements, request code or describe the current program in ordinary language. A complete request can create its specification and program together; missing decisions are asked in the chat. Add project → Empty project starts a blank draft, and an empty specification can also be reviewed.
 - Verify AI-created or updated source with the server-side AVR compiler and let
   the assistant repair compiler errors before returning the project.
-- Keep anchored questions, answers, selected MCU/package and requirements together. Generated YAML describes resource allocation and is editable/exportable alongside C and Markdown.
+- Keep questions and answers in each project's chat, beside its requirements and selected MCU/package. Existing inline document remarks remain available. Open the project/file list from Files in the upper middle target panel. Resource YAML stays hidden from that list and editor, while remaining part of AI requests, saved projects and project ZIPs.
 - Use the private UartDebug2 repository as the local source of project rules and AVR knowledge. Other compiler-supported devices remain available for manual programming.
+
+## Desktop workspace
+
+The desktop workspace has four panes: Chat, Project Specification, C Code and Code Description. The project/file list opens in a standard modal from the upper middle panel. AI progress and responses stay in Chat; errors also appear in the shared notification history. Compiler, UPDI and UART feedback use shared toasts with actionable details in standard dialogs, without a separate compiler-log pane. The established smooth action capsules and matching curved cutouts stay coherent when panes collapse; the placement sketch is not copied as literal construction lines. Technical stack traces and protocol logs remain in browser DevTools. See [workspace behavior and storage](docs/AVR_CANVAS.md#desktop-workspace).
 
 ## Browser and hardware requirements
 
@@ -58,10 +60,11 @@ Editing, guides, and imported files work without connected hardware. Compilation
 The old README described the entire project as client-only. That is true for serial communication, but not for every AVR feature:
 
 - UART and UPDI bytes travel directly between the browser and the serial port selected in the browser permission prompt.
-- Without Google sign-in, projects remain in browser storage. After sign-in, all project specifications, C source, descriptions, hidden resources, assets and selection state synchronize in one revisioned account snapshot. An unfinished draft is part of that same snapshot. Legacy split saves migrate without overwriting existing project specifications.
+- Without Google sign-in, projects remain in browser storage. After sign-in, all project specifications, C source, descriptions, hidden resources, assets, conversations, composer drafts and selection state synchronize in one revisioned account snapshot. An unfinished project draft and its conversation are part of that same snapshot. Legacy split saves migrate without overwriting existing project specifications; historical chat rows are not imported into the new conversations.
 - Stale-revision and account-identity checks prevent a delayed AI or synchronization response from replacing newer edits.
 - Compiling sends source and linked project files to the compiler service, which removes temporary build files after the request.
-- Account synchronization does not send the workspace to Google or OpenAI. Pressing Process sends the current canvas, annotations, selected target and current project files to the configured OpenAI Responses API with `store: false`.
+- Account synchronization does not send the workspace to Google or OpenAI. Sending a chat request sends its message, bounded conversation history, specification, selected target and relevant project files to the configured OpenAI Responses API with `store: false`. Review specification uses that chat transport with an explicit application-shortcut source; its English UI text does not change the user's response language. The retained explicit canvas operations use the same server boundary and validation.
+- Stopping receipt of a chat response prevents late changes from being applied in the browser. An already started provider request may still finish on the server, and its usage remains accounted for.
 - An optional documentation tool retrieves only registered official Microchip HTML sections when a necessary fact is missing. It uses local excerpts/cache first, limits external retrieval to two sections per operation, and caches fetched references for 30 days. It does not send the canvas to Microchip.
 - When enabled, the Google access layer identifies a signed-in account by Google's verified `sub` claim and a “device” only as a best-effort browser installation. It does not collect or prove a hardware identifier.
 - Generated C, guide and YAML files return to the browser and use ordinary file-workspace persistence. New projects do not create server-side private AI drafts. Legacy drafts remain on disk but are not read by the canvas agent.
@@ -90,7 +93,7 @@ flowchart LR
   Nginx --> Compiler[compile-server.js :8082]
   Compiler --> Toolchain[XC8 + DFP + avr-objcopy]
   Nginx --> AI[ai-server.js :8083]
-  Rules[Canvas rules] --> AI
+  Rules[Project and conversation policy] --> AI
   Knowledge[Local DFP facts and reviewed recipes] --> AI
   AI -->|missing fact only| Docs[Official Microchip HTML cache]
   AI --> AccessDB[Account-scoped SQLite]
@@ -109,13 +112,15 @@ Projects use the canonical repository structure:
 3. **Resources** — internal `Name.yaml`, hidden from the user file list.
 4. **Code Description** — a separate Markdown description generated from the current C.
 
-Educational examples are derived from the canonical `User_Examples` folder and use the same project format. Their source logic is preserved; the website no longer maintains a separate static mini-project tree.
+During materials installation, reviewed `User_Examples` are converted into the common project format and canonical `Target_Projects` are imported directly. The derived `project-catalog.json` is stored beside the immutable source mirror. Runtime requests read this prepared catalog instead of rewriting source examples. Their functional C tokens are preserved.
 
 Project rules, technical references and examples are maintained in the private `Sergey-Bulanov/UartDebug2` repository. Its tracked files are mirrored on the server without rearranging or rewriting them. See [the project architecture](docs/AVR_CANVAS.md) and [materials deployment](docs/AI_MATERIALS_DEPLOYMENT.md).
 
-The first paragraph below `## Short Project Description` in a built-in guide becomes its Add file description. Add its public assets to [public/sw.js](public/sw.js). Built-in projects are copied into the browser workspace before editing.
+Built-in project cards come from the prepared server catalog. Selecting a card copies the project into the editable browser workspace; rules and raw knowledge remain private.
 
-Each project's canvas uses schema 2; the complete project workspace uses schema 3 and one account revision. Older local/account saves migrate without losing their text. Deleting the last project leaves an explicitly empty draft, which takes precedence over old standalone instructions. Old `skillRefs` have no active role. Delayed processing responses cannot overwrite a newer canvas revision.
+Frontend resources are discovered from local HTML, CSS, JavaScript and manifest references. After adding a page or dependency, run `python .github/scripts/stamp_frontend_build.py --generate`; CI checks this generated service-worker list with `--check`. Deployment revisions local page resources automatically; no filename/count registry is maintained.
+
+Each project's canvas uses schema 2; the complete project workspace uses schema 3 and one account revision. Project conversations live in `miniProjects[instanceId].conversation`, with `draftConversation` beside `draftCanvas` for an unfinished project. They use the same identity, revision, conflict and recovery checks as the project files. Older local/account saves migrate without losing their text. Deleting the last project leaves an explicitly empty draft, which takes precedence over old standalone instructions. Old `skillRefs` have no active role. Delayed processing responses cannot overwrite a newer canvas revision. The new chat transport does not restore the retired historical chat store.
 
 ## Local development
 
@@ -146,7 +151,7 @@ The AI service is optional:
 npm run start:ai --prefix backend
 ```
 
-The command starts the HTTP service, but generation remains disabled until `AI_ENABLED=1` and `OPENAI_API_KEY_FILE` points to a protected key file outside the repository. Configure `ALLOWED_ORIGINS` for the local frontend origin as well. Local variables, rule packs, systemd credentials, and production setup are documented in [`backend/AI-SETUP.md`](backend/AI-SETUP.md). Never commit an API key or place it in public browser code.
+The command starts the HTTP service, but generation remains disabled until `AI_ENABLED=1` and `OPENAI_API_KEY_FILE` points to a protected key file outside the repository. Configure `ALLOWED_ORIGINS` for the local frontend origin as well. Local variables, mirrored repository materials, systemd credentials, and production setup are documented in [`backend/AI-SETUP.md`](backend/AI-SETUP.md). Never commit an API key or place it in public browser code.
 
 ## Tests
 
@@ -158,11 +163,11 @@ npm test --prefix frontend/markdown-runtime
 npm run build:check --prefix frontend/markdown-runtime
 ```
 
-Tests cover the AI HTTP boundary, rule packs, project actions, mini-project normalization and ZIP validation, documentation markers, catalog rendering, and AVR page wiring. Pull requests and pushes to `main` are checked by [GitHub Actions](.github/workflows/ci.yml).
+Tests cover the AI HTTP boundary, pinned repository rules, project actions, mini-project normalization and ZIP validation, documentation markers, prepared catalogs, resource discovery and AVR page wiring. Desktop browser interaction tests live in `frontend/browser-tests` and exercise real window gestures separately from the pure layout calculations. Pull requests run [CI](.github/workflows/ci.yml); a push to `main` runs that same workflow once as the deployment's validation prerequisite.
 
 ## Deployment
 
-The production workflow in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) deploys pushes to `main` into versioned server releases, validates health endpoints, and supports rollback. Deployment credentials stay in GitHub Actions secrets; the OpenAI key stays in a restricted systemd credential file on the host.
+The production workflow in [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) deploys pushes to `main` into versioned frontend/backend releases, validates health endpoints, and supports guarded rollback. The installed `uartdebug-backend`, `uartdebug-ai` and materials receiver use systemd. Before release pointers change, deployment checks the live account database schema and canonical materials compatibility; an incompatible historical backend is refused. Historical Python release directories are left untouched and are no longer deployed or pruned. Deployment credentials stay in GitHub Actions secrets; the OpenAI key stays in a restricted systemd credential file on the host.
 
 Production setup is intentionally not a copy-and-paste local quick start: it also requires nginx, systemd services, XC8/DFP installation, filesystem permissions, DNS, and TLS configuration.
 
@@ -170,9 +175,10 @@ Production setup is intentionally not a copy-and-paste local quick start: it als
 
 | Path | Purpose |
 | --- | --- |
-| `public/` | Static PWA, UART terminal, AVR editor/programmer, mini-project source and guides, vendored browser libraries |
-| `backend/` | Compiler service, AI service, canvas contracts, local AVR knowledge, tutorial references, and deployment files |
+| `public/` | Desktop PWA, UART terminal, AVR workspace/programmer and vendored browser libraries |
+| `backend/` | Compiler and AI services, project contracts, private-material adapters, catalog preparation and deployment |
 | `frontend/markdown-runtime/` | Source, tests, and deterministic build for the vendored CommonMark/GFM browser runtime |
+| `frontend/browser-tests/` | Desktop browser regressions with local fixtures and no live AI or hardware |
 | `docs/` | Product architecture decisions, access/credit design, and explicit limitations |
 | `tests/` | Node test suite |
 | `.github/workflows/` | CI and production deployment workflows |

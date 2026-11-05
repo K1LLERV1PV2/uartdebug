@@ -7,7 +7,7 @@ const { mkdtemp, writeFile, readFile, rm } = require("fs/promises");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execFile } = require("child_process");
+const { createCompilerSandbox, canonicalizeProjectSource, usesAssemblerFileDirective } = require("./compile-sandbox");
 const {
   AVR_COMPILE_CONTRACT,
   AVR_COMPILE_HEALTH_SERVICE,
@@ -43,7 +43,7 @@ const ALLOWED_ORIGINS = new Set(
 );
 // Keep this literal for the deployment health-check extractor. Runtime use is
 // guarded against the shared contract constant below.
-const COMPILE_SERVER_VERSION = "20260826-rate-limit-v1";
+const COMPILE_SERVER_VERSION = "20261105-sandbox-v1";
 if (COMPILE_SERVER_VERSION !== AVR_COMPILE_SERVER_VERSION) {
   throw new Error("AVR compiler contract version mismatch.");
 }
@@ -128,6 +128,7 @@ const XC8_CC = resolveTool("XC8_CC", "xc8-cc");
 const AVR_OBJCOPY = resolveTool("AVR_OBJCOPY", "avr-objcopy");
 // Default ATtiny DFP path.
 const DFP_PATH = process.env.XC8_DFP || "/opt/microchip/dfp/attiny/xc8";
+const compilerSandbox = createCompilerSandbox({ xc8Cc: XC8_CC, avrObjcopy: AVR_OBJCOPY, dfpPath: DFP_PATH });
 
 function isExecutable(filePath) {
   try {
@@ -317,44 +318,7 @@ function readBoundedInteger(value, min, max, fallback) {
 app.use("/api/", rejectCrossSiteApiRequests);
 
 function run(cmd, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const childCwd = opts.cwd || process.cwd();
-    const execOpts = {
-      ...opts,
-      env: buildChildEnv(childCwd, opts.env),
-    };
-
-    execFile(cmd, args, execOpts, (err, stdout, stderr) => {
-      if (err) {
-        err.stdout = stdout;
-        err.stderr = stderr;
-        return reject(err);
-      }
-      resolve({ stdout, stderr });
-    });
-  });
-}
-
-function buildChildEnv(childCwd, extraEnv = {}) {
-  const env = {};
-
-  for (const [name, value] of Object.entries(process.env)) {
-    if (isSensitiveEnvName(name)) continue;
-    env[name] = value;
-  }
-
-  return {
-    ...env,
-    ...extraEnv,
-    PWD: childCwd,
-    OLDPWD: childCwd,
-  };
-}
-
-function isSensitiveEnvName(name) {
-  return /(?:TOKEN|SECRET|PASSWORD|PASS|PRIVATE|CREDENTIAL|AUTH|API_?KEY|ACCESS_?KEY)/i.test(
-    String(name || "")
-  );
+  return compilerSandbox.run(cmd, args, opts);
 }
 
 function getRunErrorDetails(err, toolName, tmpDir = "") {
@@ -458,6 +422,7 @@ function sanitizeTextForResponse(value, tmpDir = "") {
     [DFP_PATH, "<xc8-dfp>"],
     [XC8_CC, getToolLabel(XC8_CC)],
     [AVR_OBJCOPY, getToolLabel(AVR_OBJCOPY)],
+    ["/work/", "<tmp>/"],
   ];
 
   for (const [needle, replacement] of replacements) {
@@ -489,7 +454,8 @@ function isUnsafeIncludePath(includePath) {
 }
 
 function findUnsafeInclude(sourceText) {
-  const includeDirective = /^\s*#\s*(?:include|include_next|import)\s+(.+)$/gm;
+  sourceText = canonicalizeProjectSource(sourceText);
+  const includeDirective = /^\s*#\s*(?:include|include_next|import|embed)\s*(.+)$/gm;
   const asmIncludeDirective = /^\s*\.include\s+["']([^"']+)["']/gim;
   let match;
 
@@ -510,6 +476,7 @@ function findUnsafeInclude(sourceText) {
 }
 
 function assertSafeProjectSource(fileName, content) {
+  if (usesAssemblerFileDirective(fileName, content)) throw new Error(`File "${fileName}" uses a disallowed assembler file directive.`);
   const unsafeInclude = findUnsafeInclude(content);
   if (!unsafeInclude) return;
 
@@ -705,6 +672,9 @@ async function handleCompileRequest(req, res) {
     }
 
     const compilePlan = buildCompilePlan(safeName, projectFiles);
+    if (!compilerSandbox.getStatus().ready) return res.status(503).json(createCompileEnvelope({
+      ok: false, stage: "server", code: "compiler_isolation_unavailable", stderr: "Compiler isolation is unavailable. Contact the site administrator.",
+    }));
     tmp = await mkdtemp(path.join(os.tmpdir(), "xc8-"));
     const elfPath = path.join(tmp, "main.elf");
     const hexPath = path.join(tmp, "main.hex");
@@ -864,11 +834,12 @@ app.get("/health", (req, res) => {
     avrObjcopy: AVR_OBJCOPY,
     dfpPath: DFP_PATH,
   });
-  return res.status(readiness.ready ? 200 : 503).json(createCompileEnvelope({
-    ok: readiness.ready,
+  const sandboxReady = compilerSandbox.getStatus().ready;
+  return res.status(readiness.ready && sandboxReady ? 200 : 503).json(createCompileEnvelope({
+    ok: readiness.ready && sandboxReady,
     service: AVR_COMPILE_HEALTH_SERVICE,
     contract: AVR_COMPILE_CONTRACT,
-    checks: readiness.checks,
+    checks: { ...readiness.checks, sandbox: sandboxReady },
   }));
 });
 

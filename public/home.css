@@ -119,6 +119,9 @@ main {
 }
 
 .nav-card {
+  --ui-panel-bg: var(--ui-surface-overlay);
+  --ui-panel-shadow: var(--ui-shadow);
+
   position: relative;
   isolation: isolate;
   display: flex;
@@ -128,10 +131,6 @@ main {
   min-height: clamp(150px, 23vh, 210px);
   padding: clamp(22px, 4vw, 36px);
   overflow: hidden;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius);
-  background: var(--ui-surface-overlay);
-  box-shadow: var(--ui-shadow);
   color: var(--ui-text);
   text-align: center;
   text-decoration: none;

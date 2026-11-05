@@ -47,6 +47,12 @@ const CANVAS_OUTPUT_SCHEMA = object({
     }),
   ),
 });
+const CHAT_OUTPUT_SCHEMA = object({
+  ...CANVAS_OUTPUT_SCHEMA.properties,
+  action: enumeration("reply", "clarify", "generate", "describe"),
+  message: text(32 * 1024, 1),
+  canvas: nullable(CANVAS_OUTPUT_SCHEMA.properties.canvas),
+});
 
 class CanvasContractError extends Error {
   constructor(message, generated = false) {
@@ -756,7 +762,18 @@ function validateSource(
 }
 
 function validateCanvasOutput(raw, options = {}) {
-  assertSchema(raw, CANVAS_OUTPUT_SCHEMA);
+  assertSchema(raw, options.conversation ? CHAT_OUTPUT_SCHEMA : CANVAS_OUTPUT_SCHEMA);
+  if (options.conversation) {
+    boundedText(raw.message, "message", 32 * 1024, { generated: true });
+    if (!raw.message.trim()) fail("A conversation response must contain a message.", true);
+  }
+  if (options.conversation && raw.action === "reply") {
+    if (raw.canvas !== null || raw.project !== null)
+      fail("A conversational reply must not change project artifacts.", true);
+    return raw;
+  }
+  if (options.conversation && raw.canvas === null)
+    fail("An artifact action must include its complete specification snapshot.", true);
   const input = normalizeCanvas(options.canvas);
   const operation = options.operation || "analyze";
   if (!Object.hasOwn(PROJECT_STAGES, operation))
@@ -774,6 +791,7 @@ function validateCanvasOutput(raw, options = {}) {
     operation === "analyze" ? validateRemarkLocale(markdown, input, locale) : [];
   if (
     operation === "analyze" &&
+    !options.conversation &&
     !input.locale &&
     !input.markdown.trim() &&
     locale.toLowerCase().split("-")[0] !== "en"
@@ -781,6 +799,7 @@ function validateCanvasOutput(raw, options = {}) {
     fail("An empty draft without a selected language must use English.", true);
   if (
     operation === "analyze" &&
+    !options.conversation &&
     !input.markdown.trim() &&
     !remarks.some((remark) => remark.hasBody)
   )
@@ -788,7 +807,7 @@ function validateCanvasOutput(raw, options = {}) {
       "Reviewing an empty draft must put initial questions in canonical inline Markdown remark blocks on that draft, not only in the service message. This stage explicitly authorizes those remarks before project identity is confirmed.",
       true,
     );
-  if (operation !== "analyze" && markdown !== input.markdown)
+  if (operation !== "analyze" && !(options.conversation && operation === "generate") && markdown !== input.markdown)
     fail(
       "Code generation and description must preserve the specification exactly.",
       true,
@@ -811,7 +830,8 @@ function validateCanvasOutput(raw, options = {}) {
     )
       fail(`This stage must return only ${expectedRoles.join(" and ")}.`, true);
     validateFileName(`${project.title}.md`, /\.md$/i);
-    const identity = projectIdentity(input.markdown);
+    const projectMarkdown = options.conversation && operation === "generate" ? markdown : input.markdown;
+    const identity = projectIdentity(projectMarkdown);
     if (
       !identity ||
       project.title !== identity.title ||
@@ -825,7 +845,7 @@ function validateCanvasOutput(raw, options = {}) {
       validateFileName(project.source.name, /\.c$/i);
       validateFileName(project.resources.name, /\.yaml$/i);
       const names = projectOutputNames(
-        input.markdown,
+        projectMarkdown,
         identity,
         options.currentProject,
       );
@@ -889,6 +909,7 @@ function validateCanvasOutput(raw, options = {}) {
 
 module.exports = {
   CANVAS_OUTPUT_SCHEMA,
+  CHAT_OUTPUT_SCHEMA,
   CanvasContractError,
   normalizeCanvas,
   validateCanvasOutput,

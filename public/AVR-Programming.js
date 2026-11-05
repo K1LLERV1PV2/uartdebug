@@ -33,23 +33,14 @@
   const LEGACY_STORAGE_KEY = "ud_c_canvas_files_v1";
   const LEGACY_STORAGE_CURRENT = "ud_c_canvas_current_v1";
   const AVR_UPDI_RUNTIME_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI__";
-  const LEGACY_UPDI_RUNTIME_KEY = "__UARTDEBUG_CANVAS_UPDI__";
   const AVR_UPDI_BRIDGE_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI_BRIDGE__";
-  const LEGACY_UPDI_BRIDGE_KEY = "__UARTDEBUG_CANVAS_UPDI_BRIDGE__";
-  const AVR_SERIAL_STATE_EVENT = "ud-avr-programming-serial-state";
-  const LEGACY_SERIAL_STATE_EVENT = "ud-canvas-serial-state";
   const OUTLINER_DEFAULT_WIDTH = 305;
   const WORKSPACE_PANEL_COMPACT_WIDTH = 62;
-  const WORKSPACE_PANEL_COMPACT_THRESHOLD = 112;
-  const WORKSPACE_PANEL_COLLAPSE_DISTANCE = 120;
-  const WORKSPACE_PANEL_REOPEN_DISTANCE = 48;
-  const OUTLINER_MIN_EXPANDED_WIDTH = 180;
-  const OUTLINER_EDITOR_MIN_WIDTH = 500;
+  const WORKSPACE_PANEL_TRANSITION_MS = 320;
+  const WORKSPACE_PANEL_MIN_WIDTH = 240;
   const DOCUMENTATION_DEFAULT_WIDTH = 360;
-  const DOCUMENTATION_MIN_WIDTH = 240;
   const WORKSPACE_RESIZER_TOTAL_WIDTH = 42;
   const PROJECT_AI_COLUMN_DEFAULT_WIDTH = 318;
-  const PROJECT_AI_COLUMN_MIN_WIDTH = 238;
   const DEVICE_PANEL_EXPANDED_HEIGHT = 112;
   const DEVICE_PANEL_COMPACT_HEIGHT = 54;
   const DEVICE_PANEL_COLLAPSED_HEIGHT = 0;
@@ -69,6 +60,18 @@
   const $ = (id) => document.getElementById(id);
   const miniProjectCore = window.UartDebugAvrMiniProjectCore;
   const projectFormat = window.UartDebugAvrProjectFormat;
+  const {
+    WORKSPACE_PANEL_COMPACT_THRESHOLD,
+    WORKSPACE_PANEL_COLLAPSE_DISTANCE,
+    WORKSPACE_PANEL_REOPEN_DISTANCE,
+    getCapsuleNotchPoints,
+    snapWorkspacePanelSize,
+    fitWorkspaceWidths,
+    resizeWorkspacePanels,
+    resizeWorkspaceBoundary,
+    getWorkspaceResizePreview,
+    balanceWorkspaceSpacing
+  } = window.UartDebugAvrWorkspaceLayout;
   let resolveMiniProjectBridgeReady = null;
   const miniProjectBridgeReady = new Promise((resolve) => {
     resolveMiniProjectBridgeReady = resolve;
@@ -77,32 +80,35 @@
   let editor = null;
   let files = Object.create(null);
   let fileAuthorship = Object.create(null);
-  let fileGroups = Object.create(null);
   let miniProjects = Object.create(null);
   let current = null;
+  let draftProjectConversation = null;
+  let projectChatController = null;
+  let hardwareFlow = null;
+  let projectChatApplyingResponse = false;
   let saveTimer = null;
   let compileErrorLineHandle = null;
+  let compileNotificationId = null;
+  let compileTask = null;
+  let unreadableWorkspaceRaw = null;
+  let projectAiNotificationId = null;
   let contextMenuFile = null;
+  let contextMenuTrigger = null;
   let inlineFileEdit = null;
   let outlinerWidth = OUTLINER_DEFAULT_WIDTH;
   let outlinerPreferredWidth = OUTLINER_DEFAULT_WIDTH;
   let editorCollapsed = false;
-  let activeSplitResize = null;
   let workspaceEditorRefreshFrame = null;
   let documentationWidth = DOCUMENTATION_DEFAULT_WIDTH;
   let documentationPreferredWidth = DOCUMENTATION_DEFAULT_WIDTH;
-  const workspacePanelMinWidths = [OUTLINER_MIN_EXPANDED_WIDTH,
-    PROJECT_AI_COLUMN_MIN_WIDTH, OUTLINER_EDITOR_MIN_WIDTH, DOCUMENTATION_MIN_WIDTH];
-  let documentationHeadingIndex = new Map();
-  let documentationRenderedHeadingIndex = new Map();
+  const workspacePanelMinWidths = Array(4).fill(WORKSPACE_PANEL_MIN_WIDTH);
   let documentationMarkerHandles = [];
   let documentationMarkerFrame = null;
   let documentationRenderTimer = null;
   let documentationTargetTimer = null;
-  let documentationEditMode = false;
   let documentationEditor = null;
   let documentationEditorSyncing = false;
-  let documentationEditSaveTimer = null;
+  let documentationSaveTimer = null;
   let projectAiColumnWidth = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
   let projectAiColumnPreferredWidth = PROJECT_AI_COLUMN_DEFAULT_WIDTH;
   let projectInstructionDocument = {
@@ -131,11 +137,12 @@
   let projectInstructionEditorSyncing = false;
   let projectInstructionCompositionActive = false;
   const markdownLiveEditors = new Map();
-  let canvasSupportedDevices = [];
+  let canvasSupportedDevices = null;
   let devicePanelState = "expanded";
   let devicePanelHeight = DEVICE_PANEL_EXPANDED_HEIGHT;
   let devicePanelTransitionTimer = null;
-  let projectAiAccountFilesSaveTimer = null;
+  let devicePanelControlAnimations = [];
+  let projectAiAccountSaveTimer = null;
   let projectAiAccountWorkspacePromise = null;
   let projectAiAccountWorkspaceRetryTimer = null;
   let projectAiAccountWorkspaceRetryCount = 0;
@@ -145,16 +152,14 @@
   let projectAiAccountSync = {
     ready: false,
     accountKey: "",
-    revisions: { files: 0 },
-    dirty: { files: false },
-    saving: { files: false },
-    conflicts: { files: false },
-    mutations: { files: 0 },
-    retries: { files: 0 },
+    revision: 0,
+    dirty: false,
+    saving: false,
+    conflict: false,
+    mutation: 0,
+    retryCount: 0,
+    localDirty: false,
     legacyInstructionRevision: null,
-  };
-  let projectAiLocalDirty = {
-    files: false,
   };
   let projectAiRequestInFlight = false;
   let projectAiAuthSession = null;
@@ -166,6 +171,12 @@
   let projectAiQuotaUpdateSequence = 0;
   let projectAiLatestQuota = null;
   let workspaceResizeFrame = null;
+  let workspaceTransitionTimer = null;
+  let workspaceTransitionFrame = null;
+  const workspaceTextAnimations = new Map();
+  const workspaceMotionScrollAnchors = new Map();
+  let workspaceLayoutSettling = false;
+  let panelActionContourFrame = null;
   let workspaceResizeObserver = null;
   let watermarkFitFrame = null;
   let watermarkResizeObserver = null;
@@ -408,6 +419,7 @@
   }
 
   function fitEditorFileWatermark() {
+    if (workspaceTransitionTimer !== null) return;
     const watermark = $("editorFileWatermark");
     const container = watermark?.closest(".editor-container");
     if (!watermark || !container) return;
@@ -467,39 +479,15 @@
     scheduleEditorFileWatermarkFit();
   }
 
-  function setCompileLogText(text) {
-    const el = $("compileLog");
-    if (!el) return;
-    el.textContent = String(text || "").replace(/\r\n/g, "\n");
-    el.scrollTop = el.scrollHeight;
-  }
-
-  function appendCompileStatus(message) {
-    const el = $("compileLog");
-    if (!el) return;
-    const text = String(message || "").replace(/\r\n/g, "\n").trim();
-    if (!text) return;
-    if (el.textContent && !el.textContent.endsWith("\n")) {
-      el.textContent += "\n";
-    }
-    el.textContent += text;
-    el.scrollTop = el.scrollHeight;
-  }
-
-  function setCompileLogLines(lines) {
-    setCompileLogText(
-      (Array.isArray(lines) ? lines : [lines]).filter(Boolean).join("\n")
-    );
-  }
-
-  function clearUpdiLog() {
-    const updi = getCanvasUpdiRuntime();
-    if (updi && typeof updi.clearLog === "function") {
-      updi.clearLog();
+  function reportCompilerStatus(message, { tone = "error", details = message, diagnostics = "", pending = false } = {}) {
+    if (compileNotificationId) {
+      window.UartDebugNotifications?.append(compileNotificationId, details, { message, tone, pending, ...(diagnostics ? { diagnostics } : {}) });
       return;
     }
-
-    setCompileLogText("");
+    compileNotificationId = window.UartDebugNotifications?.notify({
+      id: compileNotificationId || undefined, key: compileNotificationId ? undefined : null, title: "Compilation", message, details,
+      source: compileNotificationId ? undefined : current || "AVR compiler", tone, pending, diagnostics,
+    }) || compileNotificationId;
   }
 
   function sanitizeCompilerOutput(text) {
@@ -522,13 +510,14 @@
       parts.push(
         data.compile_stderr,
         data.stderr,
-        data.error,
+        typeof data.error === "string" ? data.error : data.error?.message,
         data.compile_stdout,
-        data.stdout
+        data.stdout,
+        data.message,
       );
     }
-    parts.push(rawText);
-    return sanitizeCompilerOutput(parts.filter(Boolean).join("\n"));
+    const output = parts.filter(part => typeof part === "string" && part.trim());
+    return sanitizeCompilerOutput(output.length ? output.join("\n") : rawText);
   }
 
   function getFirstCompilerIssue(data, rawText = "", fallbackFile = "") {
@@ -670,7 +659,10 @@
   function showCompilerIssue(data, rawText = "", fallbackFile = "") {
     const issue = getFirstCompilerIssue(data, rawText, fallbackFile);
     highlightCompilerIssue(issue);
-    setCompileLogText(formatCompilerIssue(issue));
+    const summary = `${issue.message}${issue.lineNumber ? ` (line ${issue.lineNumber}${issue.columnNumber ? `, column ${issue.columnNumber}` : ""})` : ""}`;
+    reportCompilerStatus(summary, {
+      details: [formatCompilerIssue(issue), collectCompilerErrorText(data, rawText)].filter(Boolean).join("\n\n"),
+    });
     return issue;
   }
 
@@ -728,11 +720,7 @@
   }
 
   async function showSiteAlert(message, title = "Notice") {
-    await showSiteDialog({
-      title,
-      message,
-      confirmText: "OK",
-    });
+    window.UartDebugNotifications?.notify({ title, message: String(message).split("\n")[0], details: message, tone: "error" });
   }
 
   function showSiteConfirm({
@@ -753,11 +741,7 @@
 
   function getCanvasUpdiRuntime() {
     if (typeof window === "undefined") return null;
-    return (
-      window[AVR_UPDI_RUNTIME_KEY] ||
-      window[LEGACY_UPDI_RUNTIME_KEY] ||
-      null
-    );
+    return window[AVR_UPDI_RUNTIME_KEY] || null;
   }
 
   async function ensureAutoDetectedTarget(options = {}) {
@@ -771,6 +755,7 @@
       allowPrompt: true,
       useCached: !options.reselectPort,
       preferPrompt: true,
+      notificationId: options.notificationId,
     });
   }
 
@@ -809,6 +794,9 @@
         );
       }
     } catch (error) {
+      if (!error?.uartDebugNotificationId) window.UartDebugNotifications?.notify({
+        title: "Chip detection", message: error.message || String(error), tone: "error",
+      });
       console.warn(
         `Chip detection failed: ${error.message || String(error)}`
       );
@@ -828,7 +816,7 @@
       try {
         loadHexIntoUpdiRuntime(updi, current, hexText, "editor");
       } catch (error) {
-        await showSiteAlert(
+        if (!error?.uartDebugNotificationId) await showSiteAlert(
           `HEX load failed.\n${error.message || String(error)}`,
           "Flash MCU"
         );
@@ -837,9 +825,15 @@
     } else {
       let ready = false;
       try {
+        // Resolve the connected chip before choosing or compiling firmware.
+        // The programmer checks the signature again immediately before erase.
+        const info = await ensureAutoDetectedTarget();
+        if (!info?.matchedTargetKey) {
+          throw new Error(`The connected chip is not supported (${formatDeviceId(info?.deviceId) || "unknown signature"}). No firmware was prepared for flashing.`);
+        }
         ready = await ensureCurrentCompiledHexLoaded(updi);
       } catch (error) {
-        await showSiteAlert(
+        if (!error?.uartDebugNotificationId) await showSiteAlert(
           `HEX load failed.\n${error.message || String(error)}`,
           "Flash MCU"
         );
@@ -854,7 +848,7 @@
       try {
         await updi.preparePortPermission();
       } catch (error) {
-        await showSiteAlert(
+        if (!error?.uartDebugNotificationId) await showSiteAlert(
           `UPDI port access failed.\n${error.message || String(error)}`,
           "Flash MCU"
         );
@@ -863,28 +857,16 @@
     }
 
     try {
-      appendCompileStatus("Flashing ...");
       await updi.programHex();
-      const compileLog = $("compileLog");
-      const lines = String(compileLog?.textContent || "")
-        .replace(/\r\n/g, "\n")
-        .split("\n")
-        .filter(Boolean);
-      if (lines[lines.length - 1] === "Flashing ...") {
-        lines[lines.length - 1] = "FLASH OK.";
-      } else {
-        lines.push("FLASH OK.");
-      }
-      setCompileLogLines(lines);
     } catch (error) {
-      await showSiteAlert(
+      if (!error?.uartDebugNotificationId) await showSiteAlert(
         `Flash failed.\n${error.message || String(error)}`,
         "Flash MCU"
       );
     }
   }
 
-  function updateCompilePanelState(resetLog = false) {
+  function updateCompilePanelState() {
     const btn = $("compileBtn");
     const hasCurrent = !!current;
     const canCompile = hasCurrent && /\.c$/i.test(current);
@@ -894,11 +876,9 @@
     if (btn) {
       btn.textContent = buttonLabel;
       btn.title = buttonLabel;
-      btn.disabled = !canCompile || updiBusy || setHexStatus._state === "building";
+      btn.disabled = !canCompile || updiBusy || !!compileTask || setHexStatus._state === "building";
     }
 
-    if (!resetLog || updiBusy) return;
-    setCompileLogText("");
   }
 
   // Built-in mini-projects are loaded from the versioned catalog below.
@@ -950,16 +930,33 @@
             const copy = document.createElement("span");
             copy.className = "file-add-card-copy";
             copy.textContent = descriptor.summary;
+            copy.dataset.tooltip = descriptor.summary;
             card.appendChild(copy);
           }
           return card;
         });
+        const restoreFocus = !!document.activeElement && grid.contains(document.activeElement);
         grid.replaceChildren(...cards);
+        if (restoreFocus) cards[0]?.focus({ preventScroll: true });
         builtInMiniProjectCardsReady = true;
       } catch (error) {
-        const failure = document.createElement("span");
-        failure.textContent = "Projects could not be loaded.";
-        grid.replaceChildren(failure);
+        const noticeId = window.UartDebugNotifications?.notify({ key: "project-catalog", title: "Mini-projects", tone: "error",
+          message: "Projects could not be loaded.", details: error.message || String(error) });
+        const message = document.createElement("p");
+        message.className = "ui-empty-state";
+        message.textContent = "Mini projects are unavailable.";
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "ui-action project-catalog-retry";
+        retry.textContent = "Retry";
+        retry.addEventListener("click", () => {
+          if (noticeId) window.UartDebugNotifications?.dismiss(noticeId);
+          retry.textContent = "Loading…";
+          void renderBuiltInMiniProjectCards();
+        });
+        const restoreFocus = !!document.activeElement && grid.contains(document.activeElement);
+        grid.replaceChildren(message, retry);
+        if (restoreFocus) retry.focus({ preventScroll: true });
         console.warn("Project catalog could not be rendered:", error);
       } finally {
         grid.removeAttribute("aria-busy");
@@ -984,9 +981,12 @@
 
   function loadState() {
     let loadedEnvelope = false;
+    let legacyGroups = {};
+    let rawState = null;
     workspaceDraftCanvasRestored = false;
+    draftProjectConversation = null;
     try {
-      const rawState = localStorage.getItem(STORAGE_STATE);
+      rawState = localStorage.getItem(STORAGE_STATE);
       if (rawState) {
         const state = JSON.parse(rawState);
         if (
@@ -1001,24 +1001,32 @@
             state.authorship && typeof state.authorship === "object"
               ? state.authorship
               : {};
-          fileGroups =
-            state.fileGroups && typeof state.fileGroups === "object"
-              ? state.fileGroups
-              : {};
+          legacyGroups = state.fileGroups || {};
           miniProjects =
             state.miniProjects && typeof state.miniProjects === "object"
               ? state.miniProjects
               : {};
           current = typeof state.current === "string" ? state.current : null;
+          if (state.draftConversation) draftProjectConversation = normalizeProjectConversation(state.draftConversation, { recoverPending: true });
           if (state.schemaVersion === 3 && state.draftCanvas && typeof state.draftCanvas === "object") {
             unassignedProjectInstructionDocument = normalizeProjectInstructionDocument(state.draftCanvas);
             workspaceDraftCanvasRestored = true;
           }
           loadedEnvelope = true;
+        } else {
+          throw new Error("The saved workspace has an unsupported format.");
         }
       }
-    } catch {
+    } catch (error) {
       loadedEnvelope = false;
+      if (rawState) {
+        unreadableWorkspaceRaw = rawState;
+        preserveUnreadableWorkspace(error);
+      } else {
+        window.UartDebugNotifications?.notify({ key: "workspace-read", title: "Project storage", tone: "error",
+          message: "The saved projects could not be read.",
+          details: "Check browser storage access and reload before editing your projects.", diagnostics: error?.stack || String(error) });
+      }
     }
 
     if (!loadedEnvelope) {
@@ -1029,7 +1037,7 @@
           "{}";
         files = JSON.parse(storedFiles || "{}");
         fileAuthorship = {};
-        fileGroups = JSON.parse(localStorage.getItem(STORAGE_GROUPS) || "{}");
+        legacyGroups = JSON.parse(localStorage.getItem(STORAGE_GROUPS) || "{}");
         current =
           localStorage.getItem(STORAGE_CURRENT) ??
           localStorage.getItem(LEGACY_STORAGE_CURRENT) ??
@@ -1037,7 +1045,7 @@
       } catch {
         files = Object.create(null);
         fileAuthorship = Object.create(null);
-        fileGroups = Object.create(null);
+        legacyGroups = {};
         current = null;
       }
 
@@ -1059,12 +1067,46 @@
       }
       setFileAuthorship(fileName, fileAuthorship[fileName], files[fileName]);
     }
-    normalizeFileGroups();
     normalizeMiniProjectInstances();
     if (current && !hasFile(current)) current = null;
+    return legacyGroups;
+  }
+
+  function preserveUnreadableWorkspace(error = null) {
+    if (unreadableWorkspaceRaw === null) return true;
+    try {
+      const base = `${STORAGE_PROJECT_AI_FILES_RECOVERY}:unreadable-workspace`;
+      let recoveryKey = base;
+      const previous = localStorage.getItem(recoveryKey);
+      let previousRaw = null;
+      try { previousRaw = previous && JSON.parse(previous).rawWorkspace; } catch {}
+      if (previous && previousRaw !== unreadableWorkspaceRaw) {
+        const suffix = Date.now();
+        let index = 0;
+        do { recoveryKey = `${base}:${suffix}-${index++}`; } while (localStorage.getItem(recoveryKey) !== null);
+      }
+      localStorage.setItem(recoveryKey, JSON.stringify({ schemaVersion: 1, savedAt: Date.now(),
+        sourceAccountKey: "browser-local", rawWorkspace: unreadableWorkspaceRaw }));
+      unreadableWorkspaceRaw = null;
+      window.UartDebugNotifications?.notify({ key: "workspace-read", title: "Project storage", tone: "warning",
+        message: "The saved projects could not be loaded.",
+        details: "The original saved data has been preserved in this browser as a recovery copy.",
+        diagnostics: [`Recovery storage key: ${recoveryKey}`, error?.stack || ""].filter(Boolean).join("\n\n") });
+      return true;
+    } catch (recoveryError) {
+      window.UartDebugNotifications?.notify({ key: "workspace-read", title: "Project storage", tone: "error",
+        message: "The saved projects could not be loaded safely.",
+        details: "The original saved data was kept unchanged. Saving and account synchronization are paused. Free browser storage and reload before editing.",
+        diagnostics: recoveryError?.stack || String(recoveryError) });
+      return false;
+    }
   }
 
   function persistState({ throwOnError = false } = {}) {
+    if (!preserveUnreadableWorkspace()) {
+      if (throwOnError) throw new Error("The original workspace could not be preserved for recovery.");
+      return false;
+    }
     try {
       localStorage.setItem(
         STORAGE_STATE,
@@ -1072,6 +1114,8 @@
       );
     } catch (error) {
       console.warn("Failed to persist AVR workspace state:", error);
+      window.UartDebugNotifications?.notify({ key: "workspace-save", title: "Project storage", tone: "error",
+        message: "Projects could not be saved in this browser.", details: error.message || String(error) });
       if (throwOnError) throw error;
       return false;
     }
@@ -1092,7 +1136,7 @@
       projectAiBootComplete &&
       !projectAiAccountWorkspaceApplying
     ) {
-      markProjectAiAccountDocumentDirty("files");
+      markProjectAiAccountWorkspaceDirty();
     }
     return true;
   }
@@ -1207,6 +1251,10 @@
       if (!guides[defaultLocale]) defaultLocale = guideLocales[0] || "";
       let selectedLocale = String(rawProject.selectedLocale || "").trim();
       if (!guides[selectedLocale]) selectedLocale = defaultLocale;
+      if (origin === "builtin" && guides.en) {
+        defaultLocale = "en";
+        selectedLocale = "en";
+      }
       if (selectedLocale && guides[selectedLocale]) {
         roleFiles.guide = guides[selectedLocale].fileName;
         mediaTypes.guide = guides[selectedLocale].mediaType;
@@ -1246,6 +1294,7 @@
         ...(rawProject.canvas && typeof rawProject.canvas === "object"
           ? { canvas: normalizeProjectInstructionDocument(rawProject.canvas) }
           : {}),
+        ...(rawProject.conversation ? { conversation: normalizeProjectConversation(rawProject.conversation, { recoverPending: true }) } : {}),
       };
     }
 
@@ -1258,83 +1307,6 @@
     ) {
       current = activeLink.project.files.source;
     }
-  }
-
-  function normalizeFileGroups() {
-    const normalized = Object.create(null);
-    const assignedFiles = new Set();
-    const assignedGroups = new Set();
-
-    if (!fileGroups || typeof fileGroups !== "object") {
-      fileGroups = Object.create(null);
-      return;
-    }
-
-    for (const [rawName, rawGroup] of Object.entries(fileGroups)) {
-      const name = String(rawName || "").trim();
-      if (
-        !name ||
-        Object.prototype.hasOwnProperty.call(normalized, name)
-      ) {
-        continue;
-      }
-
-      normalized[name] = {
-        files: [],
-        groups: [],
-        expanded: !!rawGroup?.expanded,
-      };
-    }
-
-    for (const [rawName, rawGroup] of Object.entries(fileGroups)) {
-      const name = String(rawName || "").trim();
-      if (!normalized[name]) continue;
-
-      const rawFiles = Array.isArray(rawGroup?.files)
-        ? rawGroup.files
-        : [];
-
-      for (const fileName of rawFiles) {
-        const normalizedFile = String(fileName || "").trim();
-        if (
-          !normalizedFile ||
-          !hasFile(normalizedFile) ||
-          assignedFiles.has(normalizedFile)
-        ) {
-          continue;
-        }
-
-        normalized[name].files.push(normalizedFile);
-        assignedFiles.add(normalizedFile);
-      }
-    }
-
-    for (const [rawName, rawGroup] of Object.entries(fileGroups)) {
-      const name = String(rawName || "").trim();
-      if (!normalized[name]) continue;
-
-      const rawGroups = Array.isArray(rawGroup?.groups)
-        ? rawGroup.groups
-        : [];
-
-      for (const groupName of rawGroups) {
-        const childName = String(groupName || "").trim();
-        if (
-          !childName ||
-          childName === name ||
-          !normalized[childName] ||
-          assignedGroups.has(childName)
-        ) {
-          continue;
-        }
-
-        normalized[name].groups.push(childName);
-        assignedGroups.add(childName);
-      }
-    }
-
-    fileGroups = normalized;
-    pruneGroupCycles();
   }
 
   function uniqueName(base) {
@@ -1356,65 +1328,24 @@
     return Object.prototype.hasOwnProperty.call(files, name);
   }
 
-  function hasGroup(name) {
-    return Object.prototype.hasOwnProperty.call(fileGroups, name);
-  }
-
-  function getGroupChildGroups(groupName) {
-    const group = fileGroups[groupName];
-    return (group?.groups || []).filter((name) => hasGroup(name));
-  }
-
-  function isGroupDescendant(groupName, possibleDescendant) {
-    if (!hasGroup(groupName) || !possibleDescendant) return false;
-
-    const stack = [...getGroupChildGroups(groupName)];
-    const seen = new Set();
-
-    while (stack.length) {
-      const childName = stack.pop();
-      if (!childName || seen.has(childName)) continue;
-      if (childName === possibleDescendant) return true;
-      seen.add(childName);
-      stack.push(...getGroupChildGroups(childName));
-    }
-
-    return false;
-  }
-
-  function pruneGroupCycles() {
-    for (const groupName of Object.keys(fileGroups)) {
-      const group = fileGroups[groupName];
-      group.groups = (group.groups || []).filter(
-        (childName) =>
-          childName !== groupName && !isGroupDescendant(childName, groupName)
-      );
-    }
-  }
-
-  function getFileGroup(fileName) {
-    for (const [groupName, group] of Object.entries(fileGroups)) {
-      if ((group.files || []).includes(fileName)) return groupName;
-    }
-    return "";
-  }
-
   function isCFileName(fileName) {
     return /\.c$/i.test(fileName || "");
   }
 
+  function getMarkdownEditorMode() {
+    return {
+      name: "markdown",
+      highlightFormatting: true,
+      fencedCodeBlockHighlighting: false,
+      strikethrough: true,
+      taskLists: true,
+      xml: false,
+    };
+  }
+
   function getEditorModeForFile(fileName) {
     if (isCFileName(fileName)) return "text/x-csrc";
-    if (/\.md$/i.test(fileName || "")) {
-      return {
-        name: "markdown",
-        highlightFormatting: true,
-        fencedCodeBlockHighlighting: false,
-        strikethrough: true,
-        taskLists: true,
-        xml: false,
-      };
-    }
+    if (/\.md$/i.test(fileName || "")) return getMarkdownEditorMode();
     return "text/plain";
   }
 
@@ -1518,7 +1449,7 @@
     };
   }
 
-  function buildCompileProjectSnapshot(entryName) {
+  function buildCompileProjectSnapshot(entryName, targetMcu = getCanvasTarget().mcu) {
     if (editor && current) {
       syncCurrentFileFromEditor();
     }
@@ -1532,7 +1463,7 @@
     return {
       ...plan,
       projectFiles,
-      sourceKey: JSON.stringify(projectFiles),
+      sourceKey: JSON.stringify({ mcu: targetMcu, projectFiles }),
     };
   }
 
@@ -1554,35 +1485,42 @@
     return "unsupported";
   }
 
-  async function readLocalFileText(file) {
-    if (!file) return "";
-    if (typeof file.text === "function") {
-      return await file.text();
-    }
-
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () =>
-        reject(reader.error || new Error("File read failed."));
-      reader.readAsText(file);
-    });
-  }
-
-  function openAddFileModal() {
-    const modal = $("fileAddModal");
-    if (!modal) return;
-
+  function openFilesModal() {
+    const modal = $("filesModal");
+    if (!modal || !modal.hidden) return;
     closeFileContextMenu();
     void renderBuiltInMiniProjectCards();
+    $("filesOpenBtn")?.setAttribute("aria-expanded", "true");
     openWorkspaceModal(modal, {
-      focusTarget: () => $("createEmptyProjectCard") || $("uploadExistingFileCard"),
-      onClose: closeAddFileModal,
+      trigger: $("filesOpenBtn"),
+      focusTarget: () => {
+        const list = $("fileList");
+        const row = list?.querySelector(".file-item.active") || list?.querySelector(".file-item");
+        row?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+        return row || $("createEmptyProjectCard");
+      },
+      onClose: () => {
+        const menu = $("fileContextMenu");
+        if (menu?.style.display === "block") closeFileContextMenu({ restoreFocus: true });
+        else closeFilesModal();
+      },
     });
   }
 
-  function closeAddFileModal() {
-    closeWorkspaceModal($("fileAddModal"));
+  function closeFilesModal() {
+    if (inlineFileEdit) cancelInlineFileEdit();
+    closeFileContextMenu();
+    closeWorkspaceModal($("filesModal"));
+    $("filesOpenBtn")?.setAttribute("aria-expanded", "false");
+  }
+
+  function bindFilesModal() {
+    $("filesOpenBtn")?.addEventListener("click", openFilesModal);
+    $("filesCloseBtn")?.addEventListener("click", closeFilesModal);
+    $("filesModal")?.addEventListener("click", event => {
+      if (event.target === $("filesModal")) closeFilesModal();
+    });
+    $("fileList")?.addEventListener("scroll", closeFileContextMenu);
   }
 
   function dispatchHexArtifact(detail) {
@@ -1774,7 +1712,6 @@
     const guides = {};
     const previousFiles = files;
     const previousAuthorship = fileAuthorship;
-    const previousGroups = fileGroups;
     const previousProjects = miniProjects;
     const previousCurrent = current;
     let selectionStarted = false;
@@ -1785,7 +1722,6 @@
 
     files = createDictionary(files);
     fileAuthorship = createDictionary(fileAuthorship);
-    fileGroups = createDictionary(fileGroups);
     miniProjects = createDictionary(miniProjects);
 
     try {
@@ -1860,12 +1796,11 @@
       selectionStarted = true;
       selectFile(sourceFile);
       persistState({ throwOnError: true });
-      closeAddFileModal();
+      closeFilesModal();
       return getPublicMiniProjectInstance(instanceId);
     } catch (error) {
       files = previousFiles;
       fileAuthorship = previousAuthorship;
-      fileGroups = previousGroups;
       miniProjects = previousProjects;
       current = previousCurrent;
 
@@ -1918,7 +1853,7 @@
       defaultLocale: allGuides.some(file => file.locale === defaultLocale)
         ? defaultLocale : incomingGuides[0]?.locale || allGuides[0]?.locale || "en",
     });
-    const previous = { files, fileAuthorship, fileGroups, miniProjects, current };
+    const previous = { files, fileAuthorship, miniProjects, current };
     if (editor && current && hasFile(current)) files[current] = editor.getValue();
     files = createDictionary(files);
     fileAuthorship = createDictionary(cloneJsonMetadata(fileAuthorship, {}));
@@ -1974,7 +1909,7 @@
       persistState({ throwOnError: true });
       return getPublicMiniProjectInstance(id);
     } catch (error) {
-      ({ files, fileAuthorship, fileGroups, miniProjects, current } = previous);
+      ({ files, fileAuthorship, miniProjects, current } = previous);
       activateCurrentProjectCanvas({ savePrevious: false });
       if (editor) editor.setValue(current ? files[current] || "" : "");
       renderOutliner();
@@ -2108,7 +2043,7 @@
     }, { origin: "local" });
   }
 
-  function loadHexIntoUpdiRuntime(updi, fileName, hexText, source = "uploaded") {
+  function loadHexIntoUpdiRuntime(updi, fileName, hexText, source = "uploaded", targetMcu = "") {
     const normalizedHex = String(hexText || "").replace(/\r\n/g, "\n");
 
     if (!normalizedHex.trim()) {
@@ -2116,7 +2051,7 @@
     }
 
     if (updi && typeof updi.loadHexFile === "function") {
-      updi.loadHexFile(normalizedHex, fileName, source);
+      updi.loadHexFile(normalizedHex, fileName, source, targetMcu);
       return;
     }
 
@@ -2124,6 +2059,7 @@
       hexText: normalizedHex,
       fileName,
       source,
+      targetMcu,
     });
   }
 
@@ -2141,7 +2077,7 @@
       });
       installMiniProjectDefinition(definition, { origin: "archive" });
       if (definition.importWarnings?.length) {
-        reportProjectCanvasMessage("system", definition.importWarnings.join("\n"));
+        reportProjectCanvasMessage("warning", definition.importWarnings.join("\n"));
       }
       return;
     }
@@ -2154,37 +2090,66 @@
     console.warn(`Import rejected: "${file.name}" has an unsupported extension.`);
   }
 
-  function migrateLooseFilesToProjects() {
+
+  function migrateLooseFilesToProjects(legacyGroups = {}) {
+    // Groups are read only during migration. Preserve their direct guide links
+    // in projects, then discard the old presentation tree and expansion state.
+    const groupedGuides = new Map();
+    const assigned = new Set();
+    for (const group of Object.values(legacyGroups || {})) {
+      const members = (Array.isArray(group?.files) ? group.files : []).map(name => String(name || "").trim())
+        .filter(name => {
+          if (!name || !hasFile(name) || assigned.has(name)) return false;
+          assigned.add(name);
+          return true;
+        });
+      const guide = members.find(name => /\.md$/i.test(name) && !isAiSpecMarkdownFile(name));
+      if (guide) for (const source of members.filter(name => /\.c$/i.test(name))) groupedGuides.set(source, guide);
+    }
     const loose = Object.keys(files).filter(name => !getMiniProjectForFile(name));
-    const legacyEmpty = loose.length === 1 && loose[0] === "main.c" && !files["main.c"];
-    if (legacyEmpty) {
+    if (loose.length === 1 && loose[0] === "main.c" && !files["main.c"]) {
       delete files["main.c"];
       delete fileAuthorship["main.c"];
       if (current === "main.c") current = null;
     }
-    for (const name of loose) {
-      if (!hasFile(name) || !/\.c$/i.test(name)) continue;
-      const title = getFileStem(name);
-      const instanceId = uniqueMiniProjectInstanceId(title);
+    for (const name of Object.keys(files).filter(name => /\.c$/i.test(name))) {
+      const linked = getMiniProjectForFile(name);
+      const existing = linked?.role === miniProjectCore.ROLES.SOURCE ? linked.project : null;
+      if (linked && !existing) continue;
+      if (existing && (getMiniProjectGuideEntries(existing).length || !groupedGuides.has(name))) continue;
       const stem = getFileStem(name);
-      const resource = loose.find(file => /\.ya?ml$/i.test(file) && getFileStem(file) === stem);
-      const guide = loose.find(file => /\.md$/i.test(file) &&
-        [stem, stem + ".guide", stem + "_help"].includes(getFileStem(file)) && !getMiniProjectForFile(file));
-      const guideName = guide || uniqueName(stem + " (description).md");
-      if (!guide) files[guideName] = "";
+      const guide = [`${stem}.guide.md`, `${stem}.md`, `${stem}_help.md`]
+        .map(findFileNameCaseInsensitive).find(file => file && !isAiSpecMarkdownFile(file)) || groupedGuides.get(name);
+      let guideName = guide;
+      if (!guide || getMiniProjectForFile(guide)) {
+        guideName = uniqueReservedFileName(guide || stem + " (description).md", new Set());
+        files[guideName] = guide ? files[guide] : "";
+        if (guide && fileAuthorship[guide]) fileAuthorship[guideName] = cloneJsonMetadata(fileAuthorship[guide], null);
+      }
+      const locale = projectFormat.inferLocale(files[guideName], "und");
+      const guides = { [locale]: { locale, fileName: guideName, label: locale, mediaType: "text/markdown" } };
+      if (existing) {
+        existing.files.guide = guideName;
+        existing.guides = guides;
+        existing.defaultLocale = existing.selectedLocale = locale;
+        existing.fileNames[guideName] = guideName;
+        continue;
+      }
+      const instanceId = uniqueMiniProjectInstanceId(stem);
+      const resource = loose.find(file => /\.ya?ml$/i.test(file) && getFileStem(file) === stem && !getMiniProjectForFile(file));
       miniProjects[instanceId] = {
-        schemaVersion: 1, contract: "uartdebug-project/v2", definitionId: title,
-        title, displayName: title, summary: "", version: "", origin: "migrated",
+        schemaVersion: 1, contract: "uartdebug-project/v2", definitionId: stem,
+        title: stem, displayName: stem, summary: "", version: "", origin: "migrated",
         canvasName: stem + ".md", projectPath: "Target_Projects/" + stem,
         files: { source: name, guide: guideName, ...(resource ? { specification: resource } : {}) },
-        guides: { en: { locale: "en", fileName: guideName, label: "English", mediaType: "text/markdown" } },
-        defaultLocale: "en", selectedLocale: "en", mediaTypes: {},
+        guides, defaultLocale: locale, selectedLocale: locale, mediaTypes: {},
         fileNames: { [name]: name, [guideName]: guideName },
-        canvas: current === name ? getUnassignedProjectInstructionSnapshot() : normalizeProjectInstructionDocument(null),
+        canvas: [name, guide, resource].includes(current)
+          ? getUnassignedProjectInstructionSnapshot() : normalizeProjectInstructionDocument(null),
       };
     }
-    // Keep unclaimed legacy files in storage/recovery; only projects are shown.
-    if (current && isHiddenMiniProjectFile(current)) current = getVisibleWorkspaceFileNames()[0] || null;
+    // Keep all unclaimed legacy files in storage/recovery; show only projects.
+    if (current && isHiddenMiniProjectFile(current)) current = getMiniProjectForFile(current)?.project.files.source || getVisibleWorkspaceFileNames()[0] || null;
   }
 
   function isReservedStorageName(name) {
@@ -2215,8 +2180,8 @@
           .trim()
           .toLocaleLowerCase() === normalizedName
     );
-    if (duplicateProject || hasFile(name) || hasGroup(name)) {
-      return "A file, group, or mini-project with this name already exists.";
+    if (duplicateProject || hasFile(name)) {
+      return "A file or mini-project with this name already exists.";
     }
 
     return "";
@@ -2247,23 +2212,20 @@
     editorWrap.className = "file-inline-editor";
 
     const input = document.createElement("input");
-    input.className = "file-inline-input";
+    input.className = "file-inline-input ui-text-input";
     input.type = "text";
     input.value = edit.value || "";
     input.spellcheck = false;
     input.setAttribute("aria-label", "Project display name");
+    input.setAttribute("aria-invalid", String(!!edit.error));
     input.title = "Changes the project label only. The specification defines its name and file names.";
-
-    const error = document.createElement("div");
-    error.className = "file-inline-error";
-    error.textContent = edit.error || "";
 
     input.addEventListener("click", (event) => event.stopPropagation());
     input.addEventListener("input", () => {
       if (!inlineFileEdit) return;
       inlineFileEdit.value = input.value;
       inlineFileEdit.error = "";
-      error.textContent = "";
+      input.setAttribute("aria-invalid", "false");
     });
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -2283,7 +2245,6 @@
     });
 
     editorWrap.appendChild(input);
-    editorWrap.appendChild(error);
     row.appendChild(editorWrap);
   }
 
@@ -2294,27 +2255,30 @@
   // Dividers resize adjacent panels; a closed neighbor passes spare width to an
   // expanded pane so compact panels can be reopened independently.
   function getWorkspacePanelSpecs() {
+    const container = getCanvasSplitContainer();
+    const style = container && window.getComputedStyle?.(container);
+    const notch = Number.parseFloat(style?.getPropertyValue?.("--panel-action-width")) || 34;
     return workspacePanelMinWidths.map((_, index) => ({
-      min: getWorkspacePanelMinWidth(index), compact: WORKSPACE_PANEL_COMPACT_WIDTH,
+      min: getWorkspacePanelMinWidth(index),
+      // Code and guide include the incoming capsule's notch. Canvas has no
+      // incoming notch, so its closed body must exclude that extra width.
+      compact: WORKSPACE_PANEL_COMPACT_WIDTH - (index === 1 ? notch : 0),
     }));
-  }
-
-  function snapWorkspacePanelSize(value, spec) {
-    return spec.compact && value <= WORKSPACE_PANEL_COMPACT_THRESHOLD
-      ? spec.compact
-      : Math.max(spec.min, value);
-  }
-
-  function workspacePanelFloor(value, spec) {
-    return spec.compact && value === spec.compact ? spec.compact : spec.min;
   }
 
   function getWorkspaceContentWidth() {
     const container = getCanvasSplitContainer();
+    const specs = getWorkspacePanelSpecs();
+    const style = container && window.getComputedStyle?.(container);
+    const gaps = ["--outliner-resizer-width", "--project-ai-resizer-width", "--documentation-resizer-width"]
+      .map(property => Number.parseFloat(style?.getPropertyValue?.(property)));
+    const dividerWidth = gaps.every(Number.isFinite)
+      ? gaps.reduce((sum, width) => sum + width, 0) : WORKSPACE_RESIZER_TOTAL_WIDTH;
     return Math.max(
-      getWorkspacePanelMinWidth(2) + 3 * WORKSPACE_PANEL_COMPACT_WIDTH,
+      specs.reduce((total, spec) => total + spec.compact, 0) +
+        Math.max(...specs.map(spec => spec.min - spec.compact)),
       Math.round(container?.getBoundingClientRect().width || 0) -
-        WORKSPACE_RESIZER_TOTAL_WIDTH
+        dividerWidth
     );
   }
 
@@ -2322,119 +2286,27 @@
     return [
       outlinerWidth,
       projectAiColumnWidth,
-      getWorkspaceContentWidth() - outlinerWidth - projectAiColumnWidth - documentationWidth,
+      editorCollapsed ? WORKSPACE_PANEL_COMPACT_WIDTH :
+        getWorkspaceContentWidth() - outlinerWidth - projectAiColumnWidth - documentationWidth,
       documentationWidth,
     ];
   }
 
-  function getWorkspaceNeighbor(index) {
-    return index === 0 || index === 2 ? 1 : 2;
-  }
-
-  function getWorkspacePanelMaxWidth(index, widths = getWorkspaceWidths(), specs = getWorkspacePanelSpecs()) {
-    const neighbor = getWorkspaceNeighbor(index);
-    const otherSlack = widths[neighbor] === specs[neighbor].compact
-      ? widths.reduce((sum, width, i) => sum + (i === index || i === neighbor ? 0 : width - workspacePanelFloor(width, specs[i])), 0)
-      : 0;
-    return widths[index] + widths[neighbor] - workspacePanelFloor(widths[neighbor], specs[neighbor]) + otherSlack;
-  }
-
-  function fitWorkspaceWidths(requested, available, specs) {
-    const widths = requested.map((value, i) => snapWorkspacePanelSize(value, specs[i]));
-    let excess = widths.reduce((sum, width) => sum + width, 0) - available;
-    // A viewport change first consumes the flexible editor, then side-panel slack.
-    for (const i of [2, 0, 3, 1]) {
-      const take = Math.min(Math.max(0, excess), widths[i] - workspacePanelFloor(widths[i], specs[i]));
-      widths[i] -= take;
-      excess -= take;
-    }
-    for (const i of [0, 3, 1]) {
-      if (excess <= 0) break;
-      const released = widths[i] - specs[i].compact;
-      widths[i] = specs[i].compact;
-      excess -= released;
-    }
-    // Keep an explicitly collapsed editor compact; the canvas takes spare room.
-    const flexibleIndex = widths[2] === specs[2].compact ? 1 : 2;
-    widths[flexibleIndex] -= excess;
-    return widths;
-  }
-
-  function resizeWorkspacePanels(start, specs, index, requested) {
-    const widths = [...start];
-    const neighbor = getWorkspaceNeighbor(index);
-    const total = start[index] + start[neighbor];
-    let target = Math.min(
-      getWorkspacePanelMaxWidth(index, start, specs),
-      snapWorkspacePanelSize(requested, specs[index])
-    );
-    if (target !== specs[index].compact && target < specs[index].min) return widths;
-    let adjacent = total - target;
-    if (start[neighbor] === specs[neighbor].compact) {
-      // Keep the neighbor closed and exchange space with expanded panes,
-      // preferring the editor or canvas.
-      const recipients = [2, 1, 0, 3].filter(i => i !== index && i !== neighbor && widths[i] >= specs[i].min);
-      if (!recipients.length) return widths;
-      adjacent = specs[neighbor].compact;
-      let transfer = total - target - adjacent;
-      if (transfer >= 0) widths[recipients[0]] += transfer;
-      else for (const recipient of recipients) {
-        const borrowed = Math.min(-transfer, widths[recipient] - specs[recipient].min);
-        widths[recipient] -= borrowed;
-        transfer += borrowed;
-      }
-    } else if (adjacent !== specs[neighbor].compact && adjacent < specs[neighbor].min) {
-      adjacent = snapWorkspacePanelSize(adjacent, specs[neighbor]);
-      target = total - adjacent;
-    }
-    // A compact panel can reopen only when the available width meets its minimum.
-    if (target !== specs[index].compact && target < specs[index].min) return widths;
-    widths[index] = target;
-    widths[neighbor] = adjacent;
-    return widths;
-  }
-
-  function resizeWorkspaceBoundary(start, specs, boundary, delta) {
-    if (!delta) return [...start];
+  function renderWorkspaceBoundary(start, specs, boundary, delta, options) {
+    const sizes = resizeWorkspaceBoundary(start, specs, boundary, delta);
+    const applied = renderWorkspaceWidths(sizes, options);
     const growing = delta > 0 ? boundary : boundary + 1;
     const shrinking = delta > 0 ? boundary + 1 : boundary;
-    const amount = Math.abs(delta);
-    // A small motion on a closed rail must not immediately reopen it.
-    if (start[growing] === specs[growing].compact &&
-        amount < WORKSPACE_PANEL_REOPEN_DISTANCE) return [...start];
-    const sizes = [...start];
-    const requested = start[shrinking] - amount;
-    sizes[shrinking] = start[shrinking] === specs[shrinking].compact ||
-      requested <= specs[shrinking].min - WORKSPACE_PANEL_COLLAPSE_DISTANCE
-      ? specs[shrinking].compact
-      : Math.max(specs[shrinking].min, requested);
-    const pairTotal = start[growing] + start[shrinking];
-    sizes[growing] = Math.max(specs[growing].min, pairTotal - sizes[shrinking]);
-    let missing = sizes[growing] + sizes[shrinking] - pairTotal;
-    // A reopened pane first takes its minimum from its expanded neighbor.
-    const adjacentSlack = sizes[shrinking] - workspacePanelFloor(sizes[shrinking], specs[shrinking]);
-    const adjacentTransfer = Math.min(missing, adjacentSlack);
-    sizes[shrinking] -= adjacentTransfer;
-    missing -= adjacentTransfer;
-    // Two closed neighbors may need space from a farther expanded pane. Never
-    // close that pane implicitly or take more than its spare space.
-    for (const index of [2, 1, 0, 3]) {
-      if (index === growing || index === shrinking || missing <= 0) continue;
-      const borrowed = Math.min(missing, sizes[index] - workspacePanelFloor(sizes[index], specs[index]));
-      sizes[index] -= borrowed;
-      missing -= borrowed;
-    }
-    return missing > 0 ? [...start] : sizes;
+    const reopening = delta && Math.abs(delta) >= WORKSPACE_PANEL_REOPEN_DISTANCE &&
+      start[growing] === specs[growing].compact;
+    if (applied && (!reopening || sizes[growing] !== specs[growing].compact)) return true;
+    if (!reopening || start[shrinking] === specs[shrinking].compact) return applied;
+    // The pane body can fit while its newly opened divider still needs space.
+    const adjacentClosed = resizeWorkspaceBoundary(start, specs, boundary, delta, true);
+    if (adjacentClosed[growing] === specs[growing].compact) return applied;
+    return renderWorkspaceWidths(adjacentClosed, options);
   }
 
-  function getWorkspaceCollapsePreview(start, specs, boundary, delta) {
-    if (!delta) return null;
-    const index = delta < 0 ? boundary : boundary + 1;
-    if (start[index] === specs[index].compact) return null;
-    const overtravel = specs[index].min - (start[index] - Math.abs(delta));
-    if (overtravel < 0 || overtravel >= WORKSPACE_PANEL_COLLAPSE_DISTANCE) return null;
-    return { index, direction: delta < 0 ? -1 : 1 };
-  }
 
   function getWorkspacePanelMinWidth(index) {
     const panel = getCanvasSplitContainer()?.querySelectorAll(
@@ -2442,6 +2314,16 @@
     )[index];
     const strip = panel?.querySelector(".ui-panel-header");
     if (!strip || !panel || !window.getComputedStyle) return workspacePanelMinWidths[index];
+    if (strip.dataset.toolbarLayout === "vertical") {
+      const host = strip.closest(".panel-action-host") || panel;
+      const hostStyle = window.getComputedStyle(host);
+      const configured = Number.parseFloat(hostStyle?.getPropertyValue?.("--panel-action-min-width"));
+      const trailingSpace = Number.parseFloat(hostStyle?.getPropertyValue?.("--panel-action-trailing-space")) || 0;
+      if (Number.isFinite(configured)) {
+        workspacePanelMinWidths[index] = Math.max(WORKSPACE_PANEL_COMPACT_WIDTH + 1, Math.ceil(configured + trailingSpace));
+      }
+      return workspacePanelMinWidths[index];
+    }
     const style = window.getComputedStyle?.(strip);
     if (style?.display === "none" || !strip.getClientRects().length) return workspacePanelMinWidths[index];
     const panelStyle = window.getComputedStyle(strip.closest(".avr-session-panel") || panel);
@@ -2481,6 +2363,8 @@
       persistEditorCollapsed();
     } catch (error) {
       console.warn("Failed to persist workspace layout:", error);
+      window.UartDebugNotifications?.notify({ key: "layout-save", title: "Workspace", tone: "warning",
+        message: "Window sizes could not be saved.", details: error.message || String(error) });
     }
   }
 
@@ -2488,24 +2372,228 @@
     try { localStorage.setItem(STORAGE_EDITOR_COLLAPSED, String(editorCollapsed)); } catch {}
   }
 
+  function refreshWorkspaceEditor(codeMirror) {
+    if (!codeMirror) return;
+    const wrapper = codeMirror.getWrapperElement?.();
+    if (wrapper?.getClientRects && !wrapper.getClientRects().length) return;
+    codeMirror.refresh();
+    // A reopened CM5 viewport can retain its scroll offset while its native
+    // scrollbar is still at zero. Synchronize them before queued scroll events.
+    const scroller = codeMirror.getScrollerElement?.();
+    if (!scroller) return;
+    const vertical = wrapper?.querySelector(".CodeMirror-vscrollbar");
+    const horizontal = wrapper?.querySelector(".CodeMirror-hscrollbar");
+    if (vertical) vertical.scrollTop = scroller.scrollTop;
+    if (horizontal) horizontal.scrollLeft = scroller.scrollLeft;
+  }
+
+  function settleWorkspaceEditors(anchors = new Map(), editors = [editor, documentationEditor, projectInstructionEditor]) {
+    if (workspaceLayoutSettling) return;
+    workspaceLayoutSettling = true;
+    try {
+      for (const codeMirror of editors) {
+        if (!codeMirror) continue;
+        const wrapper = codeMirror.getWrapperElement?.();
+        if (wrapper?.getClientRects && !wrapper.getClientRects().length) continue;
+        const state = [...markdownLiveEditors.values()].find(item => item.editor === codeMirror);
+        const anchor = anchors.get(codeMirror) || captureMarkdownLiveScrollAnchor(codeMirror);
+        if (state?.frame != null) window.cancelAnimationFrame?.(state.frame);
+        if (state) state.frame = null;
+        refreshWorkspaceEditor(codeMirror);
+        if (state && !state.compositionActive) {
+          // Refresh can change the visible source range after Markdown wraps.
+          // Complete that range before this task yields to the next paint.
+          for (let pass = 0; pass < 2; pass += 1) {
+            const before = codeMirror.getViewport();
+            renderMarkdownLivePreviewState(state);
+            refreshWorkspaceEditor(codeMirror);
+            const after = codeMirror.getViewport();
+            if (before.from === after.from && before.to === after.to) break;
+          }
+        }
+        restoreMarkdownLiveScrollAnchor(codeMirror, anchor);
+        refreshWorkspaceEditor(codeMirror);
+      }
+    } finally {
+      workspaceLayoutSettling = false;
+    }
+  }
+
   function refreshWorkspaceEditors() {
     if (workspaceEditorRefreshFrame !== null) return;
     workspaceEditorRefreshFrame = window.requestAnimationFrame(() => {
       workspaceEditorRefreshFrame = null;
-      editor?.refresh();
-      documentationEditor?.refresh();
-      projectInstructionEditor?.refresh();
+      if (workspaceTransitionTimer !== null) {
+        updatePanelActionContours();
+        return;
+      }
+      settleWorkspaceEditors();
       document.querySelectorAll(".canvas-split-container .custom-select").forEach(custom => {
         if (custom.getClientRects().length) updateCustomSelectIntrinsicWidth(custom);
       });
       fitEditorFileWatermark();
+      updatePanelActionContours();
     });
   }
 
-  function renderWorkspaceWidths(widths, { persist = false } = {}) {
+  function finishWorkspaceTransition() {
+    const completing = workspaceTransitionTimer !== null;
+    const anchors = new Map(workspaceMotionScrollAnchors);
+    workspaceMotionScrollAnchors.clear();
+    if (workspaceTransitionFrame !== null) {
+      window.cancelAnimationFrame?.(workspaceTransitionFrame);
+      workspaceTransitionFrame = null;
+    }
+    if (workspaceTransitionTimer !== null) {
+      window.clearTimeout?.(workspaceTransitionTimer);
+      workspaceTransitionTimer = null;
+    }
+    const container = getCanvasSplitContainer();
+    container?.classList.remove("is-workspace-transitioning");
+    container?.style.removeProperty("grid-template-columns");
+    for (const element of container?.querySelectorAll("[data-workspace-motion-content]") || []) {
+      element.removeAttribute("data-workspace-motion-content");
+      element.style.removeProperty("--workspace-content-width");
+    }
+    for (const element of container?.querySelectorAll("[data-workspace-motion-clip]") || []) {
+      element.removeAttribute("data-workspace-motion-clip");
+      element.style.removeProperty("--workspace-content-overflow-x");
+    }
+    syncWorkspaceCompactState(getWorkspaceWidths());
+    if (completing) {
+      settleWorkspaceEditors(anchors);
+      fitEditorFileWatermark();
+      updatePanelActionContours();
+    }
+    for (const [element, animation] of workspaceTextAnimations) {
+      if (!completing) {
+        animation.cancel();
+        element.removeAttribute("data-workspace-text-motion");
+        continue;
+      }
+      // The old wrapping is fully transparent before the layout lock is
+      // released. Reveal the reconciled text without exposing that change.
+      const reveal = element.animate([{ opacity: 0 }, { opacity: 1 }], {
+        duration: 110, easing: "ease-out",
+      });
+      animation.cancel();
+      element.dataset.workspaceTextMotion = "revealing";
+      workspaceTextAnimations.set(element, reveal);
+      reveal.finished.then(() => {
+        if (workspaceTextAnimations.get(element) !== reveal) return;
+        workspaceTextAnimations.delete(element);
+        element.removeAttribute("data-workspace-text-motion");
+      }).catch(() => {});
+    }
+    if (!completing) workspaceTextAnimations.clear();
+  }
+
+  function measureWorkspaceContent() {
+    const measurements = new Map();
+    const container = getCanvasSplitContainer();
+    // Text retains its layout while the surrounding frames resize.
+    const selectors = ["#projectChatTitle, .project-chat-message-content, #projectChatInput, .project-chat-edit textarea, .project-chat-edit-note, .project-chat-history-title, .project-chat-history-preview, .project-chat-history-date",
+      ".CodeMirror-code, #projectInstructionEditor",
+      ".CodeMirror-code, #editorFileWatermark",
+      ".CodeMirror-code, #projectDocumentationEditor"];
+    const panels = container?.querySelectorAll(
+      ":scope > :is(.outliner, .project-ai-layout, .editor-workspace, .documentation-workspace)");
+    panels?.forEach((panel, index) => {
+      for (const element of panel.querySelectorAll(selectors[index])) {
+        const bounds = element.getBoundingClientRect?.();
+        if (!bounds?.width || !bounds.height) continue;
+        const viewport = element.closest(".CodeMirror, .project-chat-title-content, .project-chat-thread, .project-chat-history-list, .project-documentation-scroll");
+        const scrollers = viewport ? [viewport, ...viewport.querySelectorAll(
+          ".CodeMirror-scroll, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar"),
+          ...(element.matches("textarea") ? [element] : [])] : [element];
+        measurements.set(element, { index, width: bounds.width, viewport,
+          overflowX: viewport && viewport.scrollWidth > viewport.clientWidth + 1 &&
+            window.getComputedStyle(viewport).overflowX !== "hidden" ? "scroll" : "hidden",
+          scroll: scrollers.map(node => [node, node.scrollLeft, node.scrollTop]) });
+      }
+    });
+    return measurements;
+  }
+
+  function freezeWorkspaceContent(before, previousCompact) {
+    // A narrow closing target can leave no measurable text width. Retain its
+    // previous layers too, so they keep their layout until the frame closes.
+    const measurements = new Map([...before, ...measureWorkspaceContent()]);
+    for (const [element, after] of measurements) {
+      const bounds = previousCompact[after.index] ? after : before.get(element) || after;
+      element.style.setProperty("--workspace-content-width", `${bounds.width}px`);
+      element.setAttribute("data-workspace-motion-content", "");
+      if (after.viewport) {
+        after.viewport.style.setProperty("--workspace-content-overflow-x", bounds.overflowX);
+        after.viewport.setAttribute("data-workspace-motion-clip", "");
+      }
+      for (const [node, left, top] of bounds.scroll) {
+        node.scrollLeft = left;
+        node.scrollTop = top;
+      }
+    }
+  }
+
+  function prepareWorkspaceTextReflow(previousWidths, widths) {
+    const panels = getCanvasSplitContainer()?.querySelectorAll(
+      ":scope > :is(.outliner, .project-ai-layout, .editor-workspace, .documentation-workspace)");
+    panels?.forEach((panel, index) => {
+      if (previousWidths[index] <= WORKSPACE_PANEL_COMPACT_THRESHOLD ||
+          widths[index] <= WORKSPACE_PANEL_COMPACT_THRESHOLD ||
+          Math.abs(previousWidths[index] - widths[index]) < 1) return;
+      for (const element of panel.querySelectorAll(
+        "[data-workspace-motion-content], .CodeMirror-gutters, .CodeMirror-cursors, .CodeMirror-selected")) {
+        if (typeof element.animate !== "function") continue;
+        const cm = element.closest(".CodeMirror")?.CodeMirror;
+        if (cm && !cm.getOption("lineWrapping")) continue;
+        if (!cm && !(element.value || element.textContent)) continue;
+        const animation = element.animate([
+          { opacity: 1, offset: 0 }, { opacity: 1, offset: 0.65 }, { opacity: 0, offset: 1 },
+        ], { duration: WORKSPACE_PANEL_TRANSITION_MS - 24, fill: "forwards" });
+        element.dataset.workspaceTextMotion = "hiding";
+        workspaceTextAnimations.set(element, animation);
+      }
+    });
+  }
+
+  function renderWorkspaceWidths(widths, { persist = false, animate = true, fit = false } = {}) {
+    const previousWidths = getWorkspaceWidths();
+    const specs = getWorkspacePanelSpecs();
+    const previousCompact = [outlinerWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD,
+      projectAiColumnWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD,
+      editorCollapsed, documentationWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD];
+    const compactChanged = widths.some((value, index) =>
+      (value <= WORKSPACE_PANEL_COMPACT_THRESHOLD) !== previousCompact[index]);
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (animate && !reducedMotion && workspaceTransitionTimer !== null) return false;
+    const motion = animate && !reducedMotion && compactChanged && typeof window.setTimeout === "function";
+    if (motion || !animate || reducedMotion) finishWorkspaceTransition();
+    const container = getCanvasSplitContainer();
+    const startGrid = motion && container && window.getComputedStyle?.(container).gridTemplateColumns;
+    const before = motion ? measureWorkspaceContent() : null;
+    if (motion) {
+      for (const codeMirror of [editor, documentationEditor, projectInstructionEditor]) {
+        if (!codeMirror) continue;
+        workspaceMotionScrollAnchors.set(codeMirror, captureMarkdownLiveScrollAnchor(codeMirror));
+      }
+    }
+    // Commit the target pane state while keeping already closed rails fixed.
+    syncWorkspaceCompactClasses(widths);
+    let adjusted = balanceWorkspaceSpacing(widths, getWorkspaceContentWidth(), previousWidths, specs);
+    if (!adjusted && fit) {
+      const retained = widths.map((width, index) => previousWidths[index] === specs[index].compact
+        ? specs[index].compact : width);
+      syncWorkspaceCompactClasses(retained);
+      adjusted = balanceWorkspaceSpacing(retained, getWorkspaceContentWidth(), previousWidths, specs);
+    }
+    if (!adjusted) {
+      syncWorkspaceCompactClasses(previousWidths);
+      finishWorkspaceTransition();
+      return false;
+    }
+    widths = adjusted;
     [outlinerWidth, projectAiColumnWidth, , documentationWidth] = widths;
     editorCollapsed = widths[2] <= WORKSPACE_PANEL_COMPACT_THRESHOLD;
-    const container = getCanvasSplitContainer();
     if (container) {
       container.style.setProperty("--editor-workspace-min-width",
         `${editorCollapsed ? WORKSPACE_PANEL_COMPACT_WIDTH : getWorkspacePanelMinWidth(2)}px`);
@@ -2515,20 +2603,54 @@
         ["--documentation-width", documentationWidth],
       ]) container.style.setProperty(property, `${value}px`);
     }
-    syncWorkspaceCompactState(widths);
+    // Keep closing content at its expanded size while the frame moves. Opening
+    // content is measured once at its final width before the first visible frame.
+    syncWorkspaceCompactState(widths, motion ? widths.map((size, index) =>
+      previousCompact[index] ? size : Math.max(size, specs[index].min)) : widths);
+    if (motion) {
+      if (previousCompact[2] && widths[2] > WORKSPACE_PANEL_COMPACT_THRESHOLD) fitEditorFileWatermark();
+      const openingEditors = [null, projectInstructionEditor, editor, documentationEditor]
+        .filter((codeMirror, index) => codeMirror && previousCompact[index] && widths[index] > WORKSPACE_PANEL_COMPACT_THRESHOLD);
+      if (openingEditors.length) settleWorkspaceEditors(workspaceMotionScrollAnchors, openingEditors);
+      const endGrid = container && window.getComputedStyle?.(container).gridTemplateColumns;
+      if (startGrid && endGrid && startGrid !== "none" && endGrid !== "none") {
+        freezeWorkspaceContent(before, previousCompact);
+        prepareWorkspaceTextReflow(previousWidths, widths);
+        container.style.setProperty("grid-template-columns", startGrid);
+        syncWorkspaceCompactClasses(previousWidths);
+        container.getBoundingClientRect();
+        container.classList.add("is-workspace-transitioning");
+        syncWorkspaceCompactClasses(widths);
+        // Finish editor measurement before starting the movement clock. Without
+        // a painted starting frame, synchronous layout can consume the opening
+        // part of the transition and make the first visible frame jump ahead.
+        workspaceTransitionFrame = window.requestAnimationFrame(() => {
+          workspaceTransitionFrame = window.requestAnimationFrame(() => {
+            workspaceTransitionFrame = null;
+            container.style.setProperty("grid-template-columns", endGrid);
+            window.clearTimeout(workspaceTransitionTimer);
+            workspaceTransitionTimer = window.setTimeout(finishWorkspaceTransition, WORKSPACE_PANEL_TRANSITION_MS);
+          });
+        });
+      } else container?.classList.add("is-workspace-transitioning");
+      workspaceTransitionTimer = window.setTimeout(() => {
+        finishWorkspaceTransition();
+      }, WORKSPACE_PANEL_TRANSITION_MS);
+    }
     syncSplitResizerAria();
     if (persist) persistWorkspaceLayout();
     refreshWorkspaceEditors();
+    return true;
   }
 
   function fitWorkspaceToViewport() {
     renderWorkspaceWidths(fitWorkspaceWidths(
       [outlinerPreferredWidth, projectAiColumnPreferredWidth,
-        editorCollapsed ? WORKSPACE_PANEL_COMPACT_WIDTH : OUTLINER_EDITOR_MIN_WIDTH,
+        editorCollapsed ? WORKSPACE_PANEL_COMPACT_WIDTH : WORKSPACE_PANEL_MIN_WIDTH,
         documentationPreferredWidth],
       getWorkspaceContentWidth(),
       getWorkspacePanelSpecs()
-    ));
+    ), { animate: false, fit: true });
 
     refreshWorkspaceEditors();
   }
@@ -2540,35 +2662,26 @@
     );
   }
 
-  function syncEditorCollapseState() {
+  function syncEditorCollapseState(collapsed = editorCollapsed) {
     const content = $("editorContent");
-    $("editorWorkspace")?.classList.toggle("is-collapsed", editorCollapsed);
-    if (content) content.hidden = editorCollapsed;
+    $("editorWorkspace")?.classList.toggle("is-collapsed", collapsed);
+    if (content) content.hidden = collapsed;
   }
 
-  function syncWorkspaceCompactState(sizes) {
+  function syncWorkspaceCompactClasses(sizes) {
     const container = getCanvasSplitContainer();
     for (const [index, name] of ["outliner", "project-ai", "editor", "documentation"].entries()) {
       container?.classList.toggle(`is-${name}-compact`, sizes[index] <= WORKSPACE_PANEL_COMPACT_THRESHOLD);
     }
-    syncEditorCollapseState();
   }
 
-  function expandEditorForTargetValidation() {
-    const sizes = getWorkspaceWidths();
-    const specs = getWorkspacePanelSpecs();
-    if (sizes[2] !== specs[2].compact) return;
-    const restored = resizeWorkspacePanels(sizes, specs, 2, specs[2].min);
-    if (restored[2] === specs[2].compact) {
-      sizes[2] = specs[2].min;
-      renderWorkspaceWidths(fitWorkspaceWidths(sizes, getWorkspaceContentWidth(), specs), { persist: true });
-    } else renderWorkspaceWidths(restored, { persist: true });
-  }
-
-  function expandOutlinerForEditing() {
-    if (getWorkspaceWidths()[0] <= WORKSPACE_PANEL_COMPACT_THRESHOLD) {
-      resizeWorkspacePanel(0, OUTLINER_DEFAULT_WIDTH);
+  function syncWorkspaceCompactState(sizes, contentSizes = sizes) {
+    syncWorkspaceCompactClasses(sizes);
+    const container = getCanvasSplitContainer();
+    for (const [index, name] of ["outliner", "project-ai", "editor", "documentation"].entries()) {
+      container?.classList.toggle(`is-${name}-content-compact`, contentSizes[index] <= WORKSPACE_PANEL_COMPACT_THRESHOLD);
     }
+    syncEditorCollapseState(contentSizes[2] <= WORKSPACE_PANEL_COMPACT_THRESHOLD);
   }
 
   function expandDocumentationForNavigation() {
@@ -2596,7 +2709,7 @@
   function syncSplitResizerAria() {
     const widths = getWorkspaceWidths();
     const specs = getWorkspacePanelSpecs();
-    const names = ["Files", "Canvas", "Code", "Guide"];
+    const names = ["Chat", "Canvas", "Code", "Guide"];
     for (const [id, index] of [
       ["fileListResizer", 0], ["projectAiColumnResizer", 1], ["documentationResizer", 2],
     ]) {
@@ -2621,7 +2734,10 @@
   }
 
   function showSplitCollapsePreview(panel, direction) {
-    if (!panel) { clearSplitCollapsePreview(); return; }
+    if (!panel || panel.getBoundingClientRect().width <= WORKSPACE_PANEL_COMPACT_THRESHOLD) {
+      clearSplitCollapsePreview();
+      return;
+    }
     const name = direction < 0 ? "left" : "right";
     let cue = panel.querySelector(":scope > .pane-collapse-cue");
     if (!cue || cue.dataset.direction !== name) {
@@ -2631,103 +2747,69 @@
       cue.dataset.direction = name;
       cue.setAttribute("aria-hidden", "true");
       cue.setAttribute("inert", "");
-      for (let index = 0; index < 3; index += 1) {
-        const chevron = document.createElement("span");
-        chevron.className = "pane-collapse-chevron";
-        cue.appendChild(chevron);
-      }
       panel.appendChild(cue);
     }
   }
 
-  // Pointer capture, cancellation and feedback are shared by every separator.
-  function bindSplitResizer(handle, { axis, enabled = () => true, start, move, finish, key }) {
-    if (!handle) return;
-    const coordinate = event => axis === "x" ? event.clientX : event.clientY;
-    const end = event => {
-      const session = activeSplitResize;
-      if (!session || session.handle !== handle ||
-          (event?.pointerId !== undefined && event.pointerId !== session.pointerId)) return;
-      activeSplitResize = null;
-      handle.classList.remove("is-resizing");
-      clearSplitCollapsePreview();
-      document.body.classList.remove(session.cursorClass);
-      if (handle.hasPointerCapture?.(session.pointerId)) handle.releasePointerCapture(session.pointerId);
-      finish?.(session.data);
-      event?.preventDefault?.();
-    };
-    handle.addEventListener("pointerdown", event => {
-      if (event.button !== 0 || event.isPrimary === false || activeSplitResize || !enabled()) return;
-      event.preventDefault();
-      handle.focus({ preventScroll: true });
-      const cursorClass = axis === "x" ? "is-column-resizing" : "is-row-resizing";
-      activeSplitResize = { handle, pointerId: event.pointerId,
-        cursorClass, origin: coordinate(event), data: start(event) };
-      handle.setPointerCapture?.(event.pointerId);
-      handle.classList.add("is-resizing");
-      document.body.classList.add(cursorClass);
-    });
-    handle.addEventListener("pointermove", event => {
-      const session = activeSplitResize;
-      if (!session || session.handle !== handle || session.pointerId !== event.pointerId) return;
-      event.preventDefault();
-      move(coordinate(event) - session.origin, session.data, event);
-    });
-    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
-      handle.addEventListener(type, end);
-    }
-    window.addEventListener("blur", () => end());
-    window.addEventListener("resize", () => {
-      end();
-    });
-    handle.addEventListener("keydown", event => {
-      if (!activeSplitResize && enabled()) key?.(event);
+  function bindSplitResizer(handle, options) {
+    window.UartDebugControls.bindPanelResizer(handle, {
+      ...options,
+      finish: (state, event) => {
+        clearSplitCollapsePreview();
+        options.finish?.(state, event);
+      },
     });
   }
 
   function bindWorkspaceColumnResizer(id, index) {
     bindSplitResizer($(id), {
       axis: "x",
-      start: () => ({ available: getWorkspaceContentWidth(), widths: getWorkspaceWidths(), specs: getWorkspacePanelSpecs(), offset: 0 }),
+      start: () => ({ viewportWidth: getCanvasSplitContainer()?.getBoundingClientRect().width,
+        widths: getWorkspaceWidths(), specs: getWorkspacePanelSpecs(), offset: 0 }),
       move: (delta, state) => {
+        if (workspaceTransitionTimer !== null) {
+          // Complete one snap in either direction. Rebase the held gesture so
+          // pointer samples cannot restart the transition or accumulate a jump.
+          state.widths = getWorkspaceWidths();
+          state.offset = delta;
+          return;
+        }
         const movement = delta - state.offset;
-        const sizes = resizeWorkspaceBoundary(state.widths, state.specs, index, movement);
-        renderWorkspaceWidths(sizes);
-        const preview = getWorkspaceCollapsePreview(state.widths, state.specs, index, movement);
+        renderWorkspaceBoundary(state.widths, state.specs, index, movement);
+        const rendered = getWorkspaceWidths();
+        const preview = getWorkspaceResizePreview(state.widths, state.specs, index, movement);
         if (preview) {
           const panels = getCanvasSplitContainer()?.querySelectorAll(":scope > .outliner, :scope > .project-ai-layout, :scope > .editor-workspace, :scope > .documentation-workspace");
           showSplitCollapsePreview(panels?.[preview.index], preview.direction);
         } else clearSplitCollapsePreview();
-        if (sizes.some((size, i) => (size === state.specs[i].compact) !== (state.widths[i] === state.specs[i].compact))) {
-          state.widths = sizes;
+        if (rendered.some((size, i) => (size === state.specs[i].compact) !== (state.widths[i] === state.specs[i].compact))) {
+          state.widths = rendered;
           state.offset = delta;
         }
       },
       finish: state => {
-        if (state.available !== getWorkspaceContentWidth()) fitWorkspaceToViewport();
+        if (state.viewportWidth !== getCanvasSplitContainer()?.getBoundingClientRect().width) fitWorkspaceToViewport();
         else persistWorkspaceLayout();
       },
-      key: event => {
+      key: command => {
         const widths = getWorkspaceWidths(), specs = getWorkspacePanelSpecs();
-        const arrows = ["ArrowLeft", "ArrowRight"];
         let delta;
-        if (event.key === "Home") {
+        if (command.endpoint === "start") {
           if (widths[index] === specs[index].compact) return;
           delta = -(widths[index] - specs[index].min + WORKSPACE_PANEL_COLLAPSE_DISTANCE);
-        } else if (event.key === "End") {
+        } else if (command.endpoint === "end") {
           if (widths[index + 1] === specs[index + 1].compact) return;
           delta = widths[index + 1] - specs[index + 1].min + WORKSPACE_PANEL_COLLAPSE_DISTANCE;
-        } else if (arrows.includes(event.key)) {
-          const direction = event.key === arrows[1] ? 1 : -1;
+        } else {
+          const direction = command.direction;
           const growing = direction > 0 ? index : index + 1;
           const shrinking = direction > 0 ? index + 1 : index;
           const step = widths[growing] === specs[growing].compact ? Math.max(WORKSPACE_PANEL_REOPEN_DISTANCE, specs[growing].min - specs[growing].compact)
             : widths[shrinking] <= specs[shrinking].min ? WORKSPACE_PANEL_COLLAPSE_DISTANCE
-              : event.shiftKey ? 48 : 24;
+              : command.accelerated ? 48 : 24;
           delta = direction * step;
-        } else return;
-        event.preventDefault();
-        renderWorkspaceWidths(resizeWorkspaceBoundary(widths, specs, index, delta), { persist: true });
+        }
+        renderWorkspaceBoundary(widths, specs, index, delta, { persist: true });
       },
     });
   }
@@ -2740,22 +2822,116 @@
     bindWorkspaceColumnResizer("documentationResizer", 2);
   }
 
-  function getProjectAiLayout() {
-    return document.querySelector(".project-ai-layout");
-  }
-
-
-
-
-
   function bindProjectAiResizers() {
     bindWorkspaceColumnResizer("projectAiColumnResizer", 1);
+  }
+
+  function updatePanelActionContours() {
+    const container = getCanvasSplitContainer();
+    if (!container) return;
+    const panes = [...container.querySelectorAll(
+      ".project-instruction-panel, :scope > .editor-workspace, :scope > .documentation-workspace")];
+    const curveDepth = 44;
+    let previousCapsuleCurveTop = 0;
+    let previousPaneRight = 0;
+    for (const [index, pane] of panes.entries()) {
+      const contour = pane.querySelector(":scope > [data-panel-action-contour]");
+      const bounds = pane.getBoundingClientRect?.();
+      if (!contour || !bounds?.width || !bounds.height) continue;
+      const style = window.getComputedStyle(pane);
+      const rail = Number.parseFloat(style.getPropertyValue("--panel-action-width")) || 34;
+      const bodyRight = bounds.width - 0.5;
+      const bottom = bounds.height - 0.5;
+      const actions = pane.querySelector(":scope > .panel-action-lobe");
+      const capsuleCurveTop = actions ? actions.getBoundingClientRect().bottom - bounds.top + 12 : 0;
+      const overhang = actions ? rail : 0;
+      const right = bodyRight + overhang;
+      const notch = index ? rail : 0;
+      // Keep both top corners inside the narrowest compact panel's contour.
+      const radius = Math.min(15, Math.max(0, (right - notch - 0.5) / 2));
+      const bottomRadius = Math.min(15, Math.max(0, (bodyRight - 0.5) / 2));
+      const clearance = index ? Math.max(0, bounds.left - previousPaneRight) : 0;
+      const notchTop = notch ? Math.min(previousCapsuleCurveTop - bounds.top,
+        Math.max(0, bottom - curveDepth - bottomRadius)) : 0;
+      const notchBottom = notchTop + curveDepth;
+      // Keep the capsule's established curve. Its neighbor follows a parallel
+      // offset, including the one pixel between the two stroke center lines.
+      let outline = `M${notch + radius} 0.5 H${right - radius} Q${right} 0.5 ${right} ${radius}`;
+      if (actions) outline += ` V${capsuleCurveTop} C${right} ${capsuleCurveTop + curveDepth / 2} ${bodyRight} ${capsuleCurveTop + curveDepth / 2} ${bodyRight} ${capsuleCurveTop + curveDepth}`;
+      outline += ` V${bottom - bottomRadius} Q${bodyRight} ${bottom} ${bodyRight - bottomRadius} ${bottom}`;
+      outline += ` H${bottomRadius} Q0.5 ${bottom} 0.5 ${bottom - bottomRadius}`;
+      if (notch) {
+        const points = getCapsuleNotchPoints(notch, curveDepth, clearance + 1).reverse();
+        outline += ` V${notchBottom}`;
+        for (const point of points.slice(1)) {
+          outline += ` L${(point.x + 0.5).toFixed(3)} ${(notchTop + point.y).toFixed(3)}`;
+        }
+        outline += ` V${radius}`;
+      }
+      else outline += ` V${radius}`;
+      outline += ` Q${notch + 0.5} 0.5 ${notch + radius} 0.5 Z`;
+      const viewBox = `0 0 ${bounds.width + overhang} ${bounds.height}`;
+      if (contour.getAttribute("viewBox") !== viewBox) contour.setAttribute("viewBox", viewBox);
+      pane.style.setProperty("--panel-left-notch-bottom", `${notchBottom}px`);
+      for (const [selector, path] of [[".panel-action-outline", outline],
+        [".panel-action-fill", outline]]) {
+        const element = contour.querySelector(selector);
+        if (element?.getAttribute("d") !== path) element?.setAttribute("d", path);
+      }
+      previousCapsuleCurveTop = bounds.top + capsuleCurveTop;
+      previousPaneRight = bounds.right;
+    }
+    const moving = container.classList.contains("is-workspace-transitioning") ||
+      $("avrDeviceSection")?.classList.contains("is-device-panel-transitioning");
+    if (moving && panelActionContourFrame === null) {
+      panelActionContourFrame = window.requestAnimationFrame(() => {
+        panelActionContourFrame = null;
+        updatePanelActionContours();
+      });
+    }
+  }
+
+  function bindPanelActionExpansion() {
+    const container = getCanvasSplitContainer();
+    if (!container) return;
+    const contourTemplate = $("panelActionContour")?.content?.firstElementChild;
+    if (contourTemplate) {
+      for (const pane of container.querySelectorAll(
+        ".project-instruction-panel, :scope > .editor-workspace, :scope > .documentation-workspace")) {
+        if (pane.querySelector(":scope > [data-panel-action-contour]")) continue;
+        const contour = contourTemplate.cloneNode(true);
+        contour.setAttribute("data-panel-action-contour", "");
+        contour.setAttribute("aria-hidden", "true");
+        contour.setAttribute("focusable", "false");
+        pane.prepend(contour);
+      }
+    }
+    updatePanelActionContours();
+    if (container.dataset.panelActionsBound === "true") return;
+    container.dataset.panelActionsBound = "true";
+    const expandActionPanel = (event) => {
+      if (event.type === "focusin" && !event.target?.matches?.(":focus-visible")) return;
+      const actions = event.target?.closest?.(".panel-action-lobe");
+      if (!actions || !container.contains(actions)) return;
+      const panels = [...container.querySelectorAll(
+        ":scope > :is(.outliner, .project-ai-layout, .editor-workspace, .documentation-workspace)"
+      )];
+      const index = panels.findIndex(panel => panel.contains(actions));
+      if (index < 0) return;
+      const widths = getWorkspaceWidths(), specs = getWorkspacePanelSpecs();
+      if (widths[index] === specs[index].compact) resizeWorkspacePanel(index, specs[index].min);
+    };
+    // Capture click after pointer release, before the existing action handler.
+    // Moving a tab during pointerdown/focus would cancel its pending click.
+    container.addEventListener("click", expandActionPanel, true);
+    container.addEventListener("focusin", expandActionPanel);
   }
 
   function bindWorkspaceResizeObserver() {
     const container = getCanvasSplitContainer();
     if (!container) return;
-    const busy = () => activeSplitResize ||
+    const busy = () => window.UartDebugControls.isPanelResizing() ||
+      container.classList.contains("is-workspace-transitioning") ||
       $("avrDeviceSection")?.classList.contains("is-device-panel-transitioning");
     const scheduleResize = () => {
       if (busy() || workspaceResizeFrame !== null) return;
@@ -2814,8 +2990,7 @@
   function startInlineRename(fileName) {
     if (!hasFile(fileName)) return;
     closeFileContextMenu();
-    closeAddFileModal();
-    expandOutlinerForEditing();
+    openFilesModal();
     const linkedProject = getMiniProjectForFile(fileName);
     if (linkedProject?.role === miniProjectCore.ROLES.SOURCE) {
       inlineFileEdit = {
@@ -2861,6 +3036,7 @@
     if (error) {
       inlineFileEdit.value = nextName;
       inlineFileEdit.error = error;
+      window.UartDebugNotifications?.notify({ key: "project-name-validation", title: "Project display name", message: error, tone: "warning" });
       renderOutliner();
       focusInlineFileInput();
       return false;
@@ -2877,37 +3053,26 @@
     return false;
   }
 
-  function removeFileFromGroups(fileName) {
-    for (const group of Object.values(fileGroups)) {
-      group.files = (group.files || []).filter((name) => name !== fileName);
-    }
-  }
-
-  function renderFileRow(list, name, groupName = "", depth = 0) {
+  function renderFileRow(list, name) {
     const linkedProject = getMiniProjectForFile(name);
     const isMiniProjectSource =
       linkedProject?.role === miniProjectCore.ROLES.SOURCE;
     const displayName = getOutlinerFileLabel(name);
     const row = document.createElement("div");
-    row.className = "file-item";
+    row.className = "file-item ui-list-item ui-list-item--record";
     row.dataset.file = name;
     row.dataset.fileKind = isMiniProjectSource
       ? "mini-project"
       : getOutlinerFileKind(name);
-    row.dataset.outlinerIcon = isMiniProjectSource
-      ? "MP"
-      : getOutlinerFileIcon(name);
+    if (!isMiniProjectSource) row.dataset.outlinerIcon = getOutlinerFileIcon(name);
     row.tabIndex = 0;
     row.setAttribute("role", "button");
     row.setAttribute("aria-label", displayName);
-    row.title = isMiniProjectSource ? `${displayName} (${linkedProject.project.fileNames?.[name] || name})` : name;
-    row.style.setProperty("--outliner-depth", String(depth));
-    if (isMiniProjectSource) row.classList.add("mini-project-item");
+    if (isMiniProjectSource) {
+      row.classList.add("mini-project-item");
+      row.dataset.tooltipDisabled = "";
+    } else row.title = name;
 
-    if (groupName) {
-      row.dataset.groupMemberOf = groupName;
-      row.classList.add("group-member");
-    }
     if (isCFileName(name)) row.classList.add("file-c");
 
     if (name === current) {
@@ -2928,7 +3093,7 @@
     }
 
     const label = document.createElement("div");
-    label.className = "file-name";
+    label.className = "file-name ui-list-item-title";
     label.textContent = displayName;
     row.appendChild(label);
 
@@ -2936,14 +3101,18 @@
     acts.className = "file-actions";
 
     const menuBtn = document.createElement("button");
-    menuBtn.className = "file-menu-btn";
+    menuBtn.className = "file-menu-btn ui-icon-button ui-icon-button--quiet ui-menu-trigger";
     menuBtn.title = "Project actions";
+    menuBtn.setAttribute("aria-label", `Actions for ${displayName}`);
+    menuBtn.setAttribute("aria-haspopup", "menu");
+    menuBtn.setAttribute("aria-controls", "fileContextMenu");
+    menuBtn.setAttribute("aria-expanded", "false");
     menuBtn.textContent = "\u22ef";
 
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const rect = menuBtn.getBoundingClientRect();
-      openFileContextMenu(name, rect.left + rect.width / 2, rect.bottom + 4);
+      openFileContextMenu(name, rect.left + rect.width / 2, rect.bottom + 4, menuBtn);
     });
 
     acts.appendChild(menuBtn);
@@ -2952,8 +3121,15 @@
     row.addEventListener("click", () => {
       if (inlineFileEdit && !commitInlineFileEdit()) return;
       selectFile(name);
+      closeFilesModal();
     });
     row.addEventListener("keydown", event => {
+      if (event.target === row && (event.key === "ContextMenu" || event.key === "F10" && event.shiftKey)) {
+        event.preventDefault();
+        const bounds = row.getBoundingClientRect();
+        openFileContextMenu(name, bounds.left, bounds.bottom + 4, row);
+        return;
+      }
       if (event.target === row && ["Enter", " "].includes(event.key)) {
         event.preventDefault();
         row.click();
@@ -2962,7 +3138,7 @@
 
     row.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      openFileContextMenu(name, e.clientX, e.clientY);
+      openFileContextMenu(name, e.clientX, e.clientY, row);
     });
 
     list.appendChild(row);
@@ -2972,47 +3148,39 @@
     const list = $("fileList");
     list.innerHTML = "";
 
-    const newRow = document.createElement("div");
-    newRow.className = "file-item new-item";
-    newRow.dataset.outlinerIcon = "+";
-    newRow.title = "Add project";
-    newRow.setAttribute("role", "button");
-    newRow.setAttribute("aria-label", "Add project");
-    newRow.tabIndex = 0;
-    newRow.addEventListener("keydown", (event) => {
-      if (event.target === newRow && ["Enter", " "].includes(event.key)) {
-        event.preventDefault();
-        newRow.click();
-      }
-    });
-
-    {
-      const plus = document.createElement("div");
-      plus.className = "file-name";
-      plus.textContent = "+";
-
-      newRow.appendChild(plus);
-      newRow.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openAddFileModal();
-      });
+    const names = getVisibleWorkspaceFileNames();
+    if (!names.length) {
+      const empty = document.createElement("p");
+      empty.className = "ui-empty-state";
+      empty.textContent = "No projects yet";
+      list.appendChild(empty);
+    }
+    for (const name of names) {
+      renderFileRow(list, name);
     }
 
-    list.appendChild(newRow);
-
-    for (const name of getVisibleWorkspaceFileNames()) {
-      renderFileRow(list, name, "", 0);
-    }
-
-    updateToolbarState();
-    updateCompilePanelState(false);
+    updateCompilePanelState();
   }
 
-  function openFileContextMenu(fileName, clientX, clientY) {
+  function openFileContextMenu(fileName, clientX, clientY, trigger) {
     const menu = $("fileContextMenu");
     if (!menu) return;
 
+    if (menu.style.display === "block" && contextMenuFile === fileName && contextMenuTrigger === trigger) {
+      closeFileContextMenu({ restoreFocus: true });
+      return;
+    }
+    closeFileContextMenu();
+
     contextMenuFile = fileName;
+    contextMenuTrigger = trigger || document.activeElement;
+    contextMenuTrigger?.setAttribute("aria-expanded", "true");
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Project actions");
+    for (const button of menu.querySelectorAll("button")) {
+      button.setAttribute("role", "menuitem");
+      button.tabIndex = -1;
+    }
 
     const renameBtn = menu.querySelector('button[data-action="rename"]');
     const deleteBtn = menu.querySelector('button[data-action="delete"]');
@@ -3070,13 +3238,40 @@
 
     menu.style.left = x + "px";
     menu.style.top = y + "px";
+    menu.querySelector("button:not([hidden]):not(:disabled)")?.focus();
   }
 
-  function closeFileContextMenu() {
+  function closeFileContextMenu({ restoreFocus = false } = {}) {
     const menu = $("fileContextMenu");
     if (!menu) return;
     menu.style.display = "none";
     contextMenuFile = null;
+    const trigger = contextMenuTrigger;
+    contextMenuTrigger = null;
+    trigger?.setAttribute("aria-expanded", "false");
+    if (restoreFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
+  }
+
+  function handleFileMenuKeydown(event) {
+    const menu = $("fileContextMenu");
+    if (menu?.style.display !== "block") return false;
+    if (event.key === "Escape") {
+      closeFileContextMenu({ restoreFocus: true });
+      event.preventDefault();
+      return true;
+    }
+    if (event.key === "Tab") {
+      closeFileContextMenu({ restoreFocus: true });
+      return false;
+    }
+    if (!menu.contains(document.activeElement) || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return false;
+    const buttons = [...menu.querySelectorAll("button:not([hidden]):not(:disabled)")];
+    const index = buttons.indexOf(document.activeElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+      : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next]?.focus();
+    event.preventDefault();
+    return true;
   }
 
   async function handleFileContextAction(action) {
@@ -3087,7 +3282,7 @@
 
     const targetName = contextMenuFile;
     // Close menu immediately so it doesn't hang around over dialogs
-    closeFileContextMenu();
+    closeFileContextMenu({ restoreFocus: true });
 
     switch (action) {
       case "rename":
@@ -3227,13 +3422,7 @@
       if (match && !isAiSpecMarkdownFile(match)) return match;
     }
 
-    const groupName = getFileGroup(fileName);
-    const groupFiles = groupName ? fileGroups[groupName]?.files || [] : [];
-    return (
-      groupFiles.find(
-        (name) => /\.md$/i.test(name) && !isAiSpecMarkdownFile(name) && hasFile(name)
-      ) || ""
-    );
+    return "";
   }
 
   function getDocumentationContext(fileName = current) {
@@ -3338,317 +3527,6 @@
     } catch {}
     return "";
   }
-
-  function appendMarkdownInline(
-    parent,
-    rawText,
-    context = null,
-    { allowImages = true } = {}
-  ) {
-    const text = String(rawText || "");
-    const tokenPattern =
-      /(!\[([^\]\n]*)\]\(([^)\n]+)\)|`[^`\n]+`|\[([^\]\n]+)\]\(([^)\n]+)\)|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\*[^*\n]+\*|(?<![A-Za-z0-9])_(?=\S)(?:[^_\n]*?\S)?_(?![A-Za-z0-9]))/g;
-    let cursor = 0;
-    let match;
-
-    while ((match = tokenPattern.exec(text))) {
-      if (match.index > cursor) {
-        parent.appendChild(document.createTextNode(text.slice(cursor, match.index)));
-      }
-
-      if (match[0].startsWith("![")) {
-        const alt = match[2] || "";
-        const src = allowImages
-          ? resolveDocumentationImageUrl(match[3], context)
-          : "";
-        if (src) {
-          const image = document.createElement("img");
-          image.src = src;
-          image.alt = alt;
-          image.loading = "lazy";
-          image.decoding = "async";
-          parent.appendChild(image);
-        } else if (alt) {
-          parent.appendChild(document.createTextNode(alt));
-        }
-      } else if (match[0].startsWith("`")) {
-        const code = document.createElement("code");
-        code.textContent = match[0].slice(1, -1);
-        parent.appendChild(code);
-      } else if (
-        match[0].startsWith("**") ||
-        match[0].startsWith("__")
-      ) {
-        const strong = document.createElement("strong");
-        appendMarkdownInline(
-          strong,
-          match[0].slice(2, -2),
-          context,
-          { allowImages }
-        );
-        parent.appendChild(strong);
-      } else if (match[0].startsWith("~~")) {
-        const deleted = document.createElement("del");
-        appendMarkdownInline(
-          deleted,
-          match[0].slice(2, -2),
-          context,
-          { allowImages }
-        );
-        parent.appendChild(deleted);
-      } else if (
-        match[0].startsWith("*") ||
-        match[0].startsWith("_")
-      ) {
-        const emphasis = document.createElement("em");
-        appendMarkdownInline(
-          emphasis,
-          match[0].slice(1, -1),
-          context,
-          { allowImages }
-        );
-        parent.appendChild(emphasis);
-      } else {
-        const label = match[4];
-        const href = resolveSafeDocumentationLinkUrl(
-          String(match[5] || "").trim().replace(/^<|>$/g, "")
-        );
-        if (href) {
-          const link = document.createElement("a");
-          link.textContent = label;
-          link.href = href;
-          const destination = new URL(href, window.location.href);
-          if (
-            ["http:", "https:"].includes(destination.protocol) &&
-            destination.origin !== window.location.origin
-          ) {
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
-          }
-          parent.appendChild(link);
-        } else {
-          parent.appendChild(document.createTextNode(label));
-        }
-      }
-
-      cursor = tokenPattern.lastIndex;
-    }
-
-    if (cursor < text.length) {
-      parent.appendChild(document.createTextNode(text.slice(cursor)));
-    }
-  }
-
-  function renderMarkdownInto(
-    content,
-    markdown,
-    context = null,
-    { indexDocumentationHeadings = false, allowImages = true } = {}
-  ) {
-    if (!content) return;
-
-    const markdownRuntime = window.UartDebugMarkdown;
-    if (markdownRuntime?.renderInto) {
-      if (indexDocumentationHeadings) {
-        documentationRenderedHeadingIndex = new Map();
-      }
-      markdownRuntime.renderInto(content, String(markdown || ""), {
-        allowImages,
-        resolveLinkUrl: (href) => resolveSafeDocumentationLinkUrl(href),
-        resolveImageUrl: (href) =>
-          allowImages ? resolveDocumentationImageUrl(href, context) : "",
-        onHeading: ({ element, level, text, node }) => {
-          if (!indexDocumentationHeadings || !element) return;
-          const headingKey = miniProjectCore.normalizeHeadingKey(text);
-          const indexKey = `${level}:${headingKey}`;
-          element.dataset.documentationHeading = indexKey;
-          if (Number.isSafeInteger(node?.position?.start?.offset)) {
-            element.dataset.sourceStart = String(node.position.start.offset);
-          }
-          if (Number.isSafeInteger(node?.position?.end?.offset)) {
-            element.dataset.sourceEnd = String(node.position.end.offset);
-          }
-          element.tabIndex = -1;
-          if (
-            headingKey &&
-            !documentationRenderedHeadingIndex.has(indexKey)
-          ) {
-            documentationRenderedHeadingIndex.set(indexKey, element);
-          }
-        },
-      });
-      return;
-    }
-
-    content.replaceChildren();
-    if (indexDocumentationHeadings) {
-      documentationRenderedHeadingIndex = new Map();
-    }
-
-    const lines = String(markdown || "")
-      .replace(/\r\n?/g, "\n")
-      .split("\n");
-    let paragraphLines = [];
-    let activeList = null;
-    let activeListType = "";
-    let codeFence = null;
-    let codeLines = [];
-
-    const flushParagraph = () => {
-      if (!paragraphLines.length) return;
-      const paragraph = document.createElement("p");
-      appendMarkdownInline(paragraph, paragraphLines.join(" ").trim(), context, {
-        allowImages,
-      });
-      content.appendChild(paragraph);
-      paragraphLines = [];
-    };
-
-    const flushList = () => {
-      activeList = null;
-      activeListType = "";
-    };
-
-    const flushCode = () => {
-      const pre = document.createElement("pre");
-      const code = document.createElement("code");
-      code.textContent = codeLines.join("\n");
-      if (codeFence?.language) code.dataset.language = codeFence.language;
-      pre.appendChild(code);
-      content.appendChild(pre);
-      codeFence = null;
-      codeLines = [];
-    };
-
-    const appendHeading = (level, rawHeadingText) => {
-      const headingText = String(rawHeadingText || "")
-        .replace(/[ \t]+#+[ \t]*$/, "")
-        .trim();
-      if (!headingText) return;
-
-      const heading = document.createElement(`h${level}`);
-      appendMarkdownInline(heading, headingText, context, { allowImages });
-      if (indexDocumentationHeadings) {
-        const headingKey = miniProjectCore.normalizeHeadingKey(headingText);
-        const indexKey = `${level}:${headingKey}`;
-        heading.dataset.documentationHeading = indexKey;
-        heading.tabIndex = -1;
-        if (
-          headingKey &&
-          !documentationRenderedHeadingIndex.has(indexKey)
-        ) {
-          documentationRenderedHeadingIndex.set(indexKey, heading);
-        }
-      }
-      content.appendChild(heading);
-    };
-
-    for (const line of lines) {
-      if (codeFence !== null) {
-        const closingFence = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
-        if (
-          closingFence &&
-          closingFence[1][0] === codeFence.character &&
-          closingFence[1].length >= codeFence.length
-        ) {
-          flushCode();
-          continue;
-        }
-        codeLines.push(line);
-        continue;
-      }
-
-      const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})\s*([^\s`~]*)?.*$/);
-      if (openingFence) {
-        flushParagraph();
-        flushList();
-        codeFence = {
-          character: openingFence[1][0],
-          length: openingFence[1].length,
-          language: openingFence[2] || "plain",
-        };
-        codeLines = [];
-        continue;
-      }
-
-      const headingMatch = line.match(/^ {0,3}(#{1,6})[ \t]+(.+?)\s*$/);
-      if (headingMatch) {
-        flushParagraph();
-        flushList();
-        appendHeading(headingMatch[1].length, headingMatch[2]);
-        continue;
-      }
-
-      const setextMatch = line.match(/^ {0,3}(=+|-+)[ \t]*$/);
-      if (setextMatch && paragraphLines.length) {
-        const headingText = paragraphLines.join(" ").trim();
-        paragraphLines = [];
-        flushList();
-        appendHeading(setextMatch[1][0] === "=" ? 1 : 2, headingText);
-        continue;
-      }
-
-      if (/^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line)) {
-        flushParagraph();
-        flushList();
-        content.appendChild(document.createElement("hr"));
-        continue;
-      }
-
-      const unorderedMatch = line.match(/^\s*[-*+]\s+(.+)$/);
-      const orderedMatch = line.match(/^\s*\d+[.)]\s+(.+)$/);
-      if (unorderedMatch || orderedMatch) {
-        flushParagraph();
-        const listType = orderedMatch ? "ol" : "ul";
-        if (!activeList || activeListType !== listType) {
-          flushList();
-          activeList = document.createElement(listType);
-          activeListType = listType;
-          content.appendChild(activeList);
-        }
-        const item = document.createElement("li");
-        appendMarkdownInline(item, (orderedMatch || unorderedMatch)[1], context, {
-          allowImages,
-        });
-        activeList.appendChild(item);
-        continue;
-      }
-
-      const quoteMatch = line.match(/^\s*>\s?(.*)$/);
-      if (quoteMatch) {
-        flushParagraph();
-        flushList();
-        const quote = document.createElement("blockquote");
-        appendMarkdownInline(quote, quoteMatch[1], context, { allowImages });
-        content.appendChild(quote);
-        continue;
-      }
-
-      if (!line.trim()) {
-        flushParagraph();
-        flushList();
-        continue;
-      }
-
-      flushList();
-      paragraphLines.push(line.trim());
-    }
-
-    flushParagraph();
-    flushList();
-    if (codeFence !== null || codeLines.length) flushCode();
-  }
-
-  function renderMarkdownGuide(markdown, context = null) {
-    renderMarkdownInto(
-      $("projectDocumentationContent"),
-      markdown,
-      context,
-      { indexDocumentationHeadings: true, allowImages: true }
-    );
-  }
-
-
 
   function normalizeCanvasAnnotations(value) {
     if (!Array.isArray(value)) return [];
@@ -3767,27 +3645,123 @@
     syncCanvasTargetControls(true);
     reportProjectCanvasMessage("", "");
     refreshProjectInstructionSaveState();
+    if (!projectChatApplyingResponse) projectChatController?.refresh();
   }
 
-  function reportProjectCanvasMessage(kind, message) {
-    const status = $("projectCanvasStatus");
-    if (!status) return;
-    status.textContent = String(message || "");
-    status.hidden = !status.textContent;
-    status.classList.toggle("is-error", kind === "system");
+  function normalizeProjectConversation(value, options = {}) {
+    return window.UartDebugProjectChat?.normalize(value, options)
+      || { schemaVersion: 4, activeThreadId: "chat-1", threads: [{ id: "chat-1", title: "New chat", messages: [], draft: "", titleMode: "auto" }] };
+  }
+
+  function getProjectChatContext() {
+    const linked = getMiniProjectForFile(current);
+    const instanceId = linked?.instanceId || null;
+    const conversation = normalizeProjectConversation(linked ? linked.project.conversation : draftProjectConversation);
+    return {
+      key: `${projectAiAccountWorkspaceEpoch}:${instanceId || "draft"}`,
+      instanceId,
+      accountEpoch: projectAiAccountWorkspaceEpoch,
+      threadId: conversation.activeThreadId,
+      title: linked?.project.displayName || linked?.project.title || "New project",
+      conversation,
+    };
+  }
+
+  function saveProjectConversation(scope, conversation, fromScope = null) {
+    if (scope.accountEpoch !== projectAiAccountWorkspaceEpoch ||
+        scope.key !== `${scope.accountEpoch}:${scope.instanceId || "draft"}` ||
+        (fromScope && (fromScope.accountEpoch !== scope.accountEpoch || fromScope.instanceId ||
+          fromScope.key !== `${scope.accountEpoch}:draft`))) return false;
+    const project = scope.instanceId ? miniProjects[scope.instanceId] : null;
+    if (scope.instanceId && !project) return false;
+    const value = normalizeProjectConversation(conversation);
+    const previousDraft = draftProjectConversation, previous = project?.conversation;
+    if (project) project.conversation = value;
+    else draftProjectConversation = value;
+    if (project && fromScope) draftProjectConversation = null;
+    if (persistState()) return true;
+    draftProjectConversation = previousDraft;
+    if (project) {
+      if (previous === undefined) delete project.conversation;
+      else project.conversation = previous;
+    }
+    return false;
+  }
+
+  function initProjectChat() {
+    if (!window.UartDebugProjectChat?.create || !$("projectChatForm")) return;
+    projectChatController = window.UartDebugProjectChat.create({
+      root: document.querySelector(".project-chat-panel"),
+      getContext: getProjectChatContext,
+      save: saveProjectConversation,
+      request: requestProjectChat,
+      onBusy: setProjectAiFormBusy,
+      openFiles: openFilesModal,
+      confirm: showSiteConfirm,
+      notify: options => window.UartDebugNotifications?.notify(options),
+    });
+  }
+
+  function reportProjectCanvasMessage(kind, message, notificationId = null) {
+    const content = String(message || "").trim();
+    if (!content) return;
+    if (notificationId) {
+      window.UartDebugNotifications?.append(notificationId, content, {
+        message: content.split("\n")[0], tone: kind === "system" ? "error" : "success", pending: false,
+      });
+      return;
+    }
+    window.UartDebugNotifications?.notify({
+      key: `message:${content}`, title: "Workspace",
+      message: content.split("\n")[0], details: content,
+      tone: kind === "system" ? "error" : kind === "warning" ? "warning" : "success", pending: false,
+    });
   }
 
   function getCanvasTarget() {
     const select = $("mcuSelect");
-    let mcu = String(select?.value || projectInstructionDocument.target?.mcu || "");
-    if (mcu === "auto") {
-      const bridge = window[AVR_UPDI_BRIDGE_KEY] || window[LEGACY_UPDI_BRIDGE_KEY];
-      mcu = String(bridge?.getDetectedTargetKey?.() || "");
-    }
+    const detected = String(window[AVR_UPDI_BRIDGE_KEY]?.getDetectedTargetKey?.() || "");
+    const selected = String(select?.value || projectInstructionDocument.target?.mcu || "");
+    const packageSelect = $("projectPackageSelect");
     return {
-      mcu,
-      packageName: String($("projectPackageSelect")?.value || ""),
+      mcu: detected || (selected === "auto" ? "" : selected),
+      packageName: String(packageSelect?.value || packageSelect?.dataset.pendingPackage || ""),
     };
+  }
+
+  function refreshTargetPresentation() {
+    const select = $("mcuSelect");
+    if (!select) return;
+    const runtime = getCanvasUpdiRuntime();
+    const info = runtime?.getSignatureInfo?.();
+    const detected = String(window[AVR_UPDI_BRIDGE_KEY]?.getDetectedTargetKey?.() || "");
+    if (detected && [...select.options].some(option => option.value === detected)) select.value = detected;
+    let optionsChanged = false;
+    for (const option of select.options) {
+      const disabled = !!detected && option.value !== detected;
+      if (option.disabled !== disabled) { option.disabled = disabled; optionsChanged = true; }
+    }
+    const busy = runtime?.isBusy?.() === true;
+    const automatic = select.value === "auto";
+    const autoOption = [...select.options].find(option => option.value === "auto");
+    const autoLabel = automatic && info && !detected ? "Unknown chip" : busy && automatic ? "Working…" : "Auto detect";
+    const accessibleLabel = detected ? "Target MCU, from connection"
+      : automatic ? "Target MCU, auto detection" : "Target MCU, manual choice";
+    const status = select.dataset.controlStatus || "";
+    const presentationChanged = optionsChanged || autoOption?.dataset.displayLabel !== autoLabel
+      || select.getAttribute("aria-label") !== accessibleLabel;
+    if (autoOption) autoOption.dataset.displayLabel = autoLabel;
+    select.setAttribute("aria-label", accessibleLabel);
+    select.closest(".avr-target-controls").dataset.targetRelation = detected ? "connected" : automatic ? "pending" : "manual";
+    const targetLabel = select.selectedOptions[0]?.textContent || select.value;
+    const signature = describeSignatureInfo(info) || "No chip signature available";
+    const explanation = detected
+      ? "The chip identified through the selected port takes priority. Change the connected chip or clear its connection before choosing another target."
+      : "Choose a project chip manually while no supported chip is identified through the port.";
+    select.dataset.tooltip = `${accessibleLabel}: ${targetLabel}. ${status ? status + ". " : ""}Connection: ${signature}. ${explanation}`;
+    const custom = select.nextElementSibling;
+    if (presentationChanged && custom?.classList.contains("custom-select")) updateCustomSelect(select, custom);
+    custom?.querySelector(".custom-select-trigger")?.setAttribute("data-tooltip", select.dataset.tooltip);
   }
 
   function syncCanvasTargetControls(restore = false) {
@@ -3795,25 +3769,28 @@
     if (!select) return;
     const mcuSelect = $("mcuSelect");
     const savedTarget = projectInstructionDocument.target;
-    if (restore && mcuSelect) {
+    const detected = String(window[AVR_UPDI_BRIDGE_KEY]?.getDetectedTargetKey?.() || "");
+    if (restore && mcuSelect && !detected) {
       const savedMcu = String(savedTarget?.mcu || "auto").toLowerCase();
-      mcuSelect.value = [...mcuSelect.options].some((option) => option.value === savedMcu)
-        ? savedMcu : "auto";
-      const custom = mcuSelect.nextElementSibling;
-      if (custom?.classList.contains("custom-select")) updateCustomSelect(mcuSelect, custom);
+      mcuSelect.value = [...mcuSelect.options].some(option => option.value === savedMcu) ? savedMcu : "auto";
     }
+    if (detected && mcuSelect) mcuSelect.value = detected;
     const target = getCanvasTarget();
-    const device = canvasSupportedDevices.find((item) => item.mcu === target.mcu);
-    const selectedPackage = restore
-      ? (savedTarget?.mcu === target.mcu ? savedTarget.packageName : "") : select.value;
-    const previousMcu = select.dataset.mcu;
+    const selectedPackage = restore ? String(savedTarget?.packageName || "")
+      : String(select.value || select.dataset.pendingPackage || "");
+    // A not-yet-loaded catalog cannot establish that a saved package is invalid.
+    if (!canvasSupportedDevices) {
+      if (selectedPackage) select.dataset.pendingPackage = selectedPackage;
+      else delete select.dataset.pendingPackage;
+      select.disabled = true;
+      refreshTargetPresentation();
+      return;
+    }
+    const device = canvasSupportedDevices.find(item => item.mcu === target.mcu);
     const placeholder = document.createElement("option");
     placeholder.value = "";
-    placeholder.textContent = !target.mcu
-      ? "Choose package"
-      : device
-        ? "Choose package"
-        : "Package unavailable";
+    placeholder.textContent = target.mcu && !device ? "Package unavailable" : "Choose package";
+    placeholder.dataset.displayLabel = target.mcu && !device ? "Unavailable" : "Package";
     select.replaceChildren(placeholder);
     for (const packageName of device?.packages || []) {
       const option = document.createElement("option");
@@ -3821,11 +3798,13 @@
       option.textContent = packageName;
       select.appendChild(option);
     }
-    if ((restore || !previousMcu || previousMcu === target.mcu) && device?.packages.includes(selectedPackage)) {
-      select.value = selectedPackage;
-    }
+    if (device?.packages.includes(selectedPackage)) select.value = selectedPackage;
+    delete select.dataset.pendingPackage;
     select.dataset.mcu = target.mcu;
     select.disabled = !device;
+    const custom = mcuSelect?.nextElementSibling;
+    if (custom?.classList.contains("custom-select")) updateCustomSelect(mcuSelect, custom);
+    refreshTargetPresentation();
   }
 
   function saveCanvasTarget() {
@@ -3842,8 +3821,12 @@
     $("mcuSelect")?.addEventListener("change", () => {
       syncCanvasTargetControls();
       saveCanvasTarget();
+      pulseHardwareFlow();
     });
-    $("projectPackageSelect")?.addEventListener("change", saveCanvasTarget);
+    $("projectPackageSelect")?.addEventListener("change", () => {
+      saveCanvasTarget();
+      pulseHardwareFlow();
+    });
     // Knowledge availability is separate from account/credit availability.
     void fetch("/api/avr/ai/status", { headers: { Accept: "application/json" }, credentials: "same-origin" })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error("Knowledge is unavailable")))
@@ -3852,6 +3835,7 @@
           typeof device?.mcu === "string" && Array.isArray(device.packages))
           .map((device) => ({ ...device, mcu: device.mcu.toLowerCase() }));
         syncCanvasTargetControls(true);
+        saveCanvasTarget();
         if (!canvasSupportedDevices.length) {
           reportProjectCanvasMessage("system", "The AVR knowledge pack is unavailable. Your canvas remains saved.");
         }
@@ -3861,6 +3845,44 @@
         reportProjectCanvasMessage("system", "AI is unavailable. You can keep editing the canvas.");
       });
     syncCanvasTargetControls();
+  }
+
+  function hardwareStageElement(stage) {
+    if (stage === "adapter") return $("adapterStatusText")?.closest(".hardware-port");
+    const select = $(stage === "package" ? "projectPackageSelect" : "mcuSelect");
+    return select?.nextElementSibling?.querySelector(".custom-select-trigger");
+  }
+
+  function currentHardwareFailure() {
+    if ($("adapterStatusText")?.classList.contains("is-error")) return "adapter";
+    if ($("mcuSelect")?.dataset.connectionState === "error") return "chip";
+    if ($("projectPackageSelect")?.dataset.connectionState === "error") return "package";
+    return "";
+  }
+
+  function pulseHardwareFlow() {
+    const fault = currentHardwareFailure();
+    if (fault) hardwareFlow?.fail(hardwareStageElement(fault));
+    else hardwareFlow?.pulse();
+  }
+
+  function bindHardwareFlow() {
+    hardwareFlow = window.UartDebugHardwareFlow?.create($("hardwareFlowLight"));
+    const button = $("detectChipBtn");
+    const hoverArea = button?.closest(".hardware-step--detect");
+    hoverArea?.addEventListener("pointerenter", () => {
+      if (button.disabled && !button.classList.contains("is-working")) return;
+      const fault = currentHardwareFailure();
+      hardwareFlow?.setActive("connection-hover", true, fault ? hardwareStageElement(fault) : null);
+    });
+    hoverArea?.addEventListener("pointerleave", () => hardwareFlow?.setActive("connection-hover", false));
+    $("avrTargetPanelViewport")?.addEventListener("ud-select-toggle", (event) => {
+      const owner = event.target.id === "mcuSelect" ? "chip-menu"
+        : event.target.id === "projectPackageSelect" ? "package-menu" : "";
+      if (!owner) return;
+      const fault = event.detail.open && currentHardwareFailure();
+      hardwareFlow?.setActive(owner, event.detail.open, fault ? hardwareStageElement(fault) : null);
+    });
   }
 
   function resolveCanvasAnnotationLine(annotation, markdown) {
@@ -3875,12 +3897,9 @@
   }
 
   function setProjectInstructionSaveState(message = "", { error = false } = {}) {
-    const saveState = $("projectInstructionSaveState");
-    if (!saveState) return;
     const visibleMessage = String(message || "").trim();
-    saveState.textContent = visibleMessage;
-    saveState.hidden = !visibleMessage;
-    saveState.classList.toggle("is-error", error && !!visibleMessage);
+    if (visibleMessage) window.UartDebugNotifications?.notify({ key: "instruction-save", title: "Project storage",
+      message: visibleMessage, tone: error ? "error" : "info" });
   }
 
   function refreshProjectInstructionSaveState() {
@@ -3969,7 +3988,7 @@
       unassignedProjectInstructionDocument = getProjectInstructionSnapshot();
     }
     if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
-      markProjectAiAccountDocumentDirty("files");
+      markProjectAiAccountWorkspaceDirty();
     }
 
     const save = () => {
@@ -4026,6 +4045,7 @@
 
   function registerMarkdownLiveEditor(id, codeMirror, options = {}) {
     if (!id || !codeMirror) return null;
+    codeMirror.getScrollerElement?.()?.classList.add("ui-scroll-region");
     const previous = markdownLiveEditors.get(id);
     if (previous?.frame != null) {
       window.cancelAnimationFrame(previous.frame);
@@ -4385,8 +4405,10 @@
   }
 
   function renderMarkdownLivePreviewState(state) {
+    if (state.frame != null) window.cancelAnimationFrame?.(state.frame);
     state.frame = null;
     if (!state.editor || state.compositionActive) return;
+    if (workspaceTransitionTimer !== null) return;
     const markdownRuntime = window.UartDebugMarkdown;
     const markdown = state.editor.getValue();
     if (!state.isMarkdown()) {
@@ -4415,6 +4437,8 @@
       });
       state.onHeadings?.(new Map());
       console.warn("Markdown preview could not be rendered:", error);
+      window.UartDebugNotifications?.notify({ key: "markdown-render", title: "Markdown", tone: "warning",
+        message: "Preview could not be rendered. The original text is still available.", details: error.message || String(error) });
       return;
     }
     const tree = cache.analysis.tree;
@@ -4740,7 +4764,8 @@
 
   function scheduleMarkdownLivePreview(id) {
     const state = markdownLiveEditors.get(id);
-    if (!state || state.compositionActive || state.frame !== null) return;
+    if (!state || state.compositionActive || workspaceLayoutSettling ||
+        workspaceTransitionTimer !== null || state.frame !== null) return;
     state.frame = window.requestAnimationFrame(() =>
       renderMarkdownLivePreviewState(state)
     );
@@ -4857,31 +4882,7 @@
       typeof window.CodeMirror?.fromTextArea === "function"
     ) {
       editorElement.value = projectInstructionDocument.markdown;
-      projectInstructionEditor = CodeMirror.fromTextArea(editorElement, {
-        mode: {
-          name: "markdown",
-          highlightFormatting: true,
-          fencedCodeBlockHighlighting: false,
-          strikethrough: true,
-          taskLists: true,
-          xml: false,
-        },
-        theme: "material-darker",
-        inputStyle: "contenteditable",
-        lineNumbers: false,
-        lineWrapping: true,
-        indentUnit: 2,
-        tabSize: 2,
-        indentWithTabs: false,
-        viewportMargin: 30,
-        autofocus: false,
-        extraKeys: {
-          Tab(cm) {
-            cm.replaceSelection("  ", "end", "+input");
-          },
-        },
-      });
-      projectInstructionEditor.setSize("100%", "100%");
+      projectInstructionEditor = createMarkdownDocumentEditor(editorElement, { label: "Project specification Markdown" });
       registerMarkdownLiveEditor("instruction", projectInstructionEditor, {
         getAuthorship: () => projectInstructionDocument.authorship,
         getContextKey: () => "project-instruction",
@@ -4889,11 +4890,6 @@
       });
 
       const inputField = projectInstructionEditor.getInputField();
-      inputField.setAttribute("aria-label", "Project specification Markdown");
-      inputField.setAttribute("aria-multiline", "true");
-      inputField.setAttribute("data-tooltip-disabled", "");
-      inputField.setAttribute("role", "textbox");
-      inputField.setAttribute("spellcheck", "true");
       inputField.addEventListener("compositionstart", () => {
         projectInstructionCompositionActive = true;
         setMarkdownLiveComposition("instruction", true);
@@ -4957,6 +4953,10 @@
     window.UartDebugAvrAiWorkspace = Object.freeze({
       getInstruction: getProjectInstructionSnapshot,
       processCanvas: submitProjectCanvas,
+      getConversation: () => projectChatController?.getConversation(),
+      getChats: () => normalizeProjectConversation(getProjectChatContext().conversation),
+      sendMessage: message => projectChatController?.submit(message),
+      stopResponse: () => projectChatController?.cancel(),
       setInstruction(markdown, options = {}) {
         applyProjectInstructionMarkdown(markdown, options);
         return getProjectInstructionSnapshot();
@@ -4964,93 +4964,81 @@
     });
   }
 
+
   function readStoredProjectAiAccountSync() {
     try {
-      const parsed = JSON.parse(
-        window.localStorage.getItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC) || "null"
-      );
-      if (!parsed || ![1, 2, 3].includes(parsed.schemaVersion) || !parsed.accountKey) {
-        return null;
-      }
+      const parsed = JSON.parse(window.localStorage.getItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC) || "null");
+      if (!parsed || ![1, 2, 3, 4].includes(parsed.schemaVersion) || !parsed.accountKey) return null;
+      const current = parsed.schemaVersion === 4;
       return {
-        ...parsed,
-        revisions: { files: parsed.revisions?.files },
-        dirty: { files: parsed.dirty?.files === true || parsed.dirty?.instruction === true },
-        conflicts: { files: parsed.conflicts?.files === true || parsed.conflicts?.instruction === true },
+        accountKey: String(parsed.accountKey),
+        revision: current ? parsed.revision : parsed.revisions?.files,
+        dirty: current ? parsed.dirty === true : parsed.dirty?.files === true || parsed.dirty?.instruction === true,
+        conflict: current ? parsed.conflict === true : parsed.conflicts?.files === true || parsed.conflicts?.instruction === true,
+        legacyInstructionRevision: parsed.legacyInstructionRevision,
       };
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   }
+
 
   function restoreProjectAiLocalDirtyState() {
     try {
-      const stored = JSON.parse(
-        window.localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY) || "null"
-      );
-      projectAiLocalDirty.files = stored?.dirty?.files === true || stored?.dirty?.instruction === true;
-    } catch {
-      projectAiLocalDirty = {
-        files: true,
-      };
-    }
+      const stored = JSON.parse(window.localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY) || "null");
+      projectAiAccountSync.localDirty = stored?.schemaVersion === 4
+        ? stored.dirty === true : stored?.dirty?.files === true || stored?.dirty?.instruction === true;
+    } catch { projectAiAccountSync.localDirty = true; }
   }
+
 
   function persistProjectAiLocalDirtyState() {
     try {
-      window.localStorage.setItem(
-        STORAGE_PROJECT_AI_LOCAL_DIRTY,
-        JSON.stringify({
-          schemaVersion: 3,
-          dirty: projectAiLocalDirty,
-          updatedAt: Date.now(),
-        })
-      );
+      window.localStorage.setItem(STORAGE_PROJECT_AI_LOCAL_DIRTY, JSON.stringify({
+        schemaVersion: 4, dirty: projectAiAccountSync.localDirty, updatedAt: Date.now(),
+      }));
     } catch (error) {
       console.warn("The local account-sync markers could not be saved:", error);
+      window.UartDebugNotifications?.notify({ key: "account-sync-storage", title: "Account synchronization", tone: "warning",
+        message: "Synchronization state could not be saved in this browser.", details: error.message || String(error) });
     }
   }
 
-  function setProjectAiLocalDirty(kind, dirty) {
-    if (kind !== "files") return;
-    projectAiLocalDirty[kind] = dirty === true;
+
+  function setProjectAiLocalDirty(dirty) {
+    projectAiAccountSync.localDirty = dirty === true;
     persistProjectAiLocalDirtyState();
   }
+
 
   function restoreProjectAiAccountSyncState() {
     const stored = readStoredProjectAiAccountSync();
     if (!stored) return;
-    projectAiAccountSync.accountKey = String(stored.accountKey || "");
+    projectAiAccountSync.accountKey = stored.accountKey;
     projectAiAccountSync.legacyInstructionRevision = Number.isSafeInteger(stored.legacyInstructionRevision)
       ? stored.legacyInstructionRevision : null;
-    for (const kind of ["files"]) {
-      const revision = Number(stored.revisions?.[kind]);
-      projectAiAccountSync.revisions[kind] =
-        Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
-      projectAiAccountSync.dirty[kind] = stored.dirty?.[kind] === true;
-      projectAiAccountSync.conflicts[kind] =
-        stored.conflicts?.[kind] === true;
-    }
+    const revision = Number(stored.revision);
+    projectAiAccountSync.revision = Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+    projectAiAccountSync.dirty = stored.dirty;
+    projectAiAccountSync.conflict = stored.conflict;
   }
+
 
   function persistProjectAiAccountSyncState() {
     if (!projectAiAccountSync.accountKey) return false;
     try {
-      window.localStorage.setItem(
-        STORAGE_PROJECT_AI_ACCOUNT_SYNC,
-        JSON.stringify({
-          schemaVersion: 3,
-          accountKey: projectAiAccountSync.accountKey,
-          revisions: projectAiAccountSync.revisions,
-          dirty: projectAiAccountSync.dirty,
-          conflicts: projectAiAccountSync.conflicts,
-          legacyInstructionRevision: projectAiAccountSync.legacyInstructionRevision,
-          updatedAt: Date.now(),
-        })
-      );
+      window.localStorage.setItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC, JSON.stringify({
+        schemaVersion: 4,
+        accountKey: projectAiAccountSync.accountKey,
+        revision: projectAiAccountSync.revision,
+        dirty: projectAiAccountSync.dirty,
+        conflict: projectAiAccountSync.conflict,
+        legacyInstructionRevision: projectAiAccountSync.legacyInstructionRevision,
+        updatedAt: Date.now(),
+      }));
       return true;
     } catch (error) {
       console.warn("The account sync state could not be saved:", error);
+      window.UartDebugNotifications?.notify({ key: "account-sync-storage", title: "Account synchronization", tone: "warning",
+        message: "Synchronization state could not be saved in this browser.", details: error.message || String(error) });
       return false;
     }
   }
@@ -5071,10 +5059,10 @@
       schemaVersion: 3,
       files: cloneJsonMetadata(files, {}),
       authorship: cloneJsonMetadata(fileAuthorship, {}),
-      fileGroups: cloneJsonMetadata(fileGroups, {}),
       miniProjects: cloneJsonMetadata(miniProjects, {}),
       current: typeof current === "string" ? current : null,
       draftCanvas: getUnassignedProjectInstructionSnapshot(),
+      ...(draftProjectConversation ? { draftConversation: normalizeProjectConversation(draftProjectConversation) } : {}),
     };
   }
 
@@ -5094,12 +5082,14 @@
       schemaVersion: 3,
       files: normalizedFiles,
       authorship: normalizedAuthorship,
-      fileGroups: createDictionary(cloneJsonMetadata(source.fileGroups, {})),
+      ...(Object.hasOwn(source, "fileGroups")
+        ? { fileGroups: createDictionary(cloneJsonMetadata(source.fileGroups, {})) } : {}),
       miniProjects: createDictionary(
         cloneJsonMetadata(source.miniProjects, {})
       ),
       current: typeof source.current === "string" ? source.current : null,
       draftCanvas: normalizeProjectInstructionDocument(source.draftCanvas),
+      ...(source.draftConversation ? { draftConversation: normalizeProjectConversation(source.draftConversation) } : {}),
     };
   }
 
@@ -5119,44 +5109,25 @@
     return snapshot;
   }
 
-  function getProjectAiAccountDocumentSnapshot(kind) {
-    if (kind === "files") return getProjectAiAccountFilesSnapshot();
-    throw new TypeError(`Unsupported account document: ${kind}`);
-  }
-
-  function projectAiAccountDocumentsMatch(kind, remoteData) {
+  function projectAiAccountWorkspaceMatches(remoteData) {
     try {
-      const localData = getProjectAiAccountDocumentSnapshot(kind);
-      const normalizedRemote = normalizeProjectAiAccountFilesSnapshot(remoteData);
-      return JSON.stringify(localData) === JSON.stringify(normalizedRemote);
-    } catch {
-      return false;
-    }
+      return JSON.stringify(getProjectAiAccountFilesSnapshot()) ===
+        JSON.stringify(normalizeProjectAiAccountFilesSnapshot(remoteData));
+    } catch { return false; }
   }
 
-  function getEmptyProjectAiAccountDocument(kind) {
-    if (kind === "files") {
-      return {
-        schemaVersion: 3,
-        files: {},
-        authorship: {},
-        fileGroups: {},
-        miniProjects: {},
-        current: null,
-        draftCanvas: normalizeProjectInstructionDocument(null),
-      };
-    }
-    throw new TypeError(`Unsupported account document: ${kind}`);
+
+  function getEmptyProjectAiAccountWorkspace() {
+    return {
+      schemaVersion: 3, files: {}, authorship: {}, miniProjects: {}, current: null,
+      draftCanvas: normalizeProjectInstructionDocument(null),
+    };
   }
 
-  function saveProjectAiRecoveryCopy(
-    kind,
+  function saveProjectAiWorkspaceRecovery(
     data,
     sourceAccountKey = projectAiAccountSync.accountKey
   ) {
-    if (kind !== "files") {
-      throw new TypeError(`Unsupported account document: ${kind}`);
-    }
     const storageKeyBase = STORAGE_PROJECT_AI_FILES_RECOVERY;
     const recoveryScope =
       String(sourceAccountKey || "browser-local")
@@ -5182,10 +5153,11 @@
         if (!candidateKey?.startsWith(`${storageKeyBase}:`)) continue;
         let savedAt = 0;
         try {
-          savedAt = Number(
-            JSON.parse(window.localStorage.getItem(candidateKey) || "null")
-              ?.savedAt
-          );
+          const candidate = JSON.parse(window.localStorage.getItem(candidateKey) || "null");
+          // Unreadable/future workspace envelopes must remain exact recovery
+          // evidence, rather than being pruned with normal account snapshots.
+          if (typeof candidate?.rawWorkspace === "string") continue;
+          savedAt = Number(candidate?.savedAt);
         } catch {}
         scopedCopies.push({
           key: candidateKey,
@@ -5198,7 +5170,9 @@
         .forEach(({ key }) => window.localStorage.removeItem(key));
       return true;
     } catch (error) {
-      console.warn(`The local ${kind} recovery copy could not be saved:`, error);
+      console.warn("The local workspace recovery copy could not be saved:", error);
+      window.UartDebugNotifications?.notify({ key: "workspace-recovery", title: "Project storage", tone: "error",
+        message: "The workspace recovery copy could not be saved.", details: error.message || String(error) });
       return false;
     }
   }
@@ -5214,10 +5188,11 @@
     ) {
       throw new TypeError("The saved account file workspace is invalid.");
     }
+    projectChatController?.flush();
+    projectChatController?.cancel("The account workspace changed. No response changes were applied.");
     const previousWorkspace = {
       files,
       fileAuthorship,
-      fileGroups,
       miniProjects,
       current,
       unassignedProjectInstructionDocument,
@@ -5225,6 +5200,7 @@
       projectInstructionInstanceId,
       workspaceDraftCanvasRestored,
       projectInstructionStorageReadFailed,
+      draftProjectConversation,
     };
     files = createDictionary(cloneJsonMetadata(rawData.files, {}));
     fileAuthorship = createDictionary(
@@ -5233,16 +5209,15 @@
     for (const fileName of Object.keys(files)) {
       setFileAuthorship(fileName, fileAuthorship[fileName], files[fileName]);
     }
-    fileGroups = createDictionary(cloneJsonMetadata(rawData.fileGroups, {}));
     miniProjects = createDictionary(cloneJsonMetadata(rawData.miniProjects, {}));
     current = typeof rawData.current === "string" ? rawData.current : null;
     unassignedProjectInstructionDocument = normalizeProjectInstructionDocument(rawData.draftCanvas);
+    draftProjectConversation = rawData.draftConversation ? normalizeProjectConversation(rawData.draftConversation, { recoverPending: true }) : null;
     workspaceDraftCanvasRestored = true;
     projectInstructionStorageReadFailed = false;
-    normalizeFileGroups();
     normalizeMiniProjectInstances();
     if (current && !hasFile(current)) current = null;
-    migrateLooseFilesToProjects();
+    migrateLooseFilesToProjects(rawData.fileGroups);
     if (!current) current = getVisibleWorkspaceFileNames()[0] || null;
     const activeProject = getMiniProjectForFile(current);
     projectInstructionInstanceId = activeProject?.instanceId || null;
@@ -5251,9 +5226,9 @@
     try {
       persistState({ throwOnError: true });
     } catch (error) {
-      ({ files, fileAuthorship, fileGroups, miniProjects, current,
+      ({ files, fileAuthorship, miniProjects, current,
         unassignedProjectInstructionDocument, projectInstructionDocument,
-        projectInstructionInstanceId, workspaceDraftCanvasRestored, projectInstructionStorageReadFailed } =
+        projectInstructionInstanceId, workspaceDraftCanvasRestored, projectInstructionStorageReadFailed, draftProjectConversation } =
         previousWorkspace);
       console.warn("The cloud AVR workspace could not be saved locally:", error);
       return false;
@@ -5262,9 +5237,9 @@
       window.clearTimeout(saveTimer);
       saveTimer = null;
     }
-    if (documentationEditSaveTimer) {
-      window.clearTimeout(documentationEditSaveTimer);
-      documentationEditSaveTimer = null;
+    if (documentationSaveTimer) {
+      window.clearTimeout(documentationSaveTimer);
+      documentationSaveTimer = null;
     }
     for (const scope of projectInstructionSaveJobs.keys()) {
       cancelProjectInstructionSave(scope);
@@ -5279,25 +5254,19 @@
     }
     updateEditorFileWatermark(current || "");
     activateCurrentProjectCanvas({ savePrevious: false });
+    projectChatController?.refresh({ force: true });
     refreshDocumentationPane();
     scheduleDocumentationMarkerRefresh();
     resetHexArtifact();
-    updateCompilePanelState(true);
+    updateCompilePanelState();
     return true;
   }
 
-  function applyProjectAiAccountDocument(kind, data) {
+
+  function applyProjectAiAccountWorkspace(data) {
     projectAiAccountWorkspaceApplying = true;
-    try {
-      if (kind === "files") {
-        if (!applyProjectAiAccountFilesSnapshot(data)) return false;
-      } else {
-        return false;
-      }
-      return true;
-    } finally {
-      projectAiAccountWorkspaceApplying = false;
-    }
+    try { return applyProjectAiAccountFilesSnapshot(data); }
+    finally { projectAiAccountWorkspaceApplying = false; }
   }
 
   function normalizeProjectAiRemoteDocument(rawDocument) {
@@ -5315,58 +5284,51 @@
     };
   }
 
-  function scheduleProjectAiAccountDocumentSave(kind, delay = 700) {
-    if (kind !== "files") return;
-    if (!projectAiAccountSync.ready || projectAiAccountSync.conflicts[kind]) return;
-    const currentTimer = projectAiAccountFilesSaveTimer;
-    if (currentTimer) window.clearTimeout(currentTimer);
-    const timer = window.setTimeout(() => {
-      projectAiAccountFilesSaveTimer = null;
-      void saveProjectAiAccountDocument(kind);
+
+  function scheduleProjectAiAccountWorkspaceSave(delay = 700) {
+    if (!projectAiAccountSync.ready || projectAiAccountSync.conflict) return;
+    if (projectAiAccountSaveTimer) window.clearTimeout(projectAiAccountSaveTimer);
+    projectAiAccountSaveTimer = window.setTimeout(() => {
+      projectAiAccountSaveTimer = null;
+      void saveProjectAiAccountWorkspace();
     }, delay);
-    projectAiAccountFilesSaveTimer = timer;
   }
 
-  function markProjectAiAccountDocumentDirty(kind) {
-    if (kind !== "files") return;
-    projectAiAccountSync.dirty[kind] = true;
-    projectAiAccountSync.mutations[kind] += 1;
-    setProjectAiLocalDirty(kind, true);
+
+  function markProjectAiAccountWorkspaceDirty() {
+    projectAiAccountSync.dirty = true;
+    projectAiAccountSync.mutation += 1;
+    setProjectAiLocalDirty(true);
     persistProjectAiAccountSyncState();
-    scheduleProjectAiAccountDocumentSave(kind);
+    scheduleProjectAiAccountWorkspaceSave();
   }
 
-  function getProjectAiAccountConflictMessage(kind) {
-    return "Projects changed in another tab or browser. The local copy was kept and cloud saving was paused to avoid overwriting it.";
-  }
-
-  function getProjectAiAccountSaveFailureMessage(kind, result, status) {
-    const label = getProjectAiAccountDocumentLabel(kind);
+  function getProjectAiAccountSaveFailureMessage(result, status) {
     const detail = String(result?.message || "").trim();
-    return `${label} remain saved locally, but cloud sync was paused${
+    return `Projects remain saved locally, but cloud sync was paused${
       detail ? `: ${detail}` : ` after server error ${status}`
     }`;
   }
 
-  async function saveProjectAiAccountDocument(kind) {
+  async function saveProjectAiAccountWorkspace() {
+    if (!preserveUnreadableWorkspace()) return;
     if (
-      kind !== "files" ||
       !projectAiAccountSync.ready ||
-      !projectAiAccountSync.dirty[kind] ||
-      projectAiAccountSync.saving[kind] ||
-      projectAiAccountSync.conflicts[kind]
+      !projectAiAccountSync.dirty ||
+      projectAiAccountSync.saving ||
+      projectAiAccountSync.conflict
     ) {
       return;
     }
-    const mutation = projectAiAccountSync.mutations[kind];
-    const baseRevision = projectAiAccountSync.revisions[kind];
-    const data = getProjectAiAccountDocumentSnapshot(kind);
+    const mutation = projectAiAccountSync.mutation;
+    const baseRevision = projectAiAccountSync.revision;
+    const data = getProjectAiAccountFilesSnapshot();
     const workspaceEpoch = projectAiAccountWorkspaceEpoch;
     const accountKey = projectAiAccountSync.accountKey;
-    projectAiAccountSync.saving[kind] = true;
+    projectAiAccountSync.saving = true;
     let retryDelay = 0;
     try {
-      const response = await fetch(`${PROJECT_AI_ACCOUNT_WORKSPACE_URL}/${kind}`, {
+      const response = await fetch(`${PROJECT_AI_ACCOUNT_WORKSPACE_URL}/files`, {
         method: "PUT",
         headers: {
           Accept: "application/json",
@@ -5394,7 +5356,7 @@
       ) {
         reportProjectCanvasMessage(
           "system",
-          `The local ${getProjectAiAccountDocumentLabel(kind)} copy remains saved because the Google account changed in another tab. Cloud sync will reconnect to the current account before saving.`
+          `The local Projects copy remains saved because the Google account changed in another tab. Cloud sync will reconnect to the current account before saving.`
         );
         resetProjectAiAccountWorkspaceRuntime();
         void fetchProjectAiAuthSession().catch((error) => {
@@ -5403,26 +5365,26 @@
         return;
       }
       if (response.status === 409) {
-        projectAiAccountSync.conflicts[kind] = true;
+        projectAiAccountSync.conflict = true;
         persistProjectAiAccountSyncState();
         reportProjectCanvasMessage(
           "system",
-          `${getProjectAiAccountConflictMessage(kind)} Reload the page to choose which copy to use.`
+          `Projects changed in another tab or browser. The local copy was kept and cloud saving was paused to avoid overwriting it. Reload the page to choose which copy to use.`
         );
         return;
       }
       if (response.status === 401 || response.status === 403) {
         expireProjectAiWorkspaceSession(
-          `The local ${getProjectAiAccountDocumentLabel(kind)} copy remains saved. The Google session expired; sign in again to resume cloud sync.`
+          `The local Projects copy remains saved. The Google session expired; sign in again to resume cloud sync.`
         );
         return;
       }
       if ([400, 413, 415].includes(response.status)) {
-        projectAiAccountSync.dirty[kind] = false;
+        projectAiAccountSync.dirty = false;
         persistProjectAiAccountSyncState();
         reportProjectCanvasMessage(
           "system",
-          getProjectAiAccountSaveFailureMessage(kind, result, response.status)
+          getProjectAiAccountSaveFailureMessage(result, response.status)
         );
         return;
       }
@@ -5434,21 +5396,21 @@
           }
         }
         throw new Error(
-          String(result?.message || `Account ${kind} save failed (${response.status}).`)
+          String(result?.message || `Account workspace save failed (${response.status}).`)
         );
       }
-      const savedDocument = result.document || result[kind] || result;
+      const savedDocument = result.document || result.files || result;
       const revision = Number(savedDocument?.revision);
       if (!Number.isSafeInteger(revision) || revision <= baseRevision) {
-        throw new Error(`Account ${kind} save returned an invalid revision.`);
+        throw new Error(`Account workspace save returned an invalid revision.`);
       }
-      projectAiAccountSync.revisions[kind] = revision;
+      projectAiAccountSync.revision = revision;
       projectAiAccountSync.legacyInstructionRevision = null;
-      projectAiAccountSync.dirty[kind] =
-        projectAiAccountSync.mutations[kind] !== mutation;
-      projectAiAccountSync.retries[kind] = 0;
-      if (!projectAiAccountSync.dirty[kind]) {
-        setProjectAiLocalDirty(kind, false);
+      projectAiAccountSync.dirty =
+        projectAiAccountSync.mutation !== mutation;
+      projectAiAccountSync.retryCount = 0;
+      if (!projectAiAccountSync.dirty) {
+        setProjectAiLocalDirty(false);
         setProjectAiAccountStatus("Projects synchronized with your account.", "success");
       }
       persistProjectAiAccountSyncState();
@@ -5459,14 +5421,16 @@
       ) {
         return;
       }
-      projectAiAccountSync.retries[kind] += 1;
+      projectAiAccountSync.retryCount += 1;
       retryDelay =
         retryDelay ||
         Math.min(
           60_000,
-          1800 * 2 ** Math.min(projectAiAccountSync.retries[kind] - 1, 5)
+          1800 * 2 ** Math.min(projectAiAccountSync.retryCount - 1, 5)
         );
-      console.warn(`Account ${kind} sync failed:`, error);
+      console.warn(`Account workspace sync failed:`, error);
+      window.UartDebugNotifications?.notify({ key: "account-sync", title: "Account synchronization", tone: "warning",
+        message: "Projects could not be synchronized. Retrying automatically.", details: error.message || String(error) });
     } finally {
       if (
         workspaceEpoch !== projectAiAccountWorkspaceEpoch ||
@@ -5474,56 +5438,43 @@
       ) {
         return;
       }
-      projectAiAccountSync.saving[kind] = false;
+      projectAiAccountSync.saving = false;
       if (
         projectAiAccountSync.ready &&
-        projectAiAccountSync.dirty[kind] &&
-        !projectAiAccountSync.conflicts[kind]
+        projectAiAccountSync.dirty &&
+        !projectAiAccountSync.conflict
       ) {
-        scheduleProjectAiAccountDocumentSave(kind, retryDelay || 1800);
+        scheduleProjectAiAccountWorkspaceSave(retryDelay || 1800);
       }
     }
   }
 
+
   function resetProjectAiAccountWorkspaceRuntime() {
+    projectChatController?.flush();
+    projectChatController?.cancel("Account access changed. No response changes were applied.");
     projectAiAccountWorkspaceEpoch += 1;
+    projectChatController?.refresh({ force: true });
     projectAiAccountWorkspacePromise = null;
     projectAiAccountSync.ready = false;
-    if (projectAiAccountWorkspaceRetryTimer) {
-      window.clearTimeout(projectAiAccountWorkspaceRetryTimer);
-      projectAiAccountWorkspaceRetryTimer = null;
-    }
+    if (projectAiAccountWorkspaceRetryTimer) window.clearTimeout(projectAiAccountWorkspaceRetryTimer);
+    projectAiAccountWorkspaceRetryTimer = null;
     projectAiAccountWorkspaceRetryCount = 0;
-    for (const timer of [
-      projectAiAccountFilesSaveTimer,
-    ]) {
-      if (timer) window.clearTimeout(timer);
-    }
-    projectAiAccountFilesSaveTimer = null;
-    for (const kind of ["files"]) {
-      projectAiAccountSync.saving[kind] = false;
-      projectAiAccountSync.retries[kind] = 0;
-    }
+    if (projectAiAccountSaveTimer) window.clearTimeout(projectAiAccountSaveTimer);
+    projectAiAccountSaveTimer = null;
+    projectAiAccountSync.saving = false;
+    projectAiAccountSync.retryCount = 0;
   }
 
-  function hasMeaningfulProjectAiLocalDocument(kind) {
-    if (kind === "files") {
-      const snapshot = getProjectAiAccountFilesSnapshot();
-      const fileEntries = Object.entries(snapshot.files || {});
-      return (
-        fileEntries.some(
-          ([name, content]) => name !== "main.c" || String(content || "").length > 0
-        ) ||
-        Object.keys(snapshot.fileGroups || {}).length > 0 ||
-        Object.keys(snapshot.miniProjects || {}).length > 0 ||
-        String(snapshot.draftCanvas.markdown || "").trim().length > 0
-      );
-    }
-    return false;
-  }
 
-  function getProjectAiAccountDocumentLabel(kind) {
-    return "Projects";
+  function hasMeaningfulProjectAiLocalWorkspace() {
+    const snapshot = getProjectAiAccountFilesSnapshot();
+    return Object.entries(snapshot.files || {}).some(
+      ([name, content]) => name !== "main.c" || String(content || "").length > 0
+    ) ||
+      Object.keys(snapshot.miniProjects || {}).length > 0 ||
+      String(snapshot.draftCanvas.markdown || "").trim().length > 0 ||
+      !!snapshot.draftConversation?.messages.length || !!snapshot.draftConversation?.draft.trim();
   }
 
   function expireProjectAiWorkspaceSession(message) {
@@ -5572,402 +5523,213 @@
     }, delay);
   }
 
-  function pauseProjectAiAccountDocumentForRecoveryFailure(kind) {
-    projectAiAccountSync.dirty[kind] = false;
-    projectAiAccountSync.conflicts[kind] = true;
-    reportProjectCanvasMessage(
-      "system",
-      `The local ${getProjectAiAccountDocumentLabel(kind)} copy was not replaced because the browser could not safely persist both the local recovery and cloud copies. Free some browser storage and reload to choose again.`
-    );
+
+  function pauseProjectAiAccountWorkspaceForRecoveryFailure() {
+    projectAiAccountSync.dirty = false;
+    projectAiAccountSync.conflict = true;
+    reportProjectCanvasMessage("system",
+      "The local Projects copy was not replaced because the browser could not safely persist both the local recovery and cloud copies. Free some browser storage and reload to choose again.");
   }
 
+
   async function initializeProjectAiAccountWorkspace() {
+    if (!preserveUnreadableWorkspace()) return null;
     if (projectAiAccountSync.ready) return null;
-    if (projectAiAccountWorkspacePromise) {
-      return projectAiAccountWorkspacePromise;
-    }
+    if (projectAiAccountWorkspacePromise) return projectAiAccountWorkspacePromise;
     const workspaceEpoch = ++projectAiAccountWorkspaceEpoch;
-    const mutationsAtStart = { ...projectAiAccountSync.mutations };
+    const mutationAtStart = projectAiAccountSync.mutation;
     const promise = (async () => {
       const response = await fetch(PROJECT_AI_ACCOUNT_WORKSPACE_URL, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-        credentials: "same-origin",
+        method: "GET", headers: { Accept: "application/json" }, credentials: "same-origin",
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || result?.ok !== true) {
-        const loadError = new Error(
-          String(result?.message || `Account workspace could not be loaded (${response.status}).`)
-        );
-        loadError.httpStatus = response.status;
-        loadError.retryAfterSeconds = response.headers.get("Retry-After");
-        throw loadError;
+        const error = new Error(String(result?.message || `Account workspace could not be loaded (${response.status}).`));
+        error.httpStatus = response.status;
+        error.retryAfterSeconds = response.headers.get("Retry-After");
+        throw error;
       }
-      if (
-        workspaceEpoch !== projectAiAccountWorkspaceEpoch ||
-        projectAiAuthSession?.authenticated !== true
-      ) {
-        return null;
-      }
+      if (workspaceEpoch !== projectAiAccountWorkspaceEpoch || projectAiAuthSession?.authenticated !== true) return null;
       const accountKey = String(result.accountKey || "").trim();
       if (!accountKey) throw new Error("Account workspace identity is missing.");
       const stored = readStoredProjectAiAccountSync();
       const sameAccount = stored?.accountKey === accountKey;
-      const differentKnownAccount =
-        !!stored?.accountKey && stored.accountKey !== accountKey;
+      const differentKnownAccount = !!stored?.accountKey && !sameAccount;
       const documents = result.documents || result.workspace || result;
-      const remoteFiles = normalizeProjectAiRemoteDocument(documents.files);
+      const remote = normalizeProjectAiRemoteDocument(documents.files);
       const legacyInstruction = normalizeProjectAiRemoteDocument(documents.instruction);
-      const migrationRequired = remoteFiles.data?.schemaVersion !== 3;
-      projectAiAccountSync.legacyInstructionRevision = migrationRequired
-        ? legacyInstruction.revision : null;
-      if (migrationRequired && (remoteFiles.data !== null || legacyInstruction.data !== null)) {
-        remoteFiles.data = migrateLegacyProjectAiAccountSnapshot(remoteFiles.data, legacyInstruction.data);
+      const instructionMigrationRequired = remote.data?.schemaVersion !== 3;
+      const migrationRequired = instructionMigrationRequired || Object.hasOwn(remote.data || {}, "fileGroups");
+      projectAiAccountSync.legacyInstructionRevision = instructionMigrationRequired ? legacyInstruction.revision : null;
+      if (instructionMigrationRequired && (remote.data !== null || legacyInstruction.data !== null)) {
+        remote.data = migrateLegacyProjectAiAccountSnapshot(remote.data, legacyInstruction.data);
       }
       projectAiAccountSync.accountKey = accountKey;
-      const localRecoveryAccountKey =
-        String(stored?.accountKey || "").trim() || "browser-local";
+      const localRecoveryAccountKey = String(stored?.accountKey || "").trim() || "browser-local";
 
       if (!sameAccount) {
-        for (const kind of ["files"]) {
-          projectAiAccountSync.revisions[kind] = 0;
-          projectAiAccountSync.dirty[kind] = false;
-          projectAiAccountSync.conflicts[kind] = true;
-          projectAiAccountSync.retries[kind] = 0;
-        }
+        Object.assign(projectAiAccountSync, { revision: 0, dirty: false, conflict: true, retryCount: 0 });
         if (!persistProjectAiAccountSyncState()) {
           projectAiAccountSync.accountKey = String(stored?.accountKey || "");
-          const message =
-            "The Google account workspace was not opened because the browser could not safely record the account transition. Local data was not changed. Free some browser storage and reload.";
+          const message = "The Google account workspace was not opened because the browser could not safely record the account transition. Local data was not changed. Free some browser storage and reload.";
           reportProjectCanvasMessage("system", message);
           setProjectAiAccountStatus(message, "error");
           return null;
         }
       }
 
-      const remoteDocuments = { files: remoteFiles };
-      const missingImportCandidates = differentKnownAccount
-        ? ["files"].filter(
-            (kind) =>
-              remoteDocuments[kind].revision === 0 &&
-              remoteDocuments[kind].data === null &&
-              hasMeaningfulProjectAiLocalDocument(kind)
-          )
-        : [];
       let importMissingFromPreviousAccount = false;
-      if (missingImportCandidates.length) {
+      if (differentKnownAccount && remote.revision === 0 && remote.data === null && hasMeaningfulProjectAiLocalWorkspace()) {
         importMissingFromPreviousAccount = await showSiteConfirm({
           title: "Different Google account",
-          message:
-            "This browser still contains local AVR data from another account. Import the local data into this Google account? Choose Start empty to keep it out of the new account; a recovery copy remains in this browser.",
-          confirmText: "Import local data",
-          cancelText: "Start empty",
+          message: "This browser still contains local AVR data from another account. Import the local data into this Google account? Choose Start empty to keep it out of the new account; a recovery copy remains in this browser.",
+          confirmText: "Import local data", cancelText: "Start empty",
         });
         if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
       }
 
-      const pendingConflicts = [];
+      const storedRevision = sameAccount ? Number(stored.revision) : 0;
+      const mutationChangedDuringRequest = projectAiAccountSync.mutation !== mutationAtStart;
+      const localDirty = projectAiAccountSync.localDirty || mutationChangedDuringRequest ||
+        (sameAccount && stored.dirty) || (!stored && hasMeaningfulProjectAiLocalWorkspace());
+      const rememberedConflict = sameAccount && stored.conflict;
+      projectAiAccountSync.revision = sameAccount && Number.isSafeInteger(storedRevision) ? storedRevision : 0;
+      Object.assign(projectAiAccountSync, { dirty: false, conflict: false, retryCount: 0 });
+      let pendingConflict = false;
+      const preserveLocalCopy = sourceAccountKey => saveProjectAiWorkspaceRecovery(
+        getProjectAiAccountFilesSnapshot(), sourceAccountKey
+      );
+      const applyCloudCopy = sourceAccountKey => {
+        if (!preserveLocalCopy(sourceAccountKey)) {
+          projectAiAccountSync.conflict = true;
+          pendingConflict = true;
+          return false;
+        }
+        if (!applyProjectAiAccountWorkspace(remote.data)) {
+          pauseProjectAiAccountWorkspaceForRecoveryFailure();
+          return false;
+        }
+        projectAiAccountSync.revision = remote.revision;
+        setProjectAiLocalDirty(false);
+        return true;
+      };
 
-      for (const kind of ["files"]) {
-        const remote = remoteDocuments[kind];
-        const storedRevision = sameAccount ? Number(stored.revisions?.[kind]) : 0;
-        const mutationChangedDuringRequest =
-          projectAiAccountSync.mutations[kind] !== mutationsAtStart[kind];
-        const localDirty =
-          projectAiLocalDirty[kind] === true ||
-          mutationChangedDuringRequest ||
-          (sameAccount && stored.dirty?.[kind] === true) ||
-          (!stored && hasMeaningfulProjectAiLocalDocument(kind));
-        const rememberedConflict =
-          sameAccount && stored.conflicts?.[kind] === true;
-        projectAiAccountSync.revisions[kind] =
-          sameAccount && Number.isSafeInteger(storedRevision)
-            ? storedRevision
-            : 0;
-        projectAiAccountSync.dirty[kind] = false;
-        projectAiAccountSync.conflicts[kind] = false;
-        projectAiAccountSync.retries[kind] = 0;
-
+      const reconcileWorkspace = async () => {
         if (remote.data === null) {
-          projectAiAccountSync.revisions[kind] = 0;
+          projectAiAccountSync.revision = 0;
+          let importLocal = true;
           if (rememberedConflict) {
-            const label = getProjectAiAccountDocumentLabel(kind);
-            const importLocal = await showSiteConfirm({
-              title: `Empty cloud workspace: ${label}`,
-              message: `The cloud has no ${label} copy, while this browser still has local data from an unresolved account transition. Import the local copy into this account? Choose Start empty to keep the local data out of the account; a recovery copy will be kept.`,
-              confirmText: "Import local data",
-              cancelText: "Start empty",
+            importLocal = await showSiteConfirm({
+              title: "Empty cloud workspace: Projects",
+              message: "The cloud has no Projects copy, while this browser still has local data from an unresolved account transition. Import the local copy into this account? Choose Start empty to keep the local data out of the account; a recovery copy will be kept.",
+              confirmText: "Import local data", cancelText: "Start empty",
             });
-            if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
-            if (!importLocal) {
-              const recoverySaved = saveProjectAiRecoveryCopy(
-                kind,
-                getProjectAiAccountDocumentSnapshot(kind),
-                localRecoveryAccountKey
-              );
-              if (!recoverySaved) {
-                pauseProjectAiAccountDocumentForRecoveryFailure(kind);
-                continue;
-              }
-              const emptyApplied = applyProjectAiAccountDocument(
-                kind,
-                getEmptyProjectAiAccountDocument(kind)
-              );
-              if (!emptyApplied) {
-                pauseProjectAiAccountDocumentForRecoveryFailure(kind);
-                continue;
-              }
-            }
-            projectAiAccountSync.conflicts[kind] = false;
-            projectAiAccountSync.dirty[kind] = true;
-            setProjectAiLocalDirty(kind, true);
-            continue;
+            if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return;
+          } else if (differentKnownAccount) importLocal = importMissingFromPreviousAccount;
+          if (!importLocal && (!preserveLocalCopy(localRecoveryAccountKey) ||
+              !applyProjectAiAccountWorkspace(getEmptyProjectAiAccountWorkspace()))) {
+            pauseProjectAiAccountWorkspaceForRecoveryFailure();
+            return;
           }
-          if (differentKnownAccount && !importMissingFromPreviousAccount) {
-            const recoverySaved = saveProjectAiRecoveryCopy(
-              kind,
-              getProjectAiAccountDocumentSnapshot(kind),
-              localRecoveryAccountKey
-            );
-            if (!recoverySaved) {
-              pauseProjectAiAccountDocumentForRecoveryFailure(kind);
-              continue;
-            }
-            const emptyApplied = applyProjectAiAccountDocument(
-              kind,
-              getEmptyProjectAiAccountDocument(kind)
-            );
-            if (!emptyApplied) {
-              pauseProjectAiAccountDocumentForRecoveryFailure(kind);
-              continue;
-            }
-          }
-          projectAiAccountSync.dirty[kind] = true;
-          setProjectAiLocalDirty(kind, true);
-          continue;
+          projectAiAccountSync.dirty = true;
+          setProjectAiLocalDirty(true);
+          return;
         }
-
         if (!sameAccount) {
-          if (!differentKnownAccount && localDirty) {
-            projectAiAccountSync.conflicts[kind] = true;
-            pendingConflicts.push({ kind, remote });
-            continue;
-          }
-          if (mutationChangedDuringRequest) {
-            projectAiAccountSync.conflicts[kind] = true;
-            pendingConflicts.push({ kind, remote });
-            continue;
-          }
-          const recoverySaved = saveProjectAiRecoveryCopy(
-            kind,
-            getProjectAiAccountDocumentSnapshot(kind),
-            localRecoveryAccountKey
-          );
-          if (!recoverySaved) {
-            projectAiAccountSync.conflicts[kind] = true;
-            pendingConflicts.push({ kind, remote });
-            continue;
-          }
-          if (!applyProjectAiAccountDocument(kind, remote.data)) {
-            pauseProjectAiAccountDocumentForRecoveryFailure(kind);
-            continue;
-          }
-          projectAiAccountSync.revisions[kind] = remote.revision;
-          setProjectAiLocalDirty(kind, false);
-          continue;
+          if ((!differentKnownAccount && localDirty) || mutationChangedDuringRequest) {
+            projectAiAccountSync.conflict = true;
+            pendingConflict = true;
+          } else applyCloudCopy(localRecoveryAccountKey);
+          return;
         }
-
         if (rememberedConflict) {
-          projectAiAccountSync.conflicts[kind] = true;
-          pendingConflicts.push({ kind, remote });
-          continue;
+          projectAiAccountSync.conflict = true;
+          pendingConflict = true;
+          return;
         }
-        if (
-          Number.isSafeInteger(storedRevision) &&
-          storedRevision === remote.revision
-        ) {
-          if (projectAiAccountDocumentsMatch(kind, remote.data)) {
-            projectAiAccountSync.dirty[kind] = false;
-            setProjectAiLocalDirty(kind, false);
-            continue;
-          }
-          if (localDirty) {
-            projectAiAccountSync.dirty[kind] = true;
-            projectAiAccountSync.conflicts[kind] = true;
-            pendingConflicts.push({ kind, remote });
-            continue;
-          }
-          const recoverySaved = saveProjectAiRecoveryCopy(
-            kind,
-            getProjectAiAccountDocumentSnapshot(kind),
-            accountKey
-          );
-          if (!recoverySaved) {
-            projectAiAccountSync.conflicts[kind] = true;
-            pendingConflicts.push({ kind, remote });
-            continue;
-          }
-          if (!applyProjectAiAccountDocument(kind, remote.data)) {
-            pauseProjectAiAccountDocumentForRecoveryFailure(kind);
-            continue;
-          }
-          projectAiAccountSync.dirty[kind] = false;
-          setProjectAiLocalDirty(kind, false);
-          continue;
+        if (Number.isSafeInteger(storedRevision) && storedRevision === remote.revision &&
+            projectAiAccountWorkspaceMatches(remote.data)) {
+          setProjectAiLocalDirty(false);
+          return;
         }
         if (localDirty) {
-          projectAiAccountSync.dirty[kind] = true;
-          projectAiAccountSync.conflicts[kind] = true;
-          pendingConflicts.push({ kind, remote });
-          continue;
+          projectAiAccountSync.dirty = true;
+          projectAiAccountSync.conflict = true;
+          pendingConflict = true;
+          return;
         }
+        applyCloudCopy(accountKey);
+      };
+      await reconcileWorkspace();
+      if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
 
-        const recoverySaved = saveProjectAiRecoveryCopy(
-          kind,
-          getProjectAiAccountDocumentSnapshot(kind),
-          accountKey
-        );
-        if (!recoverySaved) {
-          projectAiAccountSync.conflicts[kind] = true;
-          pendingConflicts.push({ kind, remote });
-          continue;
-        }
-        if (!applyProjectAiAccountDocument(kind, remote.data)) {
-          pauseProjectAiAccountDocumentForRecoveryFailure(kind);
-          continue;
-        }
-        projectAiAccountSync.revisions[kind] = remote.revision;
-        setProjectAiLocalDirty(kind, false);
-      }
-
-      for (const { kind, remote } of pendingConflicts) {
-        const label = getProjectAiAccountDocumentLabel(kind);
+      if (pendingConflict) {
         const useCloud = await showSiteConfirm({
-          title: `Cloud sync conflict: ${label}`,
-          message: `A newer cloud copy exists for ${label}. Load that cloud copy on this device? A local recovery copy will be kept. Choose Pause sync to keep this local version without overwriting the cloud.`,
-          confirmText: "Use cloud copy",
-          cancelText: "Pause sync",
+          title: "Cloud sync conflict: Projects",
+          message: "A newer cloud copy exists for Projects. Load that cloud copy on this device? A local recovery copy will be kept. Choose Pause sync to keep this local version without overwriting the cloud.",
+          confirmText: "Use cloud copy", cancelText: "Pause sync",
         });
         if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
-        if (!useCloud) {
-          reportProjectCanvasMessage(
-            "system",
-            `Cloud sync is paused for ${label}. Nothing was overwritten. Reload the page when you are ready to choose again.`
-          );
-          continue;
+        if (!useCloud) reportProjectCanvasMessage("system",
+          "Cloud sync is paused for Projects. Nothing was overwritten. Reload the page when you are ready to choose again.");
+        else if (!preserveLocalCopy(sameAccount ? accountKey : localRecoveryAccountKey) ||
+            !applyProjectAiAccountWorkspace(remote.data)) pauseProjectAiAccountWorkspaceForRecoveryFailure();
+        else {
+          projectAiAccountSync.revision = remote.revision;
+          projectAiAccountSync.dirty = false;
+          projectAiAccountSync.conflict = false;
+          setProjectAiLocalDirty(false);
         }
-        const recoverySaved = saveProjectAiRecoveryCopy(
-          kind,
-          getProjectAiAccountDocumentSnapshot(kind),
-          sameAccount ? accountKey : localRecoveryAccountKey
-        );
-        if (!recoverySaved) {
-          pauseProjectAiAccountDocumentForRecoveryFailure(kind);
-          continue;
-        }
-        if (!applyProjectAiAccountDocument(kind, remote.data)) {
-          pauseProjectAiAccountDocumentForRecoveryFailure(kind);
-          continue;
-        }
-        projectAiAccountSync.revisions[kind] = remote.revision;
-        projectAiAccountSync.dirty[kind] = false;
-        projectAiAccountSync.conflicts[kind] = false;
-        setProjectAiLocalDirty(kind, false);
       }
 
       if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
-      // Accepting a legacy cloud copy is a migration, not a completed sync.
-      // Save the consolidated envelope with the files revision and the legacy
-      // instruction revision captured by the same GET.
-      if (migrationRequired && !projectAiAccountSync.conflicts.files) {
-        projectAiAccountSync.dirty.files = true;
-        setProjectAiLocalDirty("files", true);
+      // The first unified save checks both revisions captured by this GET.
+      if (migrationRequired && !projectAiAccountSync.conflict) {
+        projectAiAccountSync.dirty = true;
+        setProjectAiLocalDirty(true);
       }
       projectAiAccountSync.ready = true;
-      if (projectAiAccountWorkspaceRetryTimer) {
-        window.clearTimeout(projectAiAccountWorkspaceRetryTimer);
-        projectAiAccountWorkspaceRetryTimer = null;
-      }
+      if (projectAiAccountWorkspaceRetryTimer) window.clearTimeout(projectAiAccountWorkspaceRetryTimer);
+      projectAiAccountWorkspaceRetryTimer = null;
       projectAiAccountWorkspaceRetryCount = 0;
-      const pausedKinds = ["files"].filter(
-        (kind) => projectAiAccountSync.conflicts[kind]
-      );
-      if (pausedKinds.length) {
-        setProjectAiAccountStatus(
-          `Cloud sync is paused for ${pausedKinds
-            .map(getProjectAiAccountDocumentLabel)
-            .join(", ")}. Local data was not overwritten.`,
-          "error"
-        );
-      } else if (projectAiAccountSync.dirty.files) {
-        setProjectAiAccountStatus("Projects are saved locally; synchronizing your account…", "");
-      } else {
-        setProjectAiAccountStatus("Projects synchronized with your account.", "success");
-      }
+      if (projectAiAccountSync.conflict) setProjectAiAccountStatus(
+        "Cloud sync is paused for Projects. Local data was not overwritten.", "error");
+      else if (projectAiAccountSync.dirty) setProjectAiAccountStatus(
+        "Projects are saved locally; synchronizing your account…", "");
+      else setProjectAiAccountStatus("Projects synchronized with your account.", "success");
       persistProjectAiAccountSyncState();
-      for (const kind of ["files"]) {
-        if (projectAiAccountSync.dirty[kind]) {
-          scheduleProjectAiAccountDocumentSave(kind, 60);
-        }
-      }
+      if (projectAiAccountSync.dirty) scheduleProjectAiAccountWorkspaceSave(60);
       return result;
     })();
     projectAiAccountWorkspacePromise = promise;
-    try {
-      return await promise;
-    } catch (error) {
+    try { return await promise; }
+    catch (error) {
       if (workspaceEpoch === projectAiAccountWorkspaceEpoch) {
         const status = Number(error?.httpStatus);
-        if (status === 401 || status === 403) {
-          expireProjectAiWorkspaceSession(
-            "The Google session expired. Your local changes are safe; sign in again to resume cloud sync."
-          );
-        } else if (!status || status === 429 || status >= 500) {
-          scheduleProjectAiAccountWorkspaceRetry(error, workspaceEpoch);
-        } else {
-          setProjectAiAccountStatus(
-            "Cloud workspace sync is paused because the server rejected the load request. Your local changes are safe.",
-            "error"
-          );
-        }
+        if (status === 401 || status === 403) expireProjectAiWorkspaceSession(
+          "The Google session expired. Your local changes are safe; sign in again to resume cloud sync.");
+        else if (!status || status === 429 || status >= 500) scheduleProjectAiAccountWorkspaceRetry(error, workspaceEpoch);
+        else setProjectAiAccountStatus(
+          "Cloud workspace sync is paused because the server rejected the load request. Your local changes are safe.", "error");
       }
       throw error;
     } finally {
-      if (projectAiAccountWorkspacePromise === promise) {
-        projectAiAccountWorkspacePromise = null;
-      }
+      if (projectAiAccountWorkspacePromise === promise) projectAiAccountWorkspacePromise = null;
     }
   }
 
   function appendProjectAiThinking() {
-    const status = $("projectCanvasStatus");
-    if (!status) return null;
-    status.hidden = false;
-    status.classList.remove("is-error");
-    status.replaceChildren();
-    const indicator = document.createElement("div");
-    const label = document.createElement("span");
-    label.className = "project-ai-thinking-stage";
-    label.textContent = "Analyzing the canvas…";
-    indicator.appendChild(label);
-    status.appendChild(indicator);
-    return indicator;
+    projectAiNotificationId = window.UartDebugNotifications?.notify({ key: null, title: "Project review",
+      message: "Analyzing the canvas…", pending: true, tone: "info" });
+    return { id: projectAiNotificationId, _progressStages: new Map() };
   }
 
   function removeProjectAiThinking(indicator) {
-    if (indicator?._phaseTimer) {
-      window.clearInterval(indicator._phaseTimer);
-      indicator._phaseTimer = null;
-    }
-    indicator?.remove();
+    if (indicator?.id === projectAiNotificationId) projectAiNotificationId = null;
   }
 
   function renderProjectAiThinkingProgress(indicator, progress, verification) {
     if (!indicator || !progress || !Array.isArray(progress.stages)) return;
-    if (indicator._phaseTimer) {
-      window.clearInterval(indicator._phaseTimer);
-      indicator._phaseTimer = null;
-    }
     if (!(indicator._progressStages instanceof Map)) {
       indicator._progressStages = new Map();
     }
@@ -5994,31 +5756,20 @@
         failed: "Compiler repair failed",
       },
     };
-    let list = indicator.querySelector(".project-ai-progress-stages");
-    if (!list) {
-      list = document.createElement("ol");
-      list.className = "project-ai-progress-stages";
-      indicator.appendChild(list);
-    }
-    list.replaceChildren();
+    const stages = [];
     for (const stage of indicator._progressStages.values()) {
-      const item = document.createElement("li");
       const status = String(stage?.status || "completed");
-      item.className = `is-${status}`;
       const attempt = Number(stage?.attempt);
       const stageLabels = labels[stage?.id];
-      item.textContent = `${
+      stages.push(`${
         stageLabels?.[status] || stageLabels?.completed || String(stage?.id || "Step")
       }${
         Number.isSafeInteger(attempt) && attempt > 1
           ? ` · attempt ${attempt}`
           : ""
-      }`;
-      list.appendChild(item);
+      }`);
     }
-    const heading = indicator.querySelector(".project-ai-thinking-stage");
-    if (heading) {
-      heading.textContent =
+    const heading =
         verification?.status === "passed"
           ? `Verified with ${verification.mcu || "the selected MCU"}`
           : progress.status === "failed"
@@ -6026,8 +5777,9 @@
             : progress.status === "completed"
               ? "Response ready"
               : "Working on the project";
-    }
-    indicator.querySelector(".project-ai-thinking-dots")?.remove();
+    if (indicator.id) window.UartDebugNotifications?.notify({ id: indicator.id, title: "Project review",
+      message: heading, details: stages.join("\n"), pending: true,
+      tone: progress.status === "failed" ? "warning" : "info" });
   }
 
   async function readProjectAiApiResponse(response, onProgress) {
@@ -6217,12 +5969,9 @@
   }
 
   function setProjectAiAccountStatus(message = "", tone = "info") {
-    const status = $("projectAiAccountStatus");
-    if (!status) return;
     const normalizedMessage = String(message || "").trim();
-    status.textContent = normalizedMessage;
-    status.dataset.tone = tone;
-    status.hidden = !normalizedMessage;
+    if (normalizedMessage) window.UartDebugNotifications?.notify({ key: `message:${normalizedMessage}`, title: "Account",
+      message: normalizedMessage.split("\n")[0], details: normalizedMessage, tone });
   }
 
   function renderProjectAiAuthSession(session) {
@@ -6464,13 +6213,16 @@
           data.quota && typeof data.quota === "object" ? data.quota : null;
       }
 
+      const wasAuthenticated = projectAiAuthSession?.authenticated === true;
       projectAiAuthSession = data;
       renderProjectAiAuthSession(data);
       if (data.mode === "google" && data.authenticated === true) {
         void initializeProjectAiAccountWorkspace().catch((error) => {
           console.warn("Account workspace could not be initialized:", error);
+          window.UartDebugNotifications?.notify({ key: "account-workspace-init", title: "Account synchronization", tone: "error",
+            message: "Account projects could not be loaded.", details: error.message || String(error) });
         });
-      } else {
+      } else if (wasAuthenticated || projectAiAccountSync.ready || projectAiAccountSync.saving || projectAiAccountWorkspacePromise) {
         resetProjectAiAccountWorkspaceRuntime();
       }
       return data;
@@ -6674,28 +6426,14 @@
 
   function setProjectAiFormBusy(busy) {
     projectAiRequestInFlight = !!busy;
+    projectChatController?.setExternalBusy?.(!!busy);
     const button = $("projectCanvasRunBtn");
     if (button) {
       button.disabled = !!busy;
-      button.textContent = busy
-        ? "Working…" : "Review specification";
-    }
-    for (const id of ["projectGenerateCodeBtn", "projectDescribeCodeBtn"]) {
-      const control = $(id);
-      if (control) control.disabled = !!busy;
+      button.textContent = "Review specification";
     }
     $("projectCanvasForm")?.setAttribute("aria-busy", String(!!busy));
   }
-
-  function getProjectAiJsonByteLength(value) {
-    try {
-      return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-    } catch {
-      return Number.POSITIVE_INFINITY;
-    }
-  }
-
-
 
   function getProjectAiRequestPayload(operation = "analyze") {
     const linkedProject = getMiniProjectForFile(current);
@@ -6827,7 +6565,89 @@
     return definition;
   }
 
+  async function applyProjectAiResponse(data, request, operation, scopeEpoch, { allowChat = false } = {}) {
+    const baseRevision = assertProjectAiInstructionIsFresh(request, scopeEpoch);
+    const target = getCanvasTarget();
+    if (target.mcu !== request.mcu || target.packageName !== request.packageName) {
+      throw new Error("The project target changed while AI was working. No changes were applied.");
+    }
+    if (allowChat && data.kind === "chat") {
+      if (data.stage !== "chat" || data.baseRevision !== baseRevision || data.canvas || data.project) {
+        throw new Error("The server returned an incompatible chat response.");
+      }
+      return;
+    }
+    if (!["analyze", "generate", "describe"].includes(operation) ||
+        !["canvas", "project"].includes(data.kind) || data.baseRevision !== baseRevision ||
+        data.canvas?.schemaVersion !== 2 || data.canvas.revision !== baseRevision + 1 ||
+        typeof data.canvas.markdown !== "string" || !Array.isArray(data.canvas.annotations)) {
+      throw new Error("The server returned an incompatible canvas revision.");
+    }
+    if (data.stage && data.stage !== operation) throw new Error("The response belongs to a different project stage.");
+    if (operation === "analyze" && data.kind === "project") throw new Error("Review cannot change project code or resources.");
+    if (operation !== "analyze" && !(allowChat && operation === "generate") && data.canvas.markdown !== request.canvas.markdown) {
+      throw new Error("This stage cannot change the project specification.");
+    }
+    if (data.kind === "project") {
+      const definition = normalizeGeneratedAiProject(data.project);
+      const roles = definition.files.map(file => file.role).sort();
+      const expectedRoles = operation === "generate" ? ["source", "specification"] : ["guide"];
+      if (roles.join(",") !== expectedRoles.sort().join(",")) throw new Error("The response does not match the requested project stage.");
+      if (data.operation === "update") {
+        const instanceId = request.currentProject?.instanceId;
+        if (!instanceId || (data.targetInstanceId && data.targetInstanceId !== instanceId)) throw new Error("The response did not match the current project.");
+        assertProjectAiUpdateIsFresh(request);
+        await window.UartDebugAvrMiniProjects.updateInstance(instanceId, definition, { origin: "ai" });
+      } else if (data.operation === "create") {
+        if (operation !== "generate" || request.currentProject) throw new Error("The response cannot create a different project.");
+        definition.files.push({ role: "guide", name: getFileStem(definition.files.find(file => file.role === "source").name) + " (description).md", content: "", mediaType: "text/markdown", locale: "en" });
+        await window.UartDebugAvrMiniProjects.install(definition, { origin: "ai" });
+      } else throw new Error("The response did not specify a project action.");
+    }
+    applyProjectInstructionMarkdown(data.canvas.markdown, {
+      annotations: data.canvas.annotations, locale: data.canvas.locale,
+      target: data.canvas.target, expectedRevision: baseRevision,
+    });
+  }
 
+  async function requestProjectChat({ message, history, signal, onProgress, scope, requestSource = "message" }) {
+    const request = { ...getProjectAiRequestPayload(), message, history, requestSource };
+    delete request.operation;
+    const accountEpoch = projectAiAccountWorkspaceEpoch;
+    const accountKey = projectAiAuthSession?.accountKey || null;
+    const scopeEpoch = projectInstructionScopeEpoch;
+    let quotaUpdated = false;
+    try {
+      const response = await fetch("/api/avr/ai/chat", {
+        method: "POST", credentials: "same-origin", signal,
+        headers: { Accept: "application/x-ndjson, application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      const result = await readProjectAiApiResponse(response, progress => onProgress(progress));
+      if (signal.aborted) throw new DOMException("Response stopped.", "AbortError");
+      if (accountEpoch !== projectAiAccountWorkspaceEpoch || accountKey !== (projectAiAuthSession?.accountKey || null) ||
+          scope.key !== getProjectChatContext().key || scope.threadId !== getProjectChatContext().threadId) {
+        throw new Error("The active project, chat or account changed. No changes were applied.");
+      }
+      const data = result.data;
+      if (data?.quota) { updateProjectAiQuota(data.quota); quotaUpdated = true; }
+      if (result.status < 200 || result.status >= 300 || data?.ok !== true) {
+        throw new Error(String(data?.message || data?.error?.message || `Chat request failed (${result.status}).`));
+      }
+      if (requestSource === "review" && !["chat", "analyze"].includes(data.stage)) {
+        throw new Error("Review cannot change project code or documentation.");
+      }
+      if (typeof data.message !== "string" || !data.message.trim()) throw new Error("The assistant returned an empty response.");
+      projectChatApplyingResponse = true;
+      try { await applyProjectAiResponse(data, request, data.stage, scopeEpoch, { allowChat: true }); }
+      finally { projectChatApplyingResponse = false; }
+      return { message: String(data.message || "Project updated."), scope: getProjectChatContext() };
+    } finally {
+      if (projectAiAuthSession?.mode === "google" && !quotaUpdated && !signal.aborted) {
+        void fetchProjectAiAuthSession().catch(() => {});
+      }
+    }
+  }
 
   async function submitProjectCanvas(operation = "analyze") {
     if (projectAiRequestInFlight) return;
@@ -6859,50 +6679,10 @@
       if (result.status < 200 || result.status >= 300 || data?.ok !== true) {
         throw new Error(String(data?.message || data?.error?.message || `Canvas request failed (${result.status}).`));
       }
-      const baseRevision = assertProjectAiInstructionIsFresh(request, canvasScopeEpoch);
-      const target = getCanvasTarget();
-      if (target.mcu !== request.mcu || target.packageName !== request.packageName) {
-        throw new Error("The target changed while AI was working. Run the canvas again.");
-      }
-      if (!["canvas", "project"].includes(data.kind) || data.baseRevision !== baseRevision ||
-          data.canvas?.schemaVersion !== 2 || data.canvas.revision !== baseRevision + 1 ||
-          typeof data.canvas.markdown !== "string" || !Array.isArray(data.canvas.annotations)) {
-        throw new Error("The server returned an incompatible canvas revision.");
-      }
-      if (data.stage && data.stage !== operation) throw new Error("The response belongs to a different project stage.");
-      if (operation === "analyze" && data.kind === "project") throw new Error("Review cannot change project code or resources.");
-      if (operation !== "analyze" && data.canvas.markdown !== request.canvas.markdown) {
-        throw new Error("This stage cannot change the project specification.");
-      }
-      if (data.kind === "project") {
-        const definition = normalizeGeneratedAiProject(data.project);
-        const roles = definition.files.map(file => file.role).sort();
-        const expectedRoles = operation === "generate" ? ["source", "specification"] : ["guide"];
-        if (roles.join(",") !== expectedRoles.sort().join(",")) {
-          throw new Error("The response does not match the requested project stage.");
-        }
-        if (data.operation === "update") {
-          const instanceId = request.currentProject?.instanceId;
-          if (!instanceId || (data.targetInstanceId && data.targetInstanceId !== instanceId)) {
-            throw new Error("The response did not match the current mini-project.");
-          }
-          assertProjectAiUpdateIsFresh(request);
-          await window.UartDebugAvrMiniProjects.updateInstance(instanceId, definition, { origin: "ai" });
-        } else if (data.operation === "create") {
-          if (operation !== "generate" || request.currentProject) throw new Error("The response cannot create a different project.");
-          definition.files.push({ role: "guide", name: getFileStem(definition.files.find(file => file.role === "source").name) + " (description).md", content: "", mediaType: "text/markdown", locale: "en" });
-          await window.UartDebugAvrMiniProjects.install(definition, { origin: "ai" });
-        } else throw new Error("The response did not specify a project action.");
-      }
-      applyProjectInstructionMarkdown(data.canvas.markdown, {
-        annotations: data.canvas.annotations,
-        locale: data.canvas.locale,
-        target: data.canvas.target,
-        expectedRevision: baseRevision,
-      });
-      reportProjectCanvasMessage("assistant", data.message || (operation === "analyze" ? "Specification reviewed." : "Project updated."));
+      await applyProjectAiResponse(data, request, operation, canvasScopeEpoch);
+      reportProjectCanvasMessage("assistant", data.message || (operation === "analyze" ? "Specification reviewed." : "Project updated."), indicator?.id);
     } catch (error) {
-      reportProjectCanvasMessage("system", error?.message || "The canvas request could not be completed.");
+      reportProjectCanvasMessage("system", error?.message || "The canvas request could not be completed.", indicator?.id);
     } finally {
       removeProjectAiThinking(indicator);
       setProjectAiFormBusy(false);
@@ -6914,7 +6694,8 @@
 
   function handleProjectCanvasSubmit(event) {
     event.preventDefault();
-    void submitProjectCanvas();
+    if (projectChatController) void projectChatController.submit("Review the project specification. Ask any necessary questions in this chat.", { requestSource: "review" });
+    else void submitProjectCanvas();
   }
 
   function getDevicePanelHeightForState(state) {
@@ -6945,6 +6726,84 @@
     refreshWorkspaceEditors();
   }
 
+  function measureDevicePanelControls(section) {
+    const controls = new Map();
+    for (const element of section.querySelectorAll(
+      ".detect-chip-btn, .hardware-port, .hardware-flow .custom-select, .hardware-flow-light, " +
+      ".project-ai-auth > :not(button), .project-ai-budget > *"
+    )) {
+      const bounds = element.getBoundingClientRect();
+      if (bounds.width && bounds.height) {
+        const style = window.getComputedStyle(element);
+        controls.set(element, {
+          x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+          paddingLeft: style.paddingLeft, paddingRight: style.paddingRight,
+          gap: style.gap, opacity: style.opacity,
+          targetOpacity: style.getPropertyValue?.("--device-control-opacity")?.trim() || style.opacity,
+        });
+      }
+    }
+    return controls;
+  }
+
+  function finishDevicePanelControlAnimations() {
+    for (const animation of devicePanelControlAnimations) animation.cancel();
+    devicePanelControlAnimations = [];
+  }
+
+  function animateDevicePanelControls(before, section, fromHeight, toHeight) {
+    const duration = WORKSPACE_PANEL_TRANSITION_MS;
+    const options = { duration, easing: "cubic-bezier(0.22, 0.8, 0.22, 1)", fill: "both" };
+    for (const [element, bounds] of measureDevicePanelControls(section)) {
+      const previous = before?.get(element);
+      if (!previous || typeof element.animate !== "function") continue;
+      const from = {}, to = {};
+      for (const property of ["width", "height"]) {
+        if (Math.abs(previous[property] - bounds[property]) < 0.5) continue;
+        from[property] = `${previous[property]}px`;
+        to[property] = `${bounds[property]}px`;
+        if (property === "width") {
+          from.minWidth = from.width;
+          to.minWidth = to.width;
+        }
+      }
+      for (const property of ["paddingLeft", "paddingRight", "gap"]) {
+        if (previous[property] === bounds[property]) continue;
+        if (!Number.isFinite(Number.parseFloat(previous[property])) || !Number.isFinite(Number.parseFloat(bounds[property]))) continue;
+        from[property] = previous[property];
+        to[property] = bounds[property];
+      }
+      if (Object.keys(from).length) devicePanelControlAnimations.push(element.animate([from, to], options));
+      if (previous.opacity !== bounds.targetOpacity) {
+        const reveal = Number(bounds.targetOpacity) > Number(previous.opacity);
+        devicePanelControlAnimations.push(element.animate([
+          { opacity: previous.opacity, offset: 0 },
+          { opacity: reveal ? previous.opacity : bounds.targetOpacity, offset: reveal ? 0.9 : 0.1 },
+          { opacity: bounds.targetOpacity, offset: 1 },
+        ], { duration, fill: "both" }));
+      }
+    }
+    // Both modes retain the same four columns. Frame height is the only
+    // hardware layout change; account elements still share the FLIP pass.
+    for (const viewport of section.querySelectorAll(".avr-overview-viewport")) {
+      if (typeof viewport.animate !== "function") continue;
+      devicePanelControlAnimations.push(viewport.animate([
+        { height: `${fromHeight}px` }, { height: `${toHeight}px` },
+      ], options));
+    }
+    for (const [element, bounds] of measureDevicePanelControls(section)) {
+      const previous = before?.get(element);
+      if (!previous || typeof element.animate !== "function") continue;
+      const x = previous.x - bounds.x, y = previous.y - bounds.y;
+      if (Math.abs(x) < 0.5 && Math.abs(y) < 0.5) continue;
+      const transform = window.getComputedStyle(element).transform;
+      const base = transform === "none" ? "" : ` ${transform}`;
+      devicePanelControlAnimations.push(element.animate([
+        { transform: `translate(${x}px, ${y}px)${base}` }, { transform },
+      ], options));
+    }
+  }
+
   function applyDevicePanelState(
     state,
     { persist = false, animate = false } = {}
@@ -6954,14 +6813,34 @@
     const handle = $("devicePanelToggle");
     if (!section || !viewport || !handle) return;
 
-    devicePanelState = ["expanded", "compact", "collapsed"].includes(state)
+    const previousState = devicePanelState;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const nextState = ["expanded", "compact", "collapsed"].includes(state)
       ? state
       : "expanded";
+    if (previousState === nextState && devicePanelTransitionTimer && !reducedMotion) {
+      if (persist) {
+        try { window.localStorage.setItem(STORAGE_DEVICE_PANEL_STATE, nextState); } catch {}
+      }
+      return;
+    }
+    const transitioning = animate && !reducedMotion && previousState !== nextState;
+    const fromHeight = viewport.getBoundingClientRect().height;
+    const before = transitioning && fromHeight > 0.5
+      ? measureDevicePanelControls(section) : null;
+    finishDevicePanelControlAnimations();
+    if (devicePanelTransitionTimer) {
+      window.clearTimeout(devicePanelTransitionTimer);
+      devicePanelTransitionTimer = null;
+    }
+    section.classList.toggle("is-device-panel-transitioning", transitioning);
+    devicePanelState = nextState;
     devicePanelHeight = getDevicePanelHeightForState(devicePanelState);
     section.style.setProperty("--device-panel-height", `${devicePanelHeight}px`);
     section.dataset.state = devicePanelState;
+    section.querySelectorAll(".avr-target-controls .custom-select").forEach(updateCustomSelectIntrinsicWidth);
     const collapsed = devicePanelState === "collapsed" && devicePanelHeight === 0;
-    for (const panel of [viewport, $("avrAccountPanelViewport")].filter(Boolean)) {
+    for (const panel of section.querySelectorAll(".avr-overview-viewport")) {
       panel.setAttribute("aria-hidden", String(collapsed));
       if (collapsed) panel.setAttribute("inert", "");
       else panel.removeAttribute("inert");
@@ -6974,22 +6853,23 @@
       } catch {}
     }
 
-    if (devicePanelTransitionTimer) {
-      window.clearTimeout(devicePanelTransitionTimer);
-      devicePanelTransitionTimer = null;
-    }
-    section.classList.toggle("is-device-panel-transitioning", animate);
-    if (animate) {
-      devicePanelTransitionTimer = window.setTimeout(
-        () => {
-          devicePanelTransitionTimer = null;
-          section.classList.remove("is-device-panel-transitioning");
-          refreshWorkspaceAfterDevicePanelResize();
-        },
-        window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
-          ? 0
-          : 270
-      );
+    if (transitioning) animateDevicePanelControls(before, section, fromHeight, devicePanelHeight);
+    updatePanelActionContours();
+    if (transitioning) {
+      const finishTransition = () => {
+        // WAAPI can start on the next rendering frame. Do not cancel its last
+        // few pixels merely because a wall-clock timer reached the duration.
+        if (devicePanelControlAnimations.some(animation => animation.pending || animation.playState === "running")) {
+          devicePanelTransitionTimer = window.setTimeout(finishTransition, 16);
+          return;
+        }
+        devicePanelTransitionTimer = null;
+        finishDevicePanelControlAnimations();
+        updatePanelActionContours();
+        section.classList.remove("is-device-panel-transitioning");
+        refreshWorkspaceAfterDevicePanelResize();
+      };
+      devicePanelTransitionTimer = window.setTimeout(finishTransition, WORKSPACE_PANEL_TRANSITION_MS);
     }
   }
 
@@ -7024,6 +6904,10 @@
       axis: "y",
       start: () => ({ anchor: 0 }),
       move: (position, drag) => {
+        if (devicePanelTransitionTimer !== null) {
+          drag.anchor = position;
+          return;
+        }
         const delta = position - drag.anchor;
         const requestedSteps = Math.floor(Math.abs(delta) / DEVICE_PANEL_DRAG_THRESHOLD);
         if (requestedSteps < 1) return;
@@ -7040,112 +6924,58 @@
           ? position
           : drag.anchor + direction * DEVICE_PANEL_DRAG_THRESHOLD * appliedSteps;
         if (nextState === devicePanelState) return;
-        setDevicePanelState(nextState, { persist: false, animate: false });
+        setDevicePanelState(nextState, { persist: false, animate: true });
         refreshWorkspaceAfterDevicePanelResize();
       },
       finish: () => {
         setDevicePanelState(devicePanelState, { persist: true, animate: false });
         refreshWorkspaceAfterDevicePanelResize();
       },
-      key: event => {
+      key: command => {
         const states = ["collapsed", "compact", "expanded"];
         let index = states.indexOf(devicePanelState);
-        if (event.key === "ArrowUp") index = Math.max(0, index - 1);
-        else if (event.key === "ArrowDown") index = Math.min(states.length - 1, index + 1);
-        else if (event.key === "Home") index = 0;
-        else if (event.key === "End") index = states.length - 1;
-        else return;
-        event.preventDefault();
+        if (command.endpoint === "start") index = 0;
+        else if (command.endpoint === "end") index = states.length - 1;
+        else index = Math.max(0, Math.min(states.length - 1, index + command.direction));
         setDevicePanelState(states[index]);
       },
     });
   }
 
   function setDocumentationNotice(message = "") {
-    const notice = $("projectDocumentationNotice");
-    if (!notice) return;
-    notice.textContent = message;
-    notice.hidden = !message;
+    if (message) window.UartDebugNotifications?.notify({ title: "Code description", message, tone: "warning" });
   }
 
-  function getDocumentationLocaleLabel(guide) {
-    if (guide?.label) return guide.label;
-    const locale = String(guide?.locale || "");
-    if (!locale) return "Guide";
-    try {
-      const names = new Intl.DisplayNames([navigator.language || "en"], {
-        type: "language",
-      });
-      return names.of(locale) || locale;
-    } catch {
-      return locale;
-    }
-  }
-
-  function refreshDocumentationControls(context) {
-    const localeSelect = $("documentationLocaleSelect");
-    const editToggle = $("documentationEditToggle");
-    const guideFile = context?.guideFile || "";
-    const project = context?.linkedProject?.project || null;
-    const guides = project ? getMiniProjectGuideEntries(project) : [];
-
-    if (localeSelect) {
-      localeSelect.replaceChildren();
-      if (guides.length) {
-        for (const guide of guides) {
-          const option = document.createElement("option");
-          option.value = guide.locale || "";
-          option.textContent = getDocumentationLocaleLabel(guide);
-          localeSelect.appendChild(option);
-        }
-        localeSelect.value =
-          project.selectedLocale || project.defaultLocale || guides[0].locale || "";
-        localeSelect.disabled = guides.length < 2;
-      } else {
-        const option = document.createElement("option");
-        option.value = "";
-        option.textContent = guideFile ? "Local guide" : "Localization";
-        localeSelect.appendChild(option);
-        localeSelect.disabled = true;
-      }
-    }
-
-    if (editToggle) {
-      const canEdit = !!guideFile && hasFile(guideFile);
-      editToggle.disabled = !canEdit;
-      editToggle.textContent = documentationEditMode ? "Preview" : "Edit";
-      editToggle.setAttribute(
-        "aria-pressed",
-        String(documentationEditMode)
-      );
-    }
-
-    window.requestAnimationFrame(() => {
-      if (!activeSplitResize) fitWorkspaceToViewport();
-    });
-  }
-
-  function saveDocumentationEditorValue({ persistNow = false } = {}) {
-    if (!documentationEditMode) return;
+  function saveDocumentationEditorValue({ persistNow = false, change = null } = {}) {
     const markdownEditor = $("projectDocumentationEditor");
     const guideFile = markdownEditor?.dataset.guideFile || "";
     if (!markdownEditor || !guideFile || !hasFile(guideFile)) return;
 
-    files[guideFile] = documentationEditor
+    const previousMarkdown = files[guideFile] || "";
+    const markdown = documentationEditor
       ? documentationEditor.getValue()
       : markdownEditor.value;
-    if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
-      markProjectAiAccountDocumentDirty("files");
+    if (previousMarkdown !== markdown) {
+      fileAuthorship[guideFile] = change
+        ? updateMarkdownAuthorshipForChange(getFileAuthorship(guideFile), previousMarkdown, change, "human")
+        : mergeMarkdownAuthorshipForReplacement(previousMarkdown, markdown, getFileAuthorship(guideFile), "human");
+      files[guideFile] = markdown;
     }
-    if (documentationEditSaveTimer) {
-      window.clearTimeout(documentationEditSaveTimer);
-      documentationEditSaveTimer = null;
+    if (current === guideFile && editor && editor.getValue() !== markdown) {
+      editor.setValue(markdown);
+    }
+    if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
+      markProjectAiAccountWorkspaceDirty();
+    }
+    if (documentationSaveTimer) {
+      window.clearTimeout(documentationSaveTimer);
+      documentationSaveTimer = null;
     }
     if (persistNow) {
       persistState();
     } else {
-      documentationEditSaveTimer = window.setTimeout(() => {
-        documentationEditSaveTimer = null;
+      documentationSaveTimer = window.setTimeout(() => {
+        documentationSaveTimer = null;
         persistState();
       }, 250);
     }
@@ -7169,27 +6999,41 @@
     scheduleMarkdownLivePreview("documentation");
   }
 
-  function setDocumentationEditMode(editing) {
-    const context = getDocumentationContext(current);
-    const nextMode =
-      !!editing && !!context.guideFile && hasFile(context.guideFile);
-    if (documentationEditMode && !nextMode) {
-      saveDocumentationEditorValue({ persistNow: true });
-    }
-    documentationEditMode = nextMode;
-    if (nextMode) expandDocumentationForNavigation();
-    refreshDocumentationPane({ preserveScroll: true });
-    if (nextMode) {
-      window.requestAnimationFrame(() => {
-        documentationEditor?.focus({ preventScroll: true });
-      });
-    } else {
-      documentationEditor?.getInputField?.().blur();
-    }
+  function createMarkdownDocumentEditor(element, { label, readOnly = false }) {
+    const cm = CodeMirror.fromTextArea(element, {
+      mode: getMarkdownEditorMode(),
+      theme: "material-darker",
+      inputStyle: "contenteditable",
+      lineNumbers: false,
+      readOnly,
+      lineWrapping: true,
+      indentUnit: 2,
+      tabSize: 2,
+      indentWithTabs: false,
+      viewportMargin: 30,
+      autofocus: false,
+      extraKeys: {
+        Tab(editor) { editor.replaceSelection("  ", "end", "+input"); },
+      },
+    });
+    cm.setSize("100%", "100%");
+    cm.getWrapperElement().classList.add("is-markdown-live");
+    const input = cm.getInputField();
+    input.setAttribute("aria-label", label);
+    input.setAttribute("aria-multiline", "true");
+    input.setAttribute("data-tooltip-disabled", "");
+    input.setAttribute("role", "textbox");
+    input.setAttribute("spellcheck", "true");
+    input.setAttribute("aria-readonly", String(!!readOnly));
+    return cm;
   }
 
   function bindDocumentationWorkspace() {
     const editorElement = $("projectDocumentationEditor");
+    if (editorElement) {
+      editorElement.readOnly = true;
+      editorElement.setAttribute("aria-readonly", "true");
+    }
     if (
       !editorElement ||
       typeof window.CodeMirror?.fromTextArea !== "function"
@@ -7200,48 +7044,17 @@
       return;
     }
 
-    documentationEditor = CodeMirror.fromTextArea(editorElement, {
-      mode: {
-        name: "markdown",
-        highlightFormatting: true,
-        fencedCodeBlockHighlighting: false,
-        strikethrough: true,
-        taskLists: true,
-        xml: false,
-      },
-      theme: "material-darker",
-      inputStyle: "contenteditable",
-      lineNumbers: false,
-      readOnly: true,
-      lineWrapping: true,
-      indentUnit: 2,
-      tabSize: 2,
-      indentWithTabs: false,
-      viewportMargin: 30,
-      autofocus: false,
-      extraKeys: {
-        Tab(cm) {
-          cm.replaceSelection("  ", "end", "+input");
-        },
-      },
+    documentationEditor = createMarkdownDocumentEditor(editorElement, {
+      label: "Code description Markdown",
+      readOnly: "nocursor",
     });
-    documentationEditor.setSize("100%", "100%");
     const input = documentationEditor.getInputField();
-    input.setAttribute("aria-label", "Code description Markdown");
-    input.setAttribute("aria-multiline", "true");
-    input.setAttribute("data-tooltip-disabled", "");
-    input.setAttribute("role", "textbox");
-    input.setAttribute("spellcheck", "true");
-    input.setAttribute("aria-readonly", "true");
     registerMarkdownLiveEditor("documentation", documentationEditor, {
       getContextKey: () =>
         `${editorElement.dataset.guideFile || ""}\u0000${current || ""}`,
       getAuthorship: () => {
         const guideFile = editorElement.dataset.guideFile || "";
         return guideFile ? getFileAuthorship(guideFile) : null;
-      },
-      onHeadings: (headings) => {
-        documentationHeadingIndex = headings;
       },
       resolveImageUrl: (href) =>
         resolveDocumentationImageUrl(href, getDocumentationContext(current)),
@@ -7255,23 +7068,9 @@
     documentationEditor.on("change", (cm, change) => {
       cm.save();
       if (documentationEditorSyncing) return;
-      const guideFile = editorElement.dataset.guideFile || "";
-      if (!guideFile || !hasFile(guideFile)) return;
-      const previousMarkdown = files[guideFile] || "";
-      const markdown = cm.getValue();
-      fileAuthorship[guideFile] = updateMarkdownAuthorshipForChange(
-        fileAuthorship[guideFile],
-        previousMarkdown,
-        change,
-        "human"
-      );
-      files[guideFile] = markdown;
-      if (current === guideFile && editor && editor.getValue() !== markdown) {
-        editor.setValue(markdown);
-      }
       scheduleMarkdownLivePreview("documentation");
       scheduleMarkdownLivePreview("editor");
-      saveDocumentationEditorValue();
+      saveDocumentationEditorValue({ change });
     });
     documentationEditor.on("cursorActivity", () =>
       scheduleMarkdownLivePreview("documentation")
@@ -7282,108 +7081,37 @@
     window.addEventListener("resize", () => documentationEditor?.refresh());
   }
 
-  function indexDocumentationMarkdownHeadings(markdown) {
-    const headings = new Map();
-    try {
-      const analysis = window.UartDebugMarkdown?.analyze?.(markdown);
-      for (const heading of Array.isArray(analysis?.headings)
-        ? analysis.headings
-        : []) {
-        const key = miniProjectCore.normalizeHeadingKey(heading.text);
-        const indexKey = `${heading.level}:${key}`;
-        if (!key || headings.has(indexKey)) continue;
-        headings.set(indexKey, {
-          line: Math.max(0, Number(heading.startLine || 1) - 1),
-          ch: Math.max(0, Number(heading.startColumn || 1) - 1),
-          level: heading.level,
-          title: heading.text,
-        });
-      }
-    } catch (error) {
-      console.warn("Project guide headings could not be indexed:", error);
-    }
-    documentationHeadingIndex = headings;
-  }
-
   function refreshDocumentationPane({ preserveScroll = false } = {}) {
     const pane = $("projectDocumentationPane");
     const scroll = $("projectDocumentationScroll");
-    const content = $("projectDocumentationContent");
     const markdownEditor = $("projectDocumentationEditor");
-    if (!pane || !scroll || !content || !markdownEditor) return;
+    if (!pane || !scroll || !markdownEditor) return;
 
     const context = getDocumentationContext(current);
     const previousGuide = pane.dataset.guideFile || "";
-    const previousScrollTop = documentationEditMode
-      ? documentationEditor?.getScrollInfo?.().top || 0
-      : scroll.scrollTop;
+    const previousScrollTop = documentationEditor?.getScrollInfo?.().top ?? markdownEditor.scrollTop ?? 0;
     const guideFile = context.guideFile;
 
-    if (previousGuide && previousGuide !== guideFile) {
-      if (documentationEditMode) {
-        saveDocumentationEditorValue({ persistNow: true });
-      }
-      documentationEditMode = false;
-    }
     pane.dataset.guideFile = guideFile;
     markdownEditor.dataset.guideFile = guideFile;
     setDocumentationNotice();
-    refreshDocumentationControls(context);
-
-    if (!guideFile || !hasFile(guideFile)) {
-      documentationEditMode = false;
-      refreshDocumentationControls(context);
-      scroll.classList.remove("is-documentation-edit");
-      markdownEditor.readOnly = true;
-      markdownEditor.setAttribute("aria-readonly", "true");
-      documentationEditor?.setOption("readOnly", true);
-      documentationEditor
-        ?.getInputField?.()
-        .setAttribute("aria-readonly", "true");
-      content.hidden = false;
-      documentationEditor?.getWrapperElement?.().setAttribute("hidden", "");
-      markdownEditor.hidden = true;
-      content.replaceChildren();
-      scroll.scrollTop = 0;
-      return;
-    }
-
-    const markdown = getLiveFileContent(guideFile);
+    const canEdit = !!guideFile && hasFile(guideFile);
+    const markdown = canEdit ? getLiveFileContent(guideFile) : "";
     const wrapper = documentationEditor?.getWrapperElement?.();
     setDocumentationEditorValue(markdown);
-    if (documentationEditMode) {
-      scroll.classList.add("is-documentation-edit");
-      content.hidden = true;
-      markdownEditor.hidden = false;
-      wrapper?.removeAttribute("hidden");
-      markdownEditor.readOnly = false;
-      markdownEditor.setAttribute("aria-readonly", "false");
-      documentationEditor?.setOption("readOnly", false);
-      documentationEditor
-        ?.getInputField?.()
-        .setAttribute("aria-readonly", "false");
-      documentationEditor?.refresh();
-      scheduleMarkdownLivePreview("documentation");
-      documentationEditor?.scrollTo(
-        null,
-        preserveScroll && previousGuide === guideFile ? previousScrollTop : 0
-      );
-      return;
-    }
-
-    scroll.classList.remove("is-documentation-edit");
-    markdownEditor.readOnly = true;
-    markdownEditor.setAttribute("aria-readonly", "true");
-    documentationEditor?.setOption("readOnly", true);
+    markdownEditor.hidden = false;
+    markdownEditor.readOnly = !canEdit;
+    markdownEditor.setAttribute("aria-readonly", String(!canEdit));
+    wrapper?.removeAttribute("hidden");
+    documentationEditor?.setOption("readOnly", canEdit ? false : "nocursor");
     documentationEditor
       ?.getInputField?.()
-      .setAttribute("aria-readonly", "true");
-    wrapper?.setAttribute("hidden", "");
-    markdownEditor.hidden = true;
-    content.hidden = false;
-    renderMarkdownGuide(markdown, context);
-    scroll.scrollTop =
-      preserveScroll && previousGuide === guideFile ? previousScrollTop : 0;
+      .setAttribute("aria-readonly", String(!canEdit));
+    const top = preserveScroll && previousGuide === guideFile ? previousScrollTop : 0;
+    if (documentationEditor) documentationEditor.scrollTo(null, top);
+    else markdownEditor.scrollTop = top;
+    scheduleMarkdownLivePreview("documentation");
+    refreshWorkspaceEditors();
   }
 
   function scheduleDocumentationPaneRefresh() {
@@ -7394,25 +7122,6 @@
     }, 180);
   }
 
-  function scrollDocumentationTargetIntoView(target, behavior = "auto") {
-    const scroll = $("projectDocumentationScroll");
-    if (!scroll || !target || !scroll.contains(target)) return false;
-
-    const scrollRect = scroll.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
-    const unclampedTop =
-      scroll.scrollTop + targetRect.top - scrollRect.top - 20;
-    const maximumTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
-    const top = Math.max(0, Math.min(maximumTop, unclampedTop));
-
-    if (typeof scroll.scrollTo === "function") {
-      scroll.scrollTo({ top, behavior });
-    } else {
-      scroll.scrollTop = top;
-    }
-    return true;
-  }
-
   function navigateToDocumentationHeading(marker) {
     expandDocumentationForNavigation();
     const context = getDocumentationContext(current);
@@ -7421,19 +7130,25 @@
       return false;
     }
 
-    if (documentationEditMode) {
-      setDocumentationEditMode(false);
-    }
-
     const pane = $("projectDocumentationPane");
     if (pane?.dataset.guideFile !== context.guideFile) refreshDocumentationPane();
 
     const headingKey = miniProjectCore.normalizeHeadingKey(marker.title);
-    const targetKey = `${marker.level}:${headingKey}`;
-    let target = documentationRenderedHeadingIndex.get(targetKey);
-    if (!target) {
-      renderMarkdownGuide(getLiveFileContent(context.guideFile), context);
-      target = documentationRenderedHeadingIndex.get(targetKey);
+    let target = null;
+    try {
+      const tree = window.UartDebugMarkdown?.analyze(getLiveFileContent(context.guideFile)).tree;
+      if (tree) walkMarkdownAst(tree, node => {
+        if (target || node.type !== "heading" || node.depth !== marker.level ||
+            miniProjectCore.normalizeHeadingKey(getMarkdownAstText(node)) !== headingKey) return;
+        const point = node.position?.start;
+        if (point) target = {
+          line: Math.max(0, Number(point.line || 1) - 1),
+          ch: Math.max(0, Number(point.column || 1) - 1),
+          offset: Math.max(0, Number(point.offset) || 0),
+        };
+      });
+    } catch (error) {
+      console.warn("Documentation headings could not be read:", error);
     }
     if (!target) {
       setDocumentationNotice(`Section not found: ${marker.title}`);
@@ -7441,18 +7156,14 @@
     }
 
     setDocumentationNotice();
-    if (target instanceof Element) {
-      scrollDocumentationTargetIntoView(target);
-      target.classList.add("is-documentation-target");
-      if (documentationTargetTimer) window.clearTimeout(documentationTargetTimer);
-      documentationTargetTimer = window.setTimeout(() => {
-        target.classList.remove("is-documentation-target");
-        documentationTargetTimer = null;
-      }, 1800);
+    if (!documentationEditor) {
+      const textarea = $("projectDocumentationEditor");
+      if (!textarea) return false;
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(target.offset, target.offset);
+      textarea.scrollTop = Math.max(0, target.line * (Number.parseFloat(window.getComputedStyle(textarea).lineHeight) || 20) - 48);
       return true;
     }
-
-    if (!documentationEditor) return false;
     const targetPosition = CodeMirror.Pos(target.line, target.ch || 0);
     documentationEditor.scrollIntoView(
       { from: targetPosition, to: targetPosition },
@@ -7569,7 +7280,7 @@
     }
 
     resetHexArtifact();
-    updateCompilePanelState(true);
+    updateCompilePanelState();
 
     updateEditorFileWatermark(name);
     refreshDocumentationPane();
@@ -7614,15 +7325,14 @@
       window.clearTimeout(saveTimer);
       saveTimer = null;
     }
-    if (documentationEditSaveTimer) {
-      window.clearTimeout(documentationEditSaveTimer);
-      documentationEditSaveTimer = null;
+    if (documentationSaveTimer) {
+      window.clearTimeout(documentationSaveTimer);
+      documentationSaveTimer = null;
     }
     for (const fileName of namesToDelete) {
       delete files[fileName];
       delete fileAuthorship[fileName];
       hexArtifactsBySource.delete(fileName);
-      removeFileFromGroups(fileName);
     }
     if (deleteWholeProject) {
       delete miniProjects[linkedProject.instanceId];
@@ -7662,7 +7372,7 @@
     scheduleDocumentationMarkerRefresh();
     if (deletedCurrent) {
       resetHexArtifact();
-      updateCompilePanelState(true);
+      updateCompilePanelState();
     }
   }
 
@@ -7689,18 +7399,6 @@
 
   function downloadCurrent() {
     downloadFile(current);
-  }
-
-  function updateToolbarState() {
-    const has = !!current;
-    const rb = $("renameBtn");
-    const db = $("deleteBtn");
-    const dl = $("downloadBtn");
-    const cb = $("compileBtn");
-    if (rb) rb.disabled = !has;
-    if (db) db.disabled = !has;
-    if (dl) dl.disabled = !has;
-    if (cb) cb.disabled = !has || !/\.c$/i.test(current);
   }
 
   const C_HINT_WORDS = [
@@ -7810,6 +7508,11 @@
     };
   });
 
+  function showEditorCompletions(cm) {
+    if (!isCFileName(current)) return CodeMirror.commands.autocomplete(cm);
+    cm.showHint({ hint: CodeMirror.hint.udc, completeSingle: false, closeOnUnfocus: true });
+  }
+
   function initEditor() {
     editor = CodeMirror($("editorHost"), {
       value: current && hasFile(current) ? files[current] : "",
@@ -7824,8 +7527,8 @@
       autoCloseBrackets: true,
       autofocus: true,
       extraKeys: {
-        "Ctrl-Space": "autocomplete",
-        "Alt-Space": "autocomplete",
+        "Ctrl-Space": showEditorCompletions,
+        "Alt-Space": showEditorCompletions,
         "Alt-Enter": (cm) => openDocumentationMarkerAtLine(cm.getCursor().line),
       },
     });
@@ -7853,11 +7556,7 @@
         return;
       }
       if (/\w|_/.test(ch)) {
-        cm.showHint({
-          hint: CodeMirror.hint.udc,
-          completeSingle: false,
-          closeOnUnfocus: true,
-        });
+        showEditorCompletions(cm);
       }
     });
     if (editor && editor.setSize) {
@@ -7889,7 +7588,7 @@
         return;
       }
       if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
-        markProjectAiAccountDocumentDirty("files");
+        markProjectAiAccountWorkspaceDirty();
       }
       scheduleDocumentationMarkerRefresh();
       if (resolveGuideFileName(current) === current) {
@@ -7927,17 +7626,11 @@
   } = window.UartDebugControls;
 
   function bindUI() {
-      const newBtn = $("newBtn");
-      const renameBtn = $("renameBtn");
-      const deleteBtn = $("deleteBtn");
-      const downloadBtn = $("downloadBtn");
       const compileBtn = $("compileBtn");
       const programHexBtn = $("programHexBtn");
       const detectChipBtn = $("detectChipBtn");
       const fileContextMenu = $("fileContextMenu");
       const fileUploadInput = $("fileUploadInput");
-      const fileAddModal = $("fileAddModal");
-      const fileAddCloseBtn = $("fileAddCloseBtn");
       const uploadExistingFileCard = $("uploadExistingFileCard");
       const fileTemplateGrid = $("fileTemplateGrid");
       const siteDialog = $("siteDialog");
@@ -7945,8 +7638,6 @@
       const siteDialogCancelBtn = $("siteDialogCancelBtn");
       const siteDialogConfirmBtn = $("siteDialogConfirmBtn");
       const mcuSelect = $("mcuSelect");
-      const documentationLocaleSelect = $("documentationLocaleSelect");
-      const documentationEditToggle = $("documentationEditToggle");
       const projectAiAccountBtn = $("projectAiAccountBtn");
       const projectAiAccountModal = $("projectAiAccountModal");
       const projectAiAccountCloseBtn = $("projectAiAccountCloseBtn");
@@ -7955,32 +7646,19 @@
 
     initCustomSelect(mcuSelect);
     initCustomSelect($("projectPackageSelect"));
-    initCustomSelect(documentationLocaleSelect);
+    bindHardwareFlow();
     bindFileListResizer();
+    bindFilesModal();
     bindDocumentationResizer();
     bindProjectAiResizers();
     bindDevicePanelResizer();
     bindProjectInstructionWorkspace();
     bindDocumentationWorkspace();
+    bindPanelActionExpansion();
     bindWorkspaceResizeObserver();
-    newBtn && newBtn.addEventListener("click", openAddFileModal);
-    renameBtn &&
-      renameBtn.addEventListener("click", () => current && renameFile(current));
-    deleteBtn &&
-      deleteBtn.addEventListener("click", () => {
-        if (!current) return;
-        deleteFile(current).catch((error) => {
-          showSiteAlert(
-            `Delete failed.\n${error.message || String(error)}`,
-            "Delete failed"
-          );
-        });
-      });
-      downloadBtn && downloadBtn.addEventListener("click", downloadCurrent);
       compileBtn && compileBtn.addEventListener("click", compileCurrentFile);
       detectChipBtn && detectChipBtn.addEventListener("click", handleDetectChip);
       programHexBtn && programHexBtn.addEventListener("click", handleFlashCurrent);
-    fileAddCloseBtn && fileAddCloseBtn.addEventListener("click", closeAddFileModal);
     $("createEmptyProjectCard")?.addEventListener("click", () => {
       try {
         createEmptyProject();
@@ -8009,37 +7687,13 @@
       });
     uploadExistingFileCard &&
       uploadExistingFileCard.addEventListener("click", () => {
-        closeAddFileModal();
+        closeFilesModal();
         if (!fileUploadInput) return;
         fileUploadInput.value = "";
         fileUploadInput.click();
       });
 
-    documentationLocaleSelect &&
-      documentationLocaleSelect.addEventListener("change", () => {
-        const context = getDocumentationContext(current);
-        const project = context.linkedProject?.project;
-        const locale = documentationLocaleSelect.value;
-        const guide = project?.guides?.[locale];
-        if (!project || !guide?.fileName || !hasFile(guide.fileName)) return;
-
-        if (documentationEditMode) {
-          saveDocumentationEditorValue({ persistNow: true });
-          documentationEditMode = false;
-        }
-        project.selectedLocale = locale;
-        project.files.guide = guide.fileName;
-        project.mediaTypes.guide = guide.mediaType || "text/markdown";
-        persistState();
-        refreshDocumentationPane();
-      });
-    documentationEditToggle &&
-      documentationEditToggle.addEventListener("click", () => {
-        setDocumentationEditMode(!documentationEditMode);
-      });
     $("projectCanvasForm")?.addEventListener("submit", handleProjectCanvasSubmit);
-    $("projectGenerateCodeBtn")?.addEventListener("click", () => void submitProjectCanvas("generate"));
-    $("projectDescribeCodeBtn")?.addEventListener("click", () => void submitProjectCanvas("describe"));
     bindCanvasTargetControls();
     projectAiAccountBtn &&
       projectAiAccountBtn.addEventListener("click", handleProjectAiAccountAction);
@@ -8060,13 +7714,6 @@
       projectAiSignOutBtn.addEventListener("click", handleProjectAiSignOut);
     $("projectAiProfileForm")?.addEventListener("submit", saveProjectAiProfile);
     $("projectAiDisplayName")?.addEventListener("input", handleProjectAiProfileNameInput);
-    fileAddModal &&
-      fileAddModal.addEventListener("click", (event) => {
-        const target = event.target;
-        if (target === fileAddModal) {
-          closeAddFileModal();
-        }
-      });
     fileUploadInput &&
       fileUploadInput.addEventListener("change", async (event) => {
         const input = event.target;
@@ -8134,7 +7781,7 @@
     });
     // Dialogs share focus containment and dismiss only the topmost open surface.
     document.addEventListener("keydown", (e) => {
-      if (e.defaultPrevented || trapWorkspaceModalFocus(e)) return;
+      if (e.defaultPrevented || handleFileMenuKeydown(e) || trapWorkspaceModalFocus(e)) return;
       if (e.key === "Escape") {
         if (dismissTopWorkspaceModal()) {
           e.preventDefault();
@@ -8149,20 +7796,23 @@
     });
 
     window.addEventListener("beforeunload", () => {
+      projectChatController?.flush();
       persistProjectInstruction({ immediate: true });
-      if (documentationEditMode) {
-        saveDocumentationEditorValue({ persistNow: true });
+      if (documentationSaveTimer) {
+        window.clearTimeout(documentationSaveTimer);
+        documentationSaveTimer = null;
       }
       if (editor && current) {
         files[current] = editor.getValue();
-        persistState();
       }
+      persistState();
     });
   }
 
   // --- HEX artifact state ---
   let lastHexContent = null;
   let lastHexName = null;
+  let lastHexTargetMcu = "";
   const hexArtifactsBySource = new Map();
   let lastDetectedUpdiTargetKey = "";
 
@@ -8171,56 +7821,51 @@
       hexText: lastHexContent || "",
       fileName: lastHexName || "",
       source: "compiled",
+      targetMcu: lastHexTargetMcu,
     };
   }
 
-  function dispatchUpdiHexArtifact() {
-    dispatchHexArtifact(getUpdiHexArtifact());
-  }
-
-  function dispatchCanvasSerialState() {
-    if (typeof window === "undefined" || typeof CustomEvent !== "function") {
-      return;
-    }
-
-    const detail = {
-      connected: false,
-      label: "",
-    };
-
-    window.dispatchEvent(
-      new CustomEvent(AVR_SERIAL_STATE_EVENT, {
-        detail,
-      })
-    );
-    window.dispatchEvent(
-      new CustomEvent(LEGACY_SERIAL_STATE_EVENT, {
-        detail,
-      })
-    );
+  function dispatchUpdiHexArtifact(notificationId = null) {
+    dispatchHexArtifact({ ...getUpdiHexArtifact(), ...(notificationId ? { notificationId } : {}) });
   }
 
   function initUpdiBridge() {
     if (typeof window === "undefined") return;
 
     const bridge = {
+      setHardwareActivity: (owner, active) => hardwareFlow?.setActive(owner, active),
+      reportHardwareFailure: (stage) => hardwareFlow?.fail(hardwareStageElement(stage)),
       getHexArtifact: getUpdiHexArtifact,
-      refreshCompileControls: () => updateCompilePanelState(false),
-      isCanvasSerialConnected: () => false,
+      refreshCompileControls: () => {
+        updateCompilePanelState();
+        if (!getCanvasUpdiRuntime()?.isBusy?.()
+          && $("projectPackageSelect")?.dataset.mcu !== getCanvasTarget().mcu) {
+          syncCanvasTargetControls();
+          saveCanvasTarget();
+        }
+        refreshTargetPresentation();
+      },
       getDetectedTargetKey: () => lastDetectedUpdiTargetKey || "",
       setDetectedTargetKey: (targetKey) => {
         lastDetectedUpdiTargetKey =
           typeof targetKey === "string" ? targetKey.trim() : "";
+        if (lastDetectedUpdiTargetKey) {
+          const select = $("mcuSelect");
+          if (select) select.value = lastDetectedUpdiTargetKey;
+          syncCanvasTargetControls();
+          saveCanvasTarget();
+        }
+        refreshTargetPresentation();
       },
     };
 
     window[AVR_UPDI_BRIDGE_KEY] = bridge;
-    window[LEGACY_UPDI_BRIDGE_KEY] = bridge;
   }
 
   function resetHexArtifact() {
     lastHexContent = null;
     lastHexName = null;
+    lastHexTargetMcu = "";
     setHexStatus("idle");
     dispatchUpdiHexArtifact();
   }
@@ -8229,13 +7874,14 @@
     return hexArtifactsBySource.get(fileName) || null;
   }
 
-  function storeHexArtifact(fileName, hexText, hexName, sourceText, sourceKey) {
+  function storeHexArtifact(fileName, hexText, hexName, sourceText, sourceKey, targetMcu) {
     if (!fileName || !hexText || !hexName) return;
     hexArtifactsBySource.set(fileName, {
       hexText,
       hexName,
       sourceText: String(sourceText || ""),
       sourceKey: String(sourceKey || sourceText || ""),
+      targetMcu: String(targetMcu || "").toLowerCase(),
     });
   }
 
@@ -8274,13 +7920,15 @@
   }
 
   function loadCompiledHexArtifact(updi, artifact) {
-    if (!artifact || !artifact.hexText || !artifact.hexName) return false;
+    if (!artifact || !artifact.hexText || !artifact.hexName
+      || !artifact.targetMcu || artifact.targetMcu !== getCanvasTarget().mcu) return false;
 
     lastHexContent = artifact.hexText;
     lastHexName = artifact.hexName;
+    lastHexTargetMcu = artifact.targetMcu;
     updateHexUI(true);
     setHexStatus("ready", lastHexName);
-    loadHexIntoUpdiRuntime(updi, lastHexName, lastHexContent, "compiled");
+    loadHexIntoUpdiRuntime(updi, lastHexName, lastHexContent, "compiled", lastHexTargetMcu);
     dispatchUpdiHexArtifact();
     return true;
   }
@@ -8302,8 +7950,9 @@
 
     const compiled = await compileCurrentFile();
     if (!compiled || current !== fileName) return false;
-
-    return loadCompiledHexArtifact(updi, getHexArtifactForFile(fileName));
+    const artifact = getHexArtifactForFile(fileName);
+    if (!artifact || artifact.sourceKey !== buildCompileProjectSnapshot(fileName).sourceKey) return false;
+    return loadCompiledHexArtifact(updi, artifact);
   }
 
   async function downloadHexForFile(fileName) {
@@ -8322,228 +7971,53 @@
     }
 
     const compiled = await compileCurrentFile();
-    if (compiled) {
-      downloadHex(fileName);
-    }
-  }
-
-  async function legacyCompileCurrentFile() {
-    // Ensure we have a .c file open
-    if (!current || !hasFile(current)) {
-      await showSiteAlert("No open file.", "Compile");
-      // Mark the HEX status as failed.
-      try {
-        if (typeof setHexStatus === "function") setHexStatus("error");
-      } catch {}
-      try {
-        updateHexUI(false);
-      } catch {}
-      return;
-    }
-    if (!/\.c$/i.test(current)) {
-      await showSiteAlert(
-        "Only *.c files can be compiled. Select a .c file.",
-        "Compile"
-      );
-      try {
-        if (typeof setHexStatus === "function") setHexStatus("error");
-      } catch {}
-      try {
-        updateHexUI(false);
-      } catch {}
-      return;
-    }
-
-    // Persist editor buffer just in case
-    try {
-      if (editor && current) files[current] = editor.getValue();
-    } catch {}
-
-    // Read compile options if present in UI, fallback to defaults
-    const mcuEl = document.getElementById("mcuSelect");
-    const optEl = document.getElementById("optimizeSelect");
-    let selectedMcu = mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624";
-
-    if (selectedMcu === "auto") {
-      const bridge =
-        typeof window !== "undefined"
-          ? window[AVR_UPDI_BRIDGE_KEY] || window[LEGACY_UPDI_BRIDGE_KEY]
-          : null;
-      const detectedMcu =
-        bridge && typeof bridge.getDetectedTargetKey === "function"
-          ? String(bridge.getDetectedTargetKey() || "").trim()
-          : "";
-
-        if (!detectedMcu) {
-          await showSiteAlert(
-            "Auto detect could not resolve a supported chip. Check the UPDI connection or choose a concrete MCU before compiling.",
-            "Auto detect failed"
-          );
-        try {
-          if (typeof setHexStatus === "function") setHexStatus("error");
-        } catch {}
-        try {
-          updateHexUI(false);
-        } catch {}
-        return;
-      }
-
-      selectedMcu = detectedMcu;
-    }
-
-    const compileSnapshot = buildCompileProjectSnapshot(current);
-    const payload = {
-      filename: current,
-      code: files[current],
-      project_files: compileSnapshot.projectFiles,
-      mcu: selectedMcu,
-      optimize: optEl && optEl.value ? optEl.value.trim() : "O1",
-    };
-
-    // UI: button state + HEX status: building
-    const btn = document.getElementById("compileBtn");
-    const prevLabel = btn ? btn.textContent : "";
-    try {
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = "Compiling…";
-      }
-    } catch {}
-    try {
-      if (typeof setHexStatus === "function") setHexStatus("building");
-    } catch {}
-    try {
-      updateHexUI(false);
-    } catch {}
-
-    // Reset last HEX
-    try {
-      lastHexContent = null;
-      lastHexName = null;
-    } catch {}
-    dispatchUpdiHexArtifact();
-
-    // Request compile
-    let resp;
-    try {
-      resp = await fetch("/api/avr/compile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    } catch (e) {
-      console.error("Network error:", e);
-      await showSiteAlert(
-        "Failed to send code for compilation (network error).",
-        "Compile failed"
-      );
-      try {
-        if (typeof setHexStatus === "function") setHexStatus("error");
-      } catch {}
-      try {
-        updateHexUI(false);
-      } catch {}
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = prevLabel || "Compile";
-      }
-      return;
-    }
-
-    if (!resp.ok) {
-      const txt = await resp.text().catch(() => "");
-      console.error("Server error:", resp.status, txt);
-      await showSiteAlert(
-        "Compile server error: " + resp.status + (txt ? "\n" + txt : ""),
-        "Compile failed"
-      );
-      try {
-        if (typeof setHexStatus === "function") setHexStatus("error");
-      } catch {}
-      try {
-        updateHexUI(false);
-      } catch {}
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = prevLabel || "Compile";
-      }
-      return;
-    }
-
-    // Parse JSON
-    let data;
-    try {
-      data = await resp.json();
-    } catch (e) {
-      console.error("Bad JSON:", e);
-      await showSiteAlert("Invalid response from compile server.", "Compile failed");
-      try {
-        if (typeof setHexStatus === "function") setHexStatus("error");
-      } catch {}
-      try {
-        updateHexUI(false);
-      } catch {}
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = prevLabel || "Compile";
-      }
-      return;
-    }
-
-    // Validate payload
-    if (!data || data.ok !== true || !data.hex) {
-      const stderr =
-        data && data.stderr ? String(data.stderr) : "unknown error";
-      console.error("Compile failed:", stderr, data);
-      await showSiteAlert("Compilation failed.\n" + stderr, "Compile failed");
-      try {
-        if (typeof setHexStatus === "function") setHexStatus("error");
-      } catch {}
-      try {
-        updateHexUI(false);
-      } catch {}
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = prevLabel || "Compile";
-      }
-      return;
-    }
-
-    // Success: store HEX, name, update UI
-    try {
-      lastHexContent = data.hex;
-      const base = current.replace(/\.c$/i, "");
-      lastHexName = (data.hex_name && data.hex_name.trim()) || base + ".hex";
-    } catch (e) {
-      console.warn("HEX handling warning:", e);
-    }
-
-    try {
-      updateHexUI(true);
-    } catch {}
-    try {
-      if (typeof setHexStatus === "function")
-        setHexStatus("ready", lastHexName);
-    } catch {}
-    dispatchUpdiHexArtifact();
-
-    // Show warnings if any
-    if (data.stderr && String(data.stderr).trim()) {
-      console.warn("avr-gcc warnings:", data.stderr);
-    }
-
-    // Restore button
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = prevLabel || "Compile";
+    if (compiled && current === fileName) {
+      const artifact = getHexArtifactForFile(fileName);
+      if (artifact?.sourceKey === buildCompileProjectSnapshot(fileName).sourceKey) downloadHexArtifact(artifact);
     }
   }
 
   async function compileCurrentFile() {
-    if (getCanvasUpdiRuntime()?.isBusy?.()) return false;
+    if (compileTask || getCanvasUpdiRuntime()?.isBusy?.()) return false;
+    const task = compileCurrentFileSnapshot();
+    compileTask = task;
+    updateCompilePanelState();
+    try { return await task; }
+    finally {
+      if (compileTask === task) compileTask = null;
+      updateCompilePanelState();
+    }
+  }
+
+  async function requestCompileResult(payload, timeoutMs) {
+    const controller = new AbortController();
+    let timer, timedOut = false;
+    const timeoutError = new Error("The compile request exceeded its complete-response deadline.");
+    timeoutError.name = "TimeoutError";
+    const deadline = new Promise((resolve, reject) => {
+      timer = setTimeout(() => { timedOut = true; controller.abort(); reject(timeoutError); }, timeoutMs);
+    });
+    const request = (async () => {
+      const response = await fetch("/api/avr/compile", {
+        method: "POST", signal: controller.signal,
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      if (!response.ok) return { response, rawText: await response.text() };
+      try { return { response, data: await response.json() }; }
+      catch (error) { error.compileResponseInvalid = true; throw error; }
+    })();
+    try { return await Promise.race([request, deadline]); }
+    catch (error) { throw timedOut ? timeoutError : error; }
+    finally { clearTimeout(timer); }
+  }
+
+  async function compileCurrentFileSnapshot() {
+    compileNotificationId = null;
     const compileFileName = current;
+    const compileInstanceId = getMiniProjectForFile(compileFileName)?.instanceId || null;
+    const compileAccountEpoch = projectAiAccountWorkspaceEpoch;
     const btn = $("compileBtn");
-    const restoreButton = () => updateCompilePanelState(false);
+    const restoreButton = () => updateCompilePanelState();
     const markCompileFailed = () => {
       setHexStatus("error");
       updateHexUI(false);
@@ -8562,27 +8036,26 @@
     const compileSource = compileFileName ? files[compileFileName] : "";
 
     if (!compileFileName || !compileSource) {
-      setCompileLogText("No open file to compile.");
+      reportCompilerStatus("No open file to compile.");
       return markCompileFailed();
     }
 
     if (!/\.c$/i.test(compileFileName)) {
-      setCompileLogText(
+      reportCompilerStatus(
         `"${compileFileName}" is not a C source file. Only *.c files can be compiled.`
       );
       return markCompileFailed();
     }
 
-    clearUpdiLog();
-    setCompileLogText("Compiling ...");
+    reportCompilerStatus("Compiling…", { tone: "info", pending: true });
 
     const mcuEl = $("mcuSelect");
     const optEl = $("optimizeSelect");
-    let selectedMcu = mcuEl && mcuEl.value ? mcuEl.value.trim() : "attiny1624";
+    let selectedMcu = getCanvasTarget().mcu || (mcuEl && mcuEl.value ? mcuEl.value.trim() : "auto");
 
     if (selectedMcu === "auto") {
       try {
-        const signatureInfo = await ensureAutoDetectedTarget();
+        const signatureInfo = await ensureAutoDetectedTarget({ notificationId: compileNotificationId });
         const detectedMcu =
           signatureInfo && signatureInfo.matchedTargetKey
             ? String(signatureInfo.matchedTargetKey).trim()
@@ -8595,18 +8068,38 @@
 
         selectedMcu = detectedMcu;
       } catch (error) {
-        setCompileLogText(
-          error.message ||
-            "Auto detect could not resolve a supported chip. Check the UPDI connection or choose a concrete MCU before compiling."
-        );
+        if (error?.uartDebugNotificationId !== compileNotificationId || !error?.uartDebugNotificationId) {
+          reportCompilerStatus("A supported chip could not be selected for compilation.", {
+            details: "Check the UPDI connection or choose a supported chip before compiling.", diagnostics: error?.stack || String(error) });
+        }
         return markCompileFailed();
       }
     }
 
-    const compileSnapshot = buildCompileProjectSnapshot(compileFileName);
+    // Auto-detection can await user interaction. The requested project must
+    // still be selected before its immutable compiler input is captured.
+    if (current !== compileFileName || compileInstanceId !== (getMiniProjectForFile(compileFileName)?.instanceId || null)
+      || compileAccountEpoch !== projectAiAccountWorkspaceEpoch) {
+      reportCompilerStatus("The project changed. Compile the selected project again.", { tone: "warning" });
+      return false;
+    }
+    const compileSnapshot = buildCompileProjectSnapshot(compileFileName, selectedMcu);
+    const sourceText = compileSnapshot.projectFiles.find(file => file.name === compileFileName)?.content || "";
+    const discardChangedBuild = () => {
+      const fresh = current === compileFileName && compileAccountEpoch === projectAiAccountWorkspaceEpoch
+        && compileInstanceId === (getMiniProjectForFile(compileFileName)?.instanceId || null)
+        && compileSnapshot.sourceKey === buildCompileProjectSnapshot(compileFileName).sourceKey;
+      if (fresh) return false;
+      reportCompilerStatus("The project changed during compilation. Compile it again.", { tone: "warning",
+        details: "The previous build was discarded because its project, source files or target changed. No firmware from that build was loaded." });
+      if (current === compileFileName && setHexStatus._state === "building") {
+        setHexStatus("idle"); updateHexUI(false);
+      }
+      return true;
+    };
     const payload = {
       filename: compileFileName,
-      code: files[compileFileName],
+      code: sourceText,
       project_files: compileSnapshot.projectFiles,
       mcu: selectedMcu,
       optimize: optEl && optEl.value ? optEl.value.trim() : "O1",
@@ -8623,44 +8116,44 @@
 
     lastHexContent = null;
     lastHexName = null;
+    lastHexTargetMcu = "";
     dispatchUpdiHexArtifact();
 
-    let resp;
+    let result;
+    // The server allows 20 s per C unit, 20 s for linking and 10 s for HEX.
+    // Include transport/queue headroom and bound receiving the body as well.
+    const timeoutMs = 60000 + 20000 * Math.max(1, compileSnapshot.compileSourceNames.length);
     try {
-      resp = await fetch("/api/avr/compile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      result = await requestCompileResult(payload, timeoutMs);
     } catch (error) {
-      console.error("Network error:", error);
-      setCompileLogText(
-        `Failed to reach the compile server: ${error.message || String(error)}`
-      );
+      if (discardChangedBuild()) return false;
+      const timeout = error?.name === "TimeoutError";
+      reportCompilerStatus(timeout ? "The compile server did not respond in time."
+        : error?.compileResponseInvalid ? "The compile server returned an unreadable response."
+          : "The compile server could not be reached.", {
+        details: timeout ? "The request was stopped. Try compiling again."
+          : "Check your connection and try compiling again.", diagnostics: error?.stack || String(error) });
       return markCompileFailed();
     }
-
+    if (discardChangedBuild()) return false;
+    const resp = result.response;
     if (!resp.ok) {
-      const rawText = await resp.text().catch(() => "");
+      const rawText = result.rawText;
       let errorData = null;
       try {
         errorData = rawText ? JSON.parse(rawText) : null;
       } catch {}
-
       console.error("Compile server error:", resp.status, errorData || rawText);
+      if (!errorData && /(?:^\s*(?:<!doctype|<html)\b|(?:^|\n)\s*at\s+.+:\d+:\d+\)?\s*(?:\n|$))/i.test(rawText)) {
+        reportCompilerStatus("The compile server could not complete the request.", {
+          details: "Try compiling again in a moment.", diagnostics: `HTTP ${resp.status}\n${rawText}` });
+        return markCompileFailed();
+      }
       showCompilerIssue(errorData, rawText, compileFileName);
       return markCompileFailed();
     }
 
-    let data;
-    try {
-      data = await resp.json();
-    } catch (error) {
-      console.error("Bad JSON:", error);
-      setCompileLogText("Invalid JSON response from compile server.");
-      return markCompileFailed();
-    }
-
+    const data = result.data;
     if (!data || data.ok !== true || !data.hex) {
       console.error("Compilation failed:", data);
       showCompilerIssue(data, "", compileFileName);
@@ -8668,6 +8161,7 @@
     }
 
     lastHexContent = data.hex;
+    lastHexTargetMcu = selectedMcu;
     {
       const base = compileFileName.replace(/\.c$/i, "");
       lastHexName = (data.hex_name && data.hex_name.trim()) || base + ".hex";
@@ -8676,27 +8170,29 @@
       compileFileName,
       lastHexContent,
       lastHexName,
-      files[compileFileName],
-      compileSnapshot.sourceKey
+      sourceText,
+      compileSnapshot.sourceKey,
+      selectedMcu
     );
 
     updateHexUI(true);
     setHexStatus("ready", lastHexName);
-    dispatchUpdiHexArtifact();
-
-    setCompileLogText("BUILD OK. Hex file available.");
+    reportCompilerStatus("Build completed. HEX file is ready.", { tone: "success",
+      details: [compileFileName, `Target: ${selectedMcu}`, `HEX: ${lastHexName}`,
+        collectCompilerErrorText(data)].filter(Boolean).join("\n\n") });
+    dispatchUpdiHexArtifact(compileNotificationId);
 
     restoreButton();
     return true;
   }
 
   function boot() {
-    loadState();
+    const legacyGroups = loadState();
     restoreProjectAiLocalDirtyState();
     restoreProjectAiAccountSyncState();
     restoreProjectInstruction();
     const projectAiAuthReturn = consumeProjectAiAuthReturn();
-    migrateLooseFilesToProjects();
+    migrateLooseFilesToProjects(legacyGroups);
     restoreWorkspaceLayout();
     renderOutliner();
     if (!current) current = getVisibleWorkspaceFileNames()[0] || null;
@@ -8709,10 +8205,10 @@
       window.setTimeout(() => projectInstructionEditor?.focus(), 0);
     }
     initEditor();
+    initProjectChat();
     renderProjectAiAuthReturn(projectAiAuthReturn);
 
     updateHexUI(false);
-    dispatchCanvasSerialState();
     dispatchUpdiHexArtifact();
     selectFile(current);
 

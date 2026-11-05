@@ -6,35 +6,27 @@
     <link rel="canonical" href="https://uartdebug.com/avr" />
     <title>AVR Programming - Uart Debug</title>
 
-    <link rel="stylesheet" href="ui-theme.css?v=20260924-ui-v1" />
-    <link rel="stylesheet" href="uart.css?v=20260924-ui-v1" />
-    <link rel="stylesheet" href="ui-controls.css?v=20260924-ui-v1" />
+    <link rel="stylesheet" href="vendor/codemirror/5.65.16/codemirror.min.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="vendor/codemirror/5.65.16/theme/material-darker.min.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="vendor/codemirror/5.65.16/addon/hint/show-hint.min.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="ui-theme.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="uart.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="ui-controls.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="ui-notifications.css?v=20261105-security-release-v1" />
     <link
       rel="stylesheet"
-      href="AVR-Programming.css?v=20260928-layout-v1"
+      href="AVR-Programming.css?v=20261105-security-release-v1"
     />
-    <link rel="stylesheet" href="ui-tooltips.css?v=20260616-delay-v1" />
+    <link rel="stylesheet" href="ui-tooltips.css?v=20261105-security-release-v1" />
 
-    <link
-      rel="stylesheet"
-      href="vendor/codemirror/5.65.16/codemirror.min.css"
-    />
-    <link
-      rel="stylesheet"
-      href="vendor/codemirror/5.65.16/theme/material-darker.min.css"
-    />
-    <script src="vendor/codemirror/5.65.16/codemirror.min.js"></script>
-    <script src="vendor/codemirror/5.65.16/mode/clike/clike.min.js"></script>
-    <script src="vendor/codemirror/5.65.16/mode/markdown/markdown.js"></script>
-    <script src="vendor/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
-    <link
-      rel="stylesheet"
-      href="vendor/codemirror/5.65.16/addon/hint/show-hint.min.css"
-    />
-    <script src="vendor/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
-    <script src="vendor/codemirror/5.65.16/addon/hint/anyword-hint.min.js"></script>
-    <script src="vendor/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
-    <script defer src="vendor/uartdebug-markdown.js?v=20260826-commonmark-gfm-v1"></script>
+    <script src="vendor/codemirror/5.65.16/codemirror.min.js?v=20261105-security-release-v1"></script>
+    <script src="vendor/codemirror/5.65.16/mode/clike/clike.min.js?v=20261105-security-release-v1"></script>
+    <script src="vendor/codemirror/5.65.16/mode/markdown/markdown.js?v=20261105-security-release-v1"></script>
+    <script src="vendor/codemirror/5.65.16/addon/edit/matchbrackets.min.js?v=20261105-security-release-v1"></script>
+    <script src="vendor/codemirror/5.65.16/addon/hint/show-hint.min.js?v=20261105-security-release-v1"></script>
+    <script src="vendor/codemirror/5.65.16/addon/hint/anyword-hint.min.js?v=20261105-security-release-v1"></script>
+    <script src="vendor/codemirror/5.65.16/addon/edit/closebrackets.min.js?v=20261105-security-release-v1"></script>
+    <script defer src="vendor/uartdebug-markdown.js?v=20261105-security-release-v1"></script>
   </head>
 
   <body>
@@ -46,12 +38,11 @@
             id="avrDeviceSection"
             data-state="expanded"
           >
-            <div class="avr-overview-row">
-              <div
-                class="avr-device-panel-viewport"
-                id="avrDevicePanelViewport"
-              >
-                <div class="avr-device-panel" aria-label="UPDI adapter and chip">
+            <div class="avr-overview-row" data-tooltip-disabled>
+              <div class="avr-overview-viewport avr-device-panel-viewport" id="avrDevicePanelViewport">
+                <section class="avr-device-panel avr-target-controls ui-panel" id="avrTargetPanelViewport" aria-label="UPDI connection and project target">
+                  <div class="hardware-flow" role="group" aria-label="Connection and device">
+                    <div class="hardware-step hardware-step--detect">
                   <button
                     class="detect-chip-btn"
                     id="detectChipBtn"
@@ -72,24 +63,52 @@
                       Click to detect the chip
                     </span>
                   </button>
-
-                  <div class="avr-status-lines">
-                    <span class="avr-status-label">Port:</span>
-                    <div class="avr-status-value" id="adapterStatusText">
-                      No port selection
                     </div>
-
-                    <span class="avr-status-label">Chip:</span>
-                    <div class="avr-status-value" id="chipStatusText">
-                      No chip detected
+                    <div class="hardware-step hardware-step--port">
+                      <div class="hardware-field hardware-port" aria-label="Serial port">
+                        <span class="hardware-field-caption" aria-hidden="true">Port</span>
+                        <div class="avr-status-value is-muted" id="adapterStatusText" role="status">No port selection</div>
+                        <span class="hardware-field-spacer" aria-hidden="true"></span>
+                      </div>
                     </div>
+                    <div class="connection-control hardware-step hardware-step--chip">
+                      <select id="mcuSelect" aria-label="Target MCU" data-control-caption="Chip">
+                        <option value="auto" selected>Auto detect</option>
+                      </select>
+                    </div>
+                    <div class="connection-control hardware-step hardware-step--package">
+                      <select id="projectPackageSelect" aria-label="Chip package" data-control-caption="Package" required>
+                        <option value="" data-display-label="Package">Choose package</option>
+                      </select>
+                    </div>
+                    <div class="hardware-flow-light" id="hardwareFlowLight" aria-hidden="true"><span class="hardware-flow-beam"></span></div>
                   </div>
-
-                </div>
+                </section>
               </div>
 
-              <div class="avr-account-panel-viewport" id="avrAccountPanelViewport">
-                <section class="avr-account-panel avr-session-panel" aria-label="AI account and credits">
+              <div class="avr-overview-viewport" id="avrActionsPanelViewport">
+                <section class="avr-action-panel" aria-label="Projects and notifications">
+                  <div class="avr-action-card ui-panel">
+                    <button class="avr-panel-trigger" id="filesOpenBtn" type="button" aria-label="Open projects" aria-haspopup="dialog" aria-controls="filesModal" aria-expanded="false"></button>
+                    <span class="avr-action-title">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7ZM3 8h18" /></svg>
+                      <span>Projects</span>
+                      <svg class="avr-card-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+                    </span>
+                  </div>
+                  <div class="avr-action-card ui-panel">
+                    <button class="avr-panel-trigger" id="notificationsBtn" type="button" data-notifications-open aria-label="Notifications" aria-haspopup="dialog" aria-controls="notificationModal"></button>
+                    <span class="avr-action-title">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+                      <span>Notifications</span>
+                      <svg class="avr-card-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+                    </span>
+                  </div>
+                </section>
+              </div>
+
+              <div class="avr-overview-viewport avr-account-panel-viewport" id="avrAccountPanelViewport">
+                <section class="avr-account-panel avr-session-panel ui-panel" aria-label="AI account and credits">
                   <div class="project-ai-toolbar" id="projectAiHeader">
                     <div
                       class="project-ai-budget"
@@ -114,13 +133,13 @@
                     </div>
 
                     <div
-                      class="project-ai-auth"
+                      class="project-ai-auth avr-action-title"
                       id="projectAiAuth"
                       role="group"
                       aria-label="AI access"
                     >
                       <button
-                        class="project-ai-account-trigger"
+                        class="avr-panel-trigger project-ai-account-trigger"
                         id="projectAiAccountBtn"
                         type="button"
                         aria-label="Open AI account"
@@ -145,9 +164,7 @@
                         class="project-ai-account-trigger-status"
                         aria-hidden="true"
                       ></span>
-                      <svg class="project-ai-account-chevron" viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
+                      <svg class="avr-card-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
                     </div>
 
                   </div>
@@ -161,7 +178,7 @@
               role="separator"
               tabindex="0"
               aria-label="Resize device panel"
-              aria-controls="avrDevicePanelViewport avrAccountPanelViewport"
+              aria-controls="avrDevicePanelViewport avrActionsPanelViewport avrAccountPanelViewport"
               aria-orientation="horizontal"
               aria-valuemin="0"
               aria-valuemax="112"
@@ -174,18 +191,57 @@
           <div
             class="project-workspace-stage"
             id="projectWorkspaceStage"
-            data-mode="avr"
           >
             <div class="project-workspace-track">
               <section
-                class="project-workspace-scene workspace-scene--avr"
+                class="project-workspace-scene"
                 id="avrWorkspaceScene"
                 aria-label="AVR editor workspace"
               >
                 <div class="canvas-split-container">
-                  <aside class="outliner">
-                    <div class="scroll-frame outliner-frame">
-                      <div class="outliner-list" id="fileList"></div>
+                  <aside class="outliner avr-session-panel project-chat-panel ui-panel" aria-label="Project chat">
+                    <div class="project-chat-surface">
+                      <header class="project-chat-header">
+                        <div class="project-chat-navigation">
+                          <button class="ui-action ui-action--compact secondary-btn" id="projectChatHistoryBtn" type="button" aria-label="Chat history" aria-controls="projectChatHistory" aria-expanded="false">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h11" /></svg><span>Chats</span>
+                          </button>
+                          <button class="ui-action ui-action--compact" id="projectChatNewBtn" type="button" aria-label="New chat">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New chat</span>
+                          </button>
+                        </div>
+                        <div class="project-chat-title-row">
+                          <div class="project-chat-title-content">
+                            <h2 id="projectChatTitle">New chat</h2>
+                          </div>
+                          <button class="ui-icon-button ui-icon-button--quiet ui-menu-trigger" id="projectChatActionsBtn" type="button" aria-label="Chat actions" aria-haspopup="menu" aria-controls="projectChatMenu" aria-expanded="false">⋯</button>
+                        </div>
+                      </header>
+                      <section class="project-chat-history" id="projectChatHistory" aria-label="Project chats" hidden>
+                        <div class="project-chat-history-list ui-scroll-region" id="projectChatHistoryList" role="list" aria-label="Chats" tabindex="0"></div>
+                      </section>
+                      <div class="project-chat-thread ui-scroll-region" id="projectChatThread" role="log" aria-label="Conversation" tabindex="0"></div>
+                      <button class="project-chat-icon-button project-chat-jump ui-icon-button" id="projectChatJumpBtn" type="button" aria-label="Jump to latest message" hidden>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16m-6-6 6 6 6-6" /></svg>
+                      </button>
+                      <form class="project-chat-composer scroll-frame" id="projectChatForm">
+                        <label class="sr-only" for="projectChatInput">Message the project assistant</label>
+                        <textarea class="ui-text-input ui-text-input--embedded ui-scroll-region" id="projectChatInput" rows="2" placeholder="Ask about your project" spellcheck="true"></textarea>
+                        <div class="project-chat-composer-toolbar">
+                          <button class="project-chat-context" id="projectChatContextBtn" type="button" title="Choose project">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z" /></svg>
+                            <span id="projectChatProjectName">New project</span>
+                          </button>
+                          <span class="project-chat-model">GPT-6.1 Sol</span>
+                          <button class="project-chat-send" id="projectChatSendBtn" type="submit" aria-label="Send message" disabled>
+                            <svg class="chat-send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V4m-6 6 6-6 6 6" /></svg>
+                            <svg class="chat-stop-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                    <div class="project-chat-compact" id="projectChatCompactLabel">
+                      <span>Chat</span>
                     </div>
                   </aside>
 
@@ -194,25 +250,23 @@
                     id="fileListResizer"
                     role="separator"
                     tabindex="0"
-                    aria-label="Resize projects and specification"
+                    aria-label="Resize chat and specification"
                     aria-orientation="vertical"
                     data-tooltip-disabled
                   ></div>
 
                   <div class="project-ai-layout" aria-label="Project specification">
-                    <section class="project-instruction-panel avr-session-panel" aria-labelledby="projectInstructionTitle">
+                    <section class="project-instruction-panel avr-session-panel panel-action-host ui-panel" aria-labelledby="projectInstructionTitle">
                       <h2 class="sr-only" id="projectInstructionTitle">Project specification</h2>
-                      <form class="project-canvas-controls ui-panel-header" id="projectCanvasForm" novalidate>
+                      <form class="project-canvas-controls ui-panel-header panel-action-lobe" data-toolbar-layout="vertical" id="projectCanvasForm" novalidate>
                         <button class="connect-btn ui-action" id="projectCanvasRunBtn" type="submit">Review specification</button>
                       </form>
-                      <span class="project-instruction-save-state" id="projectInstructionSaveState" role="status" aria-live="polite" hidden></span>
                       <div class="project-instruction-workspace">
-                        <div class="project-instruction-live-editor scroll-frame" id="projectInstructionDropZone">
+                        <div class="project-instruction-live-editor markdown-live-editor scroll-frame" id="projectInstructionDropZone">
                           <label class="sr-only" for="projectInstructionEditor">Project specification Markdown</label>
-                          <textarea id="projectInstructionEditor" spellcheck="true"></textarea>
+                          <textarea class="ui-scroll-region" id="projectInstructionEditor" spellcheck="true"></textarea>
                         </div>
                       </div>
-                      <div class="project-canvas-status" id="projectCanvasStatus" role="status" aria-live="polite" hidden></div>
                     </section>
                   </div>
 
@@ -228,40 +282,16 @@
                   ></div>
 
                   <section
-                    class="editor-workspace avr-session-panel"
+                    class="editor-workspace avr-session-panel panel-action-host ui-panel"
                     id="editorWorkspace"
                     aria-label="Code editor"
                   >
                     <div
-                      class="avr-action-strip avr-session-header ui-panel-header editor-action-strip"
+                      class="avr-action-strip avr-session-header ui-panel-header editor-action-strip panel-action-lobe"
+                      data-toolbar-layout="vertical"
                       aria-label="Build and flash controls"
                     >
-                      <div class="editor-targets" role="group" aria-label="Project target">
-                        <div class="connection-control editor-target-control">
-                          <template id="mcuSelectIcon">
-                            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                              <rect x="6" y="6" width="12" height="12" rx="2" />
-                              <path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4M10 10h4v4h-4z" />
-                            </svg>
-                          </template>
-                          <select id="mcuSelect" aria-label="Target MCU" data-placeholder-icon="mcuSelectIcon" data-placeholder-value="auto">
-                            <option value="auto" selected>Auto detect</option>
-                          </select>
-                        </div>
-                        <div class="connection-control editor-target-control">
-                          <template id="projectPackageSelectIcon">
-                            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                              <rect x="6" y="4" width="12" height="16" rx="2" />
-                              <path d="M2 6h4m-4 4h4m-4 4h4m-4 4h4M18 6h4m-4 4h4m-4 4h4m-4 4h4M10 7h4" />
-                            </svg>
-                          </template>
-                          <select id="projectPackageSelect" aria-label="Chip package" data-placeholder-icon="projectPackageSelectIcon" required>
-                            <option value="">Choose package</option>
-                          </select>
-                        </div>
-                      </div>
                       <div class="editor-build-actions" role="group" aria-label="Build and flash">
-                        <button class="connect-btn ui-action" id="projectGenerateCodeBtn" type="button">Generate code</button>
                         <button class="connect-btn ui-action" id="compileBtn" type="button">
                           Compile
                         </button>
@@ -279,7 +309,7 @@
                     </div>
 
                     <div class="editor-wrap" id="editorContent">
-                      <div class="editor-container">
+                      <div class="editor-container scroll-frame">
                         <div
                           class="editor-file-watermark"
                           id="editorFileWatermark"
@@ -295,11 +325,6 @@
                         </div>
                       </div>
 
-                      <div class="compile-log-section">
-                        <div class="scroll-frame compile-log-frame">
-                          <pre class="compile-log" id="compileLog"></pre>
-                        </div>
-                      </div>
                     </div>
                   </section>
 
@@ -315,70 +340,26 @@
                   ></div>
 
                   <aside
-                    class="documentation-workspace project-documentation-panel avr-session-panel"
+                    class="documentation-workspace project-documentation-panel avr-session-panel ui-panel"
                     id="projectDocumentationPane"
                     aria-label="Code description"
                     data-tooltip-disabled
                   >
                     <div
-                      class="avr-action-strip documentation-action-strip avr-session-header ui-panel-header"
-                      aria-label="Project guide controls"
-                    >
-                      <div class="connection-control documentation-locale-control">
-                        <label class="sr-only" for="documentationLocaleSelect">
-                          Description language
-                        </label>
-                        <select id="documentationLocaleSelect" disabled>
-                          <option value="en">English</option>
-                        </select>
-                      </div>
-
-                      <button
-                        class="connect-btn ui-action"
-                        id="projectDescribeCodeBtn"
-                        type="button"
-                      >Describe code</button>
-
-                      <button
-                        class="connect-btn ui-action secondary-btn documentation-edit-toggle"
-                        id="documentationEditToggle"
-                        type="button"
-                        aria-pressed="false"
-                        disabled
-                      >
-                        Edit
-                      </button>
-                    </div>
-
-                    <div
                       class="project-documentation-view"
                       id="projectDocumentationView"
                     >
                       <div
-                        class="project-documentation-notice"
-                        id="projectDocumentationNotice"
-                        role="status"
-                        aria-live="polite"
-                        hidden
-                      ></div>
-                      <div
-                        class="project-documentation-scroll project-documentation-live-editor markdown-live-editor"
+                        class="project-documentation-scroll project-documentation-live-editor markdown-live-editor scroll-frame"
                         id="projectDocumentationScroll"
                         role="region"
                         aria-label="Project documentation content"
                         tabindex="0"
                       >
-                        <article
-                          class="project-documentation-content"
-                          id="projectDocumentationContent"
-                          hidden
-                        ></article>
                         <textarea
-                          class="project-documentation-editor"
+                          class="project-documentation-editor ui-scroll-region"
                           id="projectDocumentationEditor"
                           aria-label="Project guide Markdown"
-                          aria-readonly="true"
-                          readonly
                           spellcheck="true"
                         ></textarea>
                       </div>
@@ -389,15 +370,6 @@
             </div>
           </div>
 
-          <div id="fileContextMenu" class="file-context-menu">
-            <button type="button" data-action="rename">Rename</button>
-            <button type="button" data-action="delete">Delete</button>
-            <button type="button" data-action="download">Download</button>
-            <button type="button" data-action="download-hex">
-              Download HEX
-            </button>
-          </div>
-
           <input
             id="fileUploadInput"
             type="file"
@@ -406,81 +378,82 @@
           />
 
           <div
-            id="fileAddModal"
-            class="file-add-modal"
+            id="filesModal"
+            class="files-modal ui-modal"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="fileAddModalTitle"
+            aria-labelledby="filesModalTitle"
             hidden
           >
-            <div class="file-add-dialog">
-              <div class="file-add-header ui-dialog-header">
-                <h3 class="editor-title" id="fileAddModalTitle">Add project</h3>
-                <button
-                  class="file-add-close ui-dialog-close"
-                  id="fileAddCloseBtn"
-                  type="button"
-                  aria-label="Close"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M6 6l12 12M18 6 6 18"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      stroke-linecap="round"
-                    />
-                  </svg>
+            <div class="files-dialog ui-dialog-card">
+              <div class="ui-dialog-header">
+                <h3 class="editor-title" id="filesModalTitle">Projects</h3>
+                <button class="ui-dialog-close" id="filesCloseBtn" type="button" aria-label="Close projects">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
                 </button>
               </div>
-
-              <div class="file-add-body">
-                <div class="file-add-options">
-                  <button
-                    class="file-add-card"
-                    id="createEmptyProjectCard"
-                    type="button"
-                  >
-                    <span class="file-add-card-title">New project</span>
-                  </button>
-
-                  <button
-                    class="file-add-card"
-                    id="uploadExistingFileCard"
-                    type="button"
-                  >
-                    <span class="file-add-card-title">Import project ZIP</span>
-                  </button>
-                </div>
-
-                <section
-                  class="file-add-template-section"
-                  aria-labelledby="fileTemplatesTitle"
-                >
-                  <h4 class="file-add-section-title" id="fileTemplatesTitle">
-                    Mini projects
-                  </h4>
-
-                  <div
-                    class="file-template-grid"
-                    id="fileTemplateGrid"
-                    aria-live="polite"
-                  ></div>
+              <div class="files-dialog-body ui-dialog-body ui-dialog-columns">
+                <section class="projects-library ui-dialog-sidebar" aria-labelledby="projectsLibraryTitle">
+                  <h4 class="file-add-section-title" id="projectsLibraryTitle">Your projects</h4>
+                  <div class="outliner-frame">
+                    <div class="outliner-list ui-scroll-region" id="fileList" aria-label="Projects"></div>
+                  </div>
                 </section>
+                <section class="project-create-panel" aria-labelledby="projectCreateTitle">
+                  <h4 class="file-add-section-title" id="projectCreateTitle">Create project</h4>
+                  <div class="file-add-options">
+                    <button
+                      class="file-add-card"
+                      id="createEmptyProjectCard"
+                      type="button"
+                    >
+                      <span class="file-add-card-title">New project</span>
+                    </button>
+
+                    <button
+                      class="file-add-card"
+                      id="uploadExistingFileCard"
+                      type="button"
+                    >
+                      <span class="file-add-card-title">Import project ZIP</span>
+                    </button>
+                  </div>
+
+                  <section
+                    class="file-add-template-section"
+                    aria-labelledby="fileTemplatesTitle"
+                  >
+                    <h4 class="file-add-section-title" id="fileTemplatesTitle">
+                      Mini projects
+                    </h4>
+
+                    <div
+                      class="file-template-grid ui-scroll-region"
+                      id="fileTemplateGrid"
+                      aria-live="polite"
+                    ></div>
+                  </section>
+                </section>
+              </div>
+              <div id="fileContextMenu" class="ui-context-menu ui-panel ui-menu-list">
+                <button class="ui-list-item" type="button" data-action="rename">Rename</button>
+                <button class="ui-list-item" type="button" data-action="delete">Delete</button>
+                <button class="ui-list-item" type="button" data-action="download">Download</button>
+                <button class="ui-list-item" type="button" data-action="download-hex">Download HEX</button>
               </div>
             </div>
           </div>
 
           <div
             id="projectAiAccountModal"
-            class="site-dialog project-ai-account-modal"
+            class="site-dialog project-ai-account-modal ui-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="projectAiAccountModalTitle"
             hidden
           >
             <div
-              class="site-dialog-card project-ai-account-card"
+              class="site-dialog-card project-ai-account-card ui-dialog-card"
               id="projectAiAccountCard"
               tabindex="-1"
             >
@@ -497,12 +470,12 @@
                   type="button"
                   aria-label="Close account"
                 >
-                  &times;
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
                 </button>
               </div>
 
               <div
-                class="project-ai-account-body"
+                class="project-ai-account-body ui-dialog-body"
                 id="projectAiAccountBody"
               >
                 <button
@@ -518,7 +491,7 @@
                     aria-hidden="true"
                   >
                     <img
-                      src="/icons/sign-in-with-google-light.svg"
+                      src="/icons/sign-in-with-google-light.svg?v=20261105-security-release-v1"
                       alt=""
                       width="180"
                       height="40"
@@ -580,13 +553,6 @@
                   AI access is not configured on this server.
                 </span>
 
-                <p
-                  class="project-ai-account-status"
-                  id="projectAiAccountStatus"
-                  role="status"
-                  aria-live="polite"
-                  hidden
-                ></p>
 
                 <p
                   class="project-ai-privacy-note"
@@ -610,13 +576,13 @@
 
           <div
             id="siteDialog"
-            class="site-dialog"
+            class="site-dialog ui-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="siteDialogTitle"
             hidden
           >
-            <div class="site-dialog-card">
+            <div class="site-dialog-card ui-dialog-card">
               <div class="site-dialog-header ui-dialog-header">
                 <h3 class="editor-title" id="siteDialogTitle">Notice</h3>
                 <button
@@ -625,11 +591,11 @@
                   type="button"
                   aria-label="Close"
                 >
-                  &times;
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>
                 </button>
               </div>
-              <p class="site-dialog-message" id="siteDialogMessage"></p>
-              <div class="site-dialog-actions">
+              <p class="site-dialog-message ui-dialog-body" id="siteDialogMessage"></p>
+              <div class="site-dialog-actions ui-dialog-actions">
                 <button
                   class="connect-btn ui-action secondary-btn"
                   id="siteDialogCancelBtn"
@@ -651,15 +617,26 @@
 
       </div>
     </main>
-    <script defer src="ui-tooltips.js?v=20260723-pane-optout-v1"></script>
-    <script defer src="ui-controls.js?v=20260924-ui-v1"></script>
-    <script defer src="avr-project-format.js?v=20261015-project-rules-v1"></script>
-    <script defer src="avr-mini-projects.js?v=20261015-project-rules-v1"></script>
-    <script defer src="avr-mini-project-archive.js?v=20261015-project-rules-v1"></script>
+    <template id="panelActionContour">
+      <svg class="panel-action-contour" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+        <path class="panel-action-fill" />
+        <path class="panel-action-outline" vector-effect="non-scaling-stroke" />
+      </svg>
+    </template>
+    <script defer src="ui-tooltips.js?v=20261105-security-release-v1"></script>
+    <script defer src="ui-controls.js?v=20261105-security-release-v1"></script>
+    <script defer src="ui-notifications.js?v=20261105-security-release-v1"></script>
+    <script defer src="avr-project-format.js?v=20261105-security-release-v1"></script>
+    <script defer src="avr-mini-projects.js?v=20261105-security-release-v1"></script>
+    <script defer src="avr-mini-project-archive.js?v=20261105-security-release-v1"></script>
+    <script defer src="avr-workspace-layout.js?v=20261105-security-release-v1"></script>
+    <script defer src="avr-chat-message-tools.js?v=20261105-security-release-v1"></script>
+    <script defer src="avr-project-chat.js?v=20261105-security-release-v1"></script>
+    <script defer src="avr-hardware-flow.js?v=20261105-security-release-v1"></script>
     <script
       defer
-      src="AVR-Programming.js?v=20261015-project-rules-v1"
+      src="AVR-Programming.js?v=20261105-security-release-v1"
     ></script>
-    <script defer src="updi-test.js?v=20260709-terminal-avr-sync-v1"></script>
+    <script defer src="updi-test.js?v=20261105-security-release-v1"></script>
   </body>
 </html>

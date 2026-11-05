@@ -2,6 +2,91 @@
 (() => {
   "use strict";
   const workspaceModalStack = [];
+  let activePanelResize = null;
+
+  // Input and gesture lifetime are shared. Each workspace keeps its own sizing
+  // geometry, compact states, animation and persistence in these callbacks.
+  function bindPanelResizer(handle, { axis, enabled = () => true, start, move, finish, key }) {
+    if (!handle) return;
+    const coordinate = event => axis === "x" ? event.clientX : event.clientY;
+    const matchesSession = event => activePanelResize?.handle === handle &&
+      (event?.pointerId === undefined || event.pointerId === activePanelResize.pointerId);
+    const onMove = event => {
+      if (!matchesSession(event) || !Number.isFinite(coordinate(event))) return;
+      const session = activePanelResize;
+      event.preventDefault();
+      session.position = coordinate(event);
+      try {
+        move(session.position - session.origin, session.data, event);
+      } catch (error) {
+        end(event);
+        throw error;
+      }
+    };
+    const end = event => {
+      if (!matchesSession(event)) return;
+      const session = activePanelResize;
+      // Pointerup can carry a final position with no preceding move sample.
+      // Cancellation has no final movement, and the shared state is cleared
+      // before capture release can dispatch another completion event.
+      try {
+        if (event?.type === "pointerup" && Number.isFinite(coordinate(event)) &&
+            coordinate(event) !== session.position) {
+          session.position = coordinate(event);
+          move(session.position - session.origin, session.data, event);
+        }
+      } finally {
+        activePanelResize = null;
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", end);
+        document.removeEventListener("pointercancel", end);
+        handle.removeEventListener("lostpointercapture", end);
+        window.removeEventListener("blur", end);
+        window.removeEventListener("resize", end);
+        handle.classList.remove("is-resizing");
+        document.body.classList.remove(session.cursorClass);
+        try {
+          if (handle.hasPointerCapture?.(session.pointerId)) handle.releasePointerCapture(session.pointerId);
+        } catch {}
+        finish?.(session.data, event);
+        event?.preventDefault?.();
+      }
+    };
+    handle.addEventListener("pointerdown", event => {
+      if (event.button !== 0 || event.isPrimary === false || activePanelResize ||
+          !enabled() || !Number.isFinite(coordinate(event))) return;
+      event.preventDefault();
+      handle.focus({ preventScroll: true });
+      const data = start?.(event);
+      const cursorClass = axis === "x" ? "is-column-resizing" : "is-row-resizing";
+      activePanelResize = { handle, pointerId: event.pointerId, cursorClass,
+        origin: coordinate(event), position: coordinate(event), data };
+      handle.classList.add("is-resizing");
+      document.body.classList.add(cursorClass);
+      // Document listeners also cover environments where capture is unavailable
+      // or rejected. Captured pointer events still bubble through the document.
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", end);
+      document.addEventListener("pointercancel", end);
+      handle.addEventListener("lostpointercapture", end);
+      window.addEventListener("blur", end);
+      window.addEventListener("resize", end);
+      try { handle.setPointerCapture?.(event.pointerId); } catch {}
+    });
+    handle.addEventListener("keydown", event => {
+      if (activePanelResize || !enabled() || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      const arrows = axis === "x" ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"];
+      const direction = event.key === arrows[0] ? -1 : event.key === arrows[1] ? 1 : 0;
+      const endpoint = event.key === "Home" ? "start" : event.key === "End" ? "end" : null;
+      if (!direction && !endpoint) return;
+      event.preventDefault();
+      key?.({ direction, endpoint, accelerated: !!event.shiftKey }, event);
+    });
+  }
+
+  function isPanelResizing() {
+    return activePanelResize !== null;
+  }
 
   function getTopWorkspaceModal() {
     return [...workspaceModalStack].reverse().find((entry) => !entry.modal.hidden) || null;
@@ -18,7 +103,7 @@
     const requested = typeof entry.focusTarget === "function" ? entry.focusTarget() : entry.focusTarget;
     const target = requested && !requested.disabled && !requested.closest("[hidden]")
       ? requested : getWorkspaceModalControls(entry.modal)[0];
-    const fallback = target || entry.modal.querySelector(".site-dialog-card, .file-add-dialog") || entry.modal;
+    const fallback = target || entry.modal.querySelector(".ui-dialog-card, .site-dialog-card") || entry.modal;
     if (!target) fallback.tabIndex = -1;
     fallback.focus({ preventScroll: true });
   }
@@ -94,7 +179,7 @@
   function getSelectDisplayText(select) {
     if (!select) return "";
     const selected = select.selectedOptions && select.selectedOptions[0];
-    return selected ? selected.textContent.trim() : "";
+    return selected ? (selected.dataset.displayLabel || selected.textContent).trim() : "";
   }
 
   function updateCustomSelectIntrinsicWidth(custom) {
@@ -102,10 +187,18 @@
     if (!custom || !label) return;
     custom.style.removeProperty("--custom-select-width");
     if (custom.classList.contains("is-icon-value")) return;
-    const textWidth = Math.ceil(label.scrollWidth);
+    // Measure the glyphs, not the allocated field width: a stretched select
+    // must still recover its intrinsic size when its toolbar becomes compact.
+    const range = document.createRange?.();
+    range?.selectNodeContents(label);
+    const textWidth = Math.ceil(range?.getBoundingClientRect?.().width || label.scrollWidth);
+    const trigger = custom.querySelector(".custom-select-trigger");
+    const style = trigger && window.getComputedStyle?.(trigger);
+    const chrome = style ? ["paddingLeft", "paddingRight", "borderLeftWidth", "borderRightWidth"]
+      .reduce((total, property) => total + (Number.parseFloat(style[property]) || 0), 2) : 58;
     custom.style.setProperty(
       "--custom-select-width",
-      `${Math.max(72, textWidth + 58)}px`
+      `${Math.max(72, textWidth + chrome)}px`
     );
   }
 
@@ -114,6 +207,9 @@
     const label = custom.querySelector(".custom-select-value");
     if (!list || !label) return;
 
+    const focusedOption = custom.classList.contains("is-open") && list.contains(document.activeElement)
+      ? document.activeElement.closest(".custom-select-option") : null;
+    const focusedValue = focusedOption?.dataset.value;
     list.innerHTML = "";
     const displayText = getSelectDisplayText(select) || "Select option";
     const placeholderIcon = select.dataset.placeholderIcon &&
@@ -127,18 +223,52 @@
     const trigger = custom.querySelector(".custom-select-trigger");
     const accessibleLabel = select.getAttribute("aria-label") ||
       select.labels?.[0]?.textContent?.trim() || "Select option";
-    trigger?.setAttribute("aria-label", `${accessibleLabel}: ${displayText}`);
-    trigger?.setAttribute("data-tooltip", `${accessibleLabel}: ${displayText}`);
+    const captionText = select.dataset.controlCaption || "";
+    const statusText = select.dataset.controlStatus || "";
+    // Natural letter/number boundaries keep compact model names readable.
+    if (captionText && !placeholderIcon) {
+      const boundary = displayText.search(/[A-Za-z]\d/);
+      if (boundary >= 0) {
+        label.replaceChildren(document.createTextNode(displayText.slice(0, boundary + 1)),
+          document.createElement("wbr"), document.createTextNode(displayText.slice(boundary + 1)));
+      }
+    }
+    custom.classList.toggle("has-control-caption", !!captionText);
+    if (captionText && trigger) {
+      let caption = trigger.querySelector(".custom-select-caption");
+      let status = trigger.querySelector(".custom-select-status");
+      if (!caption) {
+        caption = document.createElement("span");
+        caption.className = "custom-select-caption";
+        caption.setAttribute("aria-hidden", "true");
+        trigger.insertBefore(caption, label);
+      }
+      if (!status) {
+        status = document.createElement("span");
+        status.className = "custom-select-status";
+        status.setAttribute("aria-hidden", "true");
+        trigger.appendChild(status);
+      }
+      caption.textContent = displayText === captionText ? "" : captionText;
+      status.textContent = statusText;
+      custom.dataset.connectionState = select.dataset.connectionState || "idle";
+    }
+    trigger?.setAttribute("aria-label", `${accessibleLabel}: ${displayText}${statusText ? `. ${statusText}` : ""}`);
+    trigger?.setAttribute("data-tooltip", select.dataset.tooltip || `${accessibleLabel}: ${displayText}`);
     updateCustomSelectIntrinsicWidth(custom);
 
     const addOption = (option) => {
       const item = document.createElement("button");
       item.type = "button";
-      item.className = "custom-select-option";
+      item.className = "custom-select-option ui-list-item";
       item.dataset.value = option.value;
       item.setAttribute("role", "option");
       item.setAttribute("aria-selected", String(option.value === select.value));
-      item.textContent = option.textContent.trim();
+      const label = document.createElement("span");
+      label.className = "custom-select-option-label";
+      label.textContent = option.textContent.trim();
+      item.appendChild(label);
+      if (option.hasAttribute("aria-label")) item.setAttribute("aria-label", option.getAttribute("aria-label"));
       item.disabled = option.disabled || option.parentElement?.disabled === true;
       item.tabIndex = -1;
 
@@ -175,6 +305,13 @@
         addOption(child);
       }
     }
+
+    if (focusedOption && !select.disabled && custom.classList.contains("is-open")) {
+      const options = [...list.querySelectorAll(".custom-select-option:not(:disabled)")];
+      const target = options.find(option => option.dataset.value === focusedValue) ||
+        options.find(option => option.getAttribute("aria-selected") === "true") || options[0] || trigger;
+      target?.focus({ preventScroll: true });
+    }
   }
 
   function updateCustomSelect(select, custom) {
@@ -196,7 +333,7 @@
     const gap = 6;
     const viewportWidth = document.documentElement.clientWidth;
     const viewportHeight = document.documentElement.clientHeight;
-    const preferredWidth = custom.closest(".documentation-locale-control") ? 180 : 280;
+    const preferredWidth = 280;
     const width = Math.min(Math.max(bounds.width, preferredWidth), viewportWidth - edge * 2);
     const below = viewportHeight - bounds.bottom - gap - edge;
     const above = bounds.top - gap - edge;
@@ -211,16 +348,23 @@
 
   function closeCustomSelect(custom) {
     if (!custom) return;
+    const wasOpen = custom.classList.contains("is-open");
     const menu = custom.querySelector(".custom-select-menu");
     if (menu?.hasAttribute("popover") && menu.matches(":popover-open")) menu.hidePopover();
     custom.classList.remove("is-open");
     const trigger = custom.querySelector(".custom-select-trigger");
     if (trigger) trigger.setAttribute("aria-expanded", "false");
+    if (wasOpen) custom.previousElementSibling?.dispatchEvent(new CustomEvent("ud-select-toggle", {
+      bubbles: true, detail: { open: false },
+    }));
   }
 
   function openCustomSelect(select, custom, focusOption = false) {
     if (!select || !custom || select.disabled) return;
-    document.querySelectorAll(".custom-select.is-open").forEach(closeCustomSelect);
+    const wasOpen = custom.classList.contains("is-open");
+    document.querySelectorAll(".custom-select.is-open").forEach(other => {
+      if (other !== custom) closeCustomSelect(other);
+    });
     updateCustomSelect(select, custom);
     custom.classList.add("is-open");
     const trigger = custom.querySelector(".custom-select-trigger");
@@ -233,6 +377,7 @@
       custom.querySelector('.custom-select-option:not(:disabled)');
     if (focusOption) active?.focus({ preventScroll: true });
     active?.scrollIntoView({ block: "nearest" });
+    if (!wasOpen) select.dispatchEvent(new CustomEvent("ud-select-toggle", { bubbles: true, detail: { open: true } }));
   }
 
   function initCustomSelect(select) {
@@ -267,7 +412,7 @@
     if (typeof menu.showPopover === "function") menu.setAttribute("popover", "manual");
 
     const list = document.createElement("div");
-    list.className = "custom-select-list";
+    list.className = "custom-select-list ui-scroll-region ui-menu-list";
     list.setAttribute("role", "listbox");
     if (select.id) {
       list.id = `${select.id}CustomListbox`;
@@ -323,7 +468,7 @@
       attributes: true,
       childList: true,
       subtree: true,
-      attributeFilter: ["disabled", "label", "selected", "value"],
+      attributeFilter: ["disabled", "label", "selected", "value", "data-control-caption", "data-control-status", "data-connection-state"],
     });
 
     document.addEventListener("click", () => closeCustomSelect(custom));
@@ -339,6 +484,8 @@
   }
 
   window.UartDebugControls = Object.freeze({
+    bindPanelResizer,
+    isPanelResizing,
     initSelect: initCustomSelect,
     updateSelect: updateCustomSelect,
     closeSelect: closeCustomSelect,

@@ -5,17 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#222f3c" />
     <title>Uart Debug</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="manifest" href="/manifest.webmanifest?v=20261105-security-release-v1" />
+    <link rel="icon" href="/favicon.ico?v=20261105-security-release-v1" sizes="any" />
     <link
       rel="icon"
       type="image/png"
       sizes="192x192"
-      href="/icons/favicon-192.png"
+      href="/icons/favicon-192.png?v=20261105-security-release-v1"
     />
 
-    <link rel="stylesheet" href="/ui-theme.css?v=20260924-ui-v1" />
-    <link rel="stylesheet" href="/home.css?v=20260924-ui-v1" />
+    <link rel="stylesheet" href="/ui-theme.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="/ui-controls.css?v=20261105-security-release-v1" />
+    <link rel="stylesheet" href="/home.css?v=20261105-security-release-v1" />
 
     <script type="application/ld+json">
       {
@@ -99,7 +100,7 @@
       <h1 class="sr-only">Uart Debug</h1>
       <section class="navigation-section" aria-label="Tools">
         <div class="nav-grid">
-          <a href="/avr" class="nav-card avr-card">
+          <a href="/avr" class="nav-card avr-card ui-panel">
             <div class="card-visual" aria-hidden="true">
               <div class="card-visual-chip">
                 <span class="chip-pins-x"></span>
@@ -116,7 +117,7 @@
             <h2 class="card-title">AVR</h2>
             <p class="card-description">Build &amp; Flash Online</p>
           </a>
-          <a href="/uart" class="nav-card uart-card">
+          <a href="/uart" class="nav-card uart-card ui-panel">
             <div class="card-visual uart-visual" aria-hidden="true">
               <div class="connector-scene">
                 <div class="binary-streams">
@@ -177,7 +178,7 @@
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
-          navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(function (error) {
+          navigator.serviceWorker.register("/sw.js?v=20261105-security-release-v1", { updateViaCache: "none" }).catch(function (error) {
             console.error("Service worker registration failed:", error);
           });
         });
