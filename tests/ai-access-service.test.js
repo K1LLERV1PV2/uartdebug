@@ -2441,7 +2441,7 @@ test("near-limit legacy chats migrate through the real frontend without losing h
     { legacy: previouslyArchived },
     { legacy: managedProjectChatsFixture(nearLimitChatCollection({ pending: true })), recoverPending: true },
   ];
-  const messageContent = ({ status, requestSource, ...message }) => message;
+  const messageContent = ({ status, requestSource, parentId, ...message }) => message;
   for (const { legacy, recoverPending } of fixtures) {
     validateStoredConversation(legacy);
     const migrated = normalize(legacy, { recoverPending });
@@ -2468,7 +2468,7 @@ test("near-limit legacy chats migrate through the real frontend without losing h
       thread.titleMode = "manual";
       for (const message of thread.messages) if (message.role === "user") message.requestSource = "review";
     }
-    assert.equal(migrated.schemaVersion, 4);
+    assert.equal(migrated.schemaVersion, 5);
     validateStoredConversation(migrated);
     const data = unifiedProjectsFixture();
     data.draftConversation = normalize(null);
@@ -2598,6 +2598,91 @@ test("cached chat clients cannot downgrade the simplified format at the latest w
   deleted.current = "new.c";
   service.writeAccountWorkspace(context, "files", { baseRevision: 2, expectedAccountKey: context.accountKey, data: deleted });
   assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, deleted);
+});
+
+test("draft branched chats transfer into a new project while retaining an empty current-format draft", async (t) => {
+  const { normalize } = require("../public/avr-project-chat");
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "draft-chat-transfer", sub: "draft-chat-transfer-account", email: "draft-transfer@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const conversation = normalize(currentProjectChatsFixture());
+  const thread = conversation.threads[0];
+  thread.messages.push({ ...thread.messages[0], id: "alternate-question", content: "An alternate question.", parentId: null });
+  thread.activeLeafId = "alternate-question";
+  const initial = unifiedProjectsFixture();
+  initial.files = {};
+  initial.miniProjects = {};
+  initial.current = null;
+  initial.draftConversation = structuredClone(conversation);
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: initial });
+
+  const transferred = unifiedProjectsFixture();
+  transferred.miniProjects.blink.conversation = structuredClone(conversation);
+  transferred.draftConversation = normalize(null);
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: transferred });
+  const stored = service.readAccountWorkspace(context).documents.files;
+  assert.equal(stored.revision, 2);
+  assert.deepEqual(stored.data, transferred);
+  assert.deepEqual(stored.data.miniProjects.blink.conversation, conversation, "all branch nodes, active leaves and other chats survive the move");
+  assert.equal(stored.data.draftConversation.schemaVersion, 5);
+  assert.ok(stored.data.draftConversation.threads.every(chat => chat.messages.length === 0 && chat.draft === ""));
+
+  for (const location of ["draft", "project"]) for (const legacy of [currentProjectChatsFixture(), undefined]) {
+    const incoming = structuredClone(transferred);
+    const owner = location === "draft" ? incoming : incoming.miniProjects.blink;
+    const field = location === "draft" ? "draftConversation" : "conversation";
+    if (legacy === undefined) delete owner[field];
+    else owner[field] = structuredClone(legacy);
+    incoming.files["blink.c"] = "A cached client must not alter the transferred project.";
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 2, expectedAccountKey: context.accountKey, data: incoming,
+    }), error => error.status === 409 && error.code === "account_workspace_migration_required");
+    assert.deepEqual(service.readAccountWorkspace(context).documents.files, stored);
+  }
+});
+
+test("branched chats round-trip atomically and cached linear clients cannot overwrite them", async (t) => {
+  const { normalize } = require("../public/avr-project-chat");
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "tree-chat", sub: "tree-chat-account", email: "tree@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const saved = unifiedProjectsFixture(), conversation = normalize(currentProjectChatsFixture());
+  const thread = conversation.threads[0], originalQuestion = thread.messages[0];
+  thread.messages.push({ ...originalQuestion, id: "edited-question", content: "An alternate question.", parentId: null });
+  thread.activeLeafId = "edited-question";
+  saved.draftConversation = structuredClone(conversation);
+  saved.miniProjects.blink.conversation = structuredClone(conversation);
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: saved });
+  const stored = service.readAccountWorkspace(context).documents.files;
+  assert.deepEqual(stored.data, saved);
+  for (const damage of [
+    tree => { tree.threads[0].messages[0].parentId = tree.threads[0].messages[0].id; },
+    tree => { tree.threads[0].messages[0].parentId = "absent-parent"; },
+    tree => { tree.threads[0].activeLeafId = "absent-branch"; },
+  ]) {
+    const incoming = structuredClone(saved);
+    damage(incoming.miniProjects.blink.conversation);
+    incoming.files["blink.c"] = "An invalid branch must not alter this program.";
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey, data: incoming,
+    }), error => error.status === 400 && error.code === "invalid_account_data");
+    assert.deepEqual(service.readAccountWorkspace(context).documents.files, stored);
+  }
+  for (const location of ["draft", "project"]) {
+    for (const legacy of [currentProjectChatsFixture(), undefined]) {
+      const incoming = structuredClone(saved);
+      if (location === "draft") {
+        if (legacy) incoming.draftConversation = legacy;
+        else delete incoming.draftConversation;
+      } else if (legacy) incoming.miniProjects.blink.conversation = legacy;
+      else delete incoming.miniProjects.blink.conversation;
+      incoming.files["blink.c"] = "A stale client must not write this source either.";
+      assert.throws(() => service.writeAccountWorkspace(context, "files", {
+        baseRevision: 1, expectedAccountKey: context.accountKey, data: incoming,
+      }), error => error.status === 409 && error.code === "account_workspace_migration_required");
+      assert.deepEqual(service.readAccountWorkspace(context).documents.files, stored);
+    }
+  }
 });
 
 test("cached unmanaged chat clients cannot strip saved chat management metadata", async (t) => {

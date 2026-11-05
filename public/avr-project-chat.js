@@ -6,6 +6,7 @@
 })(typeof globalThis === "object" ? globalThis : this, function () {
   "use strict";
 
+  const CONVERSATION_SCHEMA_VERSION = 5;
   const LIMITS = Object.freeze({
     messageBytes: 32 * 1024,
     draftBytes: 16 * 1024,
@@ -21,6 +22,7 @@
   const bytes = value => encoder.encode(value).length;
   const cleanText = value => typeof value === "string" ? value.replace(/\r\n?/g, "\n").replace(/\0/g, "") : "";
   const withoutTrailingSurrogate = value => /[\uD800-\uDBFF]$/.test(value) ? value.slice(0, -1) : value;
+  const validId = value => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 
   function bounded(value, limit) {
     const text = cleanText(value);
@@ -45,7 +47,7 @@
   }
 
   function storedMessages(messages) {
-    return messages.map(({ requestSource, status, ...message }) => status === "complete" ? message : { ...message, status });
+    return messages.map(({ requestSource, parentId, status, ...message }) => status === "complete" ? message : { ...message, status });
   }
 
   // Keep the established content budgets independent of bounded UI metadata.
@@ -65,20 +67,33 @@
    * @param {unknown} value
    * @param {{recoverPending?: boolean}} options
    */
-  function normalizeThread(value, { recoverPending = false } = {}) {
+  function normalizeThread(value, { recoverPending = false, tree = Object.hasOwn(value || {}, "activeLeafId") } = {}) {
     const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
     const ids = new Set();
     const messages = [];
-    const recent = Array.isArray(input.messages) ? input.messages.slice(-LIMITS.messages) : [];
+    if (tree && (!Array.isArray(input.messages) || input.messages.length > LIMITS.messages)) {
+      throw new RangeError("A chat can contain at most 100 messages across all branches.");
+    }
+    const recent = Array.isArray(input.messages) ? tree ? input.messages : input.messages.slice(-LIMITS.messages) : [];
     for (const [index, item] of recent.entries()) {
-      if (!item || !["user", "assistant"].includes(item.role)) continue;
+      if (!item || !["user", "assistant"].includes(item.role)) {
+        if (tree) throw new TypeError("The saved chat contains an invalid message.");
+        continue;
+      }
+      if (tree && (!validId(item.id) || ids.has(item.id) ||
+          !(item.parentId === null || validId(item.parentId) && ids.has(item.parentId)) ||
+          typeof item.content !== "string" || item.content.includes("\0") || bytes(item.content) > LIMITS.messageBytes ||
+          !Number.isSafeInteger(item.createdAt) || item.createdAt < 0 ||
+          !["complete", "pending", "error"].includes(item.status))) {
+        throw new TypeError("The saved chat contains an invalid message tree.");
+      }
       let status = ["complete", "pending", "error"].includes(item.status) ? item.status : "complete";
       if (item.role === "user") status = "complete";
       let content = bounded(item.content, LIMITS.messageBytes);
       if (recoverPending && status === "pending") {
         status = "error";
       }
-      if (status === "complete" && !content.trim()) continue;
+      if (!tree && status === "complete" && !content.trim()) continue;
       const createdAt = Number.isSafeInteger(item.createdAt) && item.createdAt >= 0 ? item.createdAt : 0;
       let id = typeof item.id === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.id)
         ? item.id : `chat-${createdAt}-${index}`;
@@ -88,16 +103,21 @@
         while (ids.has(id)) id = `${base}-${suffix++}`;
       }
       ids.add(id);
-      messages.push({ id, role: item.role, content, createdAt, status,
+      messages.push({ id, parentId: tree ? item.parentId : messages.at(-1)?.id || null, role: item.role, content, createdAt, status,
         ...(item.role === "user" ? { requestSource: ["message", "review"].includes(item.requestSource) ? item.requestSource
           : content === "Review the project specification. Ask any necessary questions in this chat." ? "review" : "message" } : {}) });
     }
     const result = { id: input.id || "chat-1", title: bounded(input.title, LIMITS.titleBytes) || "New chat",
-      messages: messages.slice(-LIMITS.messages), draft: bounded(input.draft, LIMITS.draftBytes),
+      messages, activeLeafId: tree ? input.activeLeafId : messages.at(-1)?.id || null, draft: bounded(input.draft, LIMITS.draftBytes),
       titleMode: input.titleMode === "manual" ? "manual" : "auto" };
+    if (tree && !(messages.length ? ids.has(result.activeLeafId) : result.activeLeafId === null)) {
+      throw new TypeError("The saved chat has an invalid selected branch.");
+    }
+    // Legacy valid histories fit their established content budgets. A tree is
+    // never pruned: dropping an old node would destroy another saved branch.
     const size = () => threadContentBytes(result);
-    while (result.messages.length > 1 && size() > LIMITS.storedBytes) result.messages.shift();
-    if (result.messages.length && size() > LIMITS.storedBytes) {
+    while (!tree && result.messages.length > 1 && size() > LIMITS.storedBytes) result.messages.shift();
+    if (!tree && result.messages.length && size() > LIMITS.storedBytes) {
       const message = result.messages[0], content = message.content;
       let low = 0, high = content.length;
       while (low < high) {
@@ -108,15 +128,38 @@
       }
       message.content = withoutTrailingSurrogate(content.slice(0, low));
     }
+    if (!tree) {
+      for (let index = 0; index < result.messages.length; index++) result.messages[index].parentId = result.messages[index - 1]?.id || null;
+      result.activeLeafId = result.messages.at(-1)?.id || null;
+    }
+    const selected = new Map(), byId = new Map(result.messages.map(message => [message.id, message]));
+    if (Object.hasOwn(input, "selectedChildIds")) {
+      if (!Array.isArray(input.selectedChildIds) || input.selectedChildIds.length > result.messages.length) {
+        throw new TypeError("The saved chat contains invalid branch selections.");
+      }
+      for (const id of input.selectedChildIds) {
+        const child = byId.get(id);
+        if (!child || selected.has(child.parentId)) throw new TypeError("The saved chat contains invalid branch selections.");
+        selected.set(child.parentId, child.id);
+      }
+    }
+    for (const child of activeMessages(result)) selected.set(child.parentId, child.id);
+    result.selectedChildIds = [...selected.values()];
     return result;
   }
 
   function normalize(value, options = {}) {
     const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-    const source = [2, 3, 4].includes(input.schemaVersion) && Array.isArray(input.threads) ? input.threads : [input];
+    if (Object.hasOwn(input, "schemaVersion") && ![1, 2, 3, 4, CONVERSATION_SCHEMA_VERSION].includes(input.schemaVersion)) {
+      throw new TypeError("This chat uses a newer or unsupported format. Refresh the application before saving.");
+    }
+    const tree = input.schemaVersion === CONVERSATION_SCHEMA_VERSION;
+    if (tree && (!Array.isArray(input.threads) || !input.threads.length)) throw new TypeError("The saved chat collection is invalid.");
+    const source = [2, 3, 4, CONVERSATION_SCHEMA_VERSION].includes(input.schemaVersion) && Array.isArray(input.threads) ? input.threads : [input];
     if (source.length > LIMITS.threads) throw new RangeError("A project can contain at most 32 chats.");
     const ids = new Set();
     const threads = (source.length ? source : [{}]).map((item, index) => {
+      if (tree && (!validId(item?.id) || ids.has(item.id))) throw new TypeError("The saved chat collection contains invalid or duplicate chats.");
       let id = typeof item?.id === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(item.id)
         ? item.id : `chat-${index + 1}`;
       let suffix = index + 1;
@@ -124,14 +167,33 @@
       ids.add(id);
       const firstMessage = Array.isArray(item?.messages) ? item.messages.find(message => message?.role === "user" && cleanText(message.content).trim()) : null;
       const title = item?.title || shortTitle(firstMessage?.content) || (index ? `New chat ${index + 1}` : "New chat");
-      return normalizeThread({ ...item, id, title }, options);
+      return normalizeThread({ ...item, id, title }, { ...options, tree });
     });
-    return { schemaVersion: 4,
+    if (tree && !threads.some(item => item.id === input.activeThreadId)) throw new TypeError("The selected chat is missing.");
+    return { schemaVersion: CONVERSATION_SCHEMA_VERSION,
       activeThreadId: threads.some(item => item.id === input.activeThreadId) ? input.activeThreadId : threads[0].id,
       threads };
   }
 
   const activeThread = collection => collection.threads.find(item => item.id === collection.activeThreadId) || collection.threads[0];
+  function activeMessages(thread, tip = thread.activeLeafId) {
+    const byId = new Map(thread.messages.map(message => [message.id, message])), path = [];
+    for (let message = byId.get(tip); message; message = byId.get(message.parentId)) path.push(message);
+    return path.reverse();
+  }
+
+  function continuationTip(thread, id) {
+    let tip = id;
+    const selected = new Set(thread.selectedChildIds || []);
+    // Remember nested choices even while another outer branch is visible.
+    // Only an unvisited fork defaults to its most recent saved continuation.
+    for (;;) {
+      const child = thread.messages.find(message => message.parentId === tip && selected.has(message.id))
+        || thread.messages.findLast(message => message.parentId === tip);
+      if (!child) return tip;
+      tip = child.id;
+    }
+  }
   const projectStamp = scope => JSON.stringify([scope?.key ?? "draft", scope?.instanceId ?? null, scope?.accountEpoch ?? 0]);
   const scopeStamp = scope => JSON.stringify([scope?.key ?? "draft", scope?.instanceId ?? null, scope?.accountEpoch ?? 0, scope?.threadId ?? "chat-1"]);
   const scopeOf = context => ({
@@ -188,7 +250,7 @@
     chatMenu.setAttribute("aria-label", "Chat actions");
     chatMenu.setAttribute("popover", "auto");
     root.appendChild(chatMenu);
-    let menuTarget = null, menuScope = null, menuTrigger = null;
+    let menuTarget = null, menuScope = null, menuTrigger = null, menuScrollOffsets = null;
     const rows = new Map(), listeners = [];
     let scope = null, collection = normalize(null), conversation = activeThread(collection), active = null;
     let historyOpen = false, historySignature = "", renamingId = null, renameValue = "";
@@ -197,7 +259,7 @@
     const messageTools = window.UartDebugChatMessageTools?.create({
       root: thread, getMessage: id => conversation.messages.find(item => item.id === id), getScope: () => scopeStamp(scope),
       notify: options.notify, onEdit: editAndResend, onBranch: branchFromMessage,
-      onRegenerate: regenerateInNewChat, onRetry: retryLatestFailed,
+      onRetry: retryResponse, onVariant: selectVariant, onResume: resumeContinuation,
     });
 
     function notice(tone, message, details) {
@@ -215,6 +277,9 @@
     function persist(target = scope, value = collection, fromScope = null) {
       if (!target) return false;
       try {
+        if (value.threads.some(item => threadContentBytes(item) > LIMITS.storedBytes)) {
+          throw new RangeError("This chat reached its 256 KiB storage limit across all branches. Copy any unsaved answer and continue in another chat.");
+        }
         if (collectionContentBytes(value) > LIMITS.collectionBytes) {
           throw new RangeError("This project's chats reached the 2 MiB storage limit. Open Chats and delete an older chat from its actions menu, then save again.");
         }
@@ -260,7 +325,7 @@
           scheduleLayout();
           return;
         }
-        if (followingLatest) thread.scrollTop = thread.scrollHeight;
+        if (!historyOpen && followingLatest) thread.scrollTop = thread.scrollHeight;
         updateJump();
       });
     }
@@ -348,7 +413,7 @@
           open.dataset.chatOpen = item.id; open.setAttribute("aria-current", item.id === collection.activeThreadId ? "true" : "false");
           const name = document.createElement("span"); name.className = "project-chat-history-title ui-list-item-title"; name.textContent = item.title;
           const preview = document.createElement("span"); preview.className = "project-chat-history-preview";
-          const latest = [...item.messages].reverse().find(message => message.status !== "pending" && message.content.trim());
+          const latest = activeMessages(item).reverse().find(message => message.status !== "pending" && message.content.trim());
           const text = cleanText(latest?.content || item.draft || "No messages yet").replace(/\s+/g, " ");
           preview.textContent = text.slice(0, 130);
           open.append(name, preview);
@@ -415,10 +480,11 @@
 
     function renderThread(clear = false) {
       if (clear) { messageTools?.closeEditor?.(); thread.replaceChildren(); rows.clear(); }
-      const valid = new Set(conversation.messages.map(message => message.id));
+      const visible = activeMessages(conversation);
+      const valid = new Set(visible.map(message => message.id));
       for (const [id, row] of rows) if (!valid.has(id)) { row.article.remove(); rows.delete(id); }
       let anchor = thread.firstElementChild;
-      for (const message of conversation.messages) {
+      for (const message of visible) {
         let row = rows.get(message.id);
         if (!row) { row = makeRow(message); rows.set(message.id, row); }
         row.article.dataset.role = message.role;
@@ -449,7 +515,10 @@
           else row.time.removeAttribute("datetime");
           row.copy.hidden = !message.content;
         }
-        messageTools?.decorate(row, { scope: scopeStamp(scope), isLast: message === conversation.messages.at(-1), busy: !!active || externalBusy });
+        const siblings = conversation.messages.filter(item => item.parentId === message.parentId);
+        messageTools?.decorate(row, { scope: scopeStamp(scope), isLast: message === visible.at(-1), busy: !!active || externalBusy,
+          variants: siblings.map(item => item.id), variantIndex: siblings.findIndex(item => item.id === message.id),
+          resume: message === visible.at(-1) && conversation.messages.some(item => item.parentId === message.id) });
         if (row.article !== anchor) thread.insertBefore(row.article, anchor);
         anchor = row.article.nextElementSibling;
       }
@@ -506,36 +575,48 @@
       renderThread(true);
     }
 
-    async function submit(optionalMessage, { requestSource = "message", retryId = null } = {}) {
+    async function submit(optionalMessage, { requestSource = "message", retryId = null, editId = null } = {}) {
       if (destroyed) return false;
       refresh();
       if (active) return false;
       if (externalBusy) { notice("info", "Wait for the current project operation to finish."); return false; }
-      const failed = retryId && conversation.messages.at(-1);
-      const retryUser = failed?.id === retryId && failed.role === "assistant" && failed.status === "error"
-        ? conversation.messages.at(-2) : null;
-      if (retryId && retryUser?.role !== "user") return false;
-      if (retryUser) requestSource = retryUser.requestSource || "message";
-      const message = cleanText(retryUser ? retryUser.content : optionalMessage === undefined ? input.value : optionalMessage);
+      const visible = activeMessages(conversation);
+      const retried = retryId && visible.find(item => item.id === retryId && item.role === "assistant");
+      if (retryId && (!retried || !["complete", "error"].includes(retried.status) ||
+          retried.status === "error" && retried !== visible.at(-1))) return false;
+      const replacingFailed = retried?.status === "error";
+      const edited = editId && conversation.messages.find(item => item.id === editId && item.role === "user");
+      const reusedUser = retried && conversation.messages.find(item => item.id === retried.parentId && item.role === "user");
+      if (editId && !edited || retryId && !reusedUser) return false;
+      if (reusedUser) requestSource = reusedUser.requestSource || "message";
+      const message = cleanText(reusedUser ? reusedUser.content : optionalMessage === undefined ? input.value : optionalMessage);
       if (!message.trim()) return false;
       if (bytes(message) > LIMITS.draftBytes) { notice("warning", "A message can contain at most 16 KiB of text."); return false; }
       if (!flush()) return false;
-      const history = requestHistory(retryUser ? conversation.messages.slice(0, -2) : conversation.messages);
+      const parentId = reusedUser ? reusedUser.parentId : edited ? edited.parentId : conversation.activeLeafId;
+      const history = requestHistory(activeMessages(conversation, parentId));
       const createdAt = Date.now();
-      let id = retryUser?.id;
-      if (!id) {
-        do { id = `chat-${createdAt}-${++sequence}`; }
-        while (conversation.messages.some(item => item.id === id || item.id === `${id}-assistant`));
-      }
-      const run = { scope: { ...scope }, assistantId: failed?.id || `${id}-assistant`, controller: new AbortController(), progress: "Working…", cancelled: false };
-      const retainedDraft = retryUser || optionalMessage !== undefined && cleanText(input.value) !== message
+      let id;
+      do { id = `chat-${createdAt}-${++sequence}`; }
+      while (conversation.messages.some(item => item.id === id || item.id === `${id}-assistant`));
+      const run = { scope: { ...scope }, assistantId: replacingFailed ? retried.id : `${id}-assistant`, controller: new AbortController(), progress: "Working…", cancelled: false };
+      const retainedDraft = reusedUser || optionalMessage !== undefined && cleanText(input.value) !== message
         ? bounded(input.value, LIMITS.draftBytes) : "";
-      const user = retryUser || { id, role: "user", content: message, createdAt, status: "complete", requestSource };
-      setConversation({ ...conversation,
+      const user = reusedUser || { id, parentId, role: "user", content: message, createdAt, status: "complete", requestSource };
+      const assistant = { id: run.assistantId, parentId: user.id, role: "assistant", content: "", createdAt, status: "pending" };
+      const messages = replacingFailed ? conversation.messages.map(item => item.id === retried.id ? assistant : item)
+        : [...conversation.messages, ...(!reusedUser ? [user] : []), assistant];
+      if (messages.length > LIMITS.messages) {
+        notice("warning", "A chat can contain at most 100 messages across all branches. Continue in another chat; the existing branches have been kept.");
+        return false;
+      }
+      const candidate = normalizeThread({ ...conversation,
         title: conversation.titleMode === "manual" || conversation.messages.some(item => item.role === "user")
           ? conversation.title : bounded(shortTitle(message), LIMITS.titleBytes),
-        draft: retainedDraft, messages: [...(retryUser ? conversation.messages.slice(0, -2) : conversation.messages), user,
-        { id: run.assistantId, role: "assistant", content: "", createdAt, status: "pending" }] });
+        draft: retainedDraft, activeLeafId: assistant.id, messages });
+      const candidateCollection = { ...collection, threads: collection.threads.map(item => item.id === candidate.id ? candidate : item) };
+      if (!persist(run.scope, candidateCollection)) return false;
+      setConversation(candidate);
       active = run;
       input.value = retainedDraft;
       autosize();
@@ -544,14 +625,6 @@
       renderThread();
       input.focus({ preventScroll: true });
       try {
-        if (!persist(run.scope)) {
-          if (retryUser) {
-            const index = conversation.messages.findIndex(item => item.id === failed.id);
-            if (index >= 0) conversation.messages[index] = failed;
-            setConversation(conversation); renderThread(); return false;
-          }
-          throw new Error("The conversation could not be saved for this request.");
-        }
         const result = await options.request({ message, history, signal: run.controller.signal, scope: { ...run.scope },
           requestSource: requestSource === "review" ? "review" : "message",
           onProgress: progress => {
@@ -695,7 +768,7 @@
       saveTimer = null;
       const retained = collection.threads.filter(item => item.id !== id);
       if (!retained.length) retained.push(normalizeThread({ id: `chat-${Date.now()}-${++sequence}`, title: "New chat" }));
-      const candidate = { schemaVersion: 4, threads: retained,
+      const candidate = { schemaVersion: CONVERSATION_SCHEMA_VERSION, threads: retained,
         activeThreadId: retained.some(item => item.id === collection.activeThreadId) ? collection.activeThreadId : retained[0].id };
       // Persist the filtered collection directly: pre-flushing the over-budget
       // collection would prevent the user from freeing its storage.
@@ -714,6 +787,7 @@
     function closeChatMenu() {
       if (chatMenu.matches(":popover-open")) chatMenu.hidePopover();
       menuTrigger?.setAttribute("aria-expanded", "false");
+      menuScrollOffsets = null;
     }
 
     function openChatMenu(event) {
@@ -728,10 +802,12 @@
       chatMenu.replaceChildren();
       for (const [action, label] of [["rename", "Rename"], ["export", "Download Markdown"], ["delete", "Delete chat"]]) {
         const button = document.createElement("button"); button.type = "button"; button.className = "ui-list-item";
+        if (action === "delete") button.classList.add("ui-list-item--destructive");
         button.dataset.chatAction = action; button.setAttribute("role", "menuitem"); button.textContent = label;
         chatMenu.appendChild(button);
       }
       const bounds = target.getBoundingClientRect();
+      menuScrollOffsets = window.UartDebugControls.captureMenuScroll(target);
       chatMenu.showPopover(); target.setAttribute("aria-expanded", "true");
       const menuBounds = chatMenu.getBoundingClientRect();
       const x = event.type === "contextmenu" && event.clientX ? event.clientX : bounds.left;
@@ -742,7 +818,7 @@
     }
 
     function exportChat(item) {
-      const markdown = `# ${item.title}\n\n` + item.messages.filter(message => message.content.trim())
+      const markdown = `# ${item.title}\n\n` + activeMessages(item).filter(message => message.content.trim())
         .map(message => `## ${message.role === "user" ? "You" : "Assistant"}\n\n${message.content}\n`).join("\n");
       const url = window.URL.createObjectURL(new window.Blob([markdown], { type: "text/markdown;charset=utf-8" }));
       const link = document.createElement("a"); link.href = url;
@@ -755,45 +831,57 @@
         && scopeStamp(scope) === scopeStamp(scopeOf(options.getContext() || {}));
     }
 
-    function startBranch(messages, titleText, draft = "") {
-      if (active || externalBusy) { notice("info", "Wait for the current response before branching."); return false; }
-      if (collection.threads.length >= LIMITS.threads) { notice("warning", "A project can contain at most 32 chats. Delete an older chat from Chats to make room."); return false; }
+    function selectTip(id, expectedScope, focusComposer = false, followLatest = true) {
+      if (!actionIsCurrent(expectedScope) || !conversation.messages.some(item => item.id === id)) return false;
+      if (active || externalBusy) { notice("info", "Wait for the current response before changing branches."); return false; }
       if (!flush()) return false;
-      let id;
-      do { id = `chat-${Date.now()}-${++sequence}`; } while (collection.threads.some(item => item.id === id));
-      const next = normalizeThread({ id, title: bounded(shortTitle(titleText), LIMITS.titleBytes), titleMode: "manual", messages, draft });
-      const candidate = { ...collection, activeThreadId: id, threads: [...collection.threads, next] };
+      const next = normalizeThread({ ...conversation, activeLeafId: id });
+      const candidate = { ...collection, threads: collection.threads.map(item => item.id === next.id ? next : item) };
       if (!persist(scope, candidate)) return false;
-      collection = candidate; scope = { ...scope, threadId: id }; conversation = next;
-      input.value = draft; historyOpen = false; followingLatest = true; autosize(); renderThread(true); input.focus({ preventScroll: true });
+      setConversation(next);
+      historyOpen = false; followingLatest = followLatest; renderThread(true);
+      if (focusComposer) input.focus({ preventScroll: true });
       return true;
     }
 
-    function retryLatestFailed(id, expectedScope) {
+    function selectVariant(id, expectedScope, direction) {
+      if (!actionIsCurrent(expectedScope)) return false;
+      const target = conversation.messages.find(message => message.id === id);
+      if (!target) return false;
+      const current = activeMessages(conversation).find(message => message.parentId === target.parentId);
+      const oldGroup = rows.get(current?.id)?.variants?.group;
+      const anchorOffset = oldGroup ? oldGroup.getBoundingClientRect().top - thread.getBoundingClientRect().top : null;
+      if (!selectTip(continuationTip(conversation, id), expectedScope, false, false)) return false;
+      const group = rows.get(id)?.variants?.group;
+      if (group && anchorOffset !== null) {
+        thread.scrollTop += group.getBoundingClientRect().top - thread.getBoundingClientRect().top - anchorOffset;
+      }
+      const preferred = ["previous", "next"].includes(direction)
+        ? group?.querySelector(`[data-chat-variant-direction="${direction}"]:not(:disabled):not([hidden])`) : null;
+      const control = preferred || group?.querySelector("button:not(:disabled):not([hidden])");
+      (control || thread).focus({ preventScroll: true });
+      return true;
+    }
+
+    function resumeContinuation(id, expectedScope) {
+      return actionIsCurrent(expectedScope) && conversation.activeLeafId === id
+        && selectTip(continuationTip(conversation, id), expectedScope, true);
+    }
+
+    function retryResponse(id, expectedScope) {
       if (!actionIsCurrent(expectedScope)) return false;
       return submit(undefined, { retryId: id });
     }
 
     function branchFromMessage(id, expectedScope) {
       if (!actionIsCurrent(expectedScope)) return false;
-      const index = conversation.messages.findIndex(item => item.id === id && item.status === "complete");
-      return index >= 0 && startBranch(conversation.messages.slice(0, index + 1), `Branch · ${conversation.title}`);
+      return conversation.messages.some(item => item.id === id && item.status === "complete") && selectTip(id, expectedScope, true);
     }
 
     function editAndResend(id, content, expectedScope) {
       if (!actionIsCurrent(expectedScope) || !cleanText(content).trim()) return false;
       if (bytes(content) > LIMITS.draftBytes) { notice("warning", "A message can contain at most 16 KiB of text."); return false; }
-      const index = conversation.messages.findIndex(item => item.id === id && item.role === "user");
-      if (index < 0 || !startBranch(conversation.messages.slice(0, index), shortTitle(content))) return false;
-      return submit(content, { requestSource: "message" });
-    }
-
-    function regenerateInNewChat(id, expectedScope) {
-      if (!actionIsCurrent(expectedScope)) return false;
-      const index = conversation.messages.findIndex(item => item.id === id && item.role === "assistant" && item.status === "complete");
-      const userIndex = index - 1, user = conversation.messages[userIndex];
-      if (!user || user.role !== "user" || !startBranch(conversation.messages.slice(0, userIndex), `Alternative · ${conversation.title}`)) return false;
-      return submit(user.content, { requestSource: user.requestSource || "message" });
+      return submit(content, { requestSource: "message", editId: id });
     }
 
     async function copyMessage(event) {
@@ -872,14 +960,17 @@
       (menuTrigger?.isConnected ? menuTrigger : actionsButton)?.focus({ preventScroll: true });
     });
     listen(window, "resize", closeChatMenu);
-    listen(document, "scroll", event => { if (!chatMenu.contains(event.target)) closeChatMenu(); }, true);
+    listen(document, "scroll", event => {
+      if (!menuScrollOffsets || chatMenu.contains(event.target)) return;
+      if (window.UartDebugControls.hasMenuScrollChanged(menuScrollOffsets, event)) closeChatMenu();
+    }, true);
     const observer = typeof window.ResizeObserver === "function" ? new window.ResizeObserver(scheduleLayout) : null;
     observer?.observe(root);
     observer?.observe(thread);
     refresh();
 
     return Object.freeze({
-      refresh, submit, cancel, flush, selectChat, createChat, retryLatestFailed, branchFromMessage, editAndResend, regenerateInNewChat,
+      refresh, submit, cancel, flush, selectChat, createChat, retryResponse, branchFromMessage, editAndResend,
       getConversation: () => normalizeThread(conversation),
       getChats: () => normalize(collection),
       setExternalBusy(value) { externalBusy = !!value; renderControls(); },
@@ -898,5 +989,5 @@
     });
   }
 
-  return Object.freeze({ normalize, create });
+  return Object.freeze({ CONVERSATION_SCHEMA_VERSION, normalize, activeMessages, continuationTip, create });
 });

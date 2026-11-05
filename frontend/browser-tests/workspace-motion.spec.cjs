@@ -59,7 +59,7 @@ async function filledWorkspace(page, index, width = 1543) {
   await expect(page.locator(".CodeMirror")).toHaveCount(3);
   // Seed after beforeunload has saved the old controller's in-memory state.
   await page.addInitScript(() => {
-    const state = JSON.parse(localStorage.getItem("ud_avr_programming_state_v2") || "null");
+    const state = JSON.parse(localStorage.getItem("ud_avr_programming_state_v3") || "null");
     if (!state) return;
     const currentProject = Object.values(state.miniProjects).find(project => project.files.source === state.current);
     if (!currentProject) return;
@@ -72,7 +72,7 @@ async function filledWorkspace(page, index, width = 1543) {
           createdAt: 2, status: "complete" },
       ],
     };
-    localStorage.setItem("ud_avr_programming_state_v2", JSON.stringify(state));
+    localStorage.setItem("ud_avr_programming_state_v3", JSON.stringify(state));
   });
   // Installation can focus an editor; restore the intended layout afterwards.
   await page.evaluate(index => {

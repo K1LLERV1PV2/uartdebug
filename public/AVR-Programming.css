@@ -642,27 +642,27 @@ main,
   top: 0;
   bottom: 0;
   left: 0;
-  width: clamp(96px, 50%, 240px);
-  background: linear-gradient(90deg, transparent, rgba(129, 159, 141, 0.035) 20%, rgba(126, 236, 170, 0.11) 55%, rgba(200, 255, 221, 0.24) 76%, transparent);
+  width: max(240px, 90%);
+  background: linear-gradient(90deg, transparent, rgba(129, 159, 141, 0.035) 16%, rgba(126, 236, 170, 0.1) 45%, rgba(200, 255, 221, 0.2) 72%, rgba(126, 236, 170, 0.07) 88%, transparent);
   opacity: 0;
-  animation: pane-collapse-wave-right 2100ms linear infinite both;
+  animation: pane-collapse-wave-right 850ms linear 1 both;
 }
 
 .pane-collapse-cue[data-direction="left"]::before {
-  background: linear-gradient(270deg, transparent, rgba(129, 159, 141, 0.035) 20%, rgba(126, 236, 170, 0.11) 55%, rgba(200, 255, 221, 0.24) 76%, transparent);
+  background: linear-gradient(270deg, transparent, rgba(129, 159, 141, 0.035) 16%, rgba(126, 236, 170, 0.1) 45%, rgba(200, 255, 221, 0.2) 72%, rgba(126, 236, 170, 0.07) 88%, transparent);
   animation-name: pane-collapse-wave-left;
 }
 
 @keyframes pane-collapse-wave-right {
   0% { transform: translateX(-100%); opacity: 0; }
-  5%, 48% { opacity: 1; }
-  60%, 100% { transform: translateX(100cqw); opacity: 0; }
+  5%, 99% { opacity: 1; }
+  100% { transform: translateX(100cqw); opacity: 0; }
 }
 
 @keyframes pane-collapse-wave-left {
   0% { transform: translateX(100cqw); opacity: 0; }
-  5%, 48% { opacity: 1; }
-  60%, 100% { transform: translateX(-100%); opacity: 0; }
+  5%, 99% { opacity: 1; }
+  100% { transform: translateX(-100%); opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1745,16 +1745,6 @@ main,
 
 .CodeMirror-scroll {
   overflow: auto !important;
-}
-
-.CodeMirror-scrollbar-filler,
-.CodeMirror-gutter-filler {
-  background: transparent !important;
-}
-
-.CodeMirror-vscrollbar,
-.CodeMirror-hscrollbar {
-  background: var(--ui-surface-deep);
 }
 
 .CodeMirror-hints {
@@ -2854,13 +2844,13 @@ main,
 .panel-action-lobe .ui-action,
 .editor-workspace .panel-action-lobe .editor-build-actions > .connect-btn {
   flex: none;
-  width: 26px !important;
+  width: 30px !important;
   min-width: 0;
   height: max-content;
   min-height: 72px;
   padding: 10px 4px;
   border-radius: var(--ui-radius-small);
-  font-size: 12px;
+  font: 600 13px/1.2 var(--ui-font);
   white-space: nowrap;
   writing-mode: vertical-rl;
   text-orientation: mixed;
@@ -3018,9 +3008,9 @@ main,
 .project-chat-header { --ui-control-height: var(--ui-control-height-compact); --ui-icon-size: 28px; grid-area: 1 / 1; display: grid; gap: var(--ui-control-gap); min-width: 0; padding-bottom: var(--ui-control-gap); border-bottom: 1px solid var(--ui-border); }
 .project-chat-navigation { display: grid; grid-template-columns: repeat(2, minmax(max-content, 1fr)); gap: var(--ui-control-gap); }
 .project-chat-navigation .ui-action { gap: 7px; width: 100%; padding-inline: 8px; }
-.project-chat-title-row { display: flex; align-items: center; gap: var(--ui-control-gap); min-width: 0; min-height: 40px; }
+.project-chat-title-row { display: flex; align-items: center; gap: var(--ui-control-gap); min-width: 0; min-height: 28px; }
 .project-chat-title-content { flex: 1; min-width: 0; overflow: hidden; }
-#projectChatTitle { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; margin: 0; color: var(--ui-text); font: 600 14px/20px var(--ui-font); }
+#projectChatTitle { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin: 0; color: var(--ui-text); font: 600 14px/20px var(--ui-font); }
 .project-chat-history { grid-area: 2 / 1 / 4 / 2; display: grid; grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0; }
 .project-chat-rename .ui-text-input { --ui-input-height: 36px; --ui-input-padding: 0 10px; --ui-input-font: 400 13px/1.4 var(--ui-font); }
 .project-chat-history-list { min-width: 0; min-height: 0; padding: 2px; display: flex; flex-direction: column; gap: 6px; }
@@ -3035,8 +3025,8 @@ main,
 .project-chat-panel svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .project-chat-thread { grid-area: 2 / 1; padding: 4px 2px 16px; overflow-anchor: none; }
 .project-chat-message { min-width: 0; margin: 0 0 24px; font: 14px/1.55 var(--ui-font); }
-.project-chat-message[data-role="user"] { max-width: 92%; margin-left: auto; margin-bottom: 0; }
-.project-chat-message[data-role="user"].is-editing { max-width: 100%; margin-left: 0; margin-bottom: 24px; }
+.project-chat-message[data-role="user"] { max-width: 92%; margin-left: auto; }
+.project-chat-message[data-role="user"].is-editing { max-width: 100%; margin-left: 0; }
 .project-chat-message.is-editing .project-chat-message-meta { display: none; }
 .project-chat-message[data-role="user"] .project-chat-message-content { padding: 10px 12px; border-radius: 14px; background: var(--ui-surface-strong); }
 .project-chat-message-content { min-width: 0; overflow-wrap: anywhere; }
@@ -3100,3 +3090,8 @@ main,
 .project-chat-panel[data-workspace-motion-clip] { overflow: hidden; }
 @keyframes chat-working { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .project-chat-progress::before { animation: none; } }
+
+.project-chat-message-variants { --ui-icon-size: 26px; --ui-icon-padding: 5px; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+.project-chat-message-variants svg { width: 14px; height: 14px; }
+.project-chat-variant-count { min-width: 24px; color: var(--ui-text-muted); text-align: center; font: 11px/1.3 var(--ui-font); font-variant-numeric: tabular-nums; }
+.project-chat-message-variants .project-chat-resume { min-width: 0; padding-inline: 8px; font-size: 11px; white-space: normal; text-align: center; }

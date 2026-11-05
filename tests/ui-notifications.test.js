@@ -250,14 +250,127 @@ test("legacy stack traces leave the UI and session history without erasing usefu
   const { api, document, diagnostics, advance } = loadNotifications({ saved });
   api.open("old-error");
   const record = api.getAll()[0];
-  assert.equal(record.details, "");
+  assert.equal(record.details, "[20:53:08] Reading signature...\nError: Timed out\nPort closed.");
   assert.match(diagnostics.join("\n"), /waitForBuffer/);
   assert.match(diagnostics.join("\n"), /Port closed/);
   assert.equal(Object.hasOwn(record, "diagnostics"), false);
-  assert.equal(document.querySelector(".notification-detail-output").hidden, true);
+  assert.equal(document.querySelector(".notification-detail-output").hidden, false);
+  assert.equal(document.querySelector(".notification-detail-output").textContent, record.details);
   advance(250);
   assert.doesNotMatch(saved.get(storageKey), /waitForBuffer/);
   const id = api.notify({ title: "Compiler", message: "Compilation failed", details: "file.c:8:4: error: expected expression" });
   api.open(id);
   assert.equal(document.querySelector(".notification-detail-output").hidden, false);
+});
+
+test("mixed legacy logs retain their chronology, error reason and compiler lines while frames and source paths go only to the console", () => {
+  const { api, document, diagnostics, advance, saved } = loadNotifications();
+  const initial = "[20:53:08] Requesting serial port...\n[20:53:08] Opening port with 115200 / 8E2...";
+  const id = api.notify({ key: null, title: "Chip detection", message: "Reading signature...", details: initial, pending: true });
+  const mixed = [
+    "[20:53:09] Error: Timed out in http://localhost/updi-test.js:1101:15",
+    "[20:53:09]     at waitForBuffer (http://localhost/updi-test.js:1101:15)",
+    "    at Array.map (<anonymous>)",
+    "    at nativeCall (native)",
+    "    at reader (C:\\Users\\david\\websites\\uartdebug\\public\\updi-test.js:1101:15)",
+    "[20:53:09] Last caller: /var/www/uartdebug/public/updi-test.js:1101:15",
+    "firmware.c:7:3: error: expected expression",
+    "Payload: 64 byte(s), address 0x8040",
+    "See https://example.com/adapter-help for connection guidance.",
+    "[20:53:10] Port closed.",
+  ].join("\n");
+  api.append(id, mixed, { message: "Chip detection failed.", tone: "error", pending: false });
+  const record = api.getAll()[0];
+  assert.equal(api.getAll().length, 1);
+  assert.ok(record.details.startsWith(initial));
+  assert.match(record.details, /\[20:53:09\] Error: Timed out in \[source location\]/);
+  assert.match(record.details, /Last caller: \[source location\]/);
+  assert.match(record.details, /firmware\.c:7:3: error: expected expression/);
+  assert.match(record.details, /Payload: 64 byte\(s\), address 0x8040/);
+  assert.match(record.details, /https:\/\/example\.com\/adapter-help/);
+  assert.match(record.details, /\[20:53:10\] Port closed\.$/);
+  assert.doesNotMatch(record.details, /waitForBuffer|updi-test\.js|C:\\Users|\/var\/www|Array\.map|nativeCall/);
+  assert.equal(diagnostics.length, 1);
+  assert.match(diagnostics[0], /waitForBuffer/);
+  const logged = diagnostics.length;
+  api.open(id);
+  api.open(id);
+  assert.equal(diagnostics.length, logged, "opening or rendering sanitized records must not replay raw diagnostics");
+  assert.equal(document.querySelector(".notification-detail-output").textContent, record.details);
+  advance(250);
+  assert.doesNotMatch(saved.get(storageKey), /waitForBuffer|updi-test\.js|C:\\\\Users|\/var\/www/);
+});
+
+test("a stack used as both message and details keeps its reason, receives a clean key and is logged once", () => {
+  const { api, diagnostics, advance, saved } = loadNotifications();
+  const raw = "Error: Adapter disconnected in http://localhost/uart.js:100:2\n    at readLoop (http://localhost/uart.js:100:2)\n    at Array.map (<anonymous>)";
+  const id = api.notify({ title: "Serial connection", message: raw, tone: "error" });
+  let record = api.getAll()[0];
+  assert.equal(record.message, "The operation could not be completed.");
+  assert.equal(record.details, "Error: Adapter disconnected in [source location]");
+  assert.equal(record.key, "Serial connection\nError: Adapter disconnected in [source location]");
+  assert.equal(diagnostics.length, 1);
+  api.notify({ id, read: true });
+  assert.equal(diagnostics.length, 1);
+  record = api.getAll()[0];
+  assert.equal(record.details, "Error: Adapter disconnected in [source location]");
+  const second = api.notify({ title: "Serial connection", message: raw.replace("disconnected", "unavailable"), tone: "error" });
+  assert.notEqual(second, id, "different error reasons must not collapse into the generic toast message's key");
+  assert.equal(api.notify({ title: "Serial connection", message: raw, tone: "error" }), id, "the same cleaned reason retains normal deduplication");
+  advance(250);
+  assert.doesNotMatch(saved.get(storageKey), /readLoop|uart\.js|localhost|<anonymous>|"diagnostics"/);
+});
+
+test("restoring mixed legacy records immediately replaces raw stack keys and never logs them again on a subsequent reload", () => {
+  const raw = "[20:53:08] Reading signature...\nError: Timed out in /var/www/uartdebug/updi-test.js:1101:15\n    at waitForBuffer (/var/www/uartdebug/updi-test.js:1101:15)\n[20:53:09] Port closed.";
+  const saved = new Map([[storageKey, JSON.stringify({ schemaVersion: 1, records: [{ id: "old-mixed", createdAt: 1,
+    key: `Chip detection\n${raw}`, title: "Chip detection", message: "Chip detection failed.", details: raw, tone: "error" }] })]]);
+  const first = loadNotifications({ saved });
+  assert.equal(first.diagnostics.length, 1);
+  assert.match(first.api.getAll()[0].details, /Reading signature[\s\S]*Error: Timed out[\s\S]*Port closed/);
+  assert.doesNotMatch(saved.get(storageKey), /waitForBuffer|updi-test\.js|\/var\/www/);
+  const second = loadNotifications({ saved });
+  assert.equal(second.diagnostics.length, 0);
+  assert.equal(second.api.getAll()[0].details, first.api.getAll()[0].details);
+  assert.equal(second.document.querySelectorAll(".notification-toast").length, 0);
+});
+
+test("mixed-stack source redaction consumes long dotted, URL-prefix and punctuation tokens without repeated scans", () => {
+  const { performance } = require("node:perf_hooks");
+  const { api } = loadNotifications();
+  const frame = "\n    at reader (http://localhost/uart.js:100:2)";
+  const values = ["a.".repeat(24000), "http://".repeat(6800), ")".repeat(47999) + "a"];
+  const started = performance.now();
+  for (const value of values) {
+    const id = api.notify({ key: null, title: "Long recovered log", message: "Operation failed.", details: value + frame, tone: "error" });
+    assert.equal(api.getAll().find(record => record.id === id).details, value);
+  }
+  assert.ok(performance.now() - started < 500, "bounded legacy records must not block the page on repetitive tokens");
+});
+
+test("source locations in a mixed error's summary and key are removed without changing ordinary explicit keys", () => {
+  const { api, saved, advance } = loadNotifications();
+  const rawMessage = "Read failed in (http://localhost/uart.js?v=build:100:2).";
+  const id = api.notify({ title: "Serial connection", message: rawMessage, tone: "error",
+    details: `${rawMessage}\n    at reader (http://localhost/uart.js?v=build:100:2)\nPort closed.` });
+  const record = api.getAll()[0];
+  assert.equal(record.id, id);
+  assert.equal(record.message, "Read failed in [source location]");
+  assert.equal(record.key, "Serial connection\nRead failed in [source location]");
+  assert.equal(record.details, "Read failed in [source location]\nPort closed.");
+  api.notify({ key: "ordinary-explicit-key", title: "Compilation", message: "Build failed", details: "main.c:1:2: error: expected expression" });
+  assert.equal(api.getAll()[1].key, "ordinary-explicit-key");
+  advance(250);
+  assert.doesNotMatch(saved.get(storageKey), /localhost|uart\.js|at reader/);
+});
+
+test("an explicit legacy stack key uses the same cleaned value for lookup and storage", () => {
+  const { api, saved, advance } = loadNotifications();
+  const key = "Serial connection\nError: Disconnected in http://localhost/uart.js:100:2\n    at reader (http://localhost/uart.js:100:2)";
+  const id = api.notify({ key, title: "Serial connection", message: "Connecting...", pending: true });
+  assert.equal(api.notify({ key, title: "Serial connection", message: "Disconnected", pending: false, tone: "error" }), id);
+  assert.equal(api.getAll().length, 1);
+  assert.equal(api.getAll()[0].key, "Serial connection\nError: Disconnected in [source location]");
+  advance(250);
+  assert.doesNotMatch(saved.get(storageKey), /localhost|uart\.js|at reader/);
 });

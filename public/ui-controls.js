@@ -3,6 +3,24 @@
   "use strict";
   const workspaceModalStack = [];
   let activePanelResize = null;
+  const menuScrollSnapshots = new WeakMap();
+
+  function captureMenuScroll(anchor) {
+    const snapshot = new Map();
+    for (let ancestor = anchor; ancestor; ancestor = ancestor.parentElement) {
+      snapshot.set(ancestor, [ancestor.scrollLeft, ancestor.scrollTop]);
+    }
+    const scrolling = document.scrollingElement || document.documentElement;
+    if (scrolling) snapshot.set(document, [scrolling.scrollLeft, scrolling.scrollTop]);
+    return snapshot;
+  }
+
+  function hasMenuScrollChanged(snapshot, event) {
+    const previous = snapshot?.get(event.target);
+    if (!previous) return true;
+    const target = event.target === document ? document.scrollingElement || document.documentElement : event.target;
+    return previous[0] !== target?.scrollLeft || previous[1] !== target?.scrollTop;
+  }
 
   // Input and gesture lifetime are shared. Each workspace keeps its own sizing
   // geometry, compact states, animation and persistence in these callbacks.
@@ -352,6 +370,7 @@
     const menu = custom.querySelector(".custom-select-menu");
     if (menu?.hasAttribute("popover") && menu.matches(":popover-open")) menu.hidePopover();
     custom.classList.remove("is-open");
+    menuScrollSnapshots.delete(custom);
     const trigger = custom.querySelector(".custom-select-trigger");
     if (trigger) trigger.setAttribute("aria-expanded", "false");
     if (wasOpen) custom.previousElementSibling?.dispatchEvent(new CustomEvent("ud-select-toggle", {
@@ -377,6 +396,7 @@
       custom.querySelector('.custom-select-option:not(:disabled)');
     if (focusOption) active?.focus({ preventScroll: true });
     active?.scrollIntoView({ block: "nearest" });
+    menuScrollSnapshots.set(custom, captureMenuScroll(custom));
     if (!wasOpen) select.dispatchEvent(new CustomEvent("ud-select-toggle", { bubbles: true, detail: { open: true } }));
   }
 
@@ -477,13 +497,15 @@
     });
     window.addEventListener("resize", () => closeCustomSelect(custom));
     document.addEventListener("scroll", (event) => {
-      if (!menu.contains(event.target)) closeCustomSelect(custom);
+      if (!menu.contains(event.target) && hasMenuScrollChanged(menuScrollSnapshots.get(custom), event)) closeCustomSelect(custom);
     }, true);
 
     updateCustomSelect(select, custom);
   }
 
   window.UartDebugControls = Object.freeze({
+    captureMenuScroll,
+    hasMenuScrollChanged,
     bindPanelResizer,
     isPanelResizing,
     initSelect: initCustomSelect,

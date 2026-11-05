@@ -52,25 +52,11 @@
 
 :where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints) {
   scrollbar-width: thin;
-  scrollbar-color: var(--ui-scrollbar-thumb, rgba(70, 255, 120, 0.55)) var(--ui-scrollbar-track, var(--ui-surface-deep));
 }
 
 :where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar {
   width: var(--ui-scrollbar-size, 8px);
   height: var(--ui-scrollbar-size, 8px);
-}
-
-:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar-track {
-  background: var(--ui-scrollbar-track, var(--ui-surface-deep));
-}
-
-:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: var(--ui-scrollbar-thumb, rgba(70, 255, 120, 0.55));
-}
-
-:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar-thumb:hover {
-  background: var(--ui-scrollbar-thumb-hover, rgba(70, 255, 120, 0.72));
 }
 
 body.is-column-resizing,
@@ -203,14 +189,18 @@ body.is-row-resizing * {
 }
 
 .ui-action.warning-btn {
-  border-color: rgba(242, 164, 68, 0.38);
-  background: rgba(242, 164, 68, 0.22);
-  color: #ffe0aa;
+  border-color: var(--ui-warning-border);
+  background: var(--ui-warning-surface);
+  color: var(--ui-warning-text);
 }
 
 .ui-action.warning-btn:hover:not(:disabled) {
-  border-color: #ffc26b;
-  background: rgba(242, 164, 68, 0.34);
+  border-color: var(--ui-warning-hover-border);
+  background: var(--ui-warning-hover-surface);
+}
+
+.ui-action.warning-btn:focus-visible {
+  outline-color: var(--ui-warning-hover-border);
 }
 
 .ui-action:is(.running, .receiving) {
@@ -513,6 +503,24 @@ li.CodeMirror-hint-active {
 .ui-list-item:is(:disabled, [aria-disabled="true"]) {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/* Destructive menu actions use the same warning palette as Flash MCU. */
+.ui-list-item--destructive {
+  border-color: var(--ui-warning-border);
+  background: var(--ui-warning-surface);
+  color: var(--ui-warning-text);
+}
+
+.ui-list-item--destructive:hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: var(--ui-warning-hover-border);
+  background: var(--ui-warning-hover-surface);
+}
+
+.ui-list-item--destructive:focus-visible {
+  outline-color: var(--ui-warning-hover-border);
+  border-color: var(--ui-warning-hover-border);
+  background: var(--ui-warning-hover-surface);
 }
 
 .ui-modal {
