@@ -5,7 +5,8 @@ const assert = require("node:assert/strict");
 const { createAvrAiService } = require("../avr-ai-service");
 
 async function main() {
-  const actual = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  const input = process.argv[2] === "-" ? 0 : process.argv[2];
+  const actual = JSON.parse(fs.readFileSync(input, "utf8"));
   const expected = await createAvrAiService({ environment: {
     AI_MATERIALS_ROOT: process.env.AI_MATERIALS_ROOT,
   } }).getStatus();
