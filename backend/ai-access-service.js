@@ -2242,7 +2242,7 @@ class AiAccessService {
       this.database
         .prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?")
         .run(now, device.id);
-      if (installationHash) {
+      if (installationHash && create) {
         this.database
           .prepare(
             `INSERT INTO installation_aliases
@@ -2252,6 +2252,12 @@ class AiAccessService {
                last_seen_at = excluded.last_seen_at`
           )
           .run(installationHash, device.id, now, now);
+      } else if (installationHash) {
+        // Read-only session/account polling may refresh a known alias, but
+        // cannot create arbitrarily many aliases from client-controlled headers.
+        this.database
+          .prepare("UPDATE installation_aliases SET last_seen_at = ? WHERE alias_hash = ? AND device_id = ?")
+          .run(now, installationHash, device.id);
       }
     });
     this._setDeviceCookie(res, device.id);

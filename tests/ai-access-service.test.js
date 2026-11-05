@@ -789,6 +789,43 @@ test("installation secret alias restores an existing device", async (t) => {
   assert.notEqual(alias.alias_hash, secret);
 });
 
+test("read-only status and account polling cannot create installation aliases", async (t) => {
+  let timestamp = 1_800_000_000_000;
+  const { service, oauthClient } = makeService({ now: () => timestamp });
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {
+    code: "read-only-alias", sub: "read-only-alias-account", email: "alias@example.com",
+  });
+  const count = table => service.database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
+  assert.equal(count("installation_aliases"), 0);
+  const baseline = await service.getPublicStatus(request(login.cookie), new MockResponse());
+  for (let index = 0; index < 20; index++) {
+    const headers = { [INSTALLATION_SECRET_HEADER]: `read-only-installation-secret-${index}-with-entropy` };
+    const status = await service.getPublicStatus(request(login.cookie, headers), new MockResponse());
+    assert.equal(status.authenticated, true);
+    assert.equal(status.accountKey, baseline.accountKey);
+    assert.equal(service.authenticateAccountRequest(request(login.cookie, headers), new MockResponse()).accountKey, baseline.accountKey);
+  }
+  assert.equal(count("installation_aliases"), 0);
+  assert.equal(count("devices"), 1);
+
+  const secret = "login-bound-installation-secret-with-entropy";
+  await service.beginGoogleLogin(request(login.cookie, { [INSTALLATION_SECRET_HEADER]: secret }), new MockResponse());
+  assert.equal(count("installation_aliases"), 1);
+  assert.equal(count("devices"), 1);
+  timestamp += 1000;
+  const recoveryResponse = new MockResponse();
+  const sessionOnlyCookie = `${SESSION_COOKIE}=${cookieValue(login.callbackResponse, SESSION_COOKIE)}`;
+  const restored = await service.getPublicStatus(request(sessionOnlyCookie, { [INSTALLATION_SECRET_HEADER]: secret }), recoveryResponse);
+  assert.equal(restored.authenticated, true);
+  assert.equal(restored.accountKey, baseline.accountKey);
+  assert.equal(cookieValue(recoveryResponse, DEVICE_COOKIE), cookieValue(login.callbackResponse, DEVICE_COOKIE));
+  assert.equal(service.database.prepare("SELECT last_seen_at FROM installation_aliases").get().last_seen_at, timestamp);
+  assert.equal(count("installation_aliases"), 1);
+  const noSession = await service.getPublicStatus(request("", { [INSTALLATION_SECRET_HEADER]: secret }), new MockResponse());
+  assert.equal(noSession.authenticated, false, "an installation alias must not replace the account session");
+});
+
 test("logout invalidates the opaque session and clears its cookie", async (t) => {
   const { service, oauthClient } = makeService();
   t.after(() => service.close());
