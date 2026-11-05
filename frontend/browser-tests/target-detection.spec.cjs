@@ -309,9 +309,11 @@ test("multiline values fit equal compact hardware fields without header tooltips
   }
 });
 
-test("the hardware fields keep adapter and chip diagnostics inside across expanded and compact modes", async ({ page }, testInfo) => {
+test("hardware errors keep controls aligned and separate user guidance from developer diagnostics", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 900, height: 884 });
   await open(page);
+  const diagnostics = [];
+  page.on("console", message => { if (message.type() === "info") diagnostics.push(message.text()); });
   const adapterDiagnostic = "The selected USB adapter could not be opened because another application owns the serial port.";
   const chipDiagnostic = "The adapter opened, but the connected chip did not answer the UPDI SIB request; check target power and wiring.";
   await page.evaluate(({ adapterDiagnostic, chipDiagnostic }) => {
@@ -347,17 +349,20 @@ test("the hardware fields keep adapter and chip diagnostics inside across expand
     await expect(page.locator("#avrDeviceSection")).toHaveAttribute("data-state", mode);
     await expect(page.locator("#avrDeviceSection")).not.toHaveClass(/is-device-panel-transitioning/);
   };
-  const expectDiagnostic = async diagnostic => {
-    const toast = page.locator('.notification-toast[data-tone="error"] .notification-toast-open').filter({ hasText: diagnostic });
-    await expect(toast).toContainText(diagnostic);
+  const expectDiagnostic = async (message, guidance, diagnostic) => {
+    const toast = page.locator('.notification-toast[data-tone="error"] .notification-toast-open').filter({ hasText: message });
+    await expect(toast).toContainText(message);
+    await expect(toast).not.toContainText(diagnostic);
     await toast.click();
     await expect(page.locator("#notificationModal")).toBeVisible();
-    await expect(page.locator(".notification-detail pre")).toContainText(diagnostic);
+    await expect(page.locator(".notification-detail-output")).toContainText(guidance);
+    await expect(page.locator(".notification-detail")).not.toContainText(diagnostic);
+    expect(diagnostics.join("\n")).toContain(diagnostic);
     await page.keyboard.press("Escape");
   };
   await page.locator("#detectChipBtn").click();
   await expect(page.locator("#adapterStatusText")).toHaveText("Adapter error");
-  await expectDiagnostic(adapterDiagnostic);
+  await expectDiagnostic("The serial adapter is unavailable", "Select the correct port", adapterDiagnostic);
   for (const [mode, key] of [["expanded", "End"], ["compact", "ArrowUp"], ["expanded", "End"]]) {
     await setMode(mode, key);
     expectHardwareFlowGeometry(await readHardwareFlowGeometry(page));
@@ -367,7 +372,7 @@ test("the hardware fields keep adapter and chip diagnostics inside across expand
   }
   await page.locator("#detectChipBtn").click();
   await expect(page.locator("#mcuSelect")).toHaveAttribute("data-control-status", "Chip error");
-  await expectDiagnostic(chipDiagnostic);
+  await expectDiagnostic("The device operation could not be completed", "Check the UPDI wiring", chipDiagnostic);
   for (const [mode, key] of [["compact", "ArrowUp"], ["expanded", "End"]]) {
     await setMode(mode, key);
     expectHardwareFlowGeometry(await readHardwareFlowGeometry(page));

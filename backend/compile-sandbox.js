@@ -62,7 +62,7 @@ function createCompilerSandbox({ xc8Cc, avrObjcopy, dfpPath }, dependencies = {}
     for (const root of PUBLIC_TOOL_ROOTS.slice(1)) {
       if (fileSystem.existsSync(root)) args.push("--ro-bind", root, root);
     }
-    args.push("--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/work");
+    args.push("--proc", "/proc", "--remount-ro", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/work");
     return args;
   }
 
@@ -143,9 +143,58 @@ function canonicalizeProjectSource(value) {
 
 function usesAssemblerFileDirective(fileName, source) {
   const canonical = canonicalizeProjectSource(source).replace(/"\s*"/g, "");
-  const regions = /\.(?:s|asm)$/i.test(fileName) ? [canonical] :
-    [...canonical.matchAll(/\b(?:asm|__asm|__asm__)\b(?:\s+(?:volatile|__volatile__|goto))*\s*\(([\s\S]*?)\)/g)].map(match => match[1]);
-  return regions.some(region => /\.(?:incbin|include)\b/i.test(region));
+  const fileDirective = /\.(?:incbin|include)\b/i;
+  if (/\.(?:s|asm)$/i.test(fileName)) return fileDirective.test(canonical);
+  const identifiers = new Set(["asm", "__asm", "__asm__"]);
+  const qualifiers = new Set(["volatile", "__volatile__", "goto"]);
+  const identifierEnd = start => {
+    let end = start;
+    while (end < canonical.length && /[A-Za-z0-9_]/.test(canonical[end])) end++;
+    return end;
+  };
+  const quotedEnd = start => {
+    const quote = canonical[start];
+    let end = start + 1;
+    while (end < canonical.length) {
+      if (canonical[end] === "\\") end += 2;
+      else if (canonical[end++] === quote) break;
+    }
+    return end;
+  };
+  // Each quoted literal or asm context is consumed once, including an
+  // unterminated context. A regex search would retry its suffix for every asm.
+  let index = 0;
+  while (index < canonical.length) {
+    const char = canonical[index];
+    if (char === '"' || char === "'") { index = quotedEnd(index); continue; }
+    if (!/[A-Za-z0-9_]/.test(char)) { index++; continue; }
+    const end = identifierEnd(index);
+    const identifier = canonical.slice(index, end);
+    index = end;
+    if (!identifiers.has(identifier)) continue;
+    let cursor = end;
+    while (cursor < canonical.length) {
+      while (cursor < canonical.length && /\s/.test(canonical[cursor])) cursor++;
+      if (canonical[cursor] === "(") break;
+      const next = identifierEnd(cursor);
+      if (next === cursor || !qualifiers.has(canonical.slice(cursor, next))) break;
+      cursor = next;
+    }
+    index = cursor;
+    if (canonical[cursor] !== "(") continue;
+    const start = ++cursor;
+    let depth = 1;
+    while (cursor < canonical.length && depth > 0) {
+      const token = canonical[cursor];
+      if (token === '"' || token === "'") { cursor = quotedEnd(cursor); continue; }
+      if (token === "(") depth++;
+      else if (token === ")") depth--;
+      cursor++;
+    }
+    if (fileDirective.test(canonical.slice(start, depth ? cursor : cursor - 1))) return true;
+    index = cursor;
+  }
+  return false;
 }
 
 module.exports = { createCompilerSandbox, canonicalizeProjectSource, usesAssemblerFileDirective, FILE_LIMIT, WORKSPACE_LIMIT };

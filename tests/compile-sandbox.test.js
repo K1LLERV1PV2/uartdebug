@@ -3,6 +3,8 @@
 const assert = require("node:assert/strict");
 const net = require("node:net");
 const path = require("node:path");
+const fs = require("node:fs");
+const vm = require("node:vm");
 const { spawn } = require("node:child_process");
 const test = require("node:test");
 const { createCompilerSandbox, canonicalizeProjectSource, usesAssemblerFileDirective, FILE_LIMIT, WORKSPACE_LIMIT } = require("../backend/compile-sandbox");
@@ -46,6 +48,7 @@ test("compiler commands see one request workspace, public read-only tools, no ho
   assert.deepEqual(call.args.slice(-4), ["-I/work", "/work/main.c", "-o", "/work/main.o"]);
   assert.ok(call.args.includes("--fsize=" + FILE_LIMIT));
   for (const flag of ["--unshare-user", "--unshare-pid", "--unshare-net", "--unshare-ipc", "--unshare-uts", "--die-with-parent", "--new-session"]) assert.ok(call.args.includes(flag));
+  assert.equal(call.args[call.args.indexOf("--remount-ro") + 1], "/proc");
   assert.ok(call.args.includes("/usr"));
   assert.ok(!call.args.some(value => ["/etc", "/home", "/var", "/run", "/var/lib/uartdebug-ai", "/"].includes(value)));
   assert.deepEqual(Object.keys(call.options.env).sort(), ["HOME", "LANG", "LC_ALL", "PATH", "PWD", "TMPDIR"]);
@@ -87,6 +90,48 @@ test("assembler file directives are distinguished from harmless C strings", () =
   assert.equal(usesAssemblerFileDirective("main.c", '__asm__ __volatile__ (".include \\\"private\\\"");'), true);
   assert.equal(usesAssemblerFileDirective("file.S", '.incbin "private"'), true);
   assert.equal(usesAssemblerFileDirective("main.c", '__asm__("nop");'), false);
+  assert.equal(usesAssemblerFileDirective("main.c", 'printf("asm(.include file)");'), false);
+  assert.equal(usesAssemblerFileDirective("main.c", 'const char *text = "__asm__(.incbin file)";'), false);
+  assert.equal(usesAssemblerFileDirective("main.c", 'asm volatile("nop)" : : "r"(function_call(1))); printf(".include");'), false);
+  assert.equal(usesAssemblerFileDirective("main.c", 'asm("nop)\\\" .include file");'), true);
+  assert.equal(usesAssemblerFileDirective("main.c", 'asm volatile("nop" : : "r"(function_call(".incbin file")));'), true);
+});
+
+test("unterminated assembly contexts are consumed once without repeated suffix scans", () => {
+  const source = "asm(".repeat(131072);
+  const started = performance.now();
+  assert.equal(usesAssemblerFileDirective("main.c", source), false);
+  assert.equal(usesAssemblerFileDirective("main.c", source + '".incbin file"'), true);
+  assert.ok(performance.now() - started < 1500, "half-megabyte malformed contexts must remain bounded");
+});
+
+test("C include scanning stays line-local and fast across long newline-only prefixes", () => {
+  const compiler = fs.readFileSync(path.join(__dirname, "../backend/compile-server.js"), "utf8");
+  const frontend = fs.readFileSync(path.join(__dirname, "../public/AVR-Programming.js"), "utf8");
+  const functionText = (text, name, nextName) => text.slice(text.indexOf(`function ${name}(`), text.indexOf(`function ${nextName}(`));
+  const backendContext = vm.createContext({ canonicalizeProjectSource });
+  vm.runInContext(functionText(compiler, "normalizeIncludePath", "assertSafeProjectSource") +
+    functionText(compiler, "extractQuotedIncludes", "resolveProjectIncludeName"), backendContext);
+  const frontendContext = vm.createContext({});
+  vm.runInContext(functionText(frontend, "extractQuotedIncludes", "resolveProjectIncludeName"), frontendContext);
+  const example = '\v\f \t# \tinclude \v"one.h"\r\n#\ninclude "not-a-directive.h"\n#include\n"also-not-a-directive.h"';
+  assert.deepEqual(Array.from(backendContext.extractQuotedIncludes(example)), ["one.h"]);
+  assert.deepEqual(Array.from(frontendContext.extractQuotedIncludes(example)), ["one.h"]);
+  assert.equal(backendContext.findUnsafeInclude('\t# \vinclude "/audit-probe"'), "/audit-probe");
+  const manyLines = "\n".repeat(512000) + "int value;";
+  const started = performance.now();
+  assert.equal(backendContext.findUnsafeInclude(manyLines), "");
+  assert.equal(backendContext.extractQuotedIncludes(manyLines).length, 0);
+  assert.equal(frontendContext.extractQuotedIncludes(manyLines).length, 0);
+  assert.ok(performance.now() - started < 1500, "blank lines must not be reconsidered as directive whitespace");
+});
+
+test("generated C validation preserves leading blank lines without quadratic directive searches", () => {
+  const { validateSource } = require("../backend/avr-canvas-contract");
+  const source = "\n".repeat(60000) + '// Project name: blink\n// Project version: Ver.1.0\n#include <xc.h>\n//+ Begin AI includes\n//- End AI includes\n//+ Begin AI globals\n//- End AI globals\n//+ Begin user globals\n//- End user globals\nint main(void) {\n//+ Begin AI initialization\n//- End AI initialization\n//+ Begin user initialization\n//- End user initialization\nwhile (1) {\n//+ Begin AI cyclic\n//- End AI cyclic\n//+ Begin user cyclic\n//- End user cyclic\n}\nreturn 0;\n}\n';
+  const started = performance.now();
+  assert.doesNotThrow(() => validateSource(source, { software_dependencies: { includes: ["#include <xc.h>"] } }, "", { title: "blink", version: "Ver.1.0" }));
+  assert.ok(performance.now() - started < 1500, "source identity and include searches must stay bounded");
 });
 
 test("the public compiler rejects obfuscated host includes before invoking any tool", async t => {

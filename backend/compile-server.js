@@ -455,8 +455,8 @@ function isUnsafeIncludePath(includePath) {
 
 function findUnsafeInclude(sourceText) {
   sourceText = canonicalizeProjectSource(sourceText);
-  const includeDirective = /^\s*#\s*(?:include|include_next|import|embed)\s*(.+)$/gm;
-  const asmIncludeDirective = /^\s*\.include\s+["']([^"']+)["']/gim;
+  const includeDirective = /^[ \t\v\f\r]*#[ \t\v\f\r]*(?:include|include_next|import|embed)[ \t\v\f\r]*(.+)$/gm;
+  const asmIncludeDirective = /^[ \t\v\f\r]*\.include[ \t\v\f\r]+["']([^"']+)["']/gim;
   let match;
 
   while ((match = includeDirective.exec(sourceText || ""))) {
@@ -547,7 +547,7 @@ function normalizeProjectFiles(rawFiles, entryName, entryCode) {
 
 function extractQuotedIncludes(sourceText) {
   const includes = [];
-  const includePattern = /^\s*#\s*include\s*"([^"]+)"/gm;
+  const includePattern = /^[ \t\v\f\r]*#[ \t\v\f\r]*include[ \t\v\f\r]*"([^"\r\n]+)"/gm;
   let match;
 
   while ((match = includePattern.exec(sourceText || ""))) {

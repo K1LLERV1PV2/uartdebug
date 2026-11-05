@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20261105-security-release-v1";
+const CACHE_NAME = "uartdebug-shell-20261105-security-release-v2";
 // Generated from local frontend references by stamp_frontend_build.py --generate.
 const APP_SHELL_ASSETS = [
   "/",

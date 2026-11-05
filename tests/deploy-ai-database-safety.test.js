@@ -241,6 +241,9 @@ test("compiler isolation is required before activating a release", () => {
   assert.match(unit, /NoNewPrivileges=true/);
   assert.match(unit, /ProtectSystem=strict/);
   assert.match(unit, /PrivateTmp=true/);
+  assert.match(unit, /ProcSubset=all/);
+  assert.match(unit, /RestrictAddressFamilies=.*AF_NETLINK/);
+  for (const flag of ["ProtectHostname", "ProtectKernelLogs", "ProtectKernelTunables"]) assert.match(unit, new RegExp(`${flag}=false`));
   const helpers = read("backend/deploy/remote-deploy-helpers.sh");
   assert.match(helpers, /\/usr\/bin\/bwrap/);
   assert.match(helpers, /\/usr\/bin\/prlimit/);

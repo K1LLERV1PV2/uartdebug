@@ -1373,7 +1373,7 @@
 
   function extractQuotedIncludes(sourceText) {
     const includes = [];
-    const includePattern = /^\s*#\s*include\s*"([^"]+)"/gm;
+    const includePattern = /^[ \t\v\f\r]*#[ \t\v\f\r]*include[ \t\v\f\r]*"([^"\r\n]+)"/gm;
     let match;
 
     while ((match = includePattern.exec(sourceText || ""))) {

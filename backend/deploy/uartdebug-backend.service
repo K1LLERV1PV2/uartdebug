@@ -28,10 +28,13 @@ ProtectHome=true
 ReadWritePaths=/tmp /var/tmp
 ProtectClock=true
 ProtectControlGroups=true
-ProtectHostname=true
-ProtectKernelLogs=true
+# These read-only host /proc submounts prevent Bubblewrap from mounting its own
+# PID-namespace procfs. The worker mounts that private procfs read-only instead;
+# the parent remains an unprivileged user with an empty capability set.
+ProtectHostname=false
+ProtectKernelLogs=false
 ProtectKernelModules=true
-ProtectKernelTunables=true
+ProtectKernelTunables=false
 RestrictSUIDSGID=true
 RestrictRealtime=true
 # Bubblewrap needs these namespaces for each compiler invocation.
@@ -39,11 +42,13 @@ RestrictNamespaces=user mnt pid net ipc uts
 LockPersonality=true
 RemoveIPC=true
 SystemCallArchitectures=native
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Bubblewrap uses netlink while initializing its isolated network namespace.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 IPAddressDeny=any
 IPAddressAllow=localhost
 ProtectProc=invisible
-ProcSubset=pid
+# Bubblewrap reads overflowuid/overflowgid before entering its user namespace.
+ProcSubset=all
 TasksMax=64
 MemoryMax=256M
 CPUQuota=60%

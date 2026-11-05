@@ -680,7 +680,7 @@ function validateSource(
   });
   if (identity) {
     const information = source
-      .slice(0, source.search(/^\s*#\s*include/m))
+      .slice(0, source.search(/^[ \t\v\f\r]*#[ \t\v\f\r]*include/m))
       .split("\n");
     const name = information
       .map(
@@ -747,7 +747,7 @@ function validateSource(
         : value,
   );
   const includes = [
-    ...sourceCode.matchAll(/^\s*#\s*include\s*([<"][^>"\n]+[>"])/gm),
+    ...sourceCode.matchAll(/^[ \t\v\f\r]*#[ \t\v\f\r]*include[ \t\v\f\r]*([<"][^>"\r\n]+[>"])/gm),
   ].map((match) => `#include ${match[1]}`);
   if (
     includes.filter((line) => line === "#include <xc.h>").length !== 1 ||
