@@ -9,80 +9,34 @@ run_sudo() {
   sudo -n "$@"
 }
 
+verify_compiler_release() {
+  local compiler_backend="$1"
+  for required in compile-server.js compile-sandbox.js deploy/uartdebug-backend.service deploy/install-compiler-service.sh; do
+    [ -f "${compiler_backend}/${required}" ] || {
+      echo "Compiler release is missing ${required}; refusing to change release symlinks." >&2
+      return 78
+    }
+  done
+  [ -x /usr/bin/bwrap ] && [ -x /usr/bin/prlimit ] || {
+    echo "Compiler isolation dependencies are unavailable; refusing to change release symlinks." >&2
+    return 69
+  }
+  id uartcompile >/dev/null || return
+  run_sudo systemd-analyze verify "${compiler_backend}/deploy/uartdebug-backend.service"
+}
+
 verify_ai_release_knowledge() {
   local materials_backend="$1"
-  if [ -f "${materials_backend}/avr-materials.js" ]; then
-    run_sudo -u uartai /usr/bin/node "${materials_backend}/deploy/verify-materials.js" \
-      /var/lib/uartdebug-ai/materials/current/repository
-  else
-    /usr/bin/node -e 'require(process.argv[1]).loadKnowledge()' "${materials_backend}/avr-knowledge.js"
-  fi
-}
-
-print_backend_port_owner() {
-  [ -n "${BACKEND_PORT:-}" ] || return 0
-  echo "Backend port ${BACKEND_PORT} listeners:"
-
-  if command -v ss >/dev/null 2>&1; then
-    run_sudo ss -ltnp "sport = :${BACKEND_PORT}" 2>/dev/null ||
-      ss -ltnp "sport = :${BACKEND_PORT}" 2>/dev/null || true
-  fi
-
-  if command -v lsof >/dev/null 2>&1; then
-    run_sudo lsof -nP -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null ||
-      lsof -nP -iTCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null || true
-  fi
-
-  if command -v fuser >/dev/null 2>&1; then
-    run_sudo fuser -v "${BACKEND_PORT}/tcp" 2>/dev/null ||
-      fuser -v "${BACKEND_PORT}/tcp" 2>/dev/null || true
-  fi
-}
-
-backend_port_busy() {
-  [ -n "${BACKEND_PORT:-}" ] || return 1
-
-  if command -v fuser >/dev/null 2>&1; then
-    run_sudo fuser "${BACKEND_PORT}/tcp" >/dev/null 2>&1 ||
-      fuser "${BACKEND_PORT}/tcp" >/dev/null 2>&1
-    return $?
-  fi
-
-  if command -v lsof >/dev/null 2>&1; then
-    [ -n "$(run_sudo lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null ||
-      lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null || true)" ]
-    return $?
-  fi
-
-  return 1
-}
-
-stop_backend_port_owner() {
-  [ -n "${BACKEND_PORT:-}" ] || return 0
-  print_backend_port_owner
-
-  if command -v fuser >/dev/null 2>&1; then
-    echo "Stopping any process currently listening on backend port ${BACKEND_PORT}"
-    run_sudo fuser -k "${BACKEND_PORT}/tcp" >/dev/null 2>&1 ||
-      fuser -k "${BACKEND_PORT}/tcp" >/dev/null 2>&1 || true
-    sleep 2
-  elif command -v lsof >/dev/null 2>&1; then
-    pids="$(run_sudo lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null ||
-      lsof -ti TCP:"${BACKEND_PORT}" -sTCP:LISTEN 2>/dev/null || true)"
-    if [ -n "${pids}" ]; then
-      echo "Stopping process currently listening on backend port ${BACKEND_PORT}: ${pids}"
-      kill ${pids} || true
-      sleep 2
-    fi
-  else
-    echo "Neither fuser nor lsof found; relying on PM2 process-name cleanup"
-  fi
-
-  print_backend_port_owner
-  if backend_port_busy; then
-    echo "Backend port ${BACKEND_PORT} is still busy after stop attempt"
-    exit 1
-  fi
+  for required in ai-server.js compile-server.js compile-sandbox.js avr-ai-service.js avr-materials.js deploy/verify-materials.js deploy/uartdebug-ai.service deploy/uartdebug-backend.service; do
+    [ -f "${materials_backend}/${required}" ] || {
+      echo "Unsupported backend release: missing ${required}; refusing to change release symlinks." >&2
+      return 78
+    }
+  done
+  run_sudo -u uartmaterials -g uartai /usr/bin/node "${materials_backend}/deploy/verify-materials.js" \
+    /var/lib/uartdebug-ai/materials/current/repository --prepare-catalog || return
+  run_sudo -u uartai /usr/bin/node "${materials_backend}/deploy/verify-materials.js" \
+    /var/lib/uartdebug-ai/materials/current/repository
 }
 
 find_backend_tool() {

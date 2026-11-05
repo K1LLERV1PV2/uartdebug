@@ -8,6 +8,7 @@ Sergey-Bulanov/UartDebug2 is the source of truth. Its main-branch action "Sync A
 
 - releases/<git-sha>/repository: the unchanged tracked repository tree.
 - releases/<git-sha>/manifest.json: identity and each file's SHA-256/byte count.
+- releases/<git-sha>/project-catalog.json: prepared uniform projects, bound to the exact source manifest and commit.
 - current: an atomic symlink to the active release.
 - activation.json: the latest accepted deployment run.
 - install.lock: process coordination.
@@ -20,6 +21,8 @@ Tracked Notes and temporary artifacts are mirrored but excluded from automatic A
 Push to UartDebug2 main or run its action manually. No SSH key or permanent GitHub token is required. The action obtains a short-lived GitHub OIDC identity for https://uartdebug.com/api/internal/materials/sync and posts its Git archive.
 
 The receiver verifies GitHub's RSA signature, issuer, audience, immutable repository/owner IDs, private visibility, main branch, workflow reference and SHA, event, runner and expiry. It checks archive SHA-256 and authenticated commit, rejects unsafe paths, links, duplicates and incomplete rules, then invokes the backend materials validator. Repository scripts are never executed.
+
+Before activation, the installer runs `verify-materials.js <repository> --prepare-catalog` under the materials receiver identity. It prepares reviewed educational examples and canonical target projects once, writes the catalog atomically beside the mirror, and validates its provenance. The AI service only reads this artifact. Invalid or missing preparation prevents activation.
 
 Installation is serialized across processes and changes current atomically. A watermark outside immutable manifests rejects late workflows, including after a previously installed commit is reactivated. Failed validation retains the active release. Existing AI calls keep their pinned root; later calls use the new release without restart.
 
@@ -37,6 +40,6 @@ For a local development snapshot, export git archive --format=tar.gz and use --n
 
 ## Maintenance
 
-Keep previous immutable releases for recovery. Modify UartDebug2 instead of installed files. Website deployment never overwrites this tree or user projects, account balances, sessions or credentials. The active materials commit is available in AI status and the adjacent manifest.
+Keep previous immutable releases for recovery. Modify UartDebug2 instead of installed files. Website deployment never rewrites the source mirror or user projects, account balances, sessions or credentials. When a backend needs the prepared catalog for an existing materials release, its preflight prepares that sibling artifact as `uartmaterials -g uartai`, then verifies read access as `uartai` before switching release pointers. The active materials commit is available in AI status and the adjacent manifest.
 
 References: [GitHub OIDC claims](https://docs.github.com/en/actions/reference/security/oidc), [GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol).

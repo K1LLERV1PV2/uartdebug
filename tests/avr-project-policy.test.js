@@ -68,3 +68,16 @@ test("preflight messages follow regional English and Russian project locales", (
   assert.throws(() => localizedMessage("toString"), /Unknown project message/);
   assert.throws(() => localizedMessage("unknown"), /Unknown project message/);
 });
+
+test("conversation policy replaces stage-only and inline-dialogue rules consistently", () => {
+  const policy = buildProjectPolicy({ conversation: true });
+  assert.match(policy, /generate its code in the same response, including from an empty draft/);
+  assert.match(policy, /English text is an application shortcut, not a user's language choice/);
+  assert.match(policy, /Ask missing decisions in the chat message, not new inline Question blocks/);
+  assert.match(policy, /Every existing user C region byte-for-byte|every existing user C region byte-for-byte/);
+  assert.doesNotMatch(policy, /Missing identity, version, hardware or software requirements become inline Question blocks/);
+  assert.doesNotMatch(policy, /Generate cannot amend the specification/);
+  assert.doesNotMatch(policy, /Generate and describe preserve the specification exactly/);
+  assert.doesNotMatch(policy, /When blocked, return clarify and project null with unchanged specification/);
+  assert.match(policy, /All four initial canonical rule documents must be supplied completely and unchanged/);
+});

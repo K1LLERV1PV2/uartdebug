@@ -1,5 +1,7 @@
 # Локальная база AVR для агента — 24.09.2026
 
+> Historical report: this records an earlier implementation. Paths, versions and flows below may be obsolete. Current behavior is described in [the project workspace](AVR_CANVAS.md) and [materials deployment](AI_MATERIALS_DEPLOYMENT.md).
+
 Подготовлена версия `attiny162x/1.1.0` для **ATtiny1624, ATtiny1626 и ATtiny1627**. Она продолжает переход к совместному холсту: агент использует требования пользователя, готовые рецепты и локальные источники, затем формирует C, YAML и документацию на языке пользователя.
 
 ## Что сделано

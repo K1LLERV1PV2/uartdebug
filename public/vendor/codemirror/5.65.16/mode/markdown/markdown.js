@@ -13,6 +13,13 @@
 
 CodeMirror.defineMode("markdown", function(cmCfg, modeCfg) {
 
+  // UARTDebug local hardening for codemirror5#7128: the legacy inline regexes
+  // scan the remaining line even when the core highlighting budget is smaller.
+  // Very long prose lines retain their text but use plain inline highlighting.
+  var maxInlineLength = typeof cmCfg.maxHighlightLength == "number" &&
+    cmCfg.maxHighlightLength >= 0 && cmCfg.maxHighlightLength < 10000
+    ? cmCfg.maxHighlightLength : 10000;
+
   var htmlMode = CodeMirror.getMode(cmCfg, "text/html");
   var htmlModeMissing = htmlMode.name == "null"
 
@@ -412,6 +419,20 @@ CodeMirror.defineMode("markdown", function(cmCfg, modeCfg) {
   }
 
   function inlineNormal(stream, state) {
+    if (stream.string.length > maxInlineLength) {
+      // Block/fenced-code handling remains in blockNormal/local. Do not carry
+      // an unprocessed emphasis, image or link into the next ordinary line.
+      state.f = state.inline = inlineNormal;
+      state.code = 0;
+      state.em = state.strong = state.strikethrough = false;
+      state.linkText = state.linkHref = state.linkTitle = false;
+      state.image = state.imageAltText = state.imageMarker = false;
+      state.taskList = state.taskOpen = state.taskClosed = false;
+      state.trailingSpace = 0;
+      state.trailingSpaceNewLine = false;
+      stream.skipToEnd();
+      return null;
+    }
     var style = state.text(stream, state);
     if (typeof style !== 'undefined')
       return style;

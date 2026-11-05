@@ -27,6 +27,7 @@ REQUIRED = (
 )
 MAX_FILES = 10_000
 MAX_BYTES = 512 * 1024 * 1024
+PROJECT_CATALOG = "project-catalog.json"
 
 
 def safe_path(name):
@@ -128,12 +129,24 @@ def install(archive_path, materials_root, commit, run_id=None, run_attempt=None,
                 path.chmod(0o750)
         stage.chmod(0o750)
         (stage / "manifest.json").chmod(0o640)
-        if validator:
-            subprocess.run(["node", str(validator), str(repository)], check=True,
-                           capture_output=True, text=True, timeout=60)
         release = releases / commit
         if release.exists():
             verify_existing(release, manifest)
+            # Reactivation preserves the exact original immutable manifest,
+            # including its first deployment metadata, when binding the catalog.
+            (stage / "manifest.json").write_bytes((release / "manifest.json").read_bytes())
+        # Build and validate derived projects before an active release can change.
+        # Only our installed validator executes; repository contents remain data.
+        validator = validator or Path(__file__).with_name("verify-materials.js")
+        subprocess.run(["node", str(validator), str(repository), "--prepare-catalog"], check=True,
+                       capture_output=True, text=True, timeout=60)
+        catalog = stage / PROJECT_CATALOG
+        if catalog.is_symlink() or not catalog.is_file():
+            raise ValueError("The validated project catalog is missing")
+        if release.exists():
+            # Old pinned releases may predate the derived catalog. The mirror
+            # and its manifest stay immutable while this sibling is prepared.
+            catalog.replace(release / PROJECT_CATALOG)
         else:
             stage.rename(release)
         result = {"ok": True, "repository": REPOSITORY, "commit": commit,

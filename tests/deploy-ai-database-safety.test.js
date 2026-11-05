@@ -29,18 +29,15 @@ test("deployment guards database schema before rollback symlink changes", () => 
   const workflow = read(".github/workflows/deploy.yml");
   const guard = read("backend/deploy/guard-ai-access-schema-rollback.sh");
   const rollbackResolution = workflow.indexOf("rollback_target_output=");
-  const bootstrapSymlink = workflow.indexOf(
-    "ts_bootstrap=",
-    rollbackResolution,
-  );
   const rollbackSymlink = workflow.indexOf(
     "== Rollback mode ==",
     rollbackResolution,
   );
 
   assert.ok(rollbackResolution >= 0, "rollback guard invocation is missing");
-  assert.ok(bootstrapSymlink > rollbackResolution);
-  assert.ok(rollbackSymlink > bootstrapSymlink);
+  assert.ok(rollbackSymlink > rollbackResolution);
+  assert.ok(workflow.indexOf('ln -sfn', rollbackResolution) > rollbackSymlink,
+    "the schema and materials preflight must finish before switching either release");
   assert.match(workflow, /Upload remote deploy helpers/);
   assert.match(
     workflow,
@@ -54,6 +51,36 @@ test("deployment guards database schema before rollback symlink changes", () => 
     guard,
     /live_ai_access_schema_version.*-gt.*target_ai_access_schema_version/s,
   );
+});
+
+test("materials preflight refuses unsupported releases and stops after a failed catalog preparation", (t) => {
+  const bash = process.platform === "win32" ? "C:\\Program Files\\Git\\bin\\bash.exe" : "bash";
+  if (process.platform === "win32" && !fs.existsSync(bash)) return t.skip("Git Bash is not installed");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-preflight-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const posix = value => process.platform === "win32"
+    ? value.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`) : value;
+  const helper = posix(path.join(repositoryRoot, "backend/deploy/remote-deploy-helpers.sh"));
+  const run = () => {
+    try {
+      execFileSync(bash, ["-c", '. "$1"; run_sudo() { printf "%s\\n" "$*"; return 19; }; verify_ai_release_knowledge "$2"',
+        "preflight-test", helper, posix(directory)], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      assert.fail("preflight unexpectedly accepted an invalid release");
+    } catch (error) { return error; }
+  };
+  const unsupported = run();
+  assert.equal(unsupported.status, 78);
+  assert.match(unsupported.stderr, /Unsupported backend release/);
+  assert.equal(unsupported.stdout, "", "no privileged command may run for an unsupported release");
+  for (const file of ["ai-server.js", "compile-server.js", "compile-sandbox.js", "avr-ai-service.js", "avr-materials.js", "deploy/verify-materials.js", "deploy/uartdebug-ai.service", "deploy/uartdebug-backend.service"]) {
+    const target = path.join(directory, file);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, "fixture");
+  }
+  const preparation = run();
+  assert.equal(preparation.status, 19, "catalog preparation failure must reach the deployment caller");
+  assert.match(preparation.stdout, /-u uartmaterials -g uartai .* --prepare-catalog/);
+  assert.equal(preparation.stdout.trim().split(/\r?\n/).length, 1, "failed preparation must not proceed to activation/read checks");
 });
 
 test("database backups are verified and conservatively retained", () => {
@@ -119,6 +146,8 @@ test("canvas installation includes its complete runtime and retains protected da
     /loadAiSkillCatalog|install-ai-rule-pack|ai\/skills/,
   );
   assert.doesNotMatch(unit, /AI_RULE_PACK_ROOT|AI_DRAFTS_DIR|AI_MAX_DRAFTS/);
+  assert.match(unit, /Environment=AI_GOOGLE_AUTH_ENABLED=1/);
+  assert.match(unit, /Environment=AI_GOOGLE_AUTH_REQUIRED=1/);
   const bash =
     process.platform === "win32"
       ? "C:\\Program Files\\Git\\bin\\bash.exe"
@@ -134,7 +163,7 @@ test("canvas installation includes its complete runtime and retains protected da
   }
 });
 
-test("canvas smoke check verifies retired routes and avoids paid generation", async (t) => {
+test("production smoke requires Google authentication and never starts paid generation", async (t) => {
   const bash =
     process.platform === "win32"
       ? "C:\\Program Files\\Git\\bin\\bash.exe"
@@ -143,6 +172,7 @@ test("canvas smoke check verifies retired routes and avoids paid generation", as
     return t.skip("Git Bash is not installed");
   const requests = [];
   let configured = true;
+  let mode = "google";
   const server = http.createServer((req, res) => {
     requests.push(`${req.method} ${req.url}`);
     res.setHeader("Content-Type", "application/json");
@@ -158,7 +188,11 @@ test("canvas smoke check verifies retired routes and avoids paid generation", as
         }),
       );
     if (req.url === "/api/avr/ai/auth/session")
-      return res.end(JSON.stringify({ ok: true, mode: "public" }));
+      return res.end(JSON.stringify({ ok: true, mode, configured: true, authEnabled: mode === "google", authRequired: mode === "google", authenticated: false }));
+    if (req.url === "/api/avr/ai/account/workspace") {
+      res.statusCode = 401;
+      return res.end(JSON.stringify({ ok: false, code: "authentication_required" }));
+    }
     if (req.url === "/api/avr/ai/canvas") {
       res.statusCode = 503;
       return res.end(
@@ -177,7 +211,7 @@ test("canvas smoke check verifies retired routes and avoids paid generation", as
   const run = () =>
     promisify(execFile)(bash, args, { encoding: "utf8", timeout: 20000 });
   const paid = await run();
-  assert.match(paid.stdout, /canvas-without-key=skipped/);
+  assert.match(paid.stdout, /anonymous-workspace=401/);
   assert.equal(requests.includes("POST /api/avr/ai/canvas"), false);
   for (const route of [
     "POST /api/avr/ai/respond",
@@ -187,11 +221,33 @@ test("canvas smoke check verifies retired routes and avoids paid generation", as
     assert.ok(requests.includes(route));
   configured = false;
   const withoutKey = await run();
-  assert.match(withoutKey.stdout, /canvas-without-key=503/);
+  assert.match(withoutKey.stdout, /anonymous-workspace=401/);
   assert.equal(
     requests.filter((value) => value === "POST /api/avr/ai/canvas").length,
-    1,
+    0,
   );
+  mode = "public";
+  await assert.rejects(run(), "a missing production auth configuration must fail release verification");
+});
+
+test("compiler isolation is required before activating a release", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  const preflight = workflow.indexOf('verify_compiler_release "${BE_SRC}"');
+  const activation = workflow.indexOf('ln -sfn "$PUB_NEW"');
+  assert.ok(preflight > 0 && preflight < activation);
+  const unit = read("backend/deploy/uartdebug-backend.service");
+  assert.match(unit, /User=uartcompile/);
+  assert.match(unit, /RestrictNamespaces=user mnt pid net ipc uts/);
+  assert.match(unit, /NoNewPrivileges=true/);
+  assert.match(unit, /ProtectSystem=strict/);
+  assert.match(unit, /PrivateTmp=true/);
+  assert.match(unit, /ProcSubset=all/);
+  assert.match(unit, /RestrictAddressFamilies=.*AF_NETLINK/);
+  for (const flag of ["ProtectHostname", "ProtectKernelLogs", "ProtectKernelTunables"]) assert.match(unit, new RegExp(`${flag}=false`));
+  const helpers = read("backend/deploy/remote-deploy-helpers.sh");
+  assert.match(helpers, /\/usr\/bin\/bwrap/);
+  assert.match(helpers, /\/usr\/bin\/prlimit/);
+  assert.match(helpers, /compile-sandbox\.js/);
 });
 
 for (const [liveSchema, targetSchema] of [[3, 2], [6, 5]]) {
@@ -209,7 +265,7 @@ test(`the rollback guard blocks schema ${liveSchema} from a schema ${targetSchem
     fs.rmSync(temporaryDirectory, { recursive: true, force: true }),
   );
   const release = "20260924-120000-abcdef0";
-  const roots = ["public", "backend", "python"].map((name) =>
+  const roots = ["public", "backend"].map((name) =>
     path.join(temporaryDirectory, name),
   );
   for (const root of roots)
@@ -264,7 +320,7 @@ test(`the rollback guard blocks schema ${liveSchema} from a schema ${targetSchem
   );
   fs.writeFileSync(targetService, `const SCHEMA_VERSION = ${liveSchema};\n`);
   const output = execFileSync(bash, args, executionOptions);
-  assert.equal(output.trim().split(/\r?\n/).length, 3);
+  assert.equal(output.trim().split(/\r?\n/).length, 2);
   assert.match(output, /backend\/20260924-120000-abcdef0/);
 });
 }

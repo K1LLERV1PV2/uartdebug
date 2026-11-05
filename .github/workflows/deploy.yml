@@ -75,21 +75,6 @@ jobs:
           strip_components: 1
           rm: true
 
-      - name: Upload python/ if exists and not rollback
-        if: ${{ (hashFiles('python/**') != '') && (!inputs.rollback) }}
-        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT || 22 }}
-          passphrase: ${{ secrets.SSH_PASSPHRASE }}
-          fingerprint: ${{ secrets.SSH_FINGERPRINT }}
-          source: "python"
-          target: "/tmp/deploy/${{ github.sha }}/python"
-          strip_components: 1
-          rm: true
-
       - name: Upload remote deploy helpers
         uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
         with:
@@ -127,15 +112,11 @@ jobs:
             ROOT="/var/www/uartdebug"
             PUB_DIR="${ROOT}/public"
             BE_DIR="${ROOT}/backend"
-            PY_DIR="${ROOT}/python"
 
             RLS="${ROOT}/releases"
             PUB_RLS="${RLS}/public"
             BE_RLS="${RLS}/backend"
-            PY_RLS="${RLS}/python"
 
-            PM2_NAME="${{ secrets.PM2_NAME }}"
-            [ -z "${PM2_NAME:-}" ] && PM2_NAME="uartdebug-backend"
 
             HC_URL="${{ secrets.HC_URL || '' }}"
             HC_RESOLVE=""
@@ -146,9 +127,7 @@ jobs:
 
             BACKEND_HC_URL="${{ secrets.BACKEND_HC_URL || '' }}"
             BACKEND_PORT="${{ secrets.BACKEND_PORT || '8082' }}"
-            BACKEND_BIND_HOST="${{ secrets.BACKEND_BIND_HOST || '127.0.0.1' }}"
             [ -z "${BACKEND_PORT:-}" ] && BACKEND_PORT="8082"
-            [ -z "${BACKEND_BIND_HOST:-}" ] && BACKEND_BIND_HOST="127.0.0.1"
             [ -z "${BACKEND_HC_URL:-}" ] && BACKEND_HC_URL="http://127.0.0.1:${BACKEND_PORT}/health"
             AI_PORT="${{ secrets.AI_PORT || '8083' }}"
             AI_HC_URL="${{ secrets.AI_HC_URL || '' }}"
@@ -172,12 +151,17 @@ jobs:
             ROLLBACK="${DEPLOY_ROLLBACK:-}"
             TO_RELEASE="${DEPLOY_TO_RELEASE:-}"
 
-            sudo mkdir -p "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
-            sudo chown -R "$USER":"$USER" "${ROOT}" "${RLS}" "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"
+            run_sudo install -d -o "$USER" -g "$(id -gn)" -m 0755 "${PUB_RLS}" "${BE_RLS}"
+
+            for service in uartdebug-backend.service uartdebug-ai.service; do
+              systemctl cat "${service}" >/dev/null || {
+                echo "${service} must be installed before deployment or rollback" >&2
+                exit 69
+              }
+            done
 
             rollback_pub_target=""
             rollback_be_target=""
-            rollback_py_target=""
             if [ -n "${ROLLBACK}" ]; then
               rollback_guard="/tmp/deploy/${SHA}/deploy-tools/guard-ai-access-schema-rollback.sh"
               [ -f "${rollback_guard}" ] || {
@@ -186,38 +170,33 @@ jobs:
               }
               rollback_target_output="$(
                 run_sudo /bin/bash "${rollback_guard}" \
-                  "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}" "${TO_RELEASE}" \
+                  "${PUB_RLS}" "${BE_RLS}" "${TO_RELEASE}" \
                   "/var/lib/uartdebug-ai/data/ai-access.sqlite"
               )"
               mapfile -t rollback_targets <<< "${rollback_target_output}"
               rollback_pub_target="${rollback_targets[0]:-}"
               rollback_be_target="${rollback_targets[1]:-}"
-              rollback_py_target="${rollback_targets[2]:-}"
+              [ -n "${rollback_be_target}" ] || { echo "No backend rollback release found" >&2; exit 66; }
+              verify_compiler_release "${rollback_be_target}"
+              verify_ai_release_knowledge "${rollback_be_target}"
+              run_sudo systemd-analyze verify "${rollback_be_target}/deploy/uartdebug-ai.service"
             fi
-
-            ts_bootstrap="$(date +%Y%m%d-%H%M%S)-bootstrap"
-            for X in public backend python; do
-              DIR="${ROOT}/${X}"
-              RLS_DIR="${RLS}/${X}"
-              [ -d "$RLS_DIR" ] || mkdir -p "$RLS_DIR"
-              if [ ! -L "$DIR" ] && [ -d "$DIR" ]; then
-                mkdir -p "${RLS_DIR}/${ts_bootstrap}"
-                rsync -a --delete "${DIR}/" "${RLS_DIR}/${ts_bootstrap}/"
-                rm -rf "${DIR}"
-                ln -sfn "${RLS_DIR}/${ts_bootstrap}" "${DIR}"
-              fi
-            done
 
             if [ -n "${ROLLBACK}" ]; then
               echo "== Rollback mode =="
               [ -n "${rollback_pub_target}" ] && ln -sfn "${rollback_pub_target}" "${PUB_DIR}" || echo "No matching previous public release"
               [ -n "${rollback_be_target}" ] && ln -sfn "${rollback_be_target}" "${BE_DIR}" || echo "No matching previous backend release"
-              [ -n "${rollback_py_target}" ] && ln -sfn "${rollback_py_target}" "${PY_DIR}" || echo "No matching previous python release"
             else
               echo "== Deploy new build =="
               PUB_SRC="/tmp/deploy/${SHA}/public"
               BE_SRC="/tmp/deploy/${SHA}/backend"
-              PY_SRC="/tmp/deploy/${SHA}/python"
+
+              /usr/bin/node -e '
+                const [major, minor] = process.versions.node.split(".").map(Number);
+                if (major < 22 || (major === 22 && minor < 13)) process.exit(1);
+              ' || { echo "Node.js 22.13 or newer is required" >&2; exit 1; }
+              npm ci --prefix "${BE_SRC}" --omit=dev --ignore-scripts
+              verify_compiler_release "${BE_SRC}"
 
               if [ -f "${BE_SRC}/ai-server.js" ]; then
                 if ! command -v systemctl >/dev/null 2>&1 ||
@@ -226,10 +205,11 @@ jobs:
                   echo "Run backend/deploy/install-ai-service.sh once, then deploy again"
                   exit 1
                 fi
-                for canvas_module in avr-ai-service.js avr-ai-runtime.js avr-canvas-contract.js avr-documentation-lookup.js avr-knowledge.js; do
+                for canvas_module in avr-ai-service.js avr-ai-runtime.js avr-canvas-contract.js avr-conversation-contract.js avr-documentation-lookup.js avr-knowledge.js; do
                   /usr/bin/node --check "${BE_SRC}/${canvas_module}"
                 done
                 verify_ai_release_knowledge "${BE_SRC}"
+                run_sudo systemd-analyze verify "${BE_SRC}/deploy/uartdebug-ai.service"
                 [ -f "${BE_SRC}/deploy/backup-ai-access-database.sh" ] || {
                   echo "Missing AI access-database backup helper in staged backend"
                   exit 1
@@ -276,7 +256,6 @@ jobs:
               NOW="$(date +%Y%m%d-%H%M%S)-${SHA:0:7}"
               PUB_NEW="${PUB_RLS}/${NOW}"
               BE_NEW="${BE_RLS}/${NOW}"
-              PY_NEW="${PY_RLS}/${NOW}"
 
               if [ -d "$PUB_SRC" ]; then
                 rm -rf "$PUB_NEW"
@@ -293,30 +272,11 @@ jobs:
                 mkdir -p "$BE_NEW"
                 rsync -a --delete "$BE_SRC"/ "$BE_NEW"/
                 printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$BE_NEW/RELEASE.txt"
-                if [ -f "${BE_NEW}/package.json" ]; then
-                  /usr/bin/node -e '
-                    const [major, minor] = process.versions.node.split(".").map(Number);
-                    if (major < 22 || (major === 22 && minor < 13)) process.exit(1);
-                  ' || {
-                    echo "Node.js 22.13 or newer is required by the deployed backend"
-                    exit 1
-                  }
-                  npm ci --prefix "${BE_NEW}" --omit=dev --ignore-scripts
-                fi
                 ln -sfn "$BE_NEW" "$BE_DIR"
               else
                 echo "No backend artifacts at $BE_SRC (skip)"
               fi
 
-              if [ -d "$PY_SRC" ]; then
-                rm -rf "$PY_NEW"
-                mkdir -p "$PY_NEW"
-                rsync -a --delete "$PY_SRC"/ "$PY_NEW"/
-                printf 'sha=%s\nref=%s\nrun=%s\n' "$SHA" "$REF_NAME" "$RUN_URL" > "$PY_NEW/RELEASE.txt"
-                ln -sfn "$PY_NEW" "$PY_DIR"
-              else
-                echo "No python artifacts at $PY_SRC (skip)"
-              fi
             fi
 
             if command -v nginx >/dev/null 2>&1; then
@@ -346,36 +306,13 @@ jobs:
                 fi
 
                 echo "Restarting uartdebug-backend.service"
+                if [ -z "${ROLLBACK}" ]; then
+                  run_sudo /bin/bash "${BE_DIR}/deploy/install-compiler-service.sh" "${BE_DIR}"
+                fi
                 run_sudo systemctl restart uartdebug-backend.service
                 run_sudo systemctl is-active --quiet uartdebug-backend.service
-              elif command -v pm2 >/dev/null 2>&1; then
-                export PORT="${BACKEND_PORT}"
-                export HOST="${BACKEND_BIND_HOST}"
-                export BIND_HOST="${BACKEND_BIND_HOST}"
-                if [ -f "${BE_DIR}/ecosystem.config.js" ]; then
-                  cd "${BE_DIR}"
-                  pm2 delete "${PM2_NAME}" >/dev/null 2>&1 || true
-                  stop_backend_port_owner
-                  pm2 start ecosystem.config.js --only "${PM2_NAME}" --update-env
-                elif [ -f "${BE_DIR}/compile-server.js" ]; then
-                  if [ -z "${ROLLBACK}" ]; then
-                    grep -q "${EXPECTED_COMPILE_SERVER_VERSION}" "${BE_DIR}/compile-server.js" || {
-                      echo "Deployed backend file does not contain expected compile-server version ${EXPECTED_COMPILE_SERVER_VERSION}"
-                      grep -n "COMPILE_SERVER_VERSION\\|/health" "${BE_DIR}/compile-server.js" || true
-                      exit 1
-                    }
-                  fi
-                  pm2 delete "${PM2_NAME}" >/dev/null 2>&1 || true
-                  stop_backend_port_owner
-                  pm2 start "${BE_DIR}/compile-server.js" --name "${PM2_NAME}" --cwd "${BE_DIR}" --update-env
-                else
-                  echo "No backend entrypoint found in ${BE_DIR}"
-                  exit 1
-                fi
-                sleep 2
-                pm2 save
               else
-                echo "pm2 not found - backend cannot be restarted"
+                echo "uartdebug-backend.service must be installed before deployment"
                 exit 1
               fi
 
@@ -383,34 +320,14 @@ jobs:
                 systemctl list-unit-files --type=service --no-pager | awk '{print $1}' | grep -qx "uartdebug-ai.service"; then
                 if [ -f "${BE_DIR}/ai-server.js" ]; then
                   ai_unit_template="${BE_DIR}/deploy/uartdebug-ai.service"
-                  if [ -f "${ai_unit_template}" ]; then
-                    echo "Validating the release's uartdebug-ai.service unit"
-                    run_sudo systemd-analyze verify "${ai_unit_template}"
-                    echo "Installing the release's uartdebug-ai.service unit"
-                    run_sudo install -o root -g root -m 0644 \
-                      "${ai_unit_template}" \
-                      /etc/systemd/system/uartdebug-ai.service
-                    run_sudo systemctl daemon-reload
-                  elif [ -z "${ROLLBACK}" ]; then
-                    echo "Missing AI service unit in ${BE_DIR}"
-                    exit 1
-                  else
-                    echo "Rollback release has no AI service unit; retaining the installed unit"
-                  fi
-                  if [ -f "${BE_DIR}/avr-materials.js" ]; then
-                    verify_ai_release_knowledge "${BE_DIR}"
-                    run_sudo /bin/bash "${BE_DIR}/deploy/install-materials-sync.sh" "${BE_DIR}"
-                    run_sudo install -d -o uartai -g uartai -m 0700 /var/lib/uartdebug-ai/documentation
-                  elif [ -f "${BE_DIR}/avr-knowledge.js" ]; then
-                    /usr/bin/node -e 'require(process.argv[1]).loadKnowledge()' "${BE_DIR}/avr-knowledge.js"
-                    run_sudo install -d -o uartai -g uartai -m 0700 /var/lib/uartdebug-ai/documentation
-                  elif [ -n "${ROLLBACK}" ] && [ -f "${BE_DIR}/deploy/install-ai-rule-pack.sh" ]; then
-                    # Historic releases still require their own immutable rules.
-                    run_sudo /bin/bash "${BE_DIR}/deploy/install-ai-rule-pack.sh" "${BE_DIR}"
-                  else
-                    echo "Release has no valid AVR knowledge bundle"
-                    exit 1
-                  fi
+                  echo "Installing the preflight-validated uartdebug-ai.service unit"
+                  run_sudo install -o root -g root -m 0644 \
+                    "${ai_unit_template}" \
+                    /etc/systemd/system/uartdebug-ai.service
+                  run_sudo systemctl daemon-reload
+                  verify_ai_release_knowledge "${BE_DIR}"
+                  run_sudo /bin/bash "${BE_DIR}/deploy/install-materials-sync.sh" "${BE_DIR}"
+                  run_sudo install -d -o uartai -g uartai -m 0700 /var/lib/uartdebug-ai/documentation
 
                   expected_ai_server_version="$(
                     sed -nE 's/.*AI_SERVER_VERSION[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "${BE_DIR}/ai-server.js" | head -n 1
@@ -420,11 +337,7 @@ jobs:
                     exit 1
                   }
                   expected_ai_rule_package="$(
-                    if [ -f "${BE_DIR}/avr-knowledge.js" ]; then
-                      run_sudo /usr/bin/node -e 'require(process.argv[1]).createAvrAiService({environment:{}}).getStatus().then(s => process.stdout.write(s.rules?.packageId || ""))' "${BE_DIR}/avr-ai-service.js"
-                    else
-                      /usr/bin/node -e 'process.stdout.write(require(process.argv[1]).packageId || "")' "${BE_DIR}/ai/rule-packs/active.json"
-                    fi
+                    run_sudo -u uartai /usr/bin/node -e 'require(process.argv[1]).createAvrAiService({environment:{}}).getStatus().then(s => process.stdout.write(s.rules?.packageId || ""))' "${BE_DIR}/avr-ai-service.js"
                   )"
                   [ -n "${expected_ai_rule_package:-}" ] || {
                     echo "Could not resolve the active AI rule package"
@@ -471,9 +384,7 @@ jobs:
                       rm -f "${ai_status_body}"
                       exit 1
                   }
-                  if [ -f "${BE_DIR}/avr-knowledge.js" ]; then
-                    run_sudo /usr/bin/node "${BE_DIR}/deploy/verify-ai-release.js" "${ai_status_body}"
-                  fi
+                  run_sudo -u uartai /usr/bin/node "${BE_DIR}/deploy/verify-ai-release.js" "${ai_status_body}"
                   rm -f "${ai_status_body}"
 
                   /bin/bash "${BE_DIR}/deploy/smoke-ai-service.sh" \
@@ -523,11 +434,7 @@ jobs:
                   systemctl list-unit-files --type=service --no-pager | awk '{print $1}' | grep -qx "uartdebug-backend.service"; then
                   echo "uartdebug-backend.service status:"
                   run_sudo systemctl status uartdebug-backend.service --no-pager -l || true
-                elif command -v pm2 >/dev/null 2>&1; then
-                  echo "PM2 status:"
-                  pm2 status "${PM2_NAME}" || true
-                  echo "PM2 recent logs:"
-                  pm2 logs "${PM2_NAME}" --lines 50 --nostream || true
+
                 fi
                 rm -f "${backend_hc_body}"
                 exit 1
@@ -561,7 +468,7 @@ jobs:
             fi
 
             if [ -z "${ROLLBACK}" ]; then
-              for BASE in "${PUB_RLS}" "${BE_RLS}" "${PY_RLS}"; do
+              for BASE in "${PUB_RLS}" "${BE_RLS}"; do
                 [ -d "$BASE" ] || continue
                 count="$(ls -1 "$BASE" | sort | wc -l | tr -d ' ')"
                 if [ "$count" -gt "$KEEP" ]; then

@@ -75,6 +75,127 @@ test("compiler preflight blocks generation but permits empty specification revie
   assert.equal(reviews, 1);
 });
 
+test("project chat shares authorization, budget and NDJSON metering without requiring the compiler for a question", async (t) => {
+  const calls = [];
+  const accessContext = { mode: "google", safetyIdentifier: "ud_chat_account" };
+  const metering = { provider: "openai", model: "gpt-6.1-sol", responseId: "resp_chat", usage: {
+    inputTokens: 20, cachedInputTokens: 0, cacheWriteTokens: 0,
+    outputTokens: 5, reasoningTokens: 0, totalTokens: 25,
+  } };
+  const quota = { unit: "AI Credit", remaining: 90 };
+  const unexpected = () => { throw new Error("Chat must not invoke the canvas handler."); };
+  const server = createAiHttpServer({ environment: {},
+    aiService: {
+      authorizeAccessToken: token => token === "chat-owner",
+      validateRequestInput: unexpected, processCanvas: unexpected,
+      validateChatRequestInput(body) {
+        calls.push("validate");
+        if (!body.message?.trim()) throw new AiServiceError(400, "invalid_chat_request", "A chat message is required.");
+      },
+      getStatus: async () => ({ enabled: true, configured: true, rules: { packageId: "canonical" },
+        knowledge: { version: "test" }, compilerVerification: { enabled: true, ready: false } }),
+      async processChat(body, context) {
+        calls.push("chat");
+        assert.equal(body.message, "Explain the selected project.");
+        assert.equal(context.compilerReady, false);
+        assert.equal(context.safetyIdentifier, accessContext.safetyIdentifier);
+        assert.equal((await context.reserveBudget({ model: "gpt-6.1-sol", inputTokens: 20, maxOutputTokens: 1000 })).maxOutputTokens, 1000);
+        assert.equal((await context.extendBudget({ model: "gpt-6.1-sol", additionalInputTokens: 10, additionalMaxOutputTokens: 1000 })).additionalMaxOutputTokens, 1000);
+        await context.markProviderCalled();
+        await context.onProgress({ schemaVersion: 1, id: "generation", status: "in_progress", attempt: 1 });
+        return { ok: true, kind: "chat", stage: "chat", baseRevision: 7, message: "The program blinks an LED.", _metering: metering };
+      },
+    },
+    accessService: {
+      async authorizeAiRequest() { calls.push("authorize"); return accessContext; },
+      async reserveAiBudget(context) { assert.equal(context, accessContext); calls.push("reserve"); return { maxOutputTokens: 1000 }; },
+      async extendAiBudgetReservation(context) { assert.equal(context, accessContext); calls.push("extend"); return { additionalMaxOutputTokens: 1000 }; },
+      async markAiProviderStarted(context) { assert.equal(context, accessContext); calls.push("provider"); },
+      async recordAiUsage(context, record) {
+        assert.equal(context, accessContext); assert.equal(record.responseId, metering.responseId);
+        assert.deepEqual(record.usage, metering.usage); calls.push("record"); return { quota };
+      },
+      async releaseAiRequest(context, outcome) {
+        assert.equal(context, accessContext);
+        assert.deepEqual(outcome, { providerCalled: true, providerRejected: false, usageRecorded: true }); calls.push("release");
+      },
+    }, log: { info() {}, warn() {} },
+  });
+  const base = await listen(server); t.after(() => close(server));
+  const post = (body, token = "chat-owner") => fetch(`${base}/api/avr/ai/chat`, {
+    method: "POST", headers: { Origin: base, "Content-Type": "application/json", Accept: "application/x-ndjson", "X-UartDebug-Ai-Token": token },
+    body: JSON.stringify(body),
+  });
+  assert.equal((await post({ message: "Question" }, "invalid")).status, 401);
+  assert.deepEqual(calls, []);
+  const invalid = await post({ message: "" });
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json()).code, "invalid_chat_request");
+  assert.deepEqual(calls, ["validate"]);
+  calls.length = 0;
+  // The chat processor decides its action; a stray operation must not trigger
+  // the canvas-only compiler preflight before a harmless question is read.
+  const response = await post({ operation: "generate", message: "Explain the selected project." });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /^application\/x-ndjson/);
+  const events = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
+  assert.deepEqual(events.map(event => event.type), ["progress", "result"]);
+  assert.equal(events[1].data.kind, "chat");
+  assert.equal(events[1].data.baseRevision, 7);
+  assert.equal(events[1].data.canvas, undefined);
+  assert.equal(events[1].data._metering, undefined);
+  assert.deepEqual(events[1].data.quota, quota);
+  assert.deepEqual(calls, ["validate", "authorize", "chat", "reserve", "extend", "provider", "record", "release"]);
+});
+
+test("project chat fails closed when its validator is unavailable instead of falling back to canvas", async (t) => {
+  const unexpected = () => { throw new Error("An unavailable chat path invoked a different service."); };
+  const server = createAiHttpServer({ environment: {},
+    aiService: { authorizeAccessToken: () => true, validateRequestInput: unexpected, processCanvas: unexpected, getStatus: unexpected },
+    accessService: { authorizeAiRequest: unexpected }, log: { info() {}, warn() {} },
+  });
+  const base = await listen(server); t.after(() => close(server));
+  const response = await fetch(`${base}/api/avr/ai/chat`, { method: "POST",
+    headers: { Origin: base, "Content-Type": "application/json" }, body: JSON.stringify({ message: "Explain this." }),
+  });
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "ai_unavailable");
+});
+
+test("model validation errors expose human messages in JSON and NDJSON while preserving internal repair instructions", async t => {
+  let failure;
+  const server = createAiHttpServer({ environment: {},
+    aiService: {
+      authorizeAccessToken: () => true, validateChatRequestInput() {},
+      getStatus: async () => ({ enabled: true, configured: true, rules: { packageId: "canonical" }, knowledge: { version: "test" } }),
+      async processChat() { throw failure; },
+    },
+    accessService: { authorizeAiRequest: async () => ({ mode: "public" }), releaseAiRequest: async () => {} },
+    log: { info() {}, warn() {} },
+  });
+  const base = await listen(server); t.after(() => close(server));
+  for (const [code, instruction, expectedMessage] of [
+    ["invalid_generated_canvas", "Ask for the missing target in the chat.", "The AI could not complete this request correctly. Try again."],
+    ["invalid_ai_repair_response", "Compiler repair must preserve the validated specification exactly.", "The AI could not correct the generated project. Try again."],
+  ]) {
+    for (const stream of [false, true]) {
+      failure = new AiServiceError(502, code, instruction);
+      const response = await fetch(`${base}/api/avr/ai/chat`, {
+        method: "POST", headers: { Origin: base, "Content-Type": "application/json", ...(stream ? { Accept: "application/x-ndjson" } : {}) },
+        body: JSON.stringify({ message: "Generate the project." }),
+      });
+      const body = await response.text();
+      assert.equal(body.includes(instruction), false);
+      assert.equal(body.includes("AiServiceError:"), false);
+      const envelope = stream ? JSON.parse(body.trim()) : { status: response.status, data: JSON.parse(body) };
+      assert.equal(envelope.status, 502);
+      assert.equal(envelope.data.code, code);
+      assert.equal(envelope.data.message, expectedMessage);
+      assert.equal(failure.message, instruction, "do not rewrite the message used by the repair loop");
+    }
+  }
+});
+
 test("serves safe AI status metadata and health from a separate server", async (t) => {
   const aiService = {
     authorizeAccessToken() {
@@ -1364,7 +1485,6 @@ test("serves a complete project workspace with one revision and a legacy migrati
       return {
         accountKey: context.accountKey,
         documents: {
-          chats: emptyRecord(1),
           files: emptyRecord(3),
           instruction: emptyRecord(1),
         },
@@ -1442,6 +1562,24 @@ test("serves a complete project workspace with one revision and a legacy migrati
   ]);
 });
 
+test("retired chat workspace routes do not authenticate, read, or write account data", async (t) => {
+  const accessService = {
+    authenticateAccountRequest() { assert.fail("Retired chat routes must not access an account"); },
+    readAccountWorkspace() { assert.fail("Retired chat routes must not load old chat records"); },
+    writeAccountWorkspace() { assert.fail("Retired chat routes must not write old chat records"); },
+  };
+  const server = createAiHttpServer({ environment: {}, aiService: {}, accessService, log: { info() {}, warn() {} } });
+  const baseUrl = await listen(server);
+  t.after(() => close(server));
+  for (const method of ["GET", "PUT"]) {
+    const response = await fetch(`${baseUrl}/api/avr/ai/account/workspace/chats`, {
+      method, headers: { "Content-Type": "application/json", Origin: baseUrl },
+      ...(method === "PUT" ? { body: "{}" } : {}),
+    });
+    assert.equal(response.status, 404);
+  }
+});
+
 test("account workspace writes require same-origin JSON and preserve revision conflicts", async (t) => {
   let authenticateCalls = 0;
   let writeCalls = 0;
@@ -1474,11 +1612,11 @@ test("account workspace writes require same-origin JSON and preserve revision co
   const body = JSON.stringify({
     baseRevision: 0,
     expectedAccountKey: "account_key_123456789012345678901234567890",
-    data: { schemaVersion: 1, activeChatId: null, chats: [] },
+    data: { schemaVersion: 2, files: {}, fileGroups: {}, miniProjects: {}, current: null },
   });
 
   const missingOrigin = await fetch(
-    `${baseUrl}/api/avr/ai/account/workspace/chats`,
+    `${baseUrl}/api/avr/ai/account/workspace/files`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -1489,7 +1627,7 @@ test("account workspace writes require same-origin JSON and preserve revision co
   assert.equal(authenticateCalls, 0);
 
   const wrongType = await fetch(
-    `${baseUrl}/api/avr/ai/account/workspace/chats`,
+    `${baseUrl}/api/avr/ai/account/workspace/files`,
     {
       method: "PUT",
       headers: { "Content-Type": "text/plain", Origin: baseUrl },
@@ -1500,7 +1638,7 @@ test("account workspace writes require same-origin JSON and preserve revision co
   assert.equal(authenticateCalls, 0);
 
   const conflict = await fetch(
-    `${baseUrl}/api/avr/ai/account/workspace/chats`,
+    `${baseUrl}/api/avr/ai/account/workspace/files`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json", Origin: baseUrl },
@@ -1538,14 +1676,14 @@ test("account workspace writes reject a stale account key before persistence", a
   t.after(() => close(server));
 
   const response = await fetch(
-    `${baseUrl}/api/avr/ai/account/workspace/chats`,
+    `${baseUrl}/api/avr/ai/account/workspace/files`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json", Origin: baseUrl },
       body: JSON.stringify({
         baseRevision: 0,
         expectedAccountKey: "old_account_key_123456789012345678901234567890",
-        data: { schemaVersion: 1, activeChatId: null, chats: [] },
+        data: { schemaVersion: 2, files: {}, fileGroups: {}, miniProjects: {}, current: null },
       }),
     }
   );
@@ -1590,13 +1728,13 @@ test("rate limits account workspace writes without spending AI credits", async (
   const baseUrl = await listen(server);
   t.after(() => close(server));
   const save = () =>
-    fetch(`${baseUrl}/api/avr/ai/account/workspace/chats`, {
+    fetch(`${baseUrl}/api/avr/ai/account/workspace/files`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Origin: baseUrl },
       body: JSON.stringify({
         baseRevision: 0,
         expectedAccountKey: accountKey,
-        data: { schemaVersion: 1, activeChatId: null, chats: [] },
+        data: { schemaVersion: 2, files: {}, fileGroups: {}, miniProjects: {}, current: null },
       }),
     });
 

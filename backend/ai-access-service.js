@@ -6,6 +6,7 @@ const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { OAuth2Client } = require("google-auth-library");
 const { normalizeCanvas } = require("./avr-canvas-contract");
+const { validateStoredConversation } = require("./avr-conversation-contract");
 const { MAX_PROVIDER_RESPONSES } = require("./avr-ai-limits");
 
 const COMPLETED_PROVIDER_USAGE = Symbol("completedProviderUsage");
@@ -14,16 +15,14 @@ const SCHEMA_VERSION = 6;
 const DEVICE_COOKIE = "__Host-ud_device";
 const SESSION_COOKIE = "__Host-ud_session";
 const INSTALLATION_SECRET_HEADER = "x-uartdebug-installation";
-const ACCOUNT_WORKSPACE_TYPES = Object.freeze(["chats", "files", "instruction"]);
+const ACCOUNT_WORKSPACE_TYPES = Object.freeze(["files", "instruction"]);
 const ACCOUNT_WORKSPACE_SCHEMA_VERSIONS = Object.freeze({
-  chats: 1,
   files: 3,
   instruction: 2,
 });
 const WORKSPACE_AUTHORSHIP_VALUES = new Set(["original", "human", "ai"]);
 const MAX_WORKSPACE_AUTHORSHIP_LINES = 20_000;
 const ACCOUNT_WORKSPACE_MAX_BYTES = Object.freeze({
-  chats: 1024 * 1024,
   files: 4 * 1024 * 1024,
   instruction: 256 * 1024,
 });
@@ -372,7 +371,6 @@ class AiAccessService {
     const projects = this._readAccountWorkspaceRecord(accountHash, "files");
     const consolidated = projects.schemaVersion === 3 && projects.data !== null;
     const documents = {
-      chats: this._readAccountWorkspaceRecord(accountHash, "chats"),
       files: projects,
       // Retain the old row for recovery without validating or exposing it as
       // an active document once the complete project snapshot is canonical.
@@ -416,7 +414,7 @@ class AiAccessService {
       }
       const existing = this.database
         .prepare(
-          `SELECT revision, schema_version, created_at
+          `SELECT revision, schema_version, created_at, payload_json
              FROM account_workspace_snapshots
             WHERE account_hash = ? AND data_type = ?`
         )
@@ -435,6 +433,19 @@ class AiAccessService {
           "account_data_schema_downgrade",
           "This workspace uses a newer canvas format. Refresh the application before saving again."
         );
+      }
+      if (dataType === "files" && Number(existing?.schema_version) >= 3) {
+        let previous;
+        try { previous = JSON.parse(existing.payload_json); }
+        catch { throw new AiAccessError(500, "account_data_corrupt", "The stored account workspace is invalid."); }
+        const downgraded = (before, after) => Number(before?.schemaVersion) >= 2 &&
+          Number(after?.schemaVersion || 0) < Number(before.schemaVersion);
+        if (downgraded(previous.draftConversation, input.data.draftConversation) ||
+            Object.entries(previous.miniProjects || {}).some(([id, project]) =>
+              Object.hasOwn(input.data.miniProjects, id) && downgraded(project.conversation, input.data.miniProjects[id].conversation))) {
+          throw new AiAccessError(409, "account_workspace_migration_required",
+            "Projects now use an updated chat format. Refresh the application before saving again.");
+        }
       }
       if (dataType === "files" && input.schemaVersion === 3 &&
           Number(existing?.schema_version || 0) < 3) {
@@ -2231,7 +2242,7 @@ class AiAccessService {
       this.database
         .prepare("UPDATE devices SET last_seen_at = ? WHERE id = ?")
         .run(now, device.id);
-      if (installationHash) {
+      if (installationHash && create) {
         this.database
           .prepare(
             `INSERT INTO installation_aliases
@@ -2241,6 +2252,12 @@ class AiAccessService {
                last_seen_at = excluded.last_seen_at`
           )
           .run(installationHash, device.id, now, now);
+      } else if (installationHash) {
+        // Read-only session/account polling may refresh a known alias, but
+        // cannot create arbitrarily many aliases from client-controlled headers.
+        this.database
+          .prepare("UPDATE installation_aliases SET last_seen_at = ? WHERE alias_hash = ? AND device_id = ?")
+          .run(now, installationHash, device.id);
       }
     });
     this._setDeviceCookie(res, device.id);
@@ -2661,11 +2678,10 @@ function normalizeAccountWorkspaceData(dataType, rawData) {
     throw new AiAccessError(
       400,
       "project_instruction_storage_forbidden",
-      "Project instruction is not part of account chat or file storage."
+      "Project instruction is not part of account file storage."
     );
   }
 
-  if (dataType === "chats") validateAccountChats(rawData);
   if (dataType === "files") validateAccountFiles(rawData);
   if (dataType === "instruction") validateAccountInstruction(rawData);
 
@@ -2696,110 +2712,6 @@ function normalizeAccountWorkspaceData(dataType, rawData) {
   };
 }
 
-function validateAccountChats(data) {
-  const allowedKeys = new Set(["schemaVersion", "activeChatId", "chats"]);
-  if (Object.keys(data).some((key) => !allowedKeys.has(key)) || !Array.isArray(data.chats)) {
-    throwInvalidAccountData("The chat workspace structure is invalid.");
-  }
-  if (data.chats.length > 100) {
-    throwInvalidAccountData("The chat workspace contains too many chats.");
-  }
-
-  const ids = new Set();
-  const messageIds = new Set();
-  for (const chat of data.chats) {
-    if (
-      !isPlainJsonObject(chat) ||
-      Object.keys(chat).some(
-        (key) =>
-          ![
-            "id",
-            "title",
-            "titleSource",
-            "titleLocked",
-            "createdAt",
-            "updatedAt",
-            "messages",
-          ].includes(key)
-      )
-    ) {
-      throwInvalidAccountData("Each chat must be a JSON object.");
-    }
-    const id = normalizeBoundedWorkspaceText(chat.id, 96, { required: true });
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(id) || ids.has(id)) {
-      throwInvalidAccountData("Chat identifiers must be unique and URL-safe.");
-    }
-    ids.add(id);
-    normalizeBoundedWorkspaceText(chat.title, 256, { required: false });
-    if (
-      chat.titleSource != null &&
-      !["auto", "manual"].includes(chat.titleSource)
-    ) {
-      throwInvalidAccountData("Chat title metadata is invalid.");
-    }
-    if (chat.titleLocked != null && typeof chat.titleLocked !== "boolean") {
-      throwInvalidAccountData("Chat title metadata is invalid.");
-    }
-    validateRequiredWorkspaceTimestamp(chat.createdAt);
-    validateRequiredWorkspaceTimestamp(chat.updatedAt);
-    if (chat.updatedAt < chat.createdAt) {
-      throwInvalidAccountData("Chat timestamps are invalid.");
-    }
-    if (!Array.isArray(chat.messages)) {
-      throwInvalidAccountData("Each chat must contain a messages array.");
-    }
-    for (const message of chat.messages) {
-      if (
-        !isPlainJsonObject(message) ||
-        Object.keys(message).some(
-          (key) =>
-            ![
-              "id",
-              "role",
-              "content",
-              "title",
-              "createdAt",
-              "editedAt",
-            ].includes(key)
-        ) ||
-        !["user", "assistant"].includes(String(message.role || ""))
-      ) {
-        throwInvalidAccountData("Chat messages must have a user or assistant role.");
-      }
-      const messageId = normalizeBoundedWorkspaceText(message.id, 128, {
-        required: true,
-      });
-      if (
-        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(messageId) ||
-        messageIds.has(messageId)
-      ) {
-        throwInvalidAccountData("Chat message identifiers must be unique and URL-safe.");
-      }
-      messageIds.add(messageId);
-      normalizeBoundedWorkspaceText(message.content, 128 * 1024, {
-        required: true,
-      });
-      normalizeBoundedWorkspaceText(message.title, 512, { required: false });
-      validateRequiredWorkspaceTimestamp(message.createdAt);
-      if (message.editedAt != null) {
-        validateRequiredWorkspaceTimestamp(message.editedAt);
-        if (message.editedAt < message.createdAt) {
-          throwInvalidAccountData("Chat message timestamps are invalid.");
-        }
-      }
-    }
-  }
-
-  if (data.activeChatId != null) {
-    const activeChatId = normalizeBoundedWorkspaceText(data.activeChatId, 96, {
-      required: true,
-    });
-    if (!ids.has(activeChatId)) {
-      throwInvalidAccountData("activeChatId must identify a stored chat.");
-    }
-  }
-}
-
 function validateAccountFiles(data) {
   const allowedKeys = new Set([
     "schemaVersion",
@@ -2808,12 +2720,12 @@ function validateAccountFiles(data) {
     "miniProjects",
     "current",
     "authorship",
-    ...(data.schemaVersion === 3 ? ["draftCanvas"] : []),
+    ...(data.schemaVersion === 3 ? ["draftCanvas", "draftConversation"] : []),
   ]);
   if (
     Object.keys(data).some((key) => !allowedKeys.has(key)) ||
     !isPlainJsonObject(data.files) ||
-    !isPlainJsonObject(data.fileGroups) ||
+    (Object.hasOwn(data, "fileGroups") && !isPlainJsonObject(data.fileGroups)) ||
     !isPlainJsonObject(data.miniProjects)
   ) {
     throwInvalidAccountData("The file workspace structure is invalid.");
@@ -2821,7 +2733,7 @@ function validateAccountFiles(data) {
   const fileEntries = Object.entries(data.files);
   if (
     fileEntries.length > 256 ||
-    Object.keys(data.fileGroups).length > 256 ||
+    Object.keys(data.fileGroups || {}).length > 256 ||
     Object.keys(data.miniProjects).length > 128
   ) {
     throwInvalidAccountData("The file workspace contains too many entries.");
@@ -2867,6 +2779,7 @@ function validateAccountProjects(data) {
     throwInvalidAccountData("The project workspace must include its draft canvas.");
   }
   validateAccountInstruction(data.draftCanvas);
+  if (Object.hasOwn(data, "draftConversation")) validateAccountConversation(data.draftConversation);
   const owners = new Map();
   const sources = new Set();
   for (const [instanceId, project] of Object.entries(data.miniProjects)) {
@@ -2878,6 +2791,7 @@ function validateAccountProjects(data) {
       throwInvalidAccountData("The project workspace contains an invalid project.");
     }
     validateAccountInstruction(project.canvas);
+    if (Object.hasOwn(project, "conversation")) validateAccountConversation(project.conversation);
     const projectRoles = new Map();
     const claimFile = (name, role) => {
       if (typeof name !== "string" || !Object.prototype.hasOwnProperty.call(data.files, name)) {
@@ -2918,6 +2832,14 @@ function validateAccountProjects(data) {
   }
   if (data.current != null && !sources.has(data.current)) {
     throwInvalidAccountData("The active project must identify a stored project source.");
+  }
+}
+
+function validateAccountConversation(value) {
+  try {
+    validateStoredConversation(value);
+  } catch (error) {
+    throwInvalidAccountData(error.message);
   }
 }
 

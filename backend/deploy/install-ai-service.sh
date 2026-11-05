@@ -32,9 +32,13 @@ required=(
   "${stage}/avr-methodology.js"
   "${stage}/avr-ai-runtime.js"
   "${stage}/avr-canvas-contract.js"
+  "${stage}/avr-conversation-contract.js"
   "${stage}/avr-documentation-lookup.js"
   "${stage}/avr-knowledge.js"
   "${stage}/avr-materials.js"
+  "${stage}/avr-project-catalog-build.js"
+  "${stage}/avr-project-format.js"
+  "${stage}/avr-project-policy.js"
   "${stage}/avr-compiler-contract.js"
   "${stage}/avr-compiler-readiness.js"
   "${stage}/avr-documentation-markers.js"
@@ -47,6 +51,7 @@ required=(
   "${stage}/deploy/set-ai-workspace-body-limit.sh"
   "${stage}/deploy/redact-oauth-callback-logging.sh"
   "${stage}/deploy/remove-ai-request-limits.sh"
+  "${stage}/deploy/verify-materials.js"
 )
 for required_file in "${required[@]}"; do
   [ -f "${required_file}" ] || {
@@ -165,10 +170,17 @@ if [ "${stage}" != "${backend_dir}" ]; then
     "${stage}/avr-methodology.js" \
     "${stage}/avr-ai-runtime.js" \
     "${stage}/avr-canvas-contract.js" \
+    "${stage}/avr-conversation-contract.js" \
     "${stage}/avr-documentation-lookup.js" \
     "${stage}/avr-knowledge.js" \
     "${stage}/avr-materials.js" \
+    "${stage}/avr-project-catalog-build.js" \
+    "${stage}/avr-project-format.js" \
+    "${stage}/avr-project-policy.js" \
     "${backend_dir}/"
+  install -o deploy -g deploy -m 0644 \
+    "${stage}/deploy/verify-materials.js" \
+    "${backend_dir}/deploy/verify-materials.js"
   install -o deploy -g deploy -m 0644 \
     "${stage}/avr-compiler-contract.js" \
     "${stage}/avr-compiler-readiness.js" \

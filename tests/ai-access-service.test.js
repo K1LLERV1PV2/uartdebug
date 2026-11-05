@@ -789,6 +789,43 @@ test("installation secret alias restores an existing device", async (t) => {
   assert.notEqual(alias.alias_hash, secret);
 });
 
+test("read-only status and account polling cannot create installation aliases", async (t) => {
+  let timestamp = 1_800_000_000_000;
+  const { service, oauthClient } = makeService({ now: () => timestamp });
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, {
+    code: "read-only-alias", sub: "read-only-alias-account", email: "alias@example.com",
+  });
+  const count = table => service.database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
+  assert.equal(count("installation_aliases"), 0);
+  const baseline = await service.getPublicStatus(request(login.cookie), new MockResponse());
+  for (let index = 0; index < 20; index++) {
+    const headers = { [INSTALLATION_SECRET_HEADER]: `read-only-installation-secret-${index}-with-entropy` };
+    const status = await service.getPublicStatus(request(login.cookie, headers), new MockResponse());
+    assert.equal(status.authenticated, true);
+    assert.equal(status.accountKey, baseline.accountKey);
+    assert.equal(service.authenticateAccountRequest(request(login.cookie, headers), new MockResponse()).accountKey, baseline.accountKey);
+  }
+  assert.equal(count("installation_aliases"), 0);
+  assert.equal(count("devices"), 1);
+
+  const secret = "login-bound-installation-secret-with-entropy";
+  await service.beginGoogleLogin(request(login.cookie, { [INSTALLATION_SECRET_HEADER]: secret }), new MockResponse());
+  assert.equal(count("installation_aliases"), 1);
+  assert.equal(count("devices"), 1);
+  timestamp += 1000;
+  const recoveryResponse = new MockResponse();
+  const sessionOnlyCookie = `${SESSION_COOKIE}=${cookieValue(login.callbackResponse, SESSION_COOKIE)}`;
+  const restored = await service.getPublicStatus(request(sessionOnlyCookie, { [INSTALLATION_SECRET_HEADER]: secret }), recoveryResponse);
+  assert.equal(restored.authenticated, true);
+  assert.equal(restored.accountKey, baseline.accountKey);
+  assert.equal(cookieValue(recoveryResponse, DEVICE_COOKIE), cookieValue(login.callbackResponse, DEVICE_COOKIE));
+  assert.equal(service.database.prepare("SELECT last_seen_at FROM installation_aliases").get().last_seen_at, timestamp);
+  assert.equal(count("installation_aliases"), 1);
+  const noSession = await service.getPublicStatus(request("", { [INSTALLATION_SECRET_HEADER]: secret }), new MockResponse());
+  assert.equal(noSession.authenticated, false, "an installation alias must not replace the account session");
+});
+
 test("logout invalidates the opaque session and clears its cookie", async (t) => {
   const { service, oauthClient } = makeService();
   t.after(() => service.close());
@@ -1876,384 +1913,98 @@ test("Google mode reports missing server configuration as a typed 503", async (t
   );
 });
 
-test("account workspace snapshots persist independently without spending AI credits", async (t) => {
+test("account projects and legacy instructions persist without spending AI credits", async (t) => {
   const { service, oauthClient } = makeService();
   t.after(() => service.close());
-  const login = await signIn(service, oauthClient, {
-    code: "workspace-code",
-    sub: "workspace-account",
-    email: "workspace@example.com",
-  });
-  service.database.exec(
-    "UPDATE google_accounts SET spent_nano_usd = grant_nano_usd; UPDATE devices SET spent_nano_usd = grant_nano_usd;"
-  );
-
-  const context = service.authenticateAccountRequest(
-    request(login.cookie),
-    new MockResponse()
-  );
-  assert.equal(typeof context.accountHash, "string");
-  assert.match(context.accountKey, /^[A-Za-z0-9_-]{32,128}$/);
+  const login = await signIn(service, oauthClient, { code: "workspace-code", sub: "workspace-account", email: "workspace@example.com" });
+  service.database.exec("UPDATE google_accounts SET spent_nano_usd = grant_nano_usd; UPDATE devices SET spent_nano_usd = grant_nano_usd;");
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
   const empty = service.readAccountWorkspace(context);
   assert.equal(empty.accountKey, context.accountKey);
-  assert.deepEqual(Object.keys(empty.documents), ["chats", "files", "instruction"]);
-  assert.equal(empty.documents.chats.revision, 0);
+  assert.deepEqual(Object.keys(empty.documents), ["files", "instruction"]);
   assert.equal(empty.documents.files.data, null);
   assert.equal(empty.documents.instruction.schemaVersion, 2);
-
-  const chats = {
-    schemaVersion: 1,
-    activeChatId: "chat-1",
-    chats: [
-      {
-        id: "chat-1",
-        title: "First chat",
-        titleSource: "auto",
-        titleLocked: false,
-        createdAt: 1,
-        updatedAt: 3,
-        messages: [
-          {
-            id: "message-1",
-            role: "user",
-            content: "Question",
-            title: "",
-            createdAt: 1,
-          },
-          {
-            id: "message-2",
-            role: "assistant",
-            content: "Answer",
-            title: "",
-            createdAt: 2,
-            editedAt: 3,
-          },
-        ],
-      },
-    ],
-  };
-  const files = {
-    schemaVersion: 2,
-    files: { "main.c": "int main(void) { return 0; }\n" },
-    fileGroups: {},
-    miniProjects: {},
-    current: "main.c",
-    authorship: {
-      "main.c": {
-        schemaVersion: 1,
-        lines: ["original", "human"],
-        updatedAt: 3,
-      },
-    },
-  };
-  const instruction = {
-    schemaVersion: 1,
-    revision: 4,
-    markdown: "# Project\n",
-    skillRefs: [{ id: "initialization", version: "1.0.0" }],
-    authorship: {
-      schemaVersion: 1,
-      lines: ["original", "ai"],
-      updatedAt: 4,
-    },
-  };
-
-  assert.equal(
-    service.writeAccountWorkspace(context, "chats", {
-      baseRevision: 0,
-      expectedAccountKey: context.accountKey,
-      data: chats,
-    }).document.revision,
-    1
-  );
-  assert.equal(
-    service.writeAccountWorkspace(context, "files", {
-      baseRevision: 0,
-      expectedAccountKey: context.accountKey,
-      data: files,
-    }).document.revision,
-    1
-  );
-  assert.equal(
-    service.writeAccountWorkspace(context, "instruction", {
-      baseRevision: 0,
-      expectedAccountKey: context.accountKey,
-      data: instruction,
-    }).document.revision,
-    1
-  );
-
+  const files = { schemaVersion: 2, files: { "main.c": "int main(void) { return 0; }\n" }, fileGroups: {}, miniProjects: {}, current: "main.c",
+    authorship: { "main.c": { schemaVersion: 1, lines: ["original", "human"], updatedAt: 3 } } };
+  const instruction = { schemaVersion: 1, revision: 4, markdown: "# Project\n", skillRefs: [{ id: "initialization", version: "1.0.0" }],
+    authorship: { schemaVersion: 1, lines: ["original", "ai"], updatedAt: 4 } };
+  for (const [type, data] of [["files", files], ["instruction", instruction]]) {
+    assert.equal(service.writeAccountWorkspace(context, type, {
+      baseRevision: 0, expectedAccountKey: context.accountKey, data,
+    }).document.revision, 1);
+  }
   const stored = service.readAccountWorkspace(context);
-  assert.deepEqual(stored.documents.chats.data, chats);
   assert.deepEqual(stored.documents.files.data, files);
   assert.deepEqual(stored.documents.instruction.data, instruction);
-  assert.equal(stored.documents.chats.revision, 1);
-  assert.equal(stored.documents.files.revision, 1);
-  assert.equal(stored.documents.instruction.revision, 1);
+});
+
+test("retired chat records are preserved verbatim without loading or accepting new chat writes", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "chat-recovery", sub: "chat-recovery-account", email: "recovery@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  // A damaged legacy payload must not prevent the current project workspace from opening.
+  const payload = '{"legacyChat":"recoverable bytes"';
+  service.database.prepare(`INSERT INTO account_workspace_snapshots
+    (account_hash,data_type,revision,schema_version,payload_json,payload_bytes,created_at,updated_at)
+    VALUES (?, 'chats', 7, 1, ?, ?, 1, 2)`).run(context.accountHash,payload,Buffer.byteLength(payload));
+  assert.deepEqual(Object.keys(service.readAccountWorkspace(context).documents), ["files", "instruction"]);
+  assert.throws(() => service.writeAccountWorkspace(context, "chats", {
+    baseRevision: 7, expectedAccountKey: context.accountKey, data: { schemaVersion: 1, chats: [] },
+  }), error => error instanceof AiAccessError && error.status === 404 && error.code === "account_data_type_not_found");
+  const stored = service.database.prepare("SELECT payload_json,revision FROM account_workspace_snapshots WHERE account_hash = ? AND data_type = 'chats'").get(context.accountHash);
+  assert.equal(stored.payload_json, payload);
+  assert.equal(stored.revision, 7);
 });
 
 test("account workspace is isolated by Google account and rejects stale revisions", async (t) => {
   const { service, oauthClient } = makeService();
   t.after(() => service.close());
-  const first = await signIn(service, oauthClient, {
-    code: "workspace-first",
-    sub: "workspace-first-account",
-    email: "first@example.com",
-  });
-  const secondDevice = await signIn(service, oauthClient, {
-    code: "workspace-second-device",
-    sub: "workspace-first-account",
-    email: "first@example.com",
-  });
-  const other = await signIn(service, oauthClient, {
-    code: "workspace-other",
-    sub: "workspace-other-account",
-    email: "other@example.com",
-  });
-  const firstContext = service.authenticateAccountRequest(
-    request(first.cookie),
-    new MockResponse()
-  );
-  const secondDeviceContext = service.authenticateAccountRequest(
-    request(secondDevice.cookie),
-    new MockResponse()
-  );
-  const otherContext = service.authenticateAccountRequest(
-    request(other.cookie),
-    new MockResponse()
-  );
-  const data = { schemaVersion: 1, activeChatId: null, chats: [] };
-
-  service.writeAccountWorkspace(firstContext, "chats", {
-    baseRevision: 0,
-    expectedAccountKey: firstContext.accountKey,
-    data,
-  });
+  const first = await signIn(service, oauthClient, { code: "workspace-first", sub: "workspace-first-account", email: "first@example.com" });
+  const secondDevice = await signIn(service, oauthClient, { code: "workspace-second-device", sub: "workspace-first-account", email: "first@example.com" });
+  const other = await signIn(service, oauthClient, { code: "workspace-other", sub: "workspace-other-account", email: "other@example.com" });
+  const firstContext = service.authenticateAccountRequest(request(first.cookie), new MockResponse());
+  const secondDeviceContext = service.authenticateAccountRequest(request(secondDevice.cookie), new MockResponse());
+  const otherContext = service.authenticateAccountRequest(request(other.cookie), new MockResponse());
+  const data = { schemaVersion: 2, files: {}, authorship: {}, fileGroups: {}, miniProjects: {}, current: null };
+  service.writeAccountWorkspace(firstContext, "files", { baseRevision: 0, expectedAccountKey: firstContext.accountKey, data });
   assert.equal(firstContext.accountKey, secondDeviceContext.accountKey);
   assert.notEqual(firstContext.accountKey, otherContext.accountKey);
-  assert.deepEqual(
-    service.readAccountWorkspace(secondDeviceContext).documents.chats.data,
-    data
-  );
-  assert.equal(service.readAccountWorkspace(otherContext).documents.chats.data, null);
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(secondDeviceContext, "chats", {
-        baseRevision: 0,
-        expectedAccountKey: secondDeviceContext.accountKey,
-        data,
-      }),
-    (error) =>
-      error instanceof AiAccessError &&
-      error.status === 409 &&
-      error.code === "account_data_revision_conflict"
-  );
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(firstContext, "files", {
-        baseRevision: 0,
-        expectedAccountKey: firstContext.accountKey,
-        data: {
-          schemaVersion: 2,
-          files: {},
-          fileGroups: {},
-          miniProjects: {},
-          current: null,
-          instructionDocument: { schemaVersion: 1 },
-        },
-      }),
-    (error) =>
-      error instanceof AiAccessError &&
-      error.code === "project_instruction_storage_forbidden"
-  );
+  assert.deepEqual(service.readAccountWorkspace(secondDeviceContext).documents.files.data, data);
+  assert.equal(service.readAccountWorkspace(otherContext).documents.files.data, null);
+  assert.throws(() => service.writeAccountWorkspace(secondDeviceContext, "files", {
+    baseRevision: 0, expectedAccountKey: secondDeviceContext.accountKey, data,
+  }), error => error instanceof AiAccessError && error.status === 409 && error.code === "account_data_revision_conflict");
+  assert.throws(() => service.writeAccountWorkspace(firstContext, "files", {
+    baseRevision: 1, expectedAccountKey: firstContext.accountKey, data: { ...data, instructionDocument: { schemaVersion: 1 } },
+  }), error => error instanceof AiAccessError && error.code === "project_instruction_storage_forbidden");
 });
 
-test("account workspace validates authentication, schemas, and payload limits", async (t) => {
+test("account workspace validates authentication, schemas, authorship and payload limits", async (t) => {
   const { service, oauthClient } = makeService();
   t.after(() => service.close());
-  assert.throws(
-    () =>
-      service.authenticateAccountRequest(request(), new MockResponse()),
-    (error) => error instanceof AiAccessError && error.status === 401
-  );
-  const login = await signIn(service, oauthClient, {
-    code: "workspace-limits",
-    sub: "workspace-limits-account",
-    email: "limits@example.com",
-  });
-  const context = service.authenticateAccountRequest(
-    request(login.cookie),
-    new MockResponse()
-  );
-  const emptyChats = { schemaVersion: 1, activeChatId: null, chats: [] };
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(context, "chats", {
-        baseRevision: 0,
-        data: emptyChats,
-      }),
-    (error) =>
-      error instanceof AiAccessError &&
-      error.status === 400 &&
-      error.code === "expected_account_key_required"
-  );
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(context, "chats", {
-        baseRevision: 0,
-        expectedAccountKey: "other_account_key_123456789012345678901234567890",
-        data: emptyChats,
-      }),
-    (error) =>
-      error instanceof AiAccessError &&
-      error.status === 409 &&
-      error.code === "account_workspace_account_mismatch"
-  );
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(context, "chats", {
-        baseRevision: 0,
-        expectedAccountKey: context.accountKey,
-        data: {
-          schemaVersion: 1,
-          activeChatId: "chat-strict",
-          chats: [
-            {
-              id: "chat-strict",
-              title: "Strict",
-              createdAt: 1,
-              updatedAt: 1,
-              messages: [
-                {
-                  id: "message-strict",
-                  role: "user",
-                  content: "Question",
-                  title: "",
-                  createdAt: 1,
-                  unsupported: true,
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    (error) =>
-      error instanceof AiAccessError &&
-      error.status === 400 &&
-      error.code === "invalid_account_data"
-  );
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(context, "chats", {
-        baseRevision: 0,
-        expectedAccountKey: context.accountKey,
-        data: {
-          schemaVersion: 1,
-          activeChatId: "chat-metadata",
-          chats: [
-            {
-              id: "chat-metadata",
-              title: "Metadata",
-              titleSource: "visitor",
-              createdAt: 1,
-              updatedAt: 1,
-              messages: [],
-            },
-          ],
-        },
-      }),
-    (error) =>
-      error instanceof AiAccessError && error.code === "invalid_account_data"
-  );
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(context, "files", {
-        baseRevision: 0,
-        expectedAccountKey: context.accountKey,
-        data: {
-          schemaVersion: 2,
-          files: { "main.c": "line one\nline two" },
-          fileGroups: {},
-          miniProjects: {},
-          current: "main.c",
-          authorship: {
-            "missing.c": {
-              schemaVersion: 1,
-              lines: ["human"],
-              updatedAt: 1,
-            },
-          },
-        },
-      }),
-    (error) =>
-      error instanceof AiAccessError && error.code === "invalid_account_data"
-  );
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(context, "instruction", {
-        baseRevision: 0,
-        expectedAccountKey: context.accountKey,
-        data: {
-          schemaVersion: 1,
-          revision: 0,
-          markdown: "# Instruction\n",
-          skillRefs: [],
-          authorship: {
-            schemaVersion: 1,
-            lines: ["human"],
-            updatedAt: 1,
-          },
-        },
-      }),
-    (error) =>
-      error instanceof AiAccessError && error.code === "invalid_account_data"
-  );
-  const largeMessages = Array.from({ length: 9 }, (_, index) => ({
-    id: `large-message-${index}`,
-    role: index % 2 ? "assistant" : "user",
-    content: "x".repeat(120 * 1024),
-    title: "",
-    createdAt: index + 1,
-  }));
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(context, "chats", {
-        baseRevision: 0,
-        expectedAccountKey: context.accountKey,
-        data: {
-          schemaVersion: 1,
-          activeChatId: "large-chat",
-          chats: [
-            {
-              id: "large-chat",
-              title: "Large",
-              createdAt: 1,
-              updatedAt: 10,
-              messages: largeMessages,
-            },
-          ],
-        },
-      }),
-    (error) =>
-      error instanceof AiAccessError &&
-      error.status === 413 &&
-      error.code === "account_data_too_large"
-  );
-  assert.throws(
-    () =>
-      service.writeAccountWorkspace(context, "instruction", {
-        baseRevision: 0,
-        expectedAccountKey: context.accountKey,
-        data: {
-          schemaVersion: 1,
-          revision: 0,
-          markdown: "x".repeat(128 * 1024 + 1),
-          skillRefs: [],
-        },
-      }),
-    (error) => error instanceof AiAccessError && error.status === 400
-  );
-  assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.chats, 1024 * 1024);
+  assert.throws(() => service.authenticateAccountRequest(request(), new MockResponse()), error => error instanceof AiAccessError && error.status === 401);
+  const login = await signIn(service, oauthClient, { code: "workspace-limits", sub: "workspace-limits-account", email: "limits@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const files = { schemaVersion: 2, files: {}, fileGroups: {}, miniProjects: {}, current: null };
+  assert.throws(() => service.writeAccountWorkspace(context, "files", { baseRevision: 0, data: files }),
+    error => error instanceof AiAccessError && error.code === "expected_account_key_required");
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 0, expectedAccountKey: "other_account_key_123456789012345678901234567890", data: files,
+  }), error => error instanceof AiAccessError && error.status === 409 && error.code === "account_workspace_account_mismatch");
+  const save = (type, data) => service.writeAccountWorkspace(context, type, { baseRevision: 0, expectedAccountKey: context.accountKey, data });
+  assert.throws(() => save("files", { ...files, schemaVersion: 1 }), error => error.code === "invalid_account_data_schema");
+  assert.throws(() => save("files", { ...files, files: { "main.c": "line one\nline two" }, current: "main.c",
+    authorship: { "missing.c": { schemaVersion: 1, lines: ["human"], updatedAt: 1 } } }),
+    error => error instanceof AiAccessError && error.code === "invalid_account_data");
+  assert.throws(() => save("instruction", { schemaVersion: 1, revision: 0, markdown: "# Instruction\n", skillRefs: [],
+    authorship: { schemaVersion: 1, lines: ["human"], updatedAt: 1 } }),
+    error => error instanceof AiAccessError && error.code === "invalid_account_data");
+  assert.throws(() => save("files", { ...files, files: { "large.c": "x".repeat(4 * 1024 * 1024) } }),
+    error => error instanceof AiAccessError && error.status === 413 && error.code === "account_data_too_large");
+  assert.throws(() => save("instruction", { schemaVersion: 1, revision: 0, markdown: "x".repeat(128 * 1024 + 1), skillRefs: [] }),
+    error => error instanceof AiAccessError && error.status === 400);
+  assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.chats, undefined);
   assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.files, 4 * 1024 * 1024);
   assert.equal(ACCOUNT_WORKSPACE_MAX_BYTES.instruction, 256 * 1024);
 });
@@ -2349,6 +2100,545 @@ function unifiedProjectsFixture() {
   };
 }
 
+function projectConversationFixture(content = "Explain this project.") {
+  return { schemaVersion: 1, draft: "Follow-up question", messages: [
+    { id: "question-1", role: "user", content, createdAt: 1, status: "complete" },
+    { id: "answer-1", role: "assistant", content: "The program blinks an LED.", createdAt: 2, status: "complete" },
+  ] };
+}
+
+function projectChatsFixture() {
+  const thread = (id, title, content) => {
+    const { schemaVersion, ...conversation } = projectConversationFixture(content);
+    return { id, title, ...conversation };
+  };
+  return { schemaVersion: 2, activeThreadId: "interrupts", threads: [
+    thread("timing", "Hardware timing", "Explain the clock settings."),
+    thread("interrupts", "Прерывания", "Explain the interrupt handler."),
+  ] };
+}
+
+function managedProjectChatsFixture(collection = projectChatsFixture()) {
+  return { ...collection, schemaVersion: 3, threads: collection.threads.map((thread, index) => ({
+    ...thread, pinned: index === 0, archived: index === 1, titleMode: index === 0 ? "manual" : "auto",
+    messages: thread.messages.map(message => message.role === "user" ? { ...message, requestSource: "review" } : message),
+  })) };
+}
+
+function currentProjectChatsFixture() {
+  const collection = managedProjectChatsFixture();
+  return { ...collection, schemaVersion: 4, threads: collection.threads.map(({ pinned, archived, ...thread }) => thread) };
+}
+
+function nearLimitConversation({ omitStatus = false, pending = false } = {}) {
+  const value = { schemaVersion: 1, draft: "A preserved draft", messages: Array.from({ length: 8 }, (_, index) => ({
+    id: `near-limit-${index}`, role: "user", content: index < 7 ? "x".repeat(32 * 1024) : "", createdAt: index, status: "complete",
+  })) };
+  if (omitStatus) for (const message of value.messages) delete message.status;
+  if (pending) value.messages.unshift({ id: "pending", role: "assistant", content: "", createdAt: 0, status: "pending" });
+  value.messages.at(-1).content = "x".repeat(256 * 1024 - Buffer.byteLength(JSON.stringify(value)));
+  assert.equal(Buffer.byteLength(JSON.stringify(value)), 256 * 1024);
+  return value;
+}
+
+function nearLimitChatCollection({ pending = false } = {}) {
+  const threads = Array.from({ length: 9 }, (_, index) => {
+    const thread = { id: `large-${index}`, title: `Preserved chat ${index}`, draft: `Draft ${index}`,
+      messages: Array.from({ length: 7 }, (_, messageIndex) => ({
+        id: `m-${messageIndex}`, role: "user", content: messageIndex < 6 ? "x".repeat(32 * 1024) : "", createdAt: messageIndex, status: "complete",
+      })) };
+    thread.messages[6].content = "x".repeat(229900 - Buffer.byteLength(JSON.stringify(thread)));
+    return thread;
+  });
+  if (pending) threads[0].messages.unshift({ id: "pending", role: "assistant", content: "", createdAt: 0, status: "pending" });
+  const value = { schemaVersion: 2, activeThreadId: threads[0].id, threads };
+  const final = { id: "final", role: "user", content: "", createdAt: 8, status: "complete" };
+  threads.at(-1).messages.push(final);
+  final.content = "x".repeat(2 * 1024 * 1024 - Buffer.byteLength(JSON.stringify(value)));
+  assert.equal(Buffer.byteLength(JSON.stringify(value)), 2 * 1024 * 1024);
+  return value;
+}
+
+test("project and draft conversations save atomically with their workspace without reviving the legacy chat store", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "project-chat", sub: "project-chat-account", email: "chat@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const data = unifiedProjectsFixture();
+  data.draftConversation = projectConversationFixture("Plan a new project.");
+  data.miniProjects.blink.conversation = projectConversationFixture();
+  const beforeCredits = service.database.prepare("SELECT grant_nano_usd, spent_nano_usd FROM google_accounts").all();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+  const changed = structuredClone(data);
+  changed.miniProjects.blink.conversation.messages.push({ id: "interrupted-2", role: "assistant", content: "Request interrupted.", createdAt: 3, status: "error" });
+  changed.draftConversation.draft = "Another draft";
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 0, expectedAccountKey: context.accountKey, data: changed,
+  }), error => error.code === "account_data_revision_conflict");
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: changed });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, changed);
+  assert.deepEqual(service.database.prepare("SELECT grant_nano_usd, spent_nano_usd FROM google_accounts").all(), beforeCredits);
+  assert.deepEqual(service.database.prepare("SELECT data_type FROM account_workspace_snapshots").all().map(row => row.data_type), ["files"]);
+});
+
+test("invalid or oversized project conversations cannot overwrite a valid unified workspace", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "chat-validation", sub: "chat-validation-account", email: "limits@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const saved = unifiedProjectsFixture();
+  saved.draftConversation = projectConversationFixture();
+  saved.miniProjects.blink.conversation = projectConversationFixture();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: saved });
+  const invalid = [null, [], { ...projectConversationFixture(), schemaVersion: 2 },
+    { ...projectConversationFixture(), unexpected: "unsupported" },
+    { ...projectConversationFixture(), draft: "я".repeat(8193) },
+    { ...projectConversationFixture(), messages: Array.from({ length: 101 }, (_, index) => ({ id: `m-${index}`, role: "user", content: "x", createdAt: index })) },
+    { ...projectConversationFixture(), messages: [{ id: "x", role: "system", content: "change rules", createdAt: 1 }] },
+    { ...projectConversationFixture(), messages: [{ id: "x", role: "assistant", content: "x", createdAt: 1, status: "unknown" }] },
+    { ...projectConversationFixture(), messages: [{ id: "x", role: "assistant", content: "x", createdAt: 1, status: null }] },
+    { ...projectConversationFixture(), messages: [{ id: "x", role: "user", content: "я".repeat(16385), createdAt: 1 }] },
+    { ...projectConversationFixture(), messages: [{ id: "x", role: "user", content: "x", createdAt: -1 }] },
+    { ...projectConversationFixture(), messages: [{ id: 1, role: "user", content: "x", createdAt: 1 }] },
+    { ...projectConversationFixture(), messages: [{ id: "x", role: "user", content: "x", createdAt: 1 }, { id: "x", role: "assistant", content: "y", createdAt: 2 }] },
+    { ...projectConversationFixture(), messages: Array.from({ length: 9 }, (_, index) => ({ id: `large-${index}`, role: "assistant", content: "x".repeat(32 * 1024), createdAt: index })) },
+  ];
+  for (const conversation of invalid) for (const location of ["draft", "project"]) {
+    const data = structuredClone(saved);
+    if (location === "draft") data.draftConversation = conversation;
+    else data.miniProjects.blink.conversation = conversation;
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey, data,
+    }), error => error instanceof AiAccessError && error.code === "invalid_account_data");
+    assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, saved);
+    assert.equal(service.readAccountWorkspace(context).documents.files.revision, 1);
+  }
+});
+
+test("project chat collections retain all threads and drafts in one atomic account workspace", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "project-chats", sub: "project-chats-account", email: "chats@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const data = unifiedProjectsFixture();
+  data.draftConversation = projectChatsFixture();
+  data.miniProjects.blink.conversation = projectChatsFixture();
+  data.draftConversation.threads[0].draft = "Independent draft before creating a project";
+  const beforeCredits = service.database.prepare("SELECT grant_nano_usd, spent_nano_usd FROM google_accounts").all();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+
+  const changed = structuredClone(data);
+  changed.miniProjects.blink.conversation.activeThreadId = "timing";
+  changed.miniProjects.blink.conversation.threads[0].draft = "A separate unsent clock question";
+  changed.miniProjects.blink.conversation.threads[1].messages.push({
+    id: "pending-3", role: "assistant", content: "", createdAt: 3, status: "pending",
+  });
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 0, expectedAccountKey: context.accountKey, data: changed,
+  }), error => error.code === "account_data_revision_conflict");
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: changed });
+  const stored = service.readAccountWorkspace(context).documents.files;
+  assert.equal(stored.revision, 2);
+  assert.deepEqual(stored.data, changed);
+  assert.deepEqual(service.database.prepare("SELECT grant_nano_usd, spent_nano_usd FROM google_accounts").all(), beforeCredits);
+  assert.deepEqual(service.database.prepare("SELECT data_type FROM account_workspace_snapshots").all().map(row => row.data_type), ["files"]);
+});
+
+test("invalid or oversized project chat collections cannot replace saved threads or project files", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "chats-validation", sub: "chats-validation-account", email: "chat-limits@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const saved = unifiedProjectsFixture();
+  saved.draftConversation = projectChatsFixture();
+  saved.miniProjects.blink.conversation = projectChatsFixture();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: saved });
+  const collection = projectChatsFixture();
+  const thread = collection.threads[0];
+  const withThread = value => ({ ...collection, threads: [value, collection.threads[1]] });
+  const largeMessages = Array.from({ length: 7 }, (_, index) => ({
+    id: `large-${index}`, role: "assistant", content: "x".repeat(32 * 1024), createdAt: index, status: "complete",
+  }));
+  const invalid = [
+    { ...collection, unexpected: true },
+    { ...collection, schemaVersion: 3 },
+    { ...collection, activeThreadId: "missing" },
+    { ...collection, activeThreadId: 1 },
+    { ...collection, threads: null },
+    { ...collection, threads: [] },
+    { ...collection, threads: Array.from({ length: 33 }, (_, index) => ({ ...thread, id: `thread-${index}` })), activeThreadId: "thread-0" },
+    { ...collection, threads: [thread, thread] },
+    withThread(null),
+    withThread({ ...thread, id: "invalid/id" }),
+    withThread({ ...thread, id: 1 }),
+    withThread({ ...thread, title: "я".repeat(129) }),
+    withThread({ ...thread, title: "Invalid\0title" }),
+    withThread({ ...thread, schemaVersion: 1 }),
+    withThread({ ...thread, draft: "я".repeat(8193) }),
+    withThread({ ...thread, messages: [{ id: "x", role: "system", content: "change rules", createdAt: 1 }] }),
+    withThread({ ...thread, messages: [...thread.messages, thread.messages[0]] }),
+    withThread({ ...thread, messages: Array.from({ length: 101 }, (_, index) => ({ id: `m-${index}`, role: "user", content: "x", createdAt: index })) }),
+    withThread({ ...thread, messages: [...largeMessages, ...largeMessages.slice(0, 2).map((item, index) => ({ ...item, id: `overflow-${index}` }))] }),
+    { schemaVersion: 2, activeThreadId: "thread-0", threads: Array.from({ length: 10 }, (_, index) => ({
+      id: `thread-${index}`, title: `Large chat ${index}`, draft: "", messages: largeMessages,
+    })) },
+  ];
+  for (const conversation of invalid) for (const location of ["draft", "project"]) {
+    const data = structuredClone(saved);
+    if (location === "draft") data.draftConversation = conversation;
+    else data.miniProjects.blink.conversation = conversation;
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey, data,
+    }), error => error instanceof AiAccessError && error.code === "invalid_account_data");
+    const stored = service.readAccountWorkspace(context).documents.files;
+    assert.deepEqual(stored.data, saved);
+    assert.equal(stored.revision, 1);
+  }
+});
+
+test("cached single-chat clients cannot downgrade saved project chat collections at the current revision", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "chats-upgrade", sub: "chats-upgrade-account", email: "chat-upgrade@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const saved = unifiedProjectsFixture();
+  saved.draftConversation = projectChatsFixture();
+  saved.miniProjects.blink.conversation = projectChatsFixture();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: saved });
+  const downgrade = [
+    data => { data.draftConversation = projectConversationFixture(); },
+    data => { delete data.draftConversation; },
+    data => { data.miniProjects.blink.conversation = projectConversationFixture(); },
+    data => { delete data.miniProjects.blink.conversation; },
+  ];
+  for (const change of downgrade) {
+    const incoming = structuredClone(saved);
+    change(incoming);
+    incoming.files["blink.c"] = "This unrelated change must also remain unapplied.";
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey, data: incoming,
+    }), error => error.status === 409 && error.code === "account_workspace_migration_required" && /Refresh/.test(error.message));
+    const stored = service.readAccountWorkspace(context).documents.files;
+    assert.equal(stored.revision, 1);
+    assert.deepEqual(stored.data, saved);
+  }
+
+  // The guard protects existing collections, not the legacy format in a newly
+  // created project or a deliberate deletion of an entire project.
+  const added = structuredClone(saved);
+  const fresh = unifiedProjectsFixture();
+  for (const [name, content] of Object.entries(fresh.files)) added.files[name.replace("blink", "new")] = content;
+  added.miniProjects.new = { ...fresh.miniProjects.blink,
+    files: { source: "new.c", guide: "new.md", specification: "new.yaml" },
+    guides: { en: { fileName: "new.md", locale: "en" } }, conversation: projectConversationFixture() };
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: added });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, added);
+  const deleted = structuredClone(added);
+  delete deleted.miniProjects.blink;
+  for (const name of ["blink.c", "blink.md", "blink.yaml"]) delete deleted.files[name];
+  deleted.current = "new.c";
+  service.writeAccountWorkspace(context, "files", { baseRevision: 2, expectedAccountKey: context.accountKey, data: deleted });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, deleted);
+});
+
+test("legacy managed chats retain their original metadata and review source until migration", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "managed-chats", sub: "managed-chats-account", email: "managed@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const data = unifiedProjectsFixture();
+  data.draftConversation = managedProjectChatsFixture();
+  data.miniProjects.blink.conversation = managedProjectChatsFixture();
+  const renamedEmpty = data.miniProjects.blink.conversation.threads[0];
+  renamedEmpty.title = "Register allocation review";
+  renamedEmpty.messages = [];
+  renamedEmpty.draft = "An independently saved first message";
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+
+  const changed = structuredClone(data);
+  // The project and its draft are one snapshot, so moving an entire collection
+  // cannot save its source clearing separately from the destination's chats.
+  changed.miniProjects.blink.conversation = structuredClone(changed.draftConversation);
+  changed.draftConversation = { schemaVersion: 3, activeThreadId: "empty", threads: [{
+    id: "empty", title: "New chat", messages: [], draft: "", pinned: false, archived: false, titleMode: "auto",
+  }] };
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 0, expectedAccountKey: context.accountKey, data: changed,
+  }), error => error.code === "account_data_revision_conflict");
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: changed });
+  const stored = service.readAccountWorkspace(context).documents.files;
+  assert.equal(stored.revision, 2);
+  assert.deepEqual(stored.data, changed);
+  assert.equal(stored.data.miniProjects.blink.conversation.activeThreadId, "interrupts", "the active chat may remain archived for reading");
+  assert.equal(stored.data.miniProjects.blink.conversation.threads[1].archived, true);
+});
+
+test("invalid managed chat metadata and message sources cannot overwrite the workspace", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "managed-chat-limits", sub: "managed-chat-limits-account", email: "managed-limits@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const saved = unifiedProjectsFixture();
+  saved.draftConversation = managedProjectChatsFixture();
+  saved.miniProjects.blink.conversation = managedProjectChatsFixture();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: saved });
+  const collection = managedProjectChatsFixture(), thread = collection.threads[0];
+  const withThread = value => ({ ...collection, threads: [value, collection.threads[1]] });
+  const without = key => { const value = { ...thread }; delete value[key]; return withThread(value); };
+  const oldCollection = projectChatsFixture(), oldThread = oldCollection.threads[0];
+  const { schemaVersion, ...boundaryContent } = nearLimitConversation({ omitStatus: true });
+  const contentOverflow = { ...thread, ...boundaryContent };
+  contentOverflow.messages.at(-1).content += "x";
+  const largeMessages = Array.from({ length: 7 }, (_, index) => ({
+    id: `large-${index}`, role: "assistant", content: "x".repeat(32 * 1024), createdAt: index,
+  }));
+  const invalid = [
+    without("pinned"), without("archived"), without("titleMode"),
+    withThread({ ...thread, pinned: 1 }), withThread({ ...thread, pinned: "false" }),
+    withThread({ ...thread, archived: null }), withThread({ ...thread, archived: "true" }),
+    withThread({ ...thread, titleMode: "custom" }), withThread({ ...thread, titleMode: null }),
+    withThread({ ...thread, title: "я".repeat(129) }),
+    withThread({ ...thread, requestSource: "review" }),
+    withThread({ ...thread, messages: [{ ...thread.messages[0], requestSource: "generate" }] }),
+    withThread({ ...thread, messages: [{ ...thread.messages[0], requestSource: null }] }),
+    withThread({ ...thread, messages: [{ ...thread.messages[1], requestSource: "review" }] }),
+    withThread(contentOverflow),
+    { ...collection, activeThreadId: "large-0", threads: Array.from({ length: 10 }, (_, index) => ({
+      ...thread, id: `large-${index}`, messages: largeMessages,
+    })) },
+    { ...oldCollection, threads: [{ ...oldThread, pinned: false }, oldCollection.threads[1]] },
+    { ...oldCollection, threads: [{ ...oldThread, titleMode: "manual" }, oldCollection.threads[1]] },
+    { ...oldCollection, threads: [{ ...oldThread, messages: [{ ...oldThread.messages[0], requestSource: "message" }] }, oldCollection.threads[1]] },
+    { ...projectConversationFixture(), messages: [{ ...projectConversationFixture().messages[0], requestSource: "review" }] },
+  ];
+  for (const conversation of invalid) for (const location of ["draft", "project"]) {
+    const data = structuredClone(saved);
+    if (location === "draft") data.draftConversation = conversation;
+    else data.miniProjects.blink.conversation = conversation;
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey, data,
+    }), error => error instanceof AiAccessError && error.code === "invalid_account_data");
+    const stored = service.readAccountWorkspace(context).documents.files;
+    assert.equal(stored.revision, 1);
+    assert.deepEqual(stored.data, saved);
+  }
+});
+
+test("near-limit legacy chats migrate through the real frontend without losing history or storage compatibility", async (t) => {
+  const { normalize } = require("../public/avr-project-chat");
+  const { validateStoredConversation } = require("../backend/avr-conversation-contract");
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "chat-budget-migration", sub: "chat-budget-migration-account", email: "chat-budget@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  let revision = 0;
+  const previouslyArchived = managedProjectChatsFixture(nearLimitChatCollection());
+  previouslyArchived.activeThreadId = previouslyArchived.threads[1].id;
+  const fixtures = [
+    { legacy: nearLimitConversation() },
+    { legacy: nearLimitConversation({ omitStatus: true }) },
+    { legacy: nearLimitConversation({ omitStatus: true, pending: true }), recoverPending: true },
+    { legacy: nearLimitChatCollection() },
+    { legacy: nearLimitChatCollection({ pending: true }), recoverPending: true },
+    { legacy: previouslyArchived },
+    { legacy: managedProjectChatsFixture(nearLimitChatCollection({ pending: true })), recoverPending: true },
+  ];
+  const messageContent = ({ status, requestSource, ...message }) => message;
+  for (const { legacy, recoverPending } of fixtures) {
+    validateStoredConversation(legacy);
+    const migrated = normalize(legacy, { recoverPending });
+    const legacyThreads = legacy.schemaVersion === 1 ? [legacy] : legacy.threads;
+    assert.equal(migrated.threads.length, legacyThreads.length);
+    if (legacy.schemaVersion !== 1) assert.equal(migrated.activeThreadId, legacy.activeThreadId);
+    for (const [index, thread] of migrated.threads.entries()) {
+      assert.deepEqual(thread.messages.map(messageContent), legacyThreads[index].messages.map(messageContent));
+      for (const [messageIndex, message] of thread.messages.entries()) {
+        assert.equal(message.status, recoverPending && legacyThreads[index].messages[messageIndex].status === "pending"
+          ? "error" : legacyThreads[index].messages[messageIndex].status || "complete");
+      }
+      assert.equal(thread.draft, legacyThreads[index].draft);
+      if (legacy.schemaVersion !== 1) {
+        assert.equal(thread.id, legacyThreads[index].id);
+        assert.equal(thread.title, legacyThreads[index].title);
+      }
+      assert.equal(Object.hasOwn(thread, "pinned"), false);
+      assert.equal(Object.hasOwn(thread, "archived"), false);
+      if (legacy.schemaVersion === 3) {
+        assert.equal(thread.titleMode, legacyThreads[index].titleMode);
+        assert.deepEqual(thread.messages.map(message => message.requestSource), legacyThreads[index].messages.map(message => message.requestSource));
+      }
+      thread.titleMode = "manual";
+      for (const message of thread.messages) if (message.role === "user") message.requestSource = "review";
+    }
+    assert.equal(migrated.schemaVersion, 4);
+    validateStoredConversation(migrated);
+    const data = unifiedProjectsFixture();
+    data.draftConversation = normalize(null);
+    data.miniProjects.blink.conversation = migrated;
+    service.writeAccountWorkspace(context, "files", { baseRevision: revision++, expectedAccountKey: context.accountKey, data });
+    const stored = service.readAccountWorkspace(context).documents.files;
+    assert.equal(stored.revision, revision);
+    assert.deepEqual(stored.data, data);
+  }
+
+  const full = service.readAccountWorkspace(context).documents.files;
+  const tooLarge = structuredClone(full.data);
+  tooLarge.files["blink.c"] = "x".repeat(ACCOUNT_WORKSPACE_MAX_BYTES.files - Buffer.byteLength(JSON.stringify(tooLarge)) + 32);
+  assert.ok(Buffer.byteLength(JSON.stringify(tooLarge)) > ACCOUNT_WORKSPACE_MAX_BYTES.files);
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: full.revision, expectedAccountKey: context.accountKey, data: tooLarge,
+  }), error => error.status === 413 && error.code === "account_data_too_large");
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files, full, "the absolute workspace limit still rejects the whole write atomically");
+});
+
+test("current chats save titles and review sources atomically without retired management flags", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "simplified-chats", sub: "simplified-chat-account", email: "simplified@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const data = unifiedProjectsFixture();
+  data.draftConversation = currentProjectChatsFixture();
+  data.miniProjects.blink.conversation = currentProjectChatsFixture();
+  const empty = data.miniProjects.blink.conversation.threads[0];
+  empty.title = "A deliberately named empty chat";
+  empty.messages = [];
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+
+  const changed = structuredClone(data);
+  changed.miniProjects.blink.conversation = structuredClone(changed.draftConversation);
+  changed.draftConversation = { schemaVersion: 4, activeThreadId: "empty", threads: [{
+    id: "empty", title: "New chat", messages: [], draft: "", titleMode: "auto",
+  }] };
+  assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 0, expectedAccountKey: context.accountKey, data: changed,
+  }), error => error.code === "account_data_revision_conflict");
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: changed });
+  const stored = service.readAccountWorkspace(context).documents.files;
+  assert.equal(stored.revision, 2);
+  assert.deepEqual(stored.data, changed);
+  const thread = stored.data.miniProjects.blink.conversation.threads[0];
+  assert.equal(thread.titleMode, "manual");
+  assert.equal(thread.messages[0].requestSource, "review");
+  assert.equal(Object.hasOwn(thread, "pinned"), false);
+  assert.equal(Object.hasOwn(thread, "archived"), false);
+});
+
+test("current chat validation rejects retired flags and malformed title or request metadata atomically", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "simplified-chat-limits", sub: "simplified-chat-limits-account", email: "simplified-limits@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const saved = unifiedProjectsFixture();
+  saved.draftConversation = currentProjectChatsFixture();
+  saved.miniProjects.blink.conversation = currentProjectChatsFixture();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: saved });
+  const collection = currentProjectChatsFixture(), thread = collection.threads[0];
+  const withThread = value => ({ ...collection, threads: [value, collection.threads[1]] });
+  const withoutTitleMode = { ...thread }; delete withoutTitleMode.titleMode;
+  const { schemaVersion, ...boundaryContent } = nearLimitConversation({ omitStatus: true });
+  const contentOverflow = { ...thread, ...boundaryContent };
+  contentOverflow.messages.at(-1).content += "x";
+  const invalid = [
+    withThread({ ...thread, pinned: false }), withThread({ ...thread, archived: false }),
+    withThread(withoutTitleMode), withThread({ ...thread, titleMode: "custom" }),
+    withThread({ ...thread, titleMode: null }), withThread({ ...thread, title: "я".repeat(129) }),
+    withThread({ ...thread, requestSource: "review" }),
+    withThread({ ...thread, messages: [{ ...thread.messages[0], requestSource: "generate" }] }),
+    withThread({ ...thread, messages: [{ ...thread.messages[1], requestSource: "review" }] }),
+    withThread(contentOverflow),
+    { ...collection, archived: true },
+  ];
+  for (const conversation of invalid) for (const location of ["draft", "project"]) {
+    const incoming = structuredClone(saved);
+    if (location === "draft") incoming.draftConversation = conversation;
+    else incoming.miniProjects.blink.conversation = conversation;
+    incoming.files["blink.c"] = "An invalid chat must not write unrelated source changes.";
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey, data: incoming,
+    }), error => error.status === 400 && error.code === "invalid_account_data");
+    const stored = service.readAccountWorkspace(context).documents.files;
+    assert.equal(stored.revision, 1);
+    assert.deepEqual(stored.data, saved);
+  }
+});
+
+test("cached chat clients cannot downgrade the simplified format at the latest workspace revision", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "simplified-chat-upgrade", sub: "simplified-chat-upgrade-account", email: "simplified-upgrade@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const saved = unifiedProjectsFixture();
+  saved.draftConversation = currentProjectChatsFixture();
+  saved.miniProjects.blink.conversation = currentProjectChatsFixture();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: saved });
+  for (const legacy of [managedProjectChatsFixture(), projectChatsFixture(), projectConversationFixture(), undefined]) {
+    for (const location of ["draft", "project"]) {
+      const incoming = structuredClone(saved);
+      if (location === "draft") {
+        if (legacy === undefined) delete incoming.draftConversation;
+        else incoming.draftConversation = structuredClone(legacy);
+      } else if (legacy === undefined) delete incoming.miniProjects.blink.conversation;
+      else incoming.miniProjects.blink.conversation = structuredClone(legacy);
+      incoming.files["blink.c"] = "The old client must not change code either.";
+      assert.throws(() => service.writeAccountWorkspace(context, "files", {
+        baseRevision: 1, expectedAccountKey: context.accountKey, data: incoming,
+      }), error => error.status === 409 && error.code === "account_workspace_migration_required");
+      const stored = service.readAccountWorkspace(context).documents.files;
+      assert.equal(stored.revision, 1);
+      assert.deepEqual(stored.data, saved);
+    }
+  }
+
+  const added = structuredClone(saved), fresh = unifiedProjectsFixture();
+  for (const [name, content] of Object.entries(fresh.files)) added.files[name.replace("blink", "new")] = content;
+  added.miniProjects.new = { ...fresh.miniProjects.blink,
+    files: { source: "new.c", guide: "new.md", specification: "new.yaml" },
+    guides: { en: { fileName: "new.md", locale: "en" } }, conversation: managedProjectChatsFixture() };
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: added });
+  const deleted = structuredClone(added);
+  delete deleted.miniProjects.blink;
+  for (const name of ["blink.c", "blink.md", "blink.yaml"]) delete deleted.files[name];
+  deleted.current = "new.c";
+  service.writeAccountWorkspace(context, "files", { baseRevision: 2, expectedAccountKey: context.accountKey, data: deleted });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, deleted);
+});
+
+test("cached unmanaged chat clients cannot strip saved chat management metadata", async (t) => {
+  const { service, oauthClient } = makeService(); t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "managed-chat-upgrade", sub: "managed-chat-upgrade-account", email: "managed-upgrade@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const saved = unifiedProjectsFixture();
+  saved.draftConversation = managedProjectChatsFixture();
+  saved.miniProjects.blink.conversation = managedProjectChatsFixture();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: saved });
+  for (const legacy of [projectChatsFixture(), projectConversationFixture(), undefined]) for (const location of ["draft", "project"]) {
+    const incoming = structuredClone(saved);
+    if (location === "draft") {
+      if (legacy === undefined) delete incoming.draftConversation;
+      else incoming.draftConversation = structuredClone(legacy);
+    } else if (legacy === undefined) delete incoming.miniProjects.blink.conversation;
+    else incoming.miniProjects.blink.conversation = structuredClone(legacy);
+    incoming.files["blink.c"] = "The old tab must not write this unrelated file change either.";
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey, data: incoming,
+    }), error => error.status === 409 && error.code === "account_workspace_migration_required" && /Refresh/.test(error.message));
+    const stored = service.readAccountWorkspace(context).documents.files;
+    assert.equal(stored.revision, 1);
+    assert.deepEqual(stored.data, saved);
+  }
+
+  const added = structuredClone(saved), fresh = unifiedProjectsFixture();
+  for (const [name, content] of Object.entries(fresh.files)) added.files[name.replace("blink", "new")] = content;
+  added.miniProjects.new = { ...fresh.miniProjects.blink,
+    files: { source: "new.c", guide: "new.md", specification: "new.yaml" },
+    guides: { en: { fileName: "new.md", locale: "en" } }, conversation: projectChatsFixture() };
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: added });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, added);
+  const deleted = structuredClone(added);
+  delete deleted.miniProjects.blink;
+  for (const name of ["blink.c", "blink.md", "blink.yaml"]) delete deleted.files[name];
+  deleted.current = "new.c";
+  service.writeAccountWorkspace(context, "files", { baseRevision: 2, expectedAccountKey: context.accountKey, data: deleted });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, deleted);
+});
+
 test("unified projects save the full bundle under one revision and close legacy split writes", async (t) => {
   const { service, oauthClient } = makeService();
   t.after(() => service.close());
@@ -2402,6 +2692,24 @@ test("unified projects save the full bundle under one revision and close legacy 
     baseRevision: 2, expectedAccountKey: context.accountKey,
     expectedLegacyInstructionRevision: 0, data: unified,
   }).document.revision, 3, "A completed migration no longer depends on the inactive legacy row");
+});
+
+test("canonical project snapshots omit the retired group tree while legacy rows remain readable", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "groups-retired", sub: "groups-retired-account", email: "groups@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const oldSnapshot = unifiedProjectsFixture();
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: oldSnapshot });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, oldSnapshot);
+  const canonical = structuredClone(oldSnapshot);
+  delete canonical.fileGroups;
+  service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: canonical });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, canonical);
+  for (const fileGroups of [null, [], "invalid"]) assert.throws(() => service.writeAccountWorkspace(context, "files", {
+    baseRevision: 2, expectedAccountKey: context.accountKey, data: { ...canonical, fileGroups },
+  }), error => error.code === "invalid_account_data");
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, canonical);
 });
 
 test("invalid unified bundles cannot replace any part of the saved project workspace", async (t) => {

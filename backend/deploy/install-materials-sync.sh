@@ -7,7 +7,8 @@ backend_dir="${1:-/var/www/uartdebug/backend}"
 site_file="${2:-/etc/nginx/sites-available/uartdebug.com}"
 materials_root="/var/lib/uartdebug-ai/materials"
 unit_file="/etc/systemd/system/uartdebug-materials-sync.service"
-for source in materials-sync-server.js materials-sync-auth.js deploy/install-materials.py \
+for source in materials-sync-server.js materials-sync-auth.js avr-materials.js \
+  avr-project-catalog-build.js avr-project-format.js deploy/install-materials.py \
   deploy/verify-materials.js deploy/uartdebug-materials-sync.service deploy/nginx-materials-sync-location.conf; do
   [ -f "${backend_dir}/${source}" ] || { echo "Missing receiver file: ${source}" >&2; exit 66; }
 done

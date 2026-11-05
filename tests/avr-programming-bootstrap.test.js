@@ -8,6 +8,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const { parseHTML } = require("../frontend/markdown-runtime/node_modules/linkedom");
+const { resizeEnvironment } = require("./helpers/panel-resizer-harness");
 
 const core = require("../public/avr-mini-projects.js");
 const projectFormat = require("../public/avr-project-format.js");
@@ -18,6 +19,7 @@ function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
   const fakeWindow = {
     UartDebugAvrMiniProjectCore: core,
     UartDebugAvrProjectFormat: projectFormat,
+    UartDebugAvrWorkspaceLayout: require("../public/avr-workspace-layout.js"),
     addEventListener(type, listener) {
       windowListeners.set(type, listener);
     },
@@ -41,7 +43,7 @@ function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
   assert.ok(source.includes(marker), "AVR frontend bootstrap marker is missing");
   const instrumented = source.replace(
     marker,
-    `  window.__avrFrontendTestHooks = { ${functionNames.join(", ")} };\n${marker}`
+    `  window.__avrFrontendTestHooks = { ${functionNames.join(", ")}, notifications: () => window.UartDebugNotifications.getAll() };\n${marker}`
   );
 
   const sandbox = {
@@ -53,11 +55,24 @@ function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
     Map,
     Set,
     TextDecoder,
+    TextEncoder,
+    AbortController,
+    DOMException,
     URL,
     localStorage: fakeWindow.localStorage,
     fetch: overrides.fetch,
+    ResizeObserver: overrides.ResizeObserver,
+    sessionStorage: { getItem: () => null, setItem() {} },
+    setTimeout: overrides.setTimeout || (() => 1),
+    clearTimeout: overrides.clearTimeout || (() => {}),
+    requestAnimationFrame: () => 1,
   };
+  // Exercise the real notification records without constructing the browser
+  // surface; rendering, focus and toast interactions have browser coverage.
+  fakeDocument.readyState = "loading";
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../public/ui-controls.js"), "utf8"), sandbox);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../public/ui-notifications.js"), "utf8"), sandbox);
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../public/avr-project-chat.js"), "utf8"), sandbox);
   vm.runInNewContext(instrumented, sandbox);
   return fakeWindow.__avrFrontendTestHooks;
 }
@@ -189,6 +204,7 @@ test("exposes the mini-project bridge before DOMContentLoaded", () => {
   const documentListeners = new Map();
   const fakeWindow = {
     UartDebugAvrMiniProjectCore: core,
+    UartDebugAvrWorkspaceLayout: require("../public/avr-workspace-layout.js"),
     addEventListener(type, listener) {
       windowListeners.set(type, listener);
     },
@@ -287,21 +303,21 @@ test("infers language again after a manual specification edit while preserving i
 });
 
 function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
-  const { document } = parseHTML('<html><body><span id="projectInstructionSaveState"></span></body></html>');
+  const { document } = parseHTML('<html><body></body></html>');
   const hooks = loadAvrFrontendFunctionHooks([
     "createEmptyProject", "installMiniProjectDefinition", "updateMiniProjectInstance",
     "selectFile", "getProjectInstructionSnapshot", "getProjectAiAccountFilesSnapshot",
-    "getProjectAiAccountDocumentSnapshot", "applyProjectAiAccountDocument",
+    "applyProjectAiAccountWorkspace",
     "restoreProjectInstruction", "loadState", "persistState", "persistProjectInstruction", "deleteFile",
-    "migrateLegacyProjectAiAccountSnapshot", "initializeProjectAiAccountWorkspace", "saveProjectAiAccountDocument",
+    "migrateLegacyProjectAiAccountSnapshot", "initializeProjectAiAccountWorkspace", "saveProjectAiAccountWorkspace",
     "resetProjectAiAccountWorkspaceRuntime", "restoreProjectAiLocalDirtyState", "restoreProjectAiAccountSyncState",
-    "getPublicMiniProjectInstance", "getVisibleWorkspaceFileNames", "migrateLooseFilesToProjects", "getEmptyProjectAiAccountDocument", "isHiddenMiniProjectFile",
+    "getPublicMiniProjectInstance", "getVisibleWorkspaceFileNames", "migrateLooseFilesToProjects", "getEmptyProjectAiAccountWorkspace", "isHiddenMiniProjectFile",
     "getProjectAiRequestPayload", "assertProjectAiUpdateIsFresh",
     "assertProjectAiInstructionIsFresh", "canvasScope() { return projectInstructionScopeEpoch; }",
     `prepare() {
       resetHexArtifact = updateCompilePanelState = renderOutliner =
         refreshDocumentationPane = scheduleDocumentationMarkerRefresh =
-        scheduleMarkdownLivePreview = updateEditorFileWatermark = closeAddFileModal = () => {};
+        scheduleMarkdownLivePreview = updateEditorFileWatermark = () => {};
     }`,
     `editCanvas(markdown) {
       updateProjectInstructionFromUser(markdown, createMarkdownAuthorship(markdown, "human"));
@@ -319,6 +335,7 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
       projectAiAccountSync.ready = ready;
     }`,
     `syncState() { return JSON.parse(JSON.stringify(projectAiAccountSync)); }`,
+    `dirtyAccount() { projectAiAccountSync.dirty = true; }`,
     `setCanvasDocument(canvas) { projectInstructionDocument = normalizeProjectInstructionDocument(canvas); }`,
     `codeEditor(markdown) {
       let value = markdown;
@@ -400,11 +417,8 @@ test("account snapshots restore project canvases and the workspace draft atomica
   const accountFiles = hooks.getProjectAiAccountFilesSnapshot();
   hooks.createEmptyProject();
   hooks.editCanvas("Other requirements");
-  assert.equal(hooks.applyProjectAiAccountDocument("files", accountFiles), true);
+  assert.equal(hooks.applyProjectAiAccountWorkspace( accountFiles), true);
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Project requirements");
-  assert.equal(hooks.applyProjectAiAccountDocument("instruction", {
-    schemaVersion: 2, revision: 3, markdown: "Stale standalone draft", annotations: [],
-  }), false);
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Project requirements");
   assert.equal(hooks.getProjectAiAccountFilesSnapshot().draftCanvas.markdown, "Cloud workspace draft");
 });
@@ -448,7 +462,7 @@ test("switching projects preserves failed-save warnings and retries the original
   const timers = new Map();
   let timerId = 0;
   let failWrites = false;
-  const { hooks, document } = loadCanvasLifecycleHooks(storage, {
+  const { hooks } = loadCanvasLifecycleHooks(storage, {
     setItem(key, value) {
       if (failWrites && key === "ud_avr_programming_state_v2") throw new Error("Storage quota");
       storage.set(key, String(value));
@@ -462,17 +476,20 @@ test("switching projects preserves failed-save warnings and retries the original
   failWrites = true;
   hooks.editCanvas("Unsaved first project draft");
   hooks.selectFile(second.files.find((file) => file.role === "source").name);
-  assert.match(document.getElementById("projectInstructionSaveState").textContent, /Save failed/);
+  const failedSave = hooks.notifications().find(record => /Save failed/.test(record.message));
+  assert.ok(failedSave, "the failed save must remain available in notification history after switching projects");
+  assert.equal(failedSave.tone, "error");
   assert.ok(timers.size > 0, "The previous project's retry must survive switching");
   failWrites = false;
   for (const [id, callback] of [...timers]) { timers.delete(id); callback(); }
   const saved = JSON.parse(storage.get("ud_avr_programming_state_v2"));
   assert.equal(saved.miniProjects[first.instanceId].canvas.markdown, "Unsaved first project draft");
-  assert.equal(document.getElementById("projectInstructionSaveState").textContent, "");
+  assert.equal(hooks.pendingCanvasScopes().length, 0);
+  assert.ok(hooks.notifications().some(record => record.id === failedSave.id), "a recovered save must not erase its diagnostic history");
 });
 
-test("restoring a workspace keeps an unreadable loose-canvas warning visible", () => {
-  const { hooks, storage, document } = loadCanvasLifecycleHooks();
+test("restoring a workspace reports an unreadable loose canvas without discarding its recovery source", () => {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
   hooks.createEmptyProject();
   const legacy = JSON.parse(storage.get("ud_avr_programming_state_v2"));
   legacy.schemaVersion = 2;
@@ -481,13 +498,13 @@ test("restoring a workspace keeps an unreadable loose-canvas warning visible", (
   storage.set("ud_avr_ai_project_instruction_v2", "unreadable");
   hooks.loadState();
   hooks.restoreProjectInstruction();
-  assert.match(document.getElementById("projectInstructionSaveState").textContent, /unreadable/);
+  assert.ok(hooks.notifications().some(record => /unreadable/.test(record.message) && record.tone === "error"));
   assert.equal(storage.get("ud_avr_ai_project_instruction_v2"), "unreadable");
   hooks.persistState();
   const reloaded = loadCanvasLifecycleHooks(storage);
   reloaded.hooks.loadState();
   reloaded.hooks.restoreProjectInstruction();
-  assert.match(reloaded.document.getElementById("projectInstructionSaveState").textContent, /unreadable/);
+  assert.ok(reloaded.hooks.notifications().some(record => /unreadable/.test(record.message) && record.tone === "error"));
   assert.equal(storage.get("ud_avr_ai_project_instruction_v2"), "unreadable");
 });
 
@@ -545,7 +562,7 @@ test("deleting the last visible project clears the editor while retaining hidden
   const sourceName = project.files.find(file => file.role === "source").name;
   const snapshot = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
   snapshot.files["legacy-note.txt"] = "Retained recovery content";
-  assert.equal(hooks.applyProjectAiAccountDocument("files", snapshot), true);
+  assert.equal(hooks.applyProjectAiAccountWorkspace( snapshot), true);
   hooks.codeEditor("// Deleted project's code");
   hooks.confirm(true);
   await hooks.deleteFile(sourceName);
@@ -574,7 +591,7 @@ test("a canonical empty draft wins over a legacy standalone canvas before or aft
       schemaVersion: 2, revision: 9, markdown: "Stale architecture", annotations: [],
     }));
     if (restoreBeforeCloud) hooks.restoreProjectInstruction();
-    assert.equal(hooks.applyProjectAiAccountDocument("files", hooks.getEmptyProjectAiAccountDocument("files")), true);
+    assert.equal(hooks.applyProjectAiAccountWorkspace( hooks.getEmptyProjectAiAccountWorkspace()), true);
     if (!restoreBeforeCloud) hooks.restoreProjectInstruction();
     assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
     assert.equal(hooks.getProjectAiAccountFilesSnapshot().draftCanvas.markdown, "");
@@ -594,7 +611,7 @@ test("accepting a cloud snapshot cancels a queued unassigned draft save", () => 
   });
   hooks.queueCanvas("Queued local draft");
   assert.deepEqual(Array.from(hooks.pendingCanvasScopes()), [null]);
-  assert.equal(hooks.applyProjectAiAccountDocument("files", hooks.getEmptyProjectAiAccountDocument("files")), true);
+  assert.equal(hooks.applyProjectAiAccountWorkspace( hooks.getEmptyProjectAiAccountWorkspace()), true);
   assert.equal(hooks.pendingCanvasScopes().length, 0);
   assert.equal(timers.size, 0);
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
@@ -619,7 +636,7 @@ test("one account snapshot preserves code, YAML, descriptions, metadata, assets,
   const snapshot = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
   assert.equal(snapshot.miniProjects[project.instanceId].canvas.markdown, "Latest unsaved edit");
   const target = loadCanvasLifecycleHooks().hooks;
-  assert.equal(target.applyProjectAiAccountDocument("files", snapshot), true);
+  assert.equal(target.applyProjectAiAccountWorkspace( snapshot), true);
   assert.equal(JSON.stringify(target.getProjectAiAccountFilesSnapshot()), JSON.stringify(snapshot));
   assert.equal(target.getPublicMiniProjectInstance(project.instanceId).files.find(file => file.role === "specification").hidden, true);
 });
@@ -634,7 +651,7 @@ test("cloud project restoration cannot copy the old editor into the restored sou
   hooks.createEmptyProject();
   hooks.editCanvas("Local specification");
   hooks.codeEditor("// Unsynced old editor source");
-  assert.equal(hooks.applyProjectAiAccountDocument("files", cloud), true);
+  assert.equal(hooks.applyProjectAiAccountWorkspace( cloud), true);
   const source = project.files.find(file => file.role === "source").name;
   assert.equal(hooks.getProjectAiAccountFilesSnapshot().files[source], "// Cloud source");
   assert.equal(JSON.parse(storage.get("ud_avr_programming_state_v2")).files[source], "// Cloud source");
@@ -677,8 +694,8 @@ test("legacy account document order does not affect consolidation or the first a
     await hooks.initializeProjectAiAccountWorkspace();
     assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Legacy active specification");
     assert.equal(hooks.getProjectAiAccountFilesSnapshot().miniProjects[other.instanceId].canvas.markdown, "");
-    assert.equal(hooks.syncState().dirty.files, true, "Migration must be written even after adopting cloud data");
-    await hooks.saveProjectAiAccountDocument("files");
+    assert.equal(hooks.syncState().dirty, true, "Migration must be written even after adopting cloud data");
+    await hooks.saveProjectAiAccountWorkspace();
     const writes = requests.filter(request => request.method === "PUT");
     assert.equal(writes.length, 1);
     assert.equal(writes[0].url, "/api/avr/ai/account/workspace/files");
@@ -687,10 +704,10 @@ test("legacy account document order does not affect consolidation or the first a
     assert.equal(body.expectedLegacyInstructionRevision, 19);
     assert.equal(body.data.schemaVersion, 3);
     assert.equal(body.data.draftCanvas.markdown, "Legacy active specification");
-    assert.equal(hooks.syncState().dirty.files, false);
+    assert.equal(hooks.syncState().dirty, false);
     const sync = JSON.parse(storage.get("ud_avr_ai_account_sync_v1"));
-    assert.equal(sync.schemaVersion, 3);
-    assert.deepEqual(sync.revisions, { files: 8 });
+    assert.equal(sync.schemaVersion, 4);
+    assert.equal(sync.revision, 8);
   }
 });
 
@@ -702,10 +719,11 @@ test("legacy dirty flags are combined without replacing the files revision", () 
   const { hooks } = loadCanvasLifecycleHooks(storage);
   hooks.restoreProjectAiAccountSyncState();
   hooks.restoreProjectAiLocalDirtyState();
-  assert.equal(hooks.syncState().revisions.files, 3);
-  assert.equal(hooks.syncState().dirty.files, true);
-  assert.equal(hooks.syncState().conflicts.files, true);
-  assert.deepEqual(Object.keys(hooks.syncState().revisions), ["files"]);
+  assert.equal(hooks.syncState().revision, 3);
+  assert.equal(hooks.syncState().dirty, true);
+  assert.equal(hooks.syncState().conflict, true);
+  assert.equal("revisions" in hooks.syncState(), false);
+  assert.equal("conflicts" in hooks.syncState(), false);
 });
 
 test("an unsaved legacy instruction marker pauses the entire project reconciliation", async () => {
@@ -724,10 +742,10 @@ test("an unsaved legacy instruction marker pauses the entire project reconciliat
   hooks.account(accountKey);
   hooks.confirm(false);
   await hooks.initializeProjectAiAccountWorkspace();
-  await hooks.saveProjectAiAccountDocument("files");
+  await hooks.saveProjectAiAccountWorkspace();
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Newer local draft");
-  assert.equal(hooks.syncState().conflicts.files, true);
-  assert.equal(hooks.syncState().revisions.files, 3);
+  assert.equal(hooks.syncState().conflict, true);
+  assert.equal(hooks.syncState().revision, 3);
   assert.equal(requests.length, 1);
 });
 
@@ -741,12 +759,12 @@ test("canonical account saves send draft and projects together and retain edits 
   hooks.account("same-account", true);
   hooks.createEmptyProject();
   hooks.editCanvas("Submitted draft");
-  const pending = hooks.saveProjectAiAccountDocument("files");
+  const pending = hooks.saveProjectAiAccountWorkspace();
   hooks.editCanvas("Newer draft");
   finishSave(jsonResponse({ ok: true, document: { revision: 1 } }));
   await pending;
-  assert.equal(hooks.syncState().revisions.files, 1);
-  assert.equal(hooks.syncState().dirty.files, true);
+  assert.equal(hooks.syncState().revision, 1);
+  assert.equal(hooks.syncState().dirty, true);
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Newer draft");
   assert.equal(requests.length, 1);
   const body = JSON.parse(requests[0].body);
@@ -761,14 +779,14 @@ test("stale account save responses cannot acknowledge another account's projects
   const { hooks } = loadCanvasLifecycleHooks(new Map(), { fetch: () => new Promise(resolve => { finishSave = resolve; }) });
   hooks.account("first-account", true);
   hooks.editCanvas("First account draft");
-  const pending = hooks.saveProjectAiAccountDocument("files");
+  const pending = hooks.saveProjectAiAccountWorkspace();
   hooks.resetProjectAiAccountWorkspaceRuntime();
   hooks.account("second-account", true);
   hooks.editCanvas("Second account draft");
   finishSave(jsonResponse({ ok: true, document: { revision: 50 } }));
   await pending;
-  assert.equal(hooks.syncState().revisions.files, 0);
-  assert.equal(hooks.syncState().dirty.files, true);
+  assert.equal(hooks.syncState().revision, 0);
+  assert.equal(hooks.syncState().dirty, true);
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Second account draft");
 });
 
@@ -782,11 +800,11 @@ test("deleting the final project saves an empty account envelope instead of skip
   hooks.editCanvas("Old standalone draft");
   const project = hooks.createEmptyProject();
   hooks.editCanvas("Project draft");
-  await hooks.saveProjectAiAccountDocument("files");
+  await hooks.saveProjectAiAccountWorkspace();
   hooks.confirm(true);
   await hooks.deleteFile(project.files.find(file => file.role === "source").name);
-  assert.equal(hooks.syncState().dirty.files, true);
-  await hooks.saveProjectAiAccountDocument("files");
+  assert.equal(hooks.syncState().dirty, true);
+  await hooks.saveProjectAiAccountWorkspace();
   assert.equal(writes.length, 2);
   const deleted = JSON.parse(writes[1].body);
   assert.equal(deleted.baseRevision, 1);
@@ -794,7 +812,7 @@ test("deleting the final project saves an empty account envelope instead of skip
   assert.deepEqual(deleted.data.miniProjects, {});
   assert.equal(deleted.data.draftCanvas.markdown, "");
   assert.equal(deleted.data.current, null);
-  assert.equal(hooks.syncState().dirty.files, false);
+  assert.equal(hooks.syncState().dirty, false);
 });
 
 test("legacy instruction-only accounts migrate with the files revision zero", async () => {
@@ -811,7 +829,7 @@ test("legacy instruction-only accounts migrate with the files revision zero", as
   hooks.account(accountKey);
   await hooks.initializeProjectAiAccountWorkspace();
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Existing account draft");
-  await hooks.saveProjectAiAccountDocument("files");
+  await hooks.saveProjectAiAccountWorkspace();
   const body = JSON.parse(requests[1].body);
   assert.equal(body.baseRevision, 0);
   assert.equal(body.expectedLegacyInstructionRevision, 31);
@@ -822,7 +840,7 @@ test("legacy instruction-only accounts migrate with the files revision zero", as
 test("canonical cloud data ignores stale instruction rows and never starts a second save", async () => {
   const accountKey = "canonical-account";
   const fixture = loadCanvasLifecycleHooks().hooks;
-  const canonical = fixture.getEmptyProjectAiAccountDocument("files");
+  const canonical = fixture.getEmptyProjectAiAccountWorkspace();
   const requests = [];
   const { hooks } = loadCanvasLifecycleHooks(accountSyncStorage(accountKey, 4), { fetch: async (url, init) => {
     requests.push({ url, ...init });
@@ -834,10 +852,9 @@ test("canonical cloud data ignores stale instruction rows and never starts a sec
   hooks.restoreProjectAiAccountSyncState();
   hooks.account(accountKey);
   await hooks.initializeProjectAiAccountWorkspace();
-  await hooks.saveProjectAiAccountDocument("files");
-  await hooks.saveProjectAiAccountDocument("instruction");
+  await hooks.saveProjectAiAccountWorkspace();
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "");
-  assert.equal(hooks.syncState().dirty.files, false);
+  assert.equal(hooks.syncState().dirty, false);
   assert.equal(hooks.syncState().legacyInstructionRevision, null);
   assert.equal(requests.length, 1);
 });
@@ -855,7 +872,7 @@ test("failed canonical local writes keep legacy migration sources and do not ack
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Recoverable legacy draft");
 });
 
-test("sends only the canvas and selected target without chat history or skill refs", () => {
+test("keeps the explicit canvas-stage payload separate from conversational history and retired skill refs", () => {
   const { document } = parseHTML('<html><body><select id="mcuSelect"><option value="attiny1624" selected>ATtiny1624</option></select><select id="projectPackageSelect"><option value="SOIC-14" selected>SOIC-14</option></select></body></html>');
   const hooks = loadAvrFrontendFunctionHooks([
     "getProjectAiRequestPayload",
@@ -870,13 +887,25 @@ test("sends only the canvas and selected target without chat history or skill re
   assert.equal("skillRefs" in request.canvas, false);
 });
 
-test("replaces chat controls with one canvas action while retaining account and neighboring resizers", () => {
+test("places project chat in the left pane and project browsing in a shared modal while retaining the editors", () => {
   const html = fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8");
   const source = fs.readFileSync(path.join(__dirname, "../public/AVR-Programming.js"), "utf8");
   const { document } = parseHTML(html);
   assert.ok(document.getElementById("projectInstructionEditor"));
   assert.equal(document.querySelectorAll("#projectCanvasForm button[type=submit]").length, 1);
   assert.ok(document.getElementById("projectPackageSelect"));
+  for (const id of ["projectChatThread", "projectChatInput", "projectChatSendBtn", "projectChatCompactLabel"]) {
+    assert.ok(document.querySelector(`.outliner #${id}`), id);
+  }
+  const compactChatLabel = document.getElementById("projectChatCompactLabel");
+  assert.equal(compactChatLabel.tagName, "DIV");
+  assert.equal(compactChatLabel.textContent.trim(), "Chat");
+  assert.equal(compactChatLabel.querySelector("svg, button"), null);
+  assert.equal(document.getElementById("projectChatCompactBtn"), null);
+  assert.ok(document.querySelector("#filesModal.ui-modal #fileList"));
+  assert.equal(document.querySelector(".outliner #fileList"), null);
+  assert.ok(document.querySelector("#avrActionsPanelViewport #filesOpenBtn"));
+  assert.equal(document.getElementById("filesOpenBtn").getAttribute("aria-controls"), "filesModal");
   for (const id of ["projectAiHistory", "projectAiPrompt", "projectAiChatsBtn", "projectAiChatResizer"]) {
     assert.equal(document.getElementById(id), null, id);
   }
@@ -884,32 +913,12 @@ test("replaces chat controls with one canvas action while retaining account and 
     assert.ok(document.getElementById(id), id);
   }
   assert.ok(source.includes('fetch("/api/avr/ai/canvas"'));
+  assert.ok(source.includes('fetch("/api/avr/ai/chat"'));
   assert.equal(source.includes('fetch("/api/avr/ai/respond"'), false);
   assert.equal(source.includes("restoreProjectAiChats"), false);
   assert.equal(source.includes("skillRefs"), false);
   assert.ok(source.includes("sourceAuthorship"));
   assert.ok(source.includes("guideAuthorship"));
-});
-
-test("guide preview mouse interaction stays usable after chat removal and content replacement", () => {
-  const { document, window } = parseHTML('<html><body><div id="projectDocumentationContent"><p>First project guide</p></div><textarea id="projectDocumentationEditor"></textarea></body></html>');
-  const timers = [];
-  const hooks = loadAvrFrontendFunctionHooks(["bindDocumentationWorkspace"], {
-    document,
-    window: { setTimeout(callback) { timers.push(callback); } },
-  });
-  hooks.bindDocumentationWorkspace();
-  const preview = document.getElementById("projectDocumentationContent");
-  for (const text of ["First project guide", "Second project guide"]) {
-    const paragraph = document.createElement("p");
-    paragraph.textContent = text;
-    preview.replaceChildren(paragraph);
-    assert.doesNotThrow(() => {
-      paragraph.dispatchEvent(new window.Event("mouseup", { bubbles: true }));
-      while (timers.length) timers.shift()();
-    });
-    assert.equal(preview.textContent, text);
-  }
 });
 
 test("streams AI progress events before the final NDJSON result", async () => {
@@ -1259,18 +1268,6 @@ test("vendored Markdown mode uses a non-ambiguous HTML tag lookahead", () => {
   );
 });
 
-test("uses the MP badge for mini-projects in the AVR outliner", () => {
-  const source = fs.readFileSync(
-    path.join(__dirname, "../public/AVR-Programming.js"),
-    "utf8"
-  );
-
-  assert.match(
-    source,
-    /row\.dataset\.outlinerIcon\s*=\s*isMiniProjectSource\s*\?\s*"MP"/
-  );
-});
-
 test("keeps Google AI account controls in an accessible account modal", () => {
   const html = fs.readFileSync(
     path.join(__dirname, "../public/avr.html"),
@@ -1310,7 +1307,11 @@ test("keeps Google AI account controls in an accessible account modal", () => {
   );
   assert.match(modal, /id="projectAiAccountCard"[\s\S]*?tabindex="-1"/);
   assert.match(modal, /id="projectAiAccountCloseBtn"/);
-  assert.match(modal, /id="projectAiAccountStatus"[\s\S]*?role="status"/);
+  assert.doesNotMatch(modal, /id="projectAiAccountStatus"/);
+  const { document } = parseHTML(html);
+  assert.ok(document.getElementById("projectAiAccountModal").classList.contains("ui-modal"));
+  assert.ok(document.getElementById("projectAiAccountCard").classList.contains("ui-dialog-card"));
+  assert.ok(document.getElementById("projectAiAccountBody").classList.contains("ui-dialog-body"));
   for (const requiredControl of [
     "project-ai-google-sign-in-asset",
     'id="projectAiPrivacyNote"',
@@ -1363,29 +1364,36 @@ test("keeps Google AI account controls in an accessible account modal", () => {
   assert.match(source, /trapModalFocus: trapWorkspaceModalFocus/);
   assert.match(
     source,
-    /document\.addEventListener\("keydown", \(e\) => \{\s*if \(e\.defaultPrevented \|\| trapWorkspaceModalFocus\(e\)\) return;/
+    /document\.addEventListener\("keydown", \(e\) => \{\s*if \(e\.defaultPrevented \|\| handleFileMenuKeydown\(e\) \|\| trapWorkspaceModalFocus\(e\)\) return;/
   );
   assert.match(
     source,
     /projectAiAuthSession = \{\s*mode: "google",\s*configured: true,\s*authenticated: false,\s*quota: null,\s*\};\s*resetProjectAiAccountWorkspaceRuntime\(\);\s*renderProjectAiAuthSession\(projectAiAuthSession\);/
   );
   assert.match(source, /setProjectAiAccountStatus\(message, "error"\)/);
+  const controlsCss = fs.readFileSync(path.join(__dirname, "../public/ui-controls.css"), "utf8");
+  assert.match(controlsCss, /\.ui-modal\s*\{[^}]*backdrop-filter:\s*var\(--ui-modal-backdrop,\s*blur\(8px\)\);/);
+  const sharedFrame = controlsCss.match(/:where\(\.ui-panel,\s*\.scroll-frame,\s*\.ui-dialog-card,\s*\.custom-select-menu\)(?:,\s*\.CodeMirror-hints)?\s*\{([^}]*)\}/)?.[1];
+  assert.ok(sharedFrame, "account cards must consume the shared window foundation");
+  assert.match(sharedFrame, /border:\s*1px solid var\(--ui-panel-border, var\(--ui-border\)\);/);
+  assert.match(sharedFrame, /border-radius:\s*var\(--ui-panel-radius, var\(--ui-radius\)\);/);
+  assert.match(sharedFrame, /background:\s*var\(--ui-panel-bg, var\(--ui-window-bg\)\);/);
+  assert.match(sharedFrame, /box-shadow:\s*var\(--ui-panel-shadow, none\);/);
+  const dialogCard = controlsCss.match(/\.ui-dialog-card\s*\{([^}]*)\}/)?.[1];
+  assert.ok(dialogCard, "the dialog variant must configure the common frame");
+  assert.match(dialogCard, /--ui-panel-bg:\s*var\(--ui-dialog-bg, var\(--ui-window-bg\)\);/);
+  assert.match(dialogCard, /--ui-panel-shadow:\s*var\(--ui-dialog-shadow,\s*0 20px 60px rgba\(7, 13, 20, 0\.32\)\);/);
+  assert.doesNotMatch(dialogCard, /(?:^|\n)\s*(?:border|border-radius|background|box-shadow)\s*:/,
+    "the account dialog must not duplicate the shared frame properties");
   assert.match(
     css,
-    /\.project-ai-account-modal\s*\{[\s\S]*?backdrop-filter:\s*blur\(8px\);/
-  );
-  assert.match(
-    css,
-    /\.project-ai-account-card\s*\{[\s\S]*?width:\s*min\(100%, 520px\);[\s\S]*?background:\s*var\(--avr-window-bg\);/
+    /\.project-ai-account-card\s*\{[^}]*width:\s*min\(100%, 520px\);/
   );
   assert.match(
     css,
     /\.project-ai-google-sign-in\s*\{[\s\S]*?width:\s*100%;[\s\S]*?background:\s*rgba\(39, 174, 96, 0\.1\);/
   );
-  assert.match(
-    css,
-    /\.project-ai-account-status\[data-tone="error"\]\s*\{[\s\S]*?color:\s*#ffe0aa;/
-  );
+  assert.doesNotMatch(css, /\.project-ai-account-status/);
 });
 
 test("unlimited AI quota replaces finite progress semantics and finite snapshots restore them", () => {
@@ -1514,13 +1522,13 @@ test("failed name saves preserve the draft and can retry or reset to the Google 
   assert.equal(await hooks.saveProjectAiProfile(), false);
   assert.equal(input.value, "New name");
   assert.equal(document.getElementById("projectAiProfileSaveBtn").disabled, false);
-  assert.equal(document.getElementById("projectAiAccountStatus").textContent, "Try again shortly.");
+  assert.ok(hooks.notifications().some(record => record.message === "Try again shortly." && record.tone === "error"));
   fail = false;
   input.value = "";
   hooks.handleProjectAiProfileNameInput();
   assert.equal(await hooks.saveProjectAiProfile(), true);
   assert.equal(input.value, "David");
-  assert.equal(document.getElementById("projectAiAccountStatus").textContent, "Google display name restored.");
+  assert.ok(hooks.notifications().some(record => record.message === "Google display name restored." && record.tone === "success"));
 });
 
 test("a delayed name-save response cannot repaint a signed-out account", async () => {
@@ -1641,11 +1649,11 @@ test("a name save preserves an in-flight canvas result while a real account swit
     await canvasRequest;
     if (changeAccount) {
       assert.equal(hooks.applied(), undefined);
-      assert.match(document.getElementById("projectCanvasStatus").textContent, /account changed/);
+      assert.ok(hooks.notifications().some(record => /account changed/.test(record.message) && record.tone === "error"));
       assert.equal(document.getElementById("projectAiBudgetValue").textContent, "80 / 100");
     } else {
       assert.equal(hooks.applied(), "AI added details");
-      assert.equal(document.getElementById("projectCanvasStatus").textContent, "Canvas updated.");
+      assert.ok(hooks.notifications().some(record => record.message === "Canvas updated." && record.tone === "success"));
     }
   }
 });
@@ -1797,7 +1805,7 @@ test("installs the release AI unit before restarting the service", () => {
     "utf8"
   );
   const verifyUnit = deployWorkflow.indexOf(
-    'run_sudo systemd-analyze verify "${ai_unit_template}"'
+    'run_sudo systemd-analyze verify "${BE_SRC}/deploy/uartdebug-ai.service"'
   );
   const installUnit = deployWorkflow.indexOf(
     "run_sudo install -o root -g root -m 0644",
@@ -1821,10 +1829,11 @@ test("installs the release AI unit before restarting the service", () => {
   assert.ok(unitTarget > installUnit);
   assert.ok(daemonReload > unitTarget);
   assert.ok(restart > daemonReload);
-  assert.match(
-    deployWorkflow,
-    /elif \[ -z "\$\{ROLLBACK\}" \]; then\s+echo "Missing AI service unit in \$\{BE_DIR\}"\s+exit 1/
-  );
+  assert.ok(verifyUnit < deployWorkflow.indexOf('ln -sfn "$BE_NEW" "$BE_DIR"'),
+    "the staged unit must be checked before release activation");
+  assert.ok(deployWorkflow.indexOf('run_sudo systemd-analyze verify "${rollback_be_target}/deploy/uartdebug-ai.service"') <
+    deployWorkflow.indexOf('ln -sfn "${rollback_be_target}" "${BE_DIR}"'),
+    "rollback must also validate its target unit before release activation");
 });
 
 test("scopes the AI credential umask to secret generation", () => {
@@ -1912,7 +1921,7 @@ test("gives Add file enough width and lets catalog text wrap", () => {
 
   assert.match(
     css,
-    /\.file-add-dialog\s*\{[\s\S]*?width:\s*min\(96vw,\s*1100px\);/
+    /\.files-dialog\s*\{[\s\S]*?width:\s*min\(96vw,\s*1100px\);/
   );
   assert.match(
     css,
@@ -1947,20 +1956,505 @@ test("does not render the obsolete AI context row", () => {
   assert.match(source, /getDetectedTargetKey/);
 });
 
-test("keeps target controls with code and account controls next to the device window", () => {
+test("separates the ordered hardware controls from project and notification cards", () => {
   const html = fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8");
   const { document } = parseHTML(html);
   const code = document.getElementById("editorWorkspace");
-  assert.deepEqual(Array.from(code.querySelectorAll("select"), el => el.id), ["mcuSelect", "projectPackageSelect"]);
+  const targets = document.getElementById("avrTargetPanelViewport");
+  const hardware = document.getElementById("avrDevicePanelViewport");
+  assert.ok(hardware.contains(targets), "the hardware frame owns the project target fields");
+  assert.equal(targets.classList.contains("avr-target-panel-viewport"), false,
+    "the target group must not create a nested viewport or second height animation");
+  assert.deepEqual(Array.from(targets.querySelectorAll("select"), el => el.id), ["mcuSelect", "projectPackageSelect"]);
+  const steps = Array.from(targets.querySelectorAll(".hardware-flow > .hardware-step"));
+  assert.equal(steps.length, 4);
+  for (const [index, id] of ["detectChipBtn", "adapterStatusText", "mcuSelect", "projectPackageSelect"].entries()) {
+    assert.ok(steps[index].contains(document.getElementById(id)), `${id} belongs to its ordered hardware step`);
+  }
+  assert.equal(document.getElementById("chipStatusText"), null, "one primary chip field replaces the separate detected result");
+  assert.equal(targets.querySelector(".hardware-step-caption, .hardware-step-detail"), null);
+  assert.equal(document.getElementById("mcuSelect").getAttribute("data-control-caption"), "Chip");
+  assert.equal(document.getElementById("projectPackageSelect").getAttribute("data-control-caption"), "Package");
+  assert.equal(document.getElementById("mcuSelect").hasAttribute("data-placeholder-icon"), false);
+  assert.equal(document.getElementById("projectPackageSelect").hasAttribute("data-placeholder-icon"), false);
+  const originalButton = document.getElementById("detectChipBtn");
+  assert.equal(originalButton.className, "detect-chip-btn");
+  assert.equal(originalButton.querySelector("svg"), null);
+  assert.equal(originalButton.querySelector("[data-detect-default]").textContent.trim(), "Disconnected");
+  assert.equal(originalButton.querySelector("[data-detect-hover]").textContent.trim(), "Click to detect the chip");
+  assert.equal(document.getElementById("adapterStatusText").querySelector("button, select"), null,
+    "the port readout must not imply a separate picker");
+  assert.equal(code.querySelector("select"), null);
   for (const id of ["projectAiBudget", "projectAiAuth"]) {
     assert.equal(document.querySelectorAll(`#${id}`).length, 1);
     assert.ok(document.getElementById("avrAccountPanelViewport").contains(document.getElementById(id)));
   }
-  assert.equal(document.getElementById("avrDevicePanelViewport").nextElementSibling.id, "avrAccountPanelViewport");
+  assert.deepEqual(Array.from(document.querySelector(".avr-overview-row").children, el => el.id),
+    ["avrDevicePanelViewport", "avrActionsPanelViewport", "avrAccountPanelViewport"]);
+  assert.equal(document.querySelectorAll(".avr-overview-row > .avr-overview-viewport").length, 3);
   assert.equal(document.querySelector("#projectCanvasForm select"), null);
   assert.equal(document.getElementById("moreOptionsBtn"), null);
   assert.equal(document.getElementById("canvasUpdiSection"), null);
   assert.equal(code.querySelector("#editorCollapseBtn"), null);
+  const notifications = document.querySelector("[data-notifications-open]");
+  assert.ok(notifications, "the notification history must have a reachable control");
+  const actions = document.querySelector("#avrActionsPanelViewport > .avr-action-panel");
+  assert.ok(actions);
+  assert.equal(actions.classList.contains("ui-panel"), false, "the action grid has no shared frame");
+  const projects = document.getElementById("filesOpenBtn");
+  const cards = Array.from(actions.querySelectorAll(":scope > .avr-action-card.ui-panel"));
+  assert.equal(cards.length, 2);
+  assert.ok(cards[0].contains(projects), "projects have an independent card surface");
+  assert.ok(cards[1].contains(notifications), "notifications have an independent card surface");
+  for (const trigger of [projects, notifications, document.getElementById("projectAiAccountBtn")]) {
+    assert.ok(trigger.classList.contains("avr-panel-trigger"));
+  }
+  assert.equal(hardware.contains(actions), false);
+  assert.match(cards[0].textContent, /Projects/);
+  assert.match(cards[1].textContent, /Notifications/);
+  assert.equal(notifications.getAttribute("aria-controls"), "notificationModal");
+  for (const id of ["compileLog", "projectCanvasStatus", "projectInstructionSaveState", "projectAiAccountStatus", "projectDocumentationNotice"]) {
+    assert.equal(document.getElementById(id), null, `${id} must not duplicate notification history inside a workspace pane`);
+  }
+  const controlsIndex = html.indexOf('src="ui-controls.js');
+  const notificationsIndex = html.indexOf('src="ui-notifications.js');
+  const workspaceIndex = html.indexOf('src="AVR-Programming.js');
+  assert.ok(controlsIndex >= 0 && notificationsIndex > controlsIndex && workspaceIndex > notificationsIndex,
+    "shared controls and notifications must load before workspace producers");
+});
+
+function compactTargetFixture(catalog) {
+  const { document } = parseHTML('<html><body><select id="mcuSelect"><option value="attiny1614">ATtiny1614</option><option value="attiny1624">ATtiny1624</option></select><select id="projectPackageSelect"><option value="SOIC-14" selected>SOIC-14</option></select></body></html>');
+  for (const select of document.querySelectorAll("select")) {
+    Object.defineProperty(select, "value", {
+      configurable: true,
+      get() { return this.querySelector("option[selected]")?.value || this.options[0]?.value || ""; },
+      set(value) { for (const option of this.options) {
+        if (option.value === String(value)) option.setAttribute("selected", "");
+        else option.removeAttribute("selected");
+      } },
+    });
+  }
+  let detected = "";
+  const hooks = loadAvrFrontendFunctionHooks([
+    "syncCanvasTargetControls", "buildCompileProjectSnapshot", "getCanvasTarget", "loadCompiledHexArtifact", "getUpdiHexArtifact",
+    `prepare(catalog) {
+      canvasSupportedDevices = catalog;
+      current = "main.c";
+      files = { "main.c": "int main(void) { return 0; }" };
+      editor = null;
+      getCompileProjectFileNames = () => ({ requiredFiles: ["main.c"], compileSourceNames: ["main.c"] });
+      refreshTargetPresentation = () => {};
+      updateHexUI = () => {};
+      setHexStatus = () => {};
+      dispatchUpdiHexArtifact = () => {};
+    }`,
+    "setCatalog(catalog) { canvasSupportedDevices = catalog; }",
+  ], { document, window: { __UARTDEBUG_AVR_PROGRAMMING_UPDI_BRIDGE__: { getDetectedTargetKey: () => detected } } });
+  hooks.prepare(catalog);
+  return { hooks, document, detect: value => { detected = value; } };
+}
+
+const compactTargetCatalog = [
+  { mcu: "attiny1614", packages: ["SOIC-14"] },
+  { mcu: "attiny1624", packages: ["SOIC-14", "TSSOP-14"] },
+];
+
+test("a detected replacement keeps a supported package across MCU changes and clears an unsupported one", () => {
+  const { hooks, document, detect } = compactTargetFixture(compactTargetCatalog);
+  const chip = document.getElementById("mcuSelect"), packageSelect = document.getElementById("projectPackageSelect");
+  hooks.syncCanvasTargetControls();
+  assert.equal(packageSelect.value, "SOIC-14");
+  detect("attiny1624");
+  hooks.syncCanvasTargetControls();
+  assert.equal(chip.value, "attiny1624");
+  assert.equal(packageSelect.value, "SOIC-14");
+  packageSelect.value = "TSSOP-14";
+  detect("attiny1614");
+  hooks.syncCanvasTargetControls();
+  assert.equal(chip.value, "attiny1614");
+  assert.equal(packageSelect.value, "");
+});
+
+test("a delayed package catalog preserves its candidate until replacement support can be checked", () => {
+  const { hooks, document, detect } = compactTargetFixture(null);
+  const packageSelect = document.getElementById("projectPackageSelect");
+  detect("attiny1624");
+  hooks.syncCanvasTargetControls();
+  assert.equal(packageSelect.dataset.pendingPackage, "SOIC-14");
+  assert.equal(packageSelect.disabled, true);
+  hooks.setCatalog(compactTargetCatalog);
+  hooks.syncCanvasTargetControls();
+  assert.equal(packageSelect.value, "SOIC-14");
+  assert.equal(packageSelect.disabled, false);
+  assert.equal(packageSelect.dataset.pendingPackage, undefined);
+});
+
+test("compile cache identity includes the effective MCU even when project sources do not change", () => {
+  const { hooks, document, detect } = compactTargetFixture(compactTargetCatalog);
+  const first = JSON.parse(hooks.buildCompileProjectSnapshot("main.c").sourceKey);
+  document.getElementById("mcuSelect").value = "attiny1624";
+  const second = JSON.parse(hooks.buildCompileProjectSnapshot("main.c").sourceKey);
+  assert.equal(first.mcu, "attiny1614");
+  assert.equal(second.mcu, "attiny1624");
+  assert.deepEqual(first.projectFiles, second.projectFiles);
+  detect("attiny1614");
+  const connected = JSON.parse(hooks.buildCompileProjectSnapshot("main.c").sourceKey);
+  assert.deepEqual(connected, first, "a known physical target also controls cache identity");
+});
+
+test("loading cached compiled HEX preserves its build MCU through the runtime and bridge", () => {
+  const { hooks } = compactTargetFixture(compactTargetCatalog);
+  const calls = [];
+  assert.equal(hooks.loadCompiledHexArtifact({ loadHexFile: (...args) => calls.push(args) }, {
+    hexText: ":0100000000FF\n:00000001FF", hexName: "main.hex", targetMcu: "attiny1614",
+  }), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2], "compiled");
+  assert.equal(calls[0][3], "attiny1614");
+  assert.equal(hooks.getUpdiHexArtifact().targetMcu, "attiny1614");
+});
+
+function pendingCompileFixture(fetch, timers = {}) {
+  const { document } = parseHTML('<html><body><button id="compileBtn"></button></body></html>');
+  const loaded = [];
+  const hooks = loadAvrFrontendFunctionHooks([
+    "compileCurrentFile", "ensureCurrentCompiledHexLoaded", "downloadHexForFile", "getHexArtifactForFile", "getUpdiHexArtifact",
+    `prepare() {
+      current = "main.c";
+      files = { "main.c": '#include "board.h"\\nint main(void) { return VALUE; }', "board.h": "#define VALUE 0" };
+      editor = null;
+      getCanvasTarget = () => ({ mcu: window.__compileTarget });
+      getMiniProjectForFile = name => files[name] === undefined ? null : ({ instanceId: window.__compileProject });
+      dispatchUpdiHexArtifact = () => {};
+      downloadHexArtifact = () => { window.__compileDownloads++; return true; };
+    }`,
+    `change(kind) {
+      if (kind === "source") files["main.c"] += "\\n// New edit";
+      if (kind === "header") files["board.h"] = "#define VALUE 1";
+      if (kind === "mcu") window.__compileTarget = "attiny1624";
+      if (kind === "project") window.__compileProject = "replacement-project";
+      if (kind === "account") projectAiAccountWorkspaceEpoch++;
+    }`,
+    `lateEditCompiler() {
+      compileCurrentFile = async () => {
+        const snapshot = buildCompileProjectSnapshot(current);
+        storeHexArtifact(current, "HEX", "main.hex", files[current], snapshot.sourceKey, window.__compileTarget);
+        files[current] += "\\n// Edited after request";
+        return true;
+      };
+    }`,
+    `failAutoDetection() {
+      getCanvasTarget = () => ({ mcu: "auto" });
+      ensureAutoDetectedTarget = async ({ notificationId }) => {
+        window.UartDebugNotifications.notify({ id: notificationId, title: "Compilation",
+          message: "The chip could not be reached.", details: "Check the adapter and UPDI connection.", tone: "error", pending: false });
+        const error = new Error("Timed out waiting for echo of 1 byte(s).");
+        error.uartDebugNotificationId = notificationId;
+        throw error;
+      };
+    }`,
+    "downloads() { return window.__compileDownloads; }",
+  ], { document, fetch, ...timers, window: { __compileTarget: "attiny1614", __compileProject: "project", __compileDownloads: 0,
+    __UARTDEBUG_AVR_PROGRAMMING_UPDI__: { loadHexFile: (...args) => loaded.push(args) } } });
+  hooks.prepare();
+  return { hooks, loaded, document };
+}
+
+test("compiler results use the exact requested snapshot and reject source, header, target or project changes", async () => {
+  for (const change of [null, "source", "header", "mcu", "project", "account"]) {
+    let finish, payload, requests = 0;
+    const { hooks } = pendingCompileFixture((url, init) => {
+      requests++; payload = JSON.parse(init.body);
+      return new Promise(resolve => { finish = resolve; });
+    });
+    const compiling = hooks.compileCurrentFile();
+    assert.equal(await hooks.compileCurrentFile(), false, "a second caller must not begin another build");
+    assert.equal(requests, 1);
+    if (change) hooks.change(change);
+    finish({ ok: true, async json() { return { ok: true, hex: "HEX", hex_name: "main.hex" }; } });
+    assert.equal(await compiling, !change, change || "unchanged");
+    const artifact = hooks.getHexArtifactForFile("main.c");
+    if (change) {
+      assert.equal(artifact, null, change);
+      assert.equal(hooks.getUpdiHexArtifact().hexText, "");
+      assert.match(hooks.notifications().at(-1).message, /project changed/i);
+    } else {
+      assert.equal(artifact.sourceText, payload.code);
+      assert.deepEqual(JSON.parse(artifact.sourceKey), { mcu: payload.mcu, projectFiles: payload.project_files });
+    }
+  }
+});
+
+test("changes while the compiler response body is arriving cannot load or cache old firmware", async () => {
+  let receiveBody;
+  const { hooks, loaded } = pendingCompileFixture(async () => ({ ok: true,
+    json: () => new Promise(resolve => { receiveBody = resolve; }),
+  }));
+  const flashing = hooks.ensureCurrentCompiledHexLoaded({ loadHexFile: (...args) => loaded.push(args) });
+  while (!receiveBody) await Promise.resolve();
+  hooks.change("source");
+  receiveBody({ ok: true, hex: "OLD" });
+  assert.equal(await flashing, false);
+  assert.equal(hooks.getHexArtifactForFile("main.c"), null);
+  assert.equal(loaded.length, 0);
+});
+
+test("flash and download recheck a compiled artifact after their awaited build returns", async () => {
+  for (const action of ["flash", "download"]) {
+    const { hooks, loaded } = pendingCompileFixture(async () => { throw new Error("Must use injected build"); });
+    hooks.lateEditCompiler();
+    if (action === "flash") assert.equal(await hooks.ensureCurrentCompiledHexLoaded({ loadHexFile: (...args) => loaded.push(args) }), false);
+    else await hooks.downloadHexForFile("main.c");
+    assert.equal(loaded.length, 0);
+    assert.equal(hooks.downloads(), 0);
+  }
+});
+
+test("the whole compiler response has a deadline, releases its guard and cannot publish a late body", async () => {
+  let fireDeadline, completeBody, signal, cancelled = 0, budget, sequence = 0, requestTimer;
+  const { hooks, document } = pendingCompileFixture(async (url, init) => {
+    signal = init.signal;
+    return { ok: true, json: () => new Promise(resolve => { completeBody = resolve; }) };
+  }, { setTimeout(callback, milliseconds) {
+    const timer = ++sequence;
+    if (milliseconds >= 60000) { fireDeadline = callback; budget = milliseconds; requestTimer = timer; }
+    return timer;
+  }, clearTimeout(timer) { if (timer === requestTimer) cancelled++; } });
+  const compiling = hooks.compileCurrentFile();
+  while (!completeBody) await Promise.resolve();
+  assert.equal(budget, 80000, "one C unit includes linker, HEX and transport headroom");
+  fireDeadline();
+  assert.equal(await compiling, false);
+  assert.equal(signal.aborted, true);
+  assert.equal(cancelled, 1);
+  assert.equal(document.getElementById("compileBtn").disabled, false);
+  assert.match(hooks.notifications().at(-1).message, /did not respond in time/);
+  completeBody({ ok: true, hex: "LATE" });
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(hooks.getHexArtifactForFile("main.c"), null);
+});
+
+test("compilation preserves an already published human-readable auto-detection failure", async () => {
+  const { hooks } = pendingCompileFixture(async () => { throw new Error("Compiler must not run"); });
+  hooks.failAutoDetection();
+  assert.equal(await hooks.compileCurrentFile(), false);
+  const notices = hooks.notifications();
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].message, "The chip could not be reached.");
+  assert.equal(notices[0].pending, false);
+  assert.doesNotMatch(notices[0].message, /echo|Timed out/);
+});
+
+test("proxy HTML and server stack responses are not presented as source-code compiler errors", async () => {
+  for (const raw of ["<!DOCTYPE html><html><body>Bad Gateway</body></html>", "Error: Internal compiler wrapper error\n    at run (/server/compiler.js:15:3)"]) {
+    const { hooks } = pendingCompileFixture(async () => ({ ok: false, status: 502, async text() { return raw; } }));
+    assert.equal(await hooks.compileCurrentFile(), false);
+    const notice = hooks.notifications().at(-1);
+    assert.equal(notice.message, "The compile server could not complete the request.");
+    assert.doesNotMatch(notice.details, /<html>|compiler\.js| at run/);
+  }
+});
+
+test("existing desktop dialogs share one modal surface while retaining their dimensions", () => {
+  const { document } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8"));
+  for (const id of ["filesModal", "projectAiAccountModal", "siteDialog"]) {
+    const modal = document.getElementById(id);
+    assert.ok(modal.classList.contains("ui-modal"), id);
+    assert.ok(modal.querySelector(".ui-dialog-card"), id);
+    assert.ok(modal.querySelector(".ui-dialog-header"), id);
+    assert.ok(modal.querySelector(".ui-dialog-close"), id);
+    assert.ok(modal.querySelector(".ui-dialog-body"), id);
+  }
+  assert.ok(document.querySelector("#siteDialog .ui-dialog-actions"));
+  const { document: uartDocument } = parseHTML(fs.readFileSync(path.join(__dirname, "../public/uart.html"), "utf8"));
+  const settings = uartDocument.getElementById("settingsModal");
+  assert.ok(settings.classList.contains("ui-modal"));
+  assert.ok(settings.querySelector(".ui-dialog-card"));
+  assert.ok(settings.querySelector(".ui-dialog-body"));
+});
+
+test("compiler notifications retain full diagnostics while updating one operation record", () => {
+  const hooks = loadAvrFrontendFunctionHooks(["reportCompilerStatus", "showCompilerIssue", "collectCompilerErrorText"]);
+  hooks.reportCompilerStatus("Compiling ...", { tone: "info", pending: true });
+  const started = hooks.notifications()[0];
+  assert.equal(started.pending, true);
+  const issue = hooks.showCompilerIssue({
+    compile_stderr: "board.c:9:4: error: expected ';' before '<' token\nboard.c:12:2: error: unknown identifier PINx\n",
+    compile_stdout: "Compiler target: ATtiny1624\nAdditional diagnostic context retained.",
+  }, "HTTP diagnostic body", "main.c");
+  assert.equal(issue.fileName, "board.c");
+  assert.equal(issue.lineNumber, 9);
+  assert.equal(issue.columnNumber, 4);
+  const records = hooks.notifications();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, started.id);
+  assert.equal(records[0].tone, "error");
+  assert.equal(records[0].pending, false);
+  assert.equal(records[0].message, "expected ';' before '<' token (line 9, column 4)");
+  assert.match(records[0].details, /ERROR\..*Line 9, position 4/);
+  assert.match(records[0].details, /board\.c:12:2: error: unknown identifier PINx/);
+  assert.match(records[0].details, /Additional diagnostic context retained/);
+  assert.doesNotMatch(records[0].details, /HTTP diagnostic body/,
+    "parsed diagnostics must not be duplicated by their raw HTTP body");
+  assert.equal(hooks.collectCompilerErrorText({ error: { message: "Structured compiler error" } }, '{"error":{"message":"Structured compiler error"}}'),
+    "Structured compiler error");
+  assert.equal(hooks.collectCompilerErrorText(null, "Unstructured compiler response"), "Unstructured compiler response");
+});
+
+test("informational alert paths report details without opening a blocking confirmation", async () => {
+  const hooks = loadAvrFrontendFunctionHooks(["showSiteAlert",
+    "prepare() { showSiteDialog = () => { throw new Error('An informational alert must not block'); }; }"]);
+  hooks.prepare();
+  await hooks.showSiteAlert("Import failed.\nFull parser detail on the second line.", "Project import");
+  const records = hooks.notifications();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].title, "Project import");
+  assert.equal(records[0].message, "Import failed.");
+  assert.equal(records[0].details, "Import failed.\nFull parser detail on the second line.");
+});
+
+test("the same account and workspace failure has one notification with its complete details", () => {
+  const hooks = loadAvrFrontendFunctionHooks(["reportProjectCanvasMessage", "setProjectAiAccountStatus"]);
+  const message = "Cloud saving was paused.\nNewer local project data was retained.";
+  hooks.reportProjectCanvasMessage("system", message);
+  const id = hooks.notifications()[0].id;
+  hooks.setProjectAiAccountStatus(message, "error");
+  hooks.setProjectAiAccountStatus(message, "error");
+  hooks.reportProjectCanvasMessage("", "");
+  hooks.setProjectAiAccountStatus();
+  const records = hooks.notifications();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, id);
+  assert.equal(records[0].message, "Cloud saving was paused.");
+  assert.equal(records[0].details, message);
+  assert.equal(records[0].tone, "error");
+});
+
+test("AI progress and completion keep stage attempts and the final result in one notification", () => {
+  const hooks = loadAvrFrontendFunctionHooks(["appendProjectAiThinking", "renderProjectAiThinkingProgress", "reportProjectCanvasMessage", "removeProjectAiThinking",
+    "start() { projectAiRequestInFlight = true; }"]);
+  hooks.start();
+  const operation = hooks.appendProjectAiThinking();
+  assert.equal(hooks.notifications().length, 1);
+  hooks.renderProjectAiThinkingProgress(operation, { status: "in_progress", stages: [
+    { id: "generation", status: "completed", attempt: 1 },
+    { id: "compilation", status: "failed", attempt: 1 },
+  ] });
+  hooks.renderProjectAiThinkingProgress(operation, { status: "completed", stages: [
+    { id: "repair", status: "completed", attempt: 2 },
+  ] }, { status: "passed", mcu: "ATtiny1624" });
+  hooks.reportProjectCanvasMessage("assistant", "Specification reviewed.\nThe current canvas is saved.", operation.id);
+  hooks.removeProjectAiThinking(operation);
+  const records = hooks.notifications();
+  assert.equal(records.length, 1);
+  assert.equal(records[0].id, operation.id);
+  assert.equal(records[0].message, "Specification reviewed.");
+  assert.equal(records[0].tone, "success");
+  assert.equal(records[0].pending, false);
+  assert.match(records[0].details, /Response generated/);
+  assert.match(records[0].details, /Compiler check found a problem/);
+  assert.match(records[0].details, /Compiler error repaired · attempt 2/);
+  assert.match(records[0].details, /The current canvas is saved/);
+});
+
+test("background account feedback cannot finish or overwrite an active AI notification", () => {
+  const hooks = loadAvrFrontendFunctionHooks(["appendProjectAiThinking", "reportProjectCanvasMessage",
+    "start() { projectAiRequestInFlight = true; }"]);
+  hooks.start();
+  const operation = hooks.appendProjectAiThinking();
+  hooks.reportProjectCanvasMessage("system", "Cloud saving was paused.\nThe local project copy remains saved.");
+  const records = hooks.notifications();
+  assert.equal(records.length, 2);
+  const progress = records.find(record => record.id === operation.id);
+  assert.equal(progress.pending, true);
+  assert.equal(progress.message, "Analyzing the canvas…");
+  assert.equal(progress.tone, "info");
+  const background = records.find(record => record.id !== operation.id);
+  assert.equal(background.pending, false);
+  assert.equal(background.tone, "error");
+  assert.equal(background.message, "Cloud saving was paused.");
+  assert.match(background.details, /The local project copy remains saved/);
+  hooks.reportProjectCanvasMessage("assistant", "Specification reviewed.", operation.id);
+  const completed = hooks.notifications();
+  assert.equal(completed.length, 2);
+  assert.equal(completed.find(record => record.id === operation.id).pending, false);
+  assert.equal(completed.find(record => record.id !== operation.id).details, background.details);
+});
+
+test("saved built-in examples use English while preserving older description files", () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  const project = hooks.createEmptyProject();
+  const snapshot = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
+  const saved = snapshot.miniProjects[project.instanceId];
+  saved.origin = "builtin";
+  saved.defaultLocale = saved.selectedLocale = "ru";
+  snapshot.files["legacy.ru.md"] = "# Старое описание";
+  saved.guides.ru = { fileName: "legacy.ru.md", locale: "ru", mediaType: "text/markdown" };
+  assert.equal(hooks.applyProjectAiAccountWorkspace( snapshot), true);
+  const restored = hooks.getPublicMiniProjectInstance(project.instanceId);
+  assert.equal(restored.defaultLocale, "en");
+  assert.equal(restored.selectedLocale, "en");
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().files["legacy.ru.md"], "# Старое описание");
+});
+
+test("documentation uses one live Markdown surface without deferred actions or edit modes", () => {
+  const html = fs.readFileSync(path.join(__dirname, "../public/avr.html"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "../public/AVR-Programming.js"), "utf8");
+  const { document } = parseHTML(html);
+  assert.equal(document.getElementById("documentationLocaleSelect"), null);
+  assert.equal(document.querySelector(".documentation-locale-control"), null);
+  assert.doesNotMatch(source, /documentationLocaleSelect|getDocumentationLocaleLabel/);
+  for (const id of ["documentationEditToggle", "projectGenerateCodeBtn", "projectDescribeCodeBtn", "projectDocumentationContent"]) {
+    assert.equal(document.getElementById(id), null, `${id} must not leave a second documentation mode or deferred action in the UI`);
+  }
+  const guide = document.getElementById("projectDocumentationPane");
+  assert.ok(guide.querySelector("#projectDocumentationEditor"));
+  assert.equal(guide.querySelector("button, .ui-panel-header, .panel-action-lobe"), null);
+  assert.equal(guide.classList.contains("panel-action-host"), false);
+  assert.equal(document.querySelectorAll(".panel-action-lobe").length, 2);
+  assert.doesNotMatch(source, /documentationEditMode|setDocumentationEditMode|refreshDocumentationControls|documentationEditToggle/);
+});
+
+test("the native guide editor preserves authorship and saves directly without an edit toggle", () => {
+  const { document } = parseHTML('<html><body><aside id="projectDocumentationPane"><div id="projectDocumentationScroll"><textarea id="projectDocumentationEditor"></textarea></div></aside></body></html>');
+  const textarea = document.getElementById("projectDocumentationEditor");
+  const hooks = loadAvrFrontendFunctionHooks([
+    "bindDocumentationWorkspace", "refreshDocumentationPane", "saveDocumentationEditorValue",
+    `prepare() {
+      current = "main.c"; files["main.c"] = "// Unchanged code";
+      files["guide.md"] = "# Title\\n\\nKept line\\n\\nOld line";
+      fileAuthorship["guide.md"] = { schemaVersion: 1, lines: ["original", "original", "ai", "ai", "ai"] };
+      getDocumentationContext = () => ({ guideFile: "guide.md" });
+      refreshWorkspaceEditors = scheduleMarkdownLivePreview = persistState = () => {};
+    }`,
+    `readGuide() { return { markdown: files["guide.md"], authorship: getFileAuthorship("guide.md"), source: files["main.c"] }; }`,
+    `replaceWorkspaceGuide() { files["guide.md"] = "# Cloud replacement"; files["other.md"] = "# Other guide"; getDocumentationContext = () => ({ guideFile: "other.md" }); }`,
+    `removeGuide() { getDocumentationContext = () => ({ guideFile: "" }); }`,
+  ], { document, window: { setTimeout: () => 1, clearTimeout() {} } });
+  hooks.prepare();
+  hooks.bindDocumentationWorkspace();
+  hooks.refreshDocumentationPane();
+  assert.equal(textarea.readOnly, false);
+  assert.equal(textarea.getAttribute("aria-readonly"), "false");
+  textarea.value = "# Title\n\nKept line\n\nEdited directly";
+  textarea.dispatchEvent(new document.defaultView.Event("input"));
+  const saved = hooks.readGuide();
+  assert.equal(saved.markdown, textarea.value);
+  assert.equal(saved.authorship.lines[0], "original");
+  assert.equal(saved.authorship.lines[2], "ai");
+  assert.equal(saved.authorship.lines[4], "human");
+  assert.equal(saved.source, "// Unchanged code");
+  hooks.replaceWorkspaceGuide();
+  hooks.refreshDocumentationPane();
+  assert.equal(textarea.value, "# Other guide");
+  assert.equal(hooks.readGuide().markdown, "# Cloud replacement", "switching projects must not save an old buffer over a newer workspace snapshot");
+  hooks.removeGuide();
+  hooks.refreshDocumentationPane();
+  assert.equal(textarea.value, "");
+  assert.equal(textarea.readOnly, true);
+  assert.equal(textarea.getAttribute("aria-readonly"), "true");
+  assert.equal(hooks.readGuide().markdown, "# Cloud replacement");
 });
 
 test("code collapses from either boundary and retains desktop preferences as the PC window resizes", () => {
@@ -1969,7 +2463,7 @@ test("code collapses from either boundary and retains desktop preferences as the
   const storage = new Map();
   document.querySelector(".canvas-split-container").getBoundingClientRect = () => ({ width });
   const hooks = loadAvrFrontendFunctionHooks([
-    "restoreWorkspaceLayout", "expandEditorForTargetValidation", "fitWorkspaceToViewport", "getWorkspaceWidths", "getWorkspacePanelSpecs", "resizeWorkspaceBoundary",
+    "restoreWorkspaceLayout", "resizeWorkspacePanel", "fitWorkspaceToViewport", "getWorkspaceWidths", "getWorkspacePanelSpecs", "resizeWorkspaceBoundary",
     "drag(boundary, delta) { renderWorkspaceWidths(resizeWorkspaceBoundary(getWorkspaceWidths(), getWorkspacePanelSpecs(), boundary, delta), { persist: true }); }",
   ], {
     document,
@@ -1983,14 +2477,14 @@ test("code collapses from either boundary and retains desktop preferences as the
   assert.equal(hooks.getWorkspaceWidths()[2], 62);
   assert.equal(document.getElementById("editorContent").hidden, true);
   hooks.drag(2, 500);
-  assert.ok(hooks.getWorkspaceWidths()[2] >= 500);
+  assert.ok(hooks.getWorkspaceWidths()[2] >= hooks.getWorkspacePanelSpecs()[2].min);
   assert.equal(document.getElementById("editorContent").hidden, false);
   hooks.drag(2, 62 - hooks.getWorkspaceWidths()[2]);
   width = 1100;
   hooks.fitWorkspaceToViewport();
   assert.equal(hooks.getWorkspaceWidths()[2], 62);
-  hooks.expandEditorForTargetValidation();
-  assert.ok(hooks.getWorkspaceWidths()[2] >= 500);
+  hooks.resizeWorkspacePanel(2, hooks.getWorkspacePanelSpecs()[2].min);
+  assert.ok(hooks.getWorkspaceWidths()[2] >= hooks.getWorkspacePanelSpecs()[2].min);
   assert.equal(Array.from(hooks.getWorkspaceWidths()).reduce((a, b) => a + b), width - 42);
   hooks.drag(1, hooks.getWorkspaceWidths()[2] - hooks.getWorkspacePanelSpecs()[2].min + 120);
   assert.equal(storage.get("ud_avr_programming_editor_collapsed_v1"), "true");
@@ -2007,7 +2501,7 @@ test("code collapses from either boundary and retains desktop preferences as the
 });
 
 test("review sends an empty specification without requiring target selectors", async () => {
-  const {document}=parseHTML('<html><body><button id="projectCanvasRunBtn"></button><button id="projectGenerateCodeBtn"></button><button id="projectDescribeCodeBtn"></button><form id="projectCanvasForm"></form><div id="projectCanvasStatus"></div></body></html>');
+  const {document}=parseHTML('<html><body><button id="projectCanvasRunBtn"></button><form id="projectCanvasForm"></form></body></html>');
   let sent;
   const hooks=loadAvrFrontendFunctionHooks(["submitProjectCanvas","getProjectInstructionSnapshot",
     "prepare() { projectInstructionDocument = normalizeProjectInstructionDocument({markdown:'',revision:0}); appendProjectAiThinking=removeProjectAiThinking=()=>null; persistProjectInstruction=scheduleProjectInstructionPreview=()=>{}; }"],{
@@ -2022,37 +2516,43 @@ test("review sends an empty specification without requiring target selectors", a
   assert.equal(sent.packageName,"");
   assert.match(hooks.getProjectInstructionSnapshot().markdown,/What should the project do/);
   assert.equal(document.getElementById("projectCanvasRunBtn").disabled,false);
-  assert.equal(document.getElementById("projectGenerateCodeBtn").disabled,false);
+  assert.equal(document.getElementById("projectGenerateCodeBtn"),null);
+  assert.equal(document.getElementById("projectDescribeCodeBtn"),null);
 });
 
-test("compile shortcuts and file changes preserve an active UPDI operation log", async () => {
-  const { document } = parseHTML('<html><body><button id="compileBtn"></button><pre id="compileLog">Writing page 1</pre></body></html>');
+test("compile shortcuts and file changes preserve an active UPDI notification and its details", async () => {
+  const { document } = parseHTML('<html><body><button id="compileBtn"></button></body></html>');
   let busy = true;
   const runtime = { isBusy: () => busy };
   const hooks = loadAvrFrontendFunctionHooks([
     "updateCompilePanelState", "compileCurrentFile", "initUpdiBridge", "setHexStatus",
     "choose(name) { current = name; files[name] = '// Source'; }",
+    "updiNotice() { return window.UartDebugNotifications.notify({title:'Flash MCU',message:'Writing page 1',details:'Writing page 1',pending:true,source:'UPDI'}); }",
   ], { document, window: { __UARTDEBUG_AVR_PROGRAMMING_UPDI__: runtime } });
   hooks.choose("main.c");
-  hooks.updateCompilePanelState(true);
+  const noticeId = hooks.updiNotice();
+  hooks.updateCompilePanelState();
   assert.equal(document.getElementById("compileBtn").disabled, true);
   assert.equal(await hooks.compileCurrentFile(), false);
-  assert.equal(document.getElementById("compileLog").textContent, "Writing page 1");
+  assert.equal(hooks.notifications().length, 1);
+  assert.equal(hooks.notifications()[0].id, noticeId);
+  assert.equal(hooks.notifications()[0].details, "Writing page 1");
+  assert.equal(hooks.notifications()[0].pending, true);
   busy = false;
-  hooks.updateCompilePanelState(false);
+  hooks.updateCompilePanelState();
   assert.equal(document.getElementById("compileBtn").disabled, false);
   hooks.setHexStatus("building");
-  hooks.updateCompilePanelState(false);
+  hooks.updateCompilePanelState();
   assert.equal(document.getElementById("compileBtn").disabled, true);
   hooks.setHexStatus("ready");
-  hooks.updateCompilePanelState(false);
+  hooks.updateCompilePanelState();
   assert.equal(document.getElementById("compileBtn").disabled, false);
   hooks.choose("guide.md");
-  hooks.updateCompilePanelState(false);
+  hooks.updateCompilePanelState();
   assert.equal(document.getElementById("compileBtn").disabled, true);
 });
 
-test("uses one intrinsic toolbar row and shared width measurement for workspace panes", () => {
+test("workspace panes share an expanded floor and retain intrinsic measurement for horizontal toolbars", () => {
   const css = fs.readFileSync(
     path.join(__dirname, "../public/AVR-Programming.css"),
     "utf8"
@@ -2061,25 +2561,23 @@ test("uses one intrinsic toolbar row and shared width measurement for workspace 
     path.join(__dirname, "../public/AVR-Programming.js"),
     "utf8"
   );
+  const layout = require("../public/avr-workspace-layout.js");
 
   assert.match(
     source,
     /const WORKSPACE_PANEL_COMPACT_WIDTH\s*=\s*62;/
   );
-  assert.match(
-    source,
-    /const WORKSPACE_PANEL_COMPACT_THRESHOLD\s*=\s*112;/
-  );
+  assert.equal(layout.WORKSPACE_PANEL_COMPACT_THRESHOLD, 112);
   assert.match(
     source,
     /workspacePanelMinWidths\[index\]\s*=\s*Math\.max\([\s\S]*?panelChrome\s*\+[\s\S]*?controlsWidth/
   );
   assert.doesNotMatch(source, /halfSplitWidth/);
   assert.doesNotMatch(source, /availableDocumentationWidth\s*\/\s*2/);
-  assert.match(source, /OUTLINER_EDITOR_MIN_WIDTH\s*=\s*500/);
+  assert.match(source, /WORKSPACE_PANEL_MIN_WIDTH\s*=\s*240/);
   assert.match(
     css,
-    /--editor-workspace-min-width:\s*500px;[\s\S]*?minmax\(var\(--editor-workspace-min-width\), 1fr\)/
+    /--editor-workspace-min-width:\s*240px;[\s\S]*?minmax\(var\(--editor-workspace-min-width\), 1fr\)/
   );
   assert.match(css, /--documentation-compact-width:\s*62px;/);
   assert.match(
@@ -2092,11 +2590,11 @@ test("uses one intrinsic toolbar row and shared width measurement for workspace 
   );
   assert.match(
     css,
-    /\.canvas-split-container\.is-documentation-compact[\s\S]*?\.project-documentation-panel\s*> \*\s*\{[\s\S]*?display:\s*none !important;/
+    /\.canvas-split-container\.is-documentation-content-compact\s+\.project-documentation-panel\s*> :not\(\.pane-collapse-cue, \[data-panel-action-contour\]\)\s*\{[^}]*display:\s*none !important;/
   );
   assert.match(
     css,
-    /\.canvas-split-container\.is-documentation-compact[\s\S]*?\.project-documentation-panel::before\s*\{[\s\S]*?content:\s*"D\\A E\\A S\\A C";/
+    /\.documentation-workspace::before\s*\{[^}]*content:\s*"Description";/
   );
   assert.match(
     css,
@@ -2116,6 +2614,12 @@ test("uses one intrinsic toolbar row and shared width measurement for workspace 
     /function getWorkspacePanelMinWidth\(index\)[\s\S]{0,900}?strip\.scrollWidth/
   );
   assert.doesNotMatch(source, /function getDocumentationMinWidth/);
+  for (const name of ["outliner", "project-ai", "documentation"]) {
+    assert.match(css, new RegExp(`--${name}-resizer-width:\\s*14px;`));
+  }
+  assert.equal(Array.from(css.matchAll(/--panel-action-right\s*:/g)).length, 1,
+    "the capsule must keep one position rule in expanded and compact states");
+  assert.match(css, /--panel-action-right:\s*calc\(-0\.5px - var\(--panel-action-width\)\);/);
 });
 
 test("workspace minima follow visible intrinsic controls and retain them while collapsed", () => {
@@ -2123,9 +2627,9 @@ test("workspace minima follow visible intrinsic controls and retain them while c
     <aside class="outliner"></aside>
     <div class="project-ai-layout"><section class="avr-session-panel"><form class="ui-panel-header"><button id="canvasControl"></button></form></section></div>
     <section class="editor-workspace avr-session-panel"><div class="ui-panel-header"><div id="targetControls"></div><div id="buildControls"></div><button id="hiddenControl" hidden></button></div></section>
-    <aside class="documentation-workspace avr-session-panel"><div class="ui-panel-header"><div id="guideLocale"></div><button id="guideEdit"></button></div></aside>
+    <aside class="documentation-workspace avr-session-panel"></aside>
   </div></body></html>`);
-  const widths = { canvasControl: 132, targetControls: 340, buildControls: 220, hiddenControl: 1000, guideLocale: 130, guideEdit: 88 };
+  const widths = { canvasControl: 132, targetControls: 340, buildControls: 220, hiddenControl: 1000 };
   for (const [id] of Object.entries(widths)) {
     document.getElementById(id).getBoundingClientRect = () => ({ width: widths[id] });
   }
@@ -2139,7 +2643,7 @@ test("workspace minima follow visible intrinsic controls and retain them while c
       : { display: el.hidden ? "none" : "flex", columnGap: "8px" } },
   });
   const minima = () => Array.from(hooks.getWorkspacePanelSpecs(), spec => spec.min);
-  assert.deepEqual(minima(), [180, 160, 596, 254]);
+  assert.deepEqual(minima(), [240, 160, 596, 240]);
   widths.buildControls = 300;
   assert.equal(minima()[2], 676);
   document.querySelector(".editor-workspace .ui-panel-header").hidden = true;
@@ -2148,188 +2652,573 @@ test("workspace minima follow visible intrinsic controls and retain them while c
   assert.equal(minima()[2], 676, "a hidden toolbar must retain its last expanded width");
 });
 
-const workspacePanelSpecs = [
-  { min: 180, compact: 62 },
-  { min: 238, compact: 62 },
-  { min: 500, compact: 62 },
-  { min: 267, compact: 62 },
-];
-
-test("every boundary can collapse and restore the panel on either side", () => {
-  const { resizeWorkspaceBoundary } = loadAvrFrontendFunctionHooks(["resizeWorkspaceBoundary"]);
-  const start = [305, 618, 839, 660];
-  for (const boundary of [0, 1, 2]) {
-    for (const index of [boundary, boundary + 1]) {
-      const sign = index === boundary ? -1 : 1;
-      const closed = Array.from(resizeWorkspaceBoundary(start, workspacePanelSpecs, boundary, sign * (start[index] - workspacePanelSpecs[index].min + 120)));
-      assert.equal(closed[index], 62, `boundary ${boundary} must close panel ${index}`);
-      for (const restoreBoundary of [index - 1, index].filter(value => value >= 0 && value < 3)) {
-        const restored = Array.from(resizeWorkspaceBoundary(closed, workspacePanelSpecs, restoreBoundary,
-          (restoreBoundary === index ? 1 : -1) * workspacePanelSpecs[index].min));
-        assert.ok(restored[index] >= workspacePanelSpecs[index].min, `boundary ${restoreBoundary} must reopen panel ${index}`);
-        assert.equal(restored.reduce((sum, width) => sum + width, 0), start.reduce((sum, width) => sum + width, 0));
-      }
-    }
-  }
-});
-
-test("boundary previews hold the toolbar minimum for 120px before collapse", () => {
-  const { resizeWorkspaceBoundary, getWorkspaceCollapsePreview } = loadAvrFrontendFunctionHooks([
-    "resizeWorkspaceBoundary", "getWorkspaceCollapsePreview",
-  ]);
-  const start = [305, 618, 839, 660];
-  for (const boundary of [0, 1, 2]) {
-    for (const index of [boundary, boundary + 1]) {
-      const direction = index === boundary ? -1 : 1;
-      const toMinimum = start[index] - workspacePanelSpecs[index].min;
-      assert.equal(getWorkspaceCollapsePreview(start, workspacePanelSpecs, boundary, direction * (toMinimum - 1)), null);
-      for (const overtravel of [0, 48, 96, 119]) {
-        const delta = direction * (toMinimum + overtravel);
-        const preview = getWorkspaceCollapsePreview(start, workspacePanelSpecs, boundary, delta);
-        assert.equal(preview.index, index);
-        assert.equal(preview.direction, direction);
-        assert.equal(resizeWorkspaceBoundary(start, workspacePanelSpecs, boundary, delta)[index], workspacePanelSpecs[index].min);
-      }
-      const delta = direction * (toMinimum + 120);
-      const collapsed = resizeWorkspaceBoundary(start, workspacePanelSpecs, boundary, delta);
-      assert.equal(collapsed[index], 62);
-      assert.equal(getWorkspaceCollapsePreview(start, workspacePanelSpecs, boundary, delta), null);
-      assert.equal(resizeWorkspaceBoundary(collapsed, workspacePanelSpecs, boundary, -direction * 1)[index], 62);
-      assert.ok(resizeWorkspaceBoundary(collapsed, workspacePanelSpecs, boundary, -direction * 48)[index] >= workspacePanelSpecs[index].min);
-    }
-  }
-});
-
-test("boundary drags conserve width and never collapse an unrelated pane", () => {
-  const { resizeWorkspaceBoundary, fitWorkspaceWidths } = loadAvrFrontendFunctionHooks(["resizeWorkspaceBoundary", "fitWorkspaceWidths"]);
-  for (const budget of [686, 1000, 1522, 2400]) {
-    for (const preferred of [[305, 318, 500, 360], [62, 62, 500, 62], [305, 700, 62, 360], [62, 62, 62, 62]]) {
-      const start = fitWorkspaceWidths(preferred, budget, workspacePanelSpecs);
-      for (const boundary of [0, 1, 2]) {
-        for (let delta = -budget; delta <= budget; delta += 31) {
-          const sizes = Array.from(resizeWorkspaceBoundary(start, workspacePanelSpecs, boundary, delta));
-          assert.equal(sizes.reduce((sum, size) => sum + size, 0), budget);
-          sizes.forEach((size, index) => {
-            assert.ok(size === 62 || size >= workspacePanelSpecs[index].min, `invalid ${sizes}`);
-            if (index !== boundary && index !== boundary + 1) {
-              assert.equal(size === 62, start[index] === 62, "a different pane must retain its open/closed state");
-            }
-          });
-        }
-      }
-    }
-  }
-});
-
-test("reopening a wide toolbar borrows from its adjacent expanded pane first", () => {
-  const { resizeWorkspaceBoundary } = loadAvrFrontendFunctionHooks(["resizeWorkspaceBoundary"]);
-  const specs = workspacePanelSpecs.map((spec, index) => ({ ...spec, min: index === 2 ? 700 : spec.min }));
-  const start = [62, 1115, 62, 62];
-  assert.deepEqual(Array.from(resizeWorkspaceBoundary(start, specs, 1, -47)), start);
-  assert.deepEqual(Array.from(resizeWorkspaceBoundary(start, specs, 1, -48)), [62, 477, 700, 62]);
-});
-
-test("resizes only the adjacent pair and stops at its minimum widths", () => {
-  const { resizeWorkspacePanels } = loadAvrFrontendFunctionHooks(["resizeWorkspacePanels"]);
-  const start = [305, 318, 539, 360];
-  const resize = (index, width) => Array.from(resizeWorkspacePanels(start, workspacePanelSpecs, index, width));
-  assert.deepEqual(resize(0, 285), [285, 338, 539, 360]);
-  assert.deepEqual(resize(0, 405), [385, 238, 539, 360]);
-  assert.deepEqual(resize(0, 455), [385, 238, 539, 360]);
-  assert.deepEqual(resize(1, 418), [305, 357, 500, 360]);
-  assert.deepEqual(resize(3, 460), [305, 318, 500, 399]);
-  assert.deepEqual(start, [305, 318, 539, 360], "drag snapshots must remain immutable");
-});
-
-test("all side columns snap without intermediate invalid widths and reopen", () => {
-  const { resizeWorkspacePanels } = loadAvrFrontendFunctionHooks(["resizeWorkspacePanels"]);
-  const start = [305, 318, 539, 360];
-  for (const index of [0, 1, 2, 3]) {
-    assert.equal(resizeWorkspacePanels(start, workspacePanelSpecs, index, 113)[index], workspacePanelSpecs[index].min);
-    const collapsed = resizeWorkspacePanels(start, workspacePanelSpecs, index, 112);
-    assert.equal(collapsed[index], 62);
-    const restored = resizeWorkspacePanels(collapsed, workspacePanelSpecs, index, workspacePanelSpecs[index].min);
-    assert.equal(restored[index], workspacePanelSpecs[index].min);
-  }
-});
-
-test("a collapsed editor does not prevent collapsing or restoring the neighboring guide", () => {
-  const { resizeWorkspacePanels } = loadAvrFrontendFunctionHooks(["resizeWorkspacePanels"]);
-  const start = [305, 700, 62, 360];
-  const collapsed = Array.from(resizeWorkspacePanels(start, workspacePanelSpecs, 3, 62));
-  assert.deepEqual(collapsed, [305, 998, 62, 62]);
-  assert.equal(collapsed.reduce((a, b) => a + b), start.reduce((a, b) => a + b));
-  // The shared fit used by the restore action can reopen the editor after both close.
-  assert.deepEqual(Array.from(resizeWorkspacePanels(collapsed, workspacePanelSpecs, 2, 500)), [305, 560, 500, 62]);
-  assert.deepEqual(Array.from(resizeWorkspacePanels(collapsed, workspacePanelSpecs, 3, 267)), [305, 793, 62, 267]);
-});
-
-test("workspace resizing conserves space and minima across viewport and drag extremes", () => {
-  const { resizeWorkspacePanels, fitWorkspaceWidths } = loadAvrFrontendFunctionHooks([
-    "resizeWorkspacePanels", "fitWorkspaceWidths",
-  ]);
-  const valid = (widths, budget) => {
-    assert.equal(widths.reduce((sum, width) => sum + width, 0), budget);
-    widths.forEach((width, i) => assert.ok(
-      Number.isFinite(width) && (width === workspacePanelSpecs[i].compact || width >= workspacePanelSpecs[i].min),
-      `panel ${i}: invalid ${width} in ${widths}`
-    ));
+function panelMotionFixture(notchWidth = 34) {
+  const { document } = parseHTML(`<html><body>
+  <template id="panelActionContour"><svg class="panel-action-contour" aria-hidden="true"><path class="panel-action-fill"></path><path class="panel-action-outline"></path></svg></template>
+  <div class="canvas-split-container">
+    <aside id="filesPanel" class="outliner"><div id="fileList"></div></aside>
+    <div class="project-ai-layout"><section id="specPanel" class="project-instruction-panel panel-action-host"><form class="panel-action-lobe ui-panel-header" data-toolbar-layout="vertical"><button id="reviewAction" type="button">Review specification</button></form></section></div>
+    <section id="editorWorkspace" class="editor-workspace panel-action-host"><div class="panel-action-lobe ui-panel-header" data-toolbar-layout="vertical"><button>Compile</button><button>Flash MCU</button></div><div id="editorContent"></div></section>
+    <aside id="guidePanel" class="documentation-workspace"></aside>
+  </div></body></html>`);
+  const container = document.querySelector(".canvas-split-container");
+  container.getBoundingClientRect = () => ({ width: 1802 });
+  const floors = { filesPanel: 240, specPanel: 240, editorWorkspace: 240, guidePanel: 240 };
+  const trailingSpaces = { filesPanel: 0, specPanel: 0, editorWorkspace: 0, guidePanel: 0 };
+  const dividerWidths = {
+    "--outliner-resizer-width": "14px", "--project-ai-resizer-width": "28px",
+    "--documentation-resizer-width": "28px",
   };
-  for (const budget of [686, 964, 1000, 1202, 1522, 2200]) {
-    for (const preferred of [[305, 318, 500, 360], [62, 62, 500, 62], [1600, 900, 500, 1500], [305, 700, 62, 360], [62, 62, 62, 62]]) {
-      const start = fitWorkspaceWidths(preferred, budget, workspacePanelSpecs);
-      valid(start, budget);
-      for (const index of [0, 1, 2, 3]) {
-        let previous = 0;
-        for (let requested = -100; requested <= budget + 400; requested += 7) {
-          const widths = resizeWorkspacePanels(start, workspacePanelSpecs, index, requested);
-          valid(widths, budget);
-          for (let i = 0; i < widths.length; i++) {
-            const neighbor = index === 0 || index === 2 ? 1 : 2;
-            if (i !== index && i !== neighbor && start[neighbor] !== workspacePanelSpecs[neighbor].compact) {
-              assert.equal(widths[i], start[i], "a divider must not resize unrelated panels");
-            }
-          }
-          assert.ok(widths[index] >= previous, "one-way dragging must never reverse the resized panel");
-          previous = widths[index];
-        }
+  const getComputedStyle = element => ({ getPropertyValue(property) {
+    if (element === container) {
+      if (property === "--panel-action-width") return `${notchWidth}px`;
+      if (property === "--project-ai-resizer-width" && container.classList.contains("is-project-ai-compact")) return "14px";
+      if (property === "--documentation-resizer-width" && container.classList.contains("is-editor-compact")) return "14px";
+      return dividerWidths[property] || "";
+    }
+    if (property === "--panel-action-min-width") return `${floors[element.id]}px`;
+    if (property === "--panel-action-trailing-space") return `${trailingSpaces[element.id]}px`;
+    return "";
+  } });
+  return { document, container, getComputedStyle, trailingSpaces, dividerWidths };
+}
+
+test("each notebook page gets one shared contour without changing its action buttons", () => {
+  const fixture = panelMotionFixture();
+  const actions = [...fixture.container.querySelectorAll(".panel-action-lobe")];
+  const labels = actions.map(group => group.textContent);
+  const hooks = loadAvrFrontendFunctionHooks(["bindPanelActionExpansion"], { document: fixture.document });
+  hooks.bindPanelActionExpansion();
+  hooks.bindPanelActionExpansion();
+  assert.equal(actions.length, 2);
+  assert.equal(fixture.container.querySelectorAll("[data-panel-action-contour]").length, 3);
+  for (const [index, group] of actions.entries()) {
+    assert.equal(group.querySelector("[data-panel-action-contour]"), null, "the page owns its complete contour");
+    const contour = group.parentElement.querySelector(":scope > [data-panel-action-contour]");
+    assert.equal(contour.localName, "svg");
+    assert.equal(contour.getAttribute("aria-hidden"), "true");
+    assert.equal(contour.querySelectorAll("path").length, 2);
+    assert.equal(group.textContent, labels[index]);
+  }
+  assert.ok(fixture.document.getElementById("guidePanel").querySelector(":scope > [data-panel-action-contour]"));
+  assert.equal(fixture.document.getElementById("panelActionContour").content.firstElementChild.hasAttribute("data-panel-action-contour"), false);
+});
+
+test("all panes share the same body minimum independent of their page contours", () => {
+  const fixture = panelMotionFixture();
+  for (const button of fixture.document.querySelectorAll("button")) {
+    button.getBoundingClientRect = () => ({ width: 1000, height: 44 });
+  }
+  const hooks = loadAvrFrontendFunctionHooks(["getWorkspacePanelSpecs"], {
+    document: fixture.document, window: { getComputedStyle: fixture.getComputedStyle },
+  });
+  const minima = () => Array.from(hooks.getWorkspacePanelSpecs(), spec => spec.min);
+  assert.deepEqual(minima(), [240, 240, 240, 240]);
+  const hosts = ["filesPanel", "specPanel", "editorWorkspace", "guidePanel"];
+  assert.deepEqual(minima().map((width, index) => width - fixture.trailingSpaces[hosts[index]]),
+    [240, 240, 240, 240], "each body must reach the same collapse threshold");
+  fixture.container.classList.add("is-editor-compact", "is-documentation-compact");
+  assert.deepEqual(minima(), [240, 240, 240, 240], "collapsed actions must retain their expanded floors");
+});
+
+test("compact bodies account for the incoming notch without widening the canvas", () => {
+  for (const [notch, expected] of [[34, [62, 28, 62, 62]], [38, [62, 24, 62, 62]]]) {
+    const fixture = panelMotionFixture(notch);
+    const hooks = loadAvrFrontendFunctionHooks(["getWorkspacePanelSpecs"], {
+      document: fixture.document, window: { getComputedStyle: fixture.getComputedStyle },
+    });
+    assert.deepEqual(Array.from(hooks.getWorkspacePanelSpecs(), spec => spec.compact), expected);
+  }
+});
+
+test("workspace width follows the configured dividers and preserves the minimum PC layout", () => {
+  const fixture = panelMotionFixture();
+  let width = 1200;
+  fixture.container.getBoundingClientRect = () => ({ width });
+  const hooks = loadAvrFrontendFunctionHooks(["getWorkspaceContentWidth"], {
+    document: fixture.document, window: { getComputedStyle: fixture.getComputedStyle },
+  });
+  assert.equal(hooks.getWorkspaceContentWidth(), 1130);
+  Object.assign(fixture.dividerWidths, {
+    "--outliner-resizer-width": "22px", "--project-ai-resizer-width": "40px",
+    "--documentation-resizer-width": "18px",
+  });
+  assert.equal(hooks.getWorkspaceContentWidth(), 1120,
+    "changing shared divider widths must change the available pane budget");
+  fixture.dividerWidths["--documentation-resizer-width"] = "";
+  assert.equal(hooks.getWorkspaceContentWidth(), 1158, "unavailable CSS metrics use three shared 14px desktop dividers");
+  width = 300;
+  assert.equal(hooks.getWorkspaceContentWidth(), 426,
+    "a very narrow PC window must retain one expanded body and three compact rails");
+});
+
+test("collapsing and reopening either action pane accounts for its divider on both boundaries", () => {
+  const fixture = panelMotionFixture();
+  const hooks = loadAvrFrontendFunctionHooks([
+    "renderWorkspaceWidths", "getWorkspaceWidths", "getWorkspacePanelSpecs", "getWorkspaceContentWidth", "resizeWorkspaceBoundary",
+    "prepare() { refreshWorkspaceEditors = () => {}; }",
+  ], { document: fixture.document, window: { getComputedStyle: fixture.getComputedStyle } });
+  hooks.prepare();
+  const initial = [400, 400, 400, 532];
+  for (const index of [1, 2]) {
+    for (const boundary of [index - 1, index]) {
+      assert.equal(hooks.renderWorkspaceWidths(initial, { animate: false }), true);
+      const specs = hooks.getWorkspacePanelSpecs();
+      const sign = index === boundary ? -1 : 1;
+      const candidate = Array.from(hooks.resizeWorkspaceBoundary(initial, specs, boundary,
+        sign * (initial[index] - specs[index].min + 120)));
+      assert.equal(hooks.renderWorkspaceWidths(candidate, { animate: false }), true);
+      const closed = Array.from(hooks.getWorkspaceWidths());
+      assert.equal(closed[index], specs[index].compact);
+      assert.equal(closed.reduce((sum, width) => sum + width, 0), 1746,
+        "closing an action group releases its 14px divider reservation");
+      assert.equal(closed.reduce((sum, width) => sum + width, 0), hooks.getWorkspaceContentWidth());
+      const growing = index === boundary ? boundary + 1 : boundary;
+      assert.equal(closed[growing], candidate[growing] + 14,
+        "released divider space belongs to the pane already growing in the drag");
+      const reopen = hooks.resizeWorkspaceBoundary(closed, specs, boundary, -sign * 48);
+      assert.equal(hooks.renderWorkspaceWidths(reopen, { animate: false }), true);
+      const opened = Array.from(hooks.getWorkspaceWidths());
+      assert.ok(opened[index] >= specs[index].min);
+      assert.equal(opened.reduce((sum, width) => sum + width, 0), 1732);
+      assert.equal(opened.reduce((sum, width) => sum + width, 0), hooks.getWorkspaceContentWidth());
+      opened.forEach((width, panel) => assert.ok(width >= specs[panel].min));
+    }
+  }
+});
+
+test("divider changes keep the code rail at 62px and persist a completed pointer collapse", () => {
+  const fixture = panelMotionFixture(), storage = new Map();
+  let callbacks;
+  const hooks = loadAvrFrontendFunctionHooks([
+    "renderWorkspaceWidths", "getWorkspaceWidths", "getWorkspaceContentWidth", "bindWorkspaceColumnResizer",
+    "prepare(capture) { refreshWorkspaceEditors = () => {}; bindSplitResizer = (_handle, handlers) => capture(handlers); }",
+  ], { document: fixture.document, window: {
+    getComputedStyle: fixture.getComputedStyle,
+    localStorage: { setItem: (key, value) => storage.set(key, value) },
+  } });
+  hooks.prepare(handlers => { callbacks = handlers; });
+  assert.equal(hooks.renderWorkspaceWidths([400, 400, 62, 884], { animate: false }), true);
+  hooks.bindWorkspaceColumnResizer("fileListResizer", 0);
+  const session = callbacks.start();
+  callbacks.move(280, session);
+  assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), [786, 28, 62, 884]);
+  assert.equal(session.widths.reduce((sum, width) => sum + width, 0), hooks.getWorkspaceContentWidth(),
+    "the next pointer sample must start from the reconciled budget");
+  callbacks.finish(session);
+  assert.equal(hooks.getWorkspaceWidths()[1], 28,
+    "releasing a divider must persist the collapse rather than restore old preferences");
+  assert.equal(hooks.getWorkspaceWidths()[2], 62);
+  assert.equal(storage.get("ud_avr_ai_column_width_v1"), "28");
+  assert.equal(storage.get("ud_avr_programming_editor_collapsed_v1"), "true");
+});
+
+test("a reopen that cannot also reserve its divider leaves every panel unchanged", () => {
+  for (const index of [1, 2]) {
+    const fixture = panelMotionFixture();
+    fixture.container.getBoundingClientRect = () => ({ width: 1016 });
+    const hooks = loadAvrFrontendFunctionHooks([
+      "renderWorkspaceWidths", "getWorkspaceWidths", "getWorkspacePanelSpecs", "getWorkspaceContentWidth", "resizeWorkspaceBoundary",
+      "prepare() { refreshWorkspaceEditors = () => {}; }",
+    ], { document: fixture.document, window: { getComputedStyle: fixture.getComputedStyle } });
+    hooks.prepare();
+    const start = index === 1 ? [452, 28, 240, 240] : [418, 240, 62, 240];
+    assert.equal(hooks.renderWorkspaceWidths(start, { animate: false }), true);
+    const candidate = hooks.resizeWorkspaceBoundary(start, hooks.getWorkspacePanelSpecs(), 1, index === 1 ? 48 : -48);
+    assert.equal(candidate[index], 240, "the body alone would fit before accounting for its protrusion");
+    assert.equal(hooks.renderWorkspaceWidths(candidate, { animate: false }), false);
+    assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), start);
+    assert.equal(fixture.container.classList.contains(index === 1 ? "is-project-ai-compact" : "is-editor-compact"), true);
+    assert.equal(start.reduce((sum, width) => sum + width, 0), hooks.getWorkspaceContentWidth());
+  }
+});
+
+test("boundary reopen reserves its divider by closing only its adjacent pane when necessary", () => {
+  for (const index of [1, 2]) {
+    const fixture = panelMotionFixture();
+    fixture.container.getBoundingClientRect = () => ({ width: 1016 });
+    const hooks = loadAvrFrontendFunctionHooks([
+      "renderWorkspaceWidths", "renderWorkspaceBoundary", "getWorkspaceWidths", "getWorkspacePanelSpecs", "getWorkspaceContentWidth",
+      "prepare() { refreshWorkspaceEditors = () => {}; }",
+    ], { document: fixture.document, window: { getComputedStyle: fixture.getComputedStyle } });
+    hooks.prepare();
+    const start = index === 1 ? [452, 28, 240, 240] : [418, 240, 62, 240];
+    assert.equal(hooks.renderWorkspaceWidths(start, { animate: false }), true);
+    assert.equal(hooks.renderWorkspaceBoundary(start, hooks.getWorkspacePanelSpecs(), 1,
+      index === 1 ? 48 : -48, { animate: false }), true);
+    const sizes = Array.from(hooks.getWorkspaceWidths());
+    assert.deepEqual(sizes, index === 1 ? [418, 240, 62, 240] : [418, 28, 274, 240]);
+    assert.equal(sizes.reduce((sum, width) => sum + width, 0), hooks.getWorkspaceContentWidth());
+  }
+});
+
+test("PC viewport fitting preserves an explicitly closed code rail across divider reservations", () => {
+  const fixture = panelMotionFixture();
+  let width = 1802;
+  fixture.container.getBoundingClientRect = () => ({ width });
+  const hooks = loadAvrFrontendFunctionHooks([
+    "renderWorkspaceWidths", "fitWorkspaceToViewport", "getWorkspaceWidths", "getWorkspacePanelSpecs", "getWorkspaceContentWidth",
+    "prepare() { refreshWorkspaceEditors = () => {}; }",
+  ], { document: fixture.document, window: {
+    getComputedStyle: fixture.getComputedStyle, localStorage: { setItem() {} },
+  } });
+  hooks.prepare();
+  assert.equal(hooks.renderWorkspaceWidths([400, 400, 62, 884], { animate: false, persist: true }), true);
+  for (width of [1100, 960, 1500, 520, 1800]) {
+    hooks.fitWorkspaceToViewport();
+    const sizes = Array.from(hooks.getWorkspaceWidths()), specs = hooks.getWorkspacePanelSpecs();
+    assert.equal(sizes[2], 62);
+    assert.equal(sizes.reduce((sum, size) => sum + size, 0), hooks.getWorkspaceContentWidth());
+    sizes.forEach((size, index) => assert.ok(size === specs[index].compact || size >= specs[index].min));
+  }
+});
+
+test("restoring saved rails keeps them closed while another pane can absorb spare width", () => {
+  for (const saved of [
+    // Legacy canvas rails saved as 62px must migrate to the current 28px body.
+    [400, 62, true, 360], [62, 400, true, 62], [400, 62, true, 62],
+    [62, 62, true, 360], [62, 62, false, 62],
+    [400, 28, true, 360],
+  ]) {
+    const fixture = panelMotionFixture();
+    const storage = new Map([
+      ["ud_avr_programming_outliner_width_v1", String(saved[0])],
+      ["ud_avr_ai_column_width_v1", String(saved[1])],
+      ["ud_avr_programming_editor_collapsed_v1", String(saved[2])],
+      ["ud_avr_programming_documentation_width_v1", String(saved[3])],
+    ]);
+    const hooks = loadAvrFrontendFunctionHooks([
+      "restoreWorkspaceLayout", "getWorkspaceWidths", "getWorkspacePanelSpecs", "getWorkspaceContentWidth",
+      "prepare() { refreshWorkspaceEditors = () => {}; }",
+    ], { document: fixture.document, window: {
+      getComputedStyle: fixture.getComputedStyle,
+      localStorage: { getItem: key => storage.get(key) ?? null },
+    } });
+    hooks.prepare();
+    hooks.restoreWorkspaceLayout();
+    const sizes = Array.from(hooks.getWorkspaceWidths()), specs = hooks.getWorkspacePanelSpecs();
+    for (const index of [0, 1, 2, 3]) {
+      const closed = index === 2 ? saved[index] : saved[index] === 62 || index === 1 && saved[index] === 28;
+      assert.equal(sizes[index] === specs[index].compact, closed, `saved rail ${index} changed state in ${saved}`);
+      assert.ok(sizes[index] === specs[index].compact || sizes[index] >= specs[index].min);
+    }
+    assert.equal(sizes.reduce((sum, size) => sum + size, 0), hooks.getWorkspaceContentWidth());
+  }
+});
+
+test("collapse and reopen animate their geometry once while reduced motion remains immediate", () => {
+  const fixture = panelMotionFixture(), timers = new Map();
+  let nextTimer = 0, reduced = false;
+  const hooks = loadAvrFrontendFunctionHooks([
+    "renderWorkspaceWidths", "getWorkspaceWidths",
+    "prepare() { refreshWorkspaceEditors = () => {}; }",
+  ], { document: fixture.document, window: {
+    getComputedStyle: fixture.getComputedStyle, matchMedia: () => ({ matches: reduced }),
+    setTimeout(callback, delay) { assert.equal(delay, 320); timers.set(++nextTimer, callback); return nextTimer; },
+    clearTimeout(id) { timers.delete(id); },
+  } });
+  hooks.prepare();
+  const start = Array.from(hooks.getWorkspaceWidths());
+  const collapsed = [...start]; collapsed[1] += collapsed[0] - 62; collapsed[0] = 62;
+  hooks.renderWorkspaceWidths(collapsed);
+  assert.ok(fixture.container.classList.contains("is-workspace-transitioning"));
+  assert.equal(timers.size, 1);
+  hooks.renderWorkspaceWidths(collapsed);
+  assert.equal(timers.size, 1, "an unchanged pointer sample must not restart its snap animation");
+  assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), collapsed);
+  [...timers.values()][0]();
+  assert.equal(fixture.container.classList.contains("is-workspace-transitioning"), false);
+  hooks.renderWorkspaceWidths(start);
+  assert.ok(fixture.container.classList.contains("is-workspace-transitioning"));
+  reduced = true;
+  hooks.renderWorkspaceWidths(collapsed);
+  assert.equal(fixture.container.classList.contains("is-workspace-transitioning"), false);
+  assert.equal(timers.size, 0);
+  assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), collapsed);
+});
+
+test("held pointer movement lets every pane finish one fixed snap in either direction", () => {
+  for (const index of [0, 1, 2, 3]) {
+    for (const opening of [false, true]) {
+      const fixture = panelMotionFixture(), timers = new Map();
+      let callbacks, nextTimer = 0;
+      const hooks = loadAvrFrontendFunctionHooks([
+        "renderWorkspaceWidths", "getWorkspaceWidths", "getWorkspacePanelSpecs", "bindWorkspaceColumnResizer",
+        "prepare(capture) { refreshWorkspaceEditors = () => {}; bindSplitResizer = (_handle, handlers) => capture(handlers); }",
+      ], { document: fixture.document, window: {
+        getComputedStyle: fixture.getComputedStyle,
+        setTimeout(callback, delay) {
+          assert.equal(delay, 320);
+          timers.set(++nextTimer, callback);
+          return nextTimer;
+        },
+        clearTimeout(id) { timers.delete(id); },
+      } });
+      hooks.prepare(handlers => { callbacks = handlers; });
+      hooks.renderWorkspaceWidths([400, 400, 400, 532], { animate: false });
+      const boundary = index < 2 ? index : index - 1;
+      const growDirection = index === boundary ? 1 : -1;
+      if (opening) {
+        const closed = Array.from(hooks.getWorkspaceWidths());
+        const neighbor = index === boundary ? index + 1 : index - 1;
+        const compact = hooks.getWorkspacePanelSpecs()[index].compact;
+        closed[neighbor] += closed[index] - compact;
+        closed[index] = compact;
+        assert.equal(hooks.renderWorkspaceWidths(closed, { animate: false }), true);
+      }
+      hooks.bindWorkspaceColumnResizer("fileListResizer", boundary);
+      const session = callbacks.start();
+      const direction = opening ? growDirection : -growDirection;
+      const snapDelta = direction * (opening ? 48 : session.widths[index] - session.specs[index].min + 120);
+      callbacks.move(snapDelta, session);
+      const target = Array.from(hooks.getWorkspaceWidths());
+      assert.equal(target[index] === session.specs[index].compact, !opening, `pane ${index} did not start its ${opening ? "opening" : "closing"} snap`);
+      assert.equal(timers.size, 1);
+      const timerId = [...timers.keys()][0];
+      assert.ok(fixture.container.classList.contains("is-workspace-transitioning"));
+
+      let latestDelta = snapDelta;
+      for (const distance of [0.25, 0.5, 2, 10, 80, 160, 200]) {
+        latestDelta = snapDelta + direction * distance;
+        callbacks.move(latestDelta, session);
+        assert.ok(fixture.container.classList.contains("is-workspace-transitioning"),
+          `continued dragging must not cancel pane ${index}'s snap`);
+        assert.deepEqual([...timers.keys()], [timerId], "held samples must not restart the snap timer");
+        assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), target,
+          "held samples must leave the animation's destination unchanged");
+        assert.deepEqual(Array.from(session.widths), target);
+        assert.equal(session.offset, latestDelta, "consume pointer travel during the snap instead of accumulating a catch-up jump");
+      }
+
+      timers.get(timerId)();
+      assert.equal(fixture.container.classList.contains("is-workspace-transitioning"), false);
+      assert.equal(timers.size, 0);
+      assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), target);
+      if (opening) {
+        callbacks.move(latestDelta + growDirection * 24, session);
+        assert.equal(hooks.getWorkspaceWidths()[index], target[index] + 24,
+          "resizing after a snap must use only the movement since the latest held sample");
+        assert.equal(timers.size, 0, "ordinary resizing must not start another snap");
+      } else {
+        callbacks.move(latestDelta + growDirection * 47, session);
+        assert.equal(hooks.getWorkspaceWidths()[index], session.specs[index].compact,
+          "a held collapse must not accumulate travel toward a subsequent reopen");
+        assert.equal(timers.size, 0);
+        callbacks.move(latestDelta + growDirection * 48, session);
+        assert.ok(hooks.getWorkspaceWidths()[index] >= session.specs[index].min);
+        assert.equal(timers.size, 1, "reversing by the reopen threshold starts one new fixed snap");
+        assert.equal(nextTimer, 2);
       }
     }
   }
 });
+
+test("workspace observers do not refit a panel midway through its collapse transition", () => {
+  const fixture = panelMotionFixture(), timers = new Map(), frames = [];
+  let observeResize, fits = 0;
+  class Observer {
+    constructor(callback) { observeResize = callback; }
+    observe() {}
+  }
+  const hooks = loadAvrFrontendFunctionHooks([
+    "bindWorkspaceResizeObserver", "renderWorkspaceWidths", "getWorkspaceWidths",
+    "prepare(callback) { refreshWorkspaceEditors = () => {}; fitWorkspaceToViewport = callback; }",
+  ], { document: fixture.document, ResizeObserver: Observer, window: {
+    getComputedStyle: fixture.getComputedStyle,
+    setTimeout(callback) { timers.set(1, callback); return 1; },
+    clearTimeout(id) { timers.delete(id); },
+    requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
+  } });
+  hooks.prepare(() => fits++);
+  hooks.bindWorkspaceResizeObserver();
+  const widths = Array.from(hooks.getWorkspaceWidths());
+  widths[1] += widths[0] - 62; widths[0] = 62;
+  hooks.renderWorkspaceWidths(widths);
+  observeResize();
+  assert.equal(frames.length, 0);
+  assert.equal(fits, 0);
+  [...timers.values()][0]();
+  observeResize();
+  assert.equal(frames.length, 1);
+  frames[0]();
+  assert.equal(fits, 1);
+});
+
+test("an empty project list has one empty state and no extra creation step", () => {
+  const fixture = panelMotionFixture();
+  const hooks = loadAvrFrontendFunctionHooks([
+    "renderOutliner", "prepare() { updateCompilePanelState = () => {}; }",
+  ], { document: fixture.document });
+  hooks.prepare();
+  hooks.renderOutliner();
+  hooks.renderOutliner();
+  assert.equal(fixture.document.querySelectorAll(".new-item").length, 0);
+  assert.equal(fixture.document.querySelectorAll("#fileList .ui-empty-state").length, 1);
+  assert.equal(fixture.document.querySelector("#fileList .ui-empty-state").textContent, "No projects yet");
+  assert.equal(fixture.document.querySelector("#projectListActions"), null);
+});
+
+test("clicking an action in a collapsed panel expands it and still invokes the existing action", () => {
+  const fixture = panelMotionFixture();
+  const hooks = loadAvrFrontendFunctionHooks([
+    "bindPanelActionExpansion", "renderWorkspaceWidths", "getWorkspaceWidths",
+    "prepare() { refreshWorkspaceEditors = () => {}; }",
+  ], { document: fixture.document, window: {
+    getComputedStyle: fixture.getComputedStyle,
+    localStorage: { setItem() {} },
+  } });
+  hooks.prepare();
+  const widths = Array.from(hooks.getWorkspaceWidths());
+  widths[0] += widths[1] - 28; widths[1] = 28;
+  hooks.renderWorkspaceWidths(widths);
+  hooks.bindPanelActionExpansion();
+  let actions = 0;
+  fixture.document.getElementById("reviewAction").addEventListener("click", () => actions++);
+  fixture.document.getElementById("reviewAction").click();
+  assert.equal(actions, 1);
+  assert.equal(hooks.getWorkspaceWidths()[1], 240);
+});
+
+test("device-panel snap animates its three viewports and inherits target visibility from the hardware frame", () => {
+  const { document } = parseHTML(`<html><body><section id="avrDeviceSection">
+    <div class="avr-overview-row">
+      <div class="avr-overview-viewport avr-device-panel-viewport" id="avrDevicePanelViewport"><section id="avrTargetPanelViewport"></section></div>
+      <div class="avr-overview-viewport" id="avrActionsPanelViewport"></div>
+      <div class="avr-overview-viewport avr-account-panel-viewport" id="avrAccountPanelViewport"></div>
+    </div>
+    <div id="devicePanelToggle"></div>
+  </section></body></html>`);
+  const timers = new Map(), storage = new Map(), animations = [];
+  let cancelledAnimations = 0;
+  const panels = [...document.querySelectorAll(".avr-overview-viewport")];
+  for (const panel of panels) panel.animate = (frames, options) => {
+    animations.push({ id: panel.id, frames, options });
+    return { pending: false, playState: "finished", cancel() { cancelledAnimations++; } };
+  };
+  let nextTimer = 0, reduced = false;
+  const hooks = loadAvrFrontendFunctionHooks([
+    "setDevicePanelState", "prepare() { refreshWorkspaceAfterDevicePanelResize = () => {}; }",
+  ], { document, window: {
+    matchMedia: () => ({ matches: reduced }),
+    localStorage: { setItem: (key, value) => storage.set(key, value) },
+    setTimeout(callback, delay) {
+      assert.equal(delay, 320);
+      const id = ++nextTimer;
+      timers.set(id, () => { timers.delete(id); callback(); });
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  } });
+  hooks.prepare();
+  const section = document.getElementById("avrDeviceSection");
+  hooks.setDevicePanelState("compact", { persist: false });
+  assert.ok(section.classList.contains("is-device-panel-transitioning"));
+  assert.deepEqual(animations.map(animation => animation.id), panels.map(panel => panel.id));
+  assert.ok(animations.every(animation => animation.options.duration === 320 && animation.frames.at(-1).height === "54px"));
+  hooks.setDevicePanelState("compact", { persist: true, animate: false });
+  assert.ok(section.classList.contains("is-device-panel-transitioning"));
+  assert.equal(timers.size, 1);
+  assert.equal(storage.get("ud_avr_programming_device_panel_state_v2"), "compact");
+  [...timers.values()][0]();
+  assert.equal(section.classList.contains("is-device-panel-transitioning"), false);
+  assert.equal(cancelledAnimations, panels.length);
+  reduced = true;
+  hooks.setDevicePanelState("expanded");
+  assert.equal(section.classList.contains("is-device-panel-transitioning"), false);
+  assert.equal(timers.size, 0);
+  const targets = document.getElementById("avrTargetPanelViewport");
+  hooks.setDevicePanelState("collapsed", { animate: false });
+  assert.ok(panels.every(panel => panel.hasAttribute("inert") && panel.getAttribute("aria-hidden") === "true"));
+  assert.equal(targets.closest("[inert]"), panels[0], "target controls inherit the hardware viewport's inert state");
+  assert.equal(targets.hasAttribute("inert"), false, "the target group must not own a second visibility state");
+  hooks.setDevicePanelState("expanded", { animate: false });
+  assert.ok(panels.every(panel => !panel.hasAttribute("inert") && panel.getAttribute("aria-hidden") === "false"));
+  assert.equal(targets.closest("[inert]"), null);
+  assert.equal(animations.length, panels.length, "reduced motion and immediate visibility changes must not start more animations");
+});
+
 
 test("shared pointer handling ignores other pointers and completes once on capture loss", () => {
-  const listeners = new Map(), classes = new Set(), bodyClasses = new Set(), moves = [];
-  const classList = set => ({ add: value => set.add(value), remove: value => set.delete(value) });
-  let captured = null, finishes = 0;
-  const handle = {
-    classList: classList(classes),
-    addEventListener: (name, callback) => listeners.set(name, callback),
-    focus() {},
-    setPointerCapture: id => { captured = id; },
-    hasPointerCapture: id => captured === id,
-    releasePointerCapture: () => { captured = null; },
-    removeAttribute() {},
-  };
-  const document = { addEventListener() {}, body: { classList: classList(bodyClasses) } };
-  const { bindSplitResizer } = loadAvrFrontendFunctionHooks(["bindSplitResizer"], { document });
+  const { document, window, handle, pointer } = resizeEnvironment();
+  const moves = [];
+  let finishes = 0;
+  const { bindSplitResizer } = loadAvrFrontendFunctionHooks(["bindSplitResizer"], { document, window });
   bindSplitResizer(handle, {
     axis: "x", start: () => 300, move: (delta, width) => moves.push(width + delta),
     finish: () => finishes++,
   });
-  const event = (pointerId, clientX) => ({ pointerId, clientX, button: 0, preventDefault() {} });
-  listeners.get("pointerdown")(event(1, 100));
-  listeners.get("pointermove")(event(2, 150));
-  listeners.get("pointerup")(event(2, 150));
+  handle.emit("pointerdown", pointer(1, 100));
+  document.emit("pointermove", pointer(2, 150));
+  document.emit("pointerup", pointer(2, 150));
   assert.equal(finishes, 0);
-  listeners.get("pointermove")(event(1, 140));
+  document.emit("pointermove", pointer(1, 140));
   assert.deepEqual(moves, [340]);
-  assert.ok(bodyClasses.has("is-column-resizing"));
-  listeners.get("lostpointercapture")(event(1, 140));
-  listeners.get("pointerup")(event(1, 140));
+  assert.ok(document.body.classes.has("is-column-resizing"));
+  handle.emit("lostpointercapture", pointer(1, 140));
+  document.emit("pointerup", pointer(1, 140));
   assert.equal(finishes, 1);
-  assert.equal(classes.size, 0);
-  assert.equal(bodyClasses.size, 0);
+  assert.equal(handle.classes.size, 0);
+  assert.equal(document.body.classes.size, 0);
+});
+
+test("chat boundary delegates mouse, keyboard and cancellation to the shared panel input", () => {
+  const { document, window, handle, pointer } = resizeEnvironment();
+  document.getElementById = id => id === "fileListResizer" ? handle : null;
+  const changes = [], completions = [];
+  const hooks = loadAvrFrontendFunctionHooks([
+    "bindFileListResizer",
+    `prepare(changed, completed) {
+      getWorkspaceWidths = () => [400, 400, 400, 532];
+      getWorkspacePanelSpecs = () => Array.from({ length: 4 }, () => ({ min: 240, compact: 62 }));
+      getCanvasSplitContainer = () => ({ getBoundingClientRect: () => ({ width: 1802 }) });
+      renderWorkspaceBoundary = (widths, specs, index, delta) => changed(index, delta);
+      persistWorkspaceLayout = completed;
+    }`,
+  ], { document, window });
+  hooks.prepare((index, delta) => changes.push([index, delta]), () => completions.push(true));
+  hooks.bindFileListResizer();
+  handle.setPointerCapture = () => { throw new Error("Capture unavailable"); };
+  handle.emit("pointerdown", pointer(1, 405, { isPrimary: false }));
+  assert.equal(handle.focusCount, 0);
+  handle.emit("pointerdown", pointer(1, 405));
+  assert.deepEqual(changes, []);
+  assert.equal(handle.focusCount, 1);
+  document.emit("pointermove", pointer(1, 435));
+  window.emit("resize");
+  document.emit("pointerup", pointer(1, 500));
+  assert.deepEqual(changes, [[0, 30]]);
+  assert.equal(completions.length, 1);
+  assert.equal(document.body.classes.size, 0);
+  assert.equal(handle.emit("keydown", { key: "Home" }).defaultPrevented, true);
+  assert.equal(handle.emit("keydown", { key: "End" }).defaultPrevented, true);
+  handle.emit("keydown", { key: "ArrowRight", shiftKey: true });
+  assert.deepEqual(changes.slice(1), [[0, -280], [0, 280], [0, 48]]);
+});
+
+test("live Markdown preserves literal source and clears old decorations when its shared runtime is unavailable", () => {
+  const { document } = parseHTML('<html><body></body></html>');
+  const runtime = loadVendoredMarkdownRuntime(document);
+  const hooks = loadAvrFrontendFunctionHooks([
+    "registerMarkdownLiveEditor", "renderMarkdownLivePreviewState",
+    "setRuntime(runtime) { window.UartDebugMarkdown = runtime; }",
+  ], { document, window: { UartDebugMarkdown: runtime, requestAnimationFrame: () => 1 }, CodeMirror: { registerHelper() {}, Pos: (line, ch) => ({ line, ch }) } });
+  const markdown = '## Clock\n\n<script>alert("unsafe")</script>\n\n**literal**';
+  const editor = createMarkdownCodeMirrorStub(markdown, document);
+  let headings;
+  const state = hooks.registerMarkdownLiveEditor("fallback-test", editor, { onHeadings: value => { headings = value; } });
+  hooks.renderMarkdownLivePreviewState(state);
+  assert.ok(state.marks.length > 0);
+  assert.equal(headings.size, 1);
+  const previousMarks = [...state.marks];
+  hooks.setRuntime(undefined);
+  hooks.renderMarkdownLivePreviewState(state);
+  assert.equal(editor.getValue(), markdown);
+  assert.ok(previousMarks.every(mark => mark.cleared));
+  assert.equal(state.marks.length, 0);
+  assert.equal(state.widgets.length, 0);
+  assert.equal(state.renderCache, null);
+  assert.equal(headings.size, 0);
+  assert.equal(document.querySelector("script"), null);
 });
 
 test("uses one CommonMark GFM runtime across every Markdown surface", () => {
@@ -2353,67 +3242,21 @@ test("uses one CommonMark GFM runtime across every Markdown surface", () => {
   assert.match(sw, /\/vendor\/uartdebug-markdown\.js/);
   assert.match(
     html,
-    /id="documentationEditToggle"[\s\S]*?aria-pressed="false"[\s\S]*?>\s*Edit\s*<\/button>/
-  );
-  assert.match(
-    html,
-    /id="projectDocumentationEditor"[\s\S]*?aria-readonly="true"[\s\S]*?readonly/
-  );
-  assert.match(
-    html,
     /project-documentation-scroll project-documentation-live-editor markdown-live-editor[\s\S]*?id="projectDocumentationScroll"[\s\S]*?id="projectDocumentationEditor"/
   );
   assert.match(html, /editor-surface markdown-live-editor/);
-  assert.match(source, /window\.UartDebugMarkdown\?\.analyze/);
-  assert.match(source, /markdownRuntime\?\.renderInto/);
+  assert.match(source, /markdownRuntime\.renderInto/);
   assert.match(source, /markdownRuntime\?\.analyze/);
   assert.match(source, /registerMarkdownLiveEditor\("instruction"/);
   assert.match(source, /registerMarkdownLiveEditor\("documentation"/);
   assert.match(source, /registerMarkdownLiveEditor\("editor"/);
   assert.match(
     source,
-    /function bindDocumentationWorkspace\(\)[\s\S]*?CodeMirror\.fromTextArea\(editorElement,[\s\S]*?readOnly:\s*true,/
+    /function bindDocumentationWorkspace\(\)[\s\S]*?createMarkdownDocumentEditor\(editorElement,[\s\S]*?readOnly:\s*"nocursor",/
   );
-  assert.match(
-    source,
-    /function setDocumentationEditMode\(editing\)[\s\S]*?documentationEditMode\s*=\s*nextMode;[\s\S]*?refreshDocumentationPane\(\{ preserveScroll: true \}\)/
-  );
-  assert.match(
-    source,
-    /if \(documentationEditMode\) \{[\s\S]*?content\.hidden = true;[\s\S]*?wrapper\?\.removeAttribute\("hidden"\);[\s\S]*?setOption\("readOnly", false\)[\s\S]*?renderMarkdownGuide\(markdown, context\)/
-  );
-  assert.match(
-    source,
-    /markdownEditor\.readOnly = true;[\s\S]*?setOption\("readOnly", true\)[\s\S]*?wrapper\?\.setAttribute\("hidden", ""\);[\s\S]*?content\.hidden = false;[\s\S]*?renderMarkdownGuide\(markdown, context\)/
-  );
-  assert.match(
-    source,
-    /function navigateToDocumentationHeading\(marker\)[\s\S]*?setDocumentationEditMode\(false\)[\s\S]*?documentationRenderedHeadingIndex\.get\(targetKey\)[\s\S]*?target instanceof Element[\s\S]*?scrollDocumentationTargetIntoView\(target\)/
-  );
-  assert.match(
-    source,
-    /renderMarkdownInto\([\s\S]*?documentationRenderedHeadingIndex = new Map\(\)[\s\S]*?documentationRenderedHeadingIndex\.set\(indexKey, element\)/
-  );
-  assert.match(
-    source,
-    /scroll\.classList\.add\("is-documentation-edit"\)[\s\S]*?scroll\.classList\.remove\("is-documentation-edit"\)/
-  );
-  assert.match(
-    css,
-    /\.project-documentation-scroll\.is-documentation-edit\s*\{[\s\S]*?overflow:\s*hidden;/
-  );
-  assert.match(
-    css,
-    /\.project-documentation-live-editor\.is-documentation-edit\s*\{[\s\S]*?overflow:\s*hidden;/
-  );
-  assert.doesNotMatch(
-    css,
-    /\.project-documentation-live-editor\s*\{[\s\S]*?overflow:\s*hidden;/
-  );
-  assert.match(
-    source,
-    /documentationEditToggle\.addEventListener\("click", \(\) => \{[\s\S]*?setDocumentationEditMode\(!documentationEditMode\)/
-  );
+  assert.doesNotMatch(source, /documentationEditMode|setDocumentationEditMode|documentationRenderedHeadingIndex|renderMarkdownGuide|renderMarkdownInto/);
+  assert.doesNotMatch(css, /is-documentation-edit/);
+  assert.match(css, /\.project-documentation-scroll\s*\{[\s\S]*?overflow:\s*hidden;/);
   assert.match(source, /getMarkdownLiveRenderedElement\(cache, node, "table"\)/);
   assert.match(source, /\["image", "imageReference"\]\.includes\(node\.type\)/);
   assert.match(source, /node\.type === "footnoteReference"/);
@@ -2448,7 +3291,7 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   assert.doesNotMatch(html, /devicePanelHoverToggle|device-panel-toggle-arrow/);
   assert.match(
     css,
-    /\.avr-device-panel-viewport,\s*\.avr-account-panel-viewport\s*\{[\s\S]*?height:\s*var\(--device-panel-height\);/
+    /\.avr-overview-viewport\s*\{[\s\S]*?height:\s*var\(--device-panel-height\);/
   );
   assert.match(css, /--device-panel-height:\s*112px;/);
   assert.match(
@@ -2464,18 +3307,8 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
     /\.split-resizer\[aria-orientation="horizontal"\]::before\s*\{[\s\S]*?width:\s*58px;[\s\S]*?height:\s*2px;/
   );
   assert.doesNotMatch(css, /device-panel-toggle-arrow::after/);
-  assert.match(
-    css,
-    /data-state="compact"[\s\S]*?\.detect-chip-btn\s*\{[\s\S]*?height:\s*36px;[\s\S]*?padding:\s*0;/
-  );
-  assert.match(
-    css,
-    /data-state="compact"[\s\S]*?\.detect-chip-label\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?display:\s*flex;[\s\S]*?align-items:\s*center;[\s\S]*?justify-content:\s*center;/
-  );
-  assert.match(
-    css,
-    /data-state="compact"[\s\S]*?\.avr-status-value\s*\{[\s\S]*?height:\s*36px;[\s\S]*?min-height:\s*36px;/
-  );
+  assert.match(html, /id="detectChipBtn"[\s\S]*?data-detect-default[\s\S]*?<\/button>[\s\S]*?id="adapterStatusText"/);
+  assert.match(html, /data-detect-default[\s\S]*?data-detect-hover/);
   assert.match(
     css,
     /\.feature-panel:has\(\s*> \.canvas-section > \.avr-device-section\[data-state="collapsed"\]\s*\)\s*\{\s*padding-top:\s*0;/
@@ -2490,8 +3323,9 @@ test("uses a full-width three-stage draggable device-panel separator", () => {
   assert.match(source, /DEVICE_PANEL_COLLAPSED_HEIGHT\s*=\s*0/);
   assert.match(source, /DEVICE_PANEL_DRAG_THRESHOLD\s*=\s*48/);
   assert.match(source, /function getAdjacentDevicePanelState\(state, direction\)/);
-  assert.match(source, /lostpointercapture/);
-  assert.match(source, /\[viewport, \$\("avrAccountPanelViewport"\)\]/);
+  assert.match(source, /window\.UartDebugControls\.bindPanelResizer\(handle/);
+  assert.match(html, /aria-controls="avrDevicePanelViewport avrActionsPanelViewport avrAccountPanelViewport"/);
+  assert.doesNotMatch(css, /\.avr-target-panel-viewport/);
   assert.match(source, /if \(collapsed\) panel\.setAttribute\("inert", ""\)/);
   assert.match(source, /restoreDevicePanelState\(\)/);
 });
@@ -2587,9 +3421,7 @@ test("deploy revisions shared and page assets together on every public route", (
   const publicRoot = path.join(root, "public");
   fs.mkdirSync(publicRoot);
   const actualPublic = path.join(__dirname, "../public");
-  for (const file of fs.readdirSync(actualPublic).filter((name) => name.endsWith(".html") || ["sw.js", "manifest.webmanifest"].includes(name))) {
-    fs.copyFileSync(path.join(actualPublic, file), path.join(publicRoot, file));
-  }
+  fs.cpSync(actualPublic, publicRoot, { recursive: true });
   const result = childProcess.spawnSync(process.platform === "win32" ? "python" : "python3", [
     path.join(__dirname, "../.github/scripts/stamp_frontend_build.py"),
   ], { cwd: root, env: { ...process.env, FRONTEND_BUILD_ID: "shared-ui-test" }, encoding: "utf8" });
@@ -2630,6 +3462,54 @@ test("renames a mini-project display name without renaming its linked files", ()
   );
 });
 
+test("invalid project display names report a toast without changing project identity, and a valid correction commits", () => {
+  const { document, window: domWindow } = parseHTML('<html><body><div id="fileList"></div></body></html>');
+  const storage = new Map();
+  const hooks = loadAvrFrontendFunctionHooks([
+    "createEmptyProject", "startInlineRename", "commitInlineFileEdit", "getProjectAiAccountFilesSnapshot",
+    "prepare() { selectFile = name => { current = name; }; closeFileContextMenu = openFilesModal = refreshDocumentationPane = () => {}; }",
+  ], { document, window: { setTimeout: () => 1, localStorage: {
+    getItem: key => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, String(value)),
+    removeItem: key => storage.delete(key),
+  } } });
+  hooks.prepare();
+  const project = hooks.createEmptyProject();
+  const snapshot = () => JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
+  const before = snapshot();
+  const sourceName = before.miniProjects[project.instanceId].files.source;
+  hooks.startInlineRename(sourceName);
+  let input = document.querySelector(".file-inline-input");
+  input.value = "Invalid/project";
+  input.dispatchEvent(new domWindow.Event("input"));
+  assert.equal(hooks.commitInlineFileEdit(), false);
+  input = document.querySelector(".file-inline-input");
+  assert.equal(input.getAttribute("aria-invalid"), "true");
+  assert.equal(document.querySelector(".file-inline-error"), null);
+  const record = hooks.notifications().find(notification => notification.key === "project-name-validation");
+  assert.ok(record);
+  assert.equal(record.tone, "warning");
+  assert.match(record.message, /Do not use path separators/);
+  assert.deepEqual(snapshot(), before, "invalid input must not change the label, canonical names, files or project identity");
+  assert.equal(document.querySelector(".file-item[data-file]").getAttribute("aria-label"), project.displayName);
+
+  input.value = "A useful display label";
+  input.dispatchEvent(new domWindow.Event("input"));
+  assert.equal(input.getAttribute("aria-invalid"), "false");
+  assert.equal(hooks.commitInlineFileEdit(), true);
+  assert.equal(document.querySelector(".file-inline-input"), null);
+  assert.equal(document.querySelector(".file-inline-error"), null);
+  assert.equal(document.querySelector(".file-item[data-file] .file-name").textContent, "A useful display label");
+  const row = document.querySelector(".file-item[data-file]");
+  assert.equal(row.hasAttribute("data-outliner-icon"), false, "a project label must not reserve space for the former MP badge");
+  assert.equal(row.hasAttribute("title"), false, "the internal source name must not appear in a project tooltip");
+  assert.equal(row.hasAttribute("data-tooltip-disabled"), true, "the accessible project name must not create a duplicate tooltip");
+  const after = snapshot();
+  assert.equal(after.miniProjects[project.instanceId].displayName, "A useful display label");
+  after.miniProjects[project.instanceId].displayName = before.miniProjects[project.instanceId].displayName;
+  assert.deepEqual(after, before, "a display-label edit must preserve the specification name, source/guide names, contents and canonical project identity");
+});
+
 test("loads project cards from the private-backed API and fetches only the selected project", async () => {
   const {document}=parseHTML('<html><body><div id="fileTemplateGrid"></div></body></html>');
   const calls=[];
@@ -2656,10 +3536,10 @@ test("empty workspaces stay empty after local and cloud restoration", () => {
   const {hooks}=loadCanvasLifecycleHooks();
   hooks.loadState();
   hooks.migrateLooseFilesToProjects();
-  const empty=hooks.getEmptyProjectAiAccountDocument("files");
+  const empty=hooks.getEmptyProjectAiAccountWorkspace();
   assert.equal(Object.keys(empty.files).length,0);
   assert.equal(empty.current,null);
-  assert.equal(hooks.applyProjectAiAccountDocument("files",empty),true);
+  assert.equal(hooks.applyProjectAiAccountWorkspace(empty),true);
   const snapshot=hooks.getProjectAiAccountFilesSnapshot();
   assert.equal(Object.keys(snapshot.files).length,0);
   assert.equal(Object.keys(snapshot.miniProjects).length,0);
@@ -2706,6 +3586,167 @@ test("legacy loose projects migrate without losing code, guides, resources, or a
   assert.equal(snapshot.files["unused.txt"],"keep");
   assert.deepEqual(Array.from(hooks.getVisibleWorkspaceFileNames()),["blink.c"]);
   assert.match(hooks.getProjectInstructionSnapshot().markdown,/20 MHz/);
+});
+
+test("legacy nested groups migrate direct guide links without retaining folder state", () => {
+  const originalFiles = {
+    "alpha.c": "// Alpha source", "beta.c": "// Beta source",
+    "shared.md": "# Alpha guide", "leaf.md": "# Beta guide",
+    "notes.txt": "Unclaimed notes", "image.svg": "<svg></svg>",
+  };
+  const groupState = { Root: { files: ["alpha.c", "shared.md"], groups: ["Child"], expanded: true },
+    Child: { files: ["beta.c", "leaf.md"], groups: ["Root"], expanded: false } };
+  const storage = new Map([["ud_avr_programming_state_v2", JSON.stringify({
+    schemaVersion: 2, files: originalFiles, authorship: {}, miniProjects: {}, fileGroups: groupState, current: "alpha.c",
+  })]]);
+  const { hooks } = loadCanvasLifecycleHooks(storage);
+  const legacyGroups = hooks.loadState();
+  hooks.restoreProjectInstruction();
+  hooks.migrateLooseFilesToProjects(legacyGroups);
+  hooks.selectFile("alpha.c");
+  const snapshot = hooks.getProjectAiAccountFilesSnapshot();
+  assert.equal("fileGroups" in snapshot, false);
+  assert.equal(Object.keys(snapshot.miniProjects).length, 2);
+  for (const [name, text] of Object.entries(originalFiles)) assert.equal(snapshot.files[name], text);
+  const alpha = Object.values(snapshot.miniProjects).find(project => project.files.source === "alpha.c");
+  const beta = Object.values(snapshot.miniProjects).find(project => project.files.source === "beta.c");
+  assert.equal(alpha.files.guide, "shared.md");
+  assert.equal(beta.files.guide, "leaf.md");
+  assert.equal(hooks.persistState(), true);
+  assert.equal("fileGroups" in JSON.parse(storage.get("ud_avr_programming_state_v2")), false);
+});
+
+test("a guide shared by old grouped sources migrates into independently owned project guides", () => {
+  const guide = "# Shared guide\nThe program must keep user code.";
+  const authorship = { schemaVersion: 1, lines: ["human", "original"], updatedAt: 7 };
+  const storage = new Map([["ud_avr_programming_state_v2", JSON.stringify({
+    schemaVersion: 2, files: { "first.c": "// First", "second.c": "// Second", "manual.md": guide },
+    authorship: { "manual.md": authorship }, miniProjects: {}, current: "second.c",
+    fileGroups: { Examples: { files: ["first.c", "second.c", "manual.md"] } },
+  })]]);
+  const { hooks } = loadCanvasLifecycleHooks(storage);
+  const legacyGroups = hooks.loadState();
+  hooks.restoreProjectInstruction();
+  hooks.migrateLooseFilesToProjects(legacyGroups);
+  const snapshot = hooks.getProjectAiAccountFilesSnapshot();
+  const projects = Object.values(snapshot.miniProjects);
+  assert.equal(projects.length, 2);
+  const guideNames = projects.map(project => project.files.guide);
+  assert.equal(new Set(guideNames).size, 2);
+  for (const name of guideNames) {
+    assert.match(name, /\.md$/);
+    assert.equal(snapshot.files[name], guide);
+    assert.equal(JSON.stringify(snapshot.authorship[name]), JSON.stringify(authorship));
+  }
+  assert.equal(snapshot.files["manual.md"], guide);
+  assert.equal("fileGroups" in snapshot, false);
+});
+
+test("legacy guide migration keeps case-insensitive stem priority without inheriting parent folders", () => {
+  const originalFiles = { "Blink.C": "// Program", "BLINK.guide.md": "# Preferred guide", "Blink.md": "# Other guide",
+    "Child.c": "// Child program", "parent.md": "# Parent guide" };
+  const storage = new Map([["ud_avr_programming_state_v2", JSON.stringify({ schemaVersion: 2,
+    files: originalFiles, authorship: {}, miniProjects: {}, current: "Blink.C",
+    fileGroups: { Parent: { files: ["parent.md"], groups: ["Child"] }, Child: { files: ["Child.c"] } },
+  })]]);
+  const { hooks } = loadCanvasLifecycleHooks(storage);
+  const groups = hooks.loadState();
+  hooks.restoreProjectInstruction();
+  hooks.migrateLooseFilesToProjects(groups);
+  const snapshot = hooks.getProjectAiAccountFilesSnapshot();
+  const blink = Object.values(snapshot.miniProjects).find(project => project.files.source === "Blink.C");
+  const child = Object.values(snapshot.miniProjects).find(project => project.files.source === "Child.c");
+  assert.equal(blink.files.guide, "BLINK.guide.md");
+  assert.notEqual(child.files.guide, "parent.md");
+  assert.equal(snapshot.files[child.files.guide], "");
+  for (const [name, text] of Object.entries(originalFiles)) assert.equal(snapshot.files[name], text);
+});
+
+test("cloud group migration writes one canonical snapshot without reopening the old instruction document", async () => {
+  const fixture = loadCanvasLifecycleHooks().hooks;
+  const project = fixture.createEmptyProject();
+  const cloud = JSON.parse(JSON.stringify(fixture.getProjectAiAccountFilesSnapshot()));
+  const cloudProject = cloud.miniProjects[project.instanceId];
+  delete cloudProject.files.guide;
+  cloudProject.guides = {};
+  cloudProject.defaultLocale = cloudProject.selectedLocale = "";
+  cloud.files["old-guide.md"] = "# Historical guide\nThe program uses a timer.";
+  cloud.fileGroups = { Historical: { files: [cloudProject.files.source, "old-guide.md"] } };
+  const accountKey = "group-migration-account", requests = [];
+  const { hooks } = loadCanvasLifecycleHooks(accountSyncStorage(accountKey, 7), { fetch: async (url, init) => {
+    requests.push({ url, ...init });
+    return init.method === "GET" ? jsonResponse({ ok: true, accountKey, documents: {
+      files: { revision: 7, data: cloud }, instruction: { revision: 99, data: { markdown: "Inactive draft" } },
+    } }) : jsonResponse({ ok: true, document: { revision: 8 } });
+  } });
+  hooks.restoreProjectAiAccountSyncState();
+  hooks.account(accountKey);
+  await hooks.initializeProjectAiAccountWorkspace();
+  assert.equal(hooks.syncState().dirty, true);
+  assert.equal(hooks.syncState().legacyInstructionRevision, null);
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().miniProjects[project.instanceId].files.guide, "old-guide.md");
+  await hooks.saveProjectAiAccountWorkspace();
+  const writes = requests.filter(request => request.method === "PUT");
+  assert.equal(writes.length, 1);
+  const saved = JSON.parse(writes[0].body);
+  assert.equal(saved.baseRevision, 7);
+  assert.equal(saved.expectedLegacyInstructionRevision, undefined);
+  assert.equal("fileGroups" in saved.data, false);
+  assert.equal(saved.data.files["old-guide.md"], cloud.files["old-guide.md"]);
+  assert.equal(hooks.syncState().dirty, false);
+});
+
+test("failed local group migration leaves the old envelope and split keys available for recovery", () => {
+  const legacy = JSON.stringify({ schemaVersion: 2, files: { "old.c": "// Original", "guide.md": "# Original guide" },
+    fileGroups: { Old: { files: ["old.c", "guide.md"] } }, authorship: {}, miniProjects: {}, current: "old.c" });
+  const oldGroupKey = "ud_avr_programming_file_groups_v1";
+  const storage = new Map([["ud_avr_programming_state_v2", legacy], [oldGroupKey, "legacy backup"]]);
+  const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key) {
+    if (key === "ud_avr_programming_state_v2") throw new Error("Storage quota");
+  } });
+  const legacyGroups = hooks.loadState();
+  hooks.restoreProjectInstruction();
+  hooks.migrateLooseFilesToProjects(legacyGroups);
+  assert.equal(hooks.persistState(), false);
+  assert.equal(storage.get("ud_avr_programming_state_v2"), legacy);
+  assert.equal(storage.get(oldGroupKey), "legacy backup");
+});
+
+test("unreadable and newer workspace envelopes are preserved exactly before any replacement write", () => {
+  for (const raw of ["{ damaged workspace", JSON.stringify({ schemaVersion: 99, files: { "future.c": "Future source" }, opaque: [1, 2] })]) {
+    const stateKey = "ud_avr_programming_state_v2";
+    const storage = new Map([[stateKey, raw]]);
+    const { hooks } = loadCanvasLifecycleHooks(storage);
+    hooks.loadState();
+    const recovery = [...storage.entries()].find(([key]) => key.startsWith("ud_avr_ai_files_recovery_v1:unreadable-workspace"));
+    assert.ok(recovery);
+    assert.equal(JSON.parse(recovery[1]).rawWorkspace, raw);
+    assert.equal(storage.get(stateKey), raw, "reading alone cannot replace the original");
+    assert.equal(hooks.persistState(), true);
+    assert.equal(JSON.parse(storage.get(recovery[0])).rawWorkspace, raw);
+    assert.match(hooks.notifications().find(item => item.key === "workspace-read").details, /recovery copy/);
+  }
+});
+
+test("a failed raw workspace recovery copy blocks local overwrite and cloud initialization or save", async () => {
+  const stateKey = "ud_avr_programming_state_v2", raw = "{ original unreadable projects";
+  const storage = new Map([[stateKey, raw]]);
+  let requests = 0;
+  const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
+    if (key.startsWith("ud_avr_ai_files_recovery_v1:unreadable-workspace")) throw new Error("Quota exhausted");
+    storage.set(key, String(value));
+  }, fetch: async () => { requests++; throw new Error("Cloud must remain untouched"); } });
+  hooks.loadState();
+  assert.equal(hooks.persistState(), false);
+  assert.throws(() => hooks.persistState({ throwOnError: true }), /preserved for recovery/);
+  hooks.account("account");
+  assert.equal(await hooks.initializeProjectAiAccountWorkspace(), null);
+  hooks.account("account", true);
+  hooks.dirtyAccount();
+  await hooks.saveProjectAiAccountWorkspace();
+  assert.equal(requests, 0);
+  assert.equal(storage.get(stateKey), raw);
+  assert.match(hooks.notifications().find(item => item.key === "workspace-read").details, /paused/);
 });
 
 test("canonical projects without a description remain fresh until their program changes", () => {
@@ -2816,4 +3857,52 @@ test("an imported guide without language metadata uses und instead of an invalid
   ] });
   assert.equal(project.files.find(file => file.role === "guide").locale, "und");
   assert.equal(hooks.getProjectAiRequestPayload("describe").currentProject.guideLocale, "und");
+});
+
+test("motion defers Markdown decoration and final layout completes without a later preview frame", () => {
+  const { document } = parseHTML('<html><body></body></html>');
+  const frames = new Map();
+  let frameId = 0, refreshes = 0;
+  const hooks = loadAvrFrontendFunctionHooks([
+    "registerMarkdownLiveEditor", "renderMarkdownLivePreviewState", "scheduleMarkdownLivePreview", "settleWorkspaceEditors",
+    "begin(cm) { projectInstructionEditor = cm; workspaceTransitionTimer = 17; }",
+    "end() { workspaceTransitionTimer = null; settleWorkspaceEditors(); }",
+  ], { document, window: {
+    UartDebugMarkdown: loadVendoredMarkdownRuntime(document),
+    requestAnimationFrame(callback) { frames.set(++frameId, callback); return frameId; },
+    cancelAnimationFrame(id) { frames.delete(id); },
+  }, CodeMirror: { registerHelper() {}, Pos: (line, ch) => ({ line, ch }) } });
+  const cm = createMarkdownCodeMirrorStub("# Title\n\nA paragraph with **bold text**.", document);
+  cm.refresh = () => { refreshes++; hooks.scheduleMarkdownLivePreview("instruction"); };
+  hooks.begin(cm);
+  const state = hooks.registerMarkdownLiveEditor("instruction", cm);
+  hooks.renderMarkdownLivePreviewState(state);
+  assert.equal(cm.marks.length, 0, "a moving text layer must not replace its decorations");
+  assert.equal(frames.size, 0);
+  hooks.end();
+  assert.ok(refreshes > 0);
+  assert.ok(cm.marks.some(mark => !mark.cleared), "Markdown must be decorated before layout completion returns");
+  assert.equal(frames.size, 0, "refresh viewport events must not queue a second visible layout");
+  assert.deepEqual(cm.scrollCalls.at(-1), { kind: "scrollTo", left: 7, top: 46 });
+});
+
+test("synchronous workspace layout consumes a previously queued Markdown preview", () => {
+  const { document } = parseHTML('<html><body></body></html>');
+  const frames = new Map();
+  const hooks = loadAvrFrontendFunctionHooks([
+    "registerMarkdownLiveEditor", "settleWorkspaceEditors",
+    "prepare(cm) { projectInstructionEditor = cm; }",
+  ], { document, window: {
+    UartDebugMarkdown: loadVendoredMarkdownRuntime(document),
+    requestAnimationFrame(callback) { frames.set(42, callback); return 42; },
+    cancelAnimationFrame(id) { frames.delete(id); },
+  }, CodeMirror: { registerHelper() {}, Pos: (line, ch) => ({ line, ch }) } });
+  const cm = createMarkdownCodeMirrorStub("# Title\n\nExisting description.", document);
+  cm.refresh = () => {};
+  hooks.prepare(cm);
+  hooks.registerMarkdownLiveEditor("instruction", cm);
+  assert.equal(frames.size, 1);
+  hooks.settleWorkspaceEditors();
+  assert.equal(frames.size, 0);
+  assert.ok(cm.marks.some(mark => !mark.cleared));
 });

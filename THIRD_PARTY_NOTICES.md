@@ -13,8 +13,10 @@ The UartDebugMarkdown license aggregate is also deployed beside its bundle as
 `public/vendor/uartdebug-markdown.LICENSE.txt`.
 
 The vendored CodeMirror Markdown mode includes a local linear-time HTML-tag
-lookahead hardening patch. CodeMirror remains governed by its upstream MIT
-license.
+lookahead hardening patch and a bound on inline tokenization of very long prose
+lines. The latter follows the editor highlighting budget; it preserves document
+text and block parsing while using plain inline highlighting beyond that budget.
+CodeMirror remains governed by its upstream MIT license.
 
 The Google "Sign in with Google" SVG in
 `public/icons/sign-in-with-google-light.svg` is an official Google branding
@@ -27,6 +29,6 @@ licenses continue to apply to those packages and their transitive dependencies:
 
 | Component | Version | Manifest | Upstream | License |
 | --- | --- | --- | --- | --- |
-| Express | 4.22.2 | `backend/package.json` | [expressjs/express](https://github.com/expressjs/express/tree/4.22.2) | MIT |
+| Express | 4.22.3 | `backend/package.json` | [expressjs/express](https://github.com/expressjs/express/tree/4.22.3) | MIT |
 | Express Rate Limit | 8.6.2 | `backend/package.json` | [express-rate-limit/express-rate-limit](https://github.com/express-rate-limit/express-rate-limit/tree/v8.6.2) | MIT |
 | Google Auth Library for Node.js | 11.0.2 | `backend/package.json` | [googleapis/google-auth-library-nodejs](https://github.com/googleapis/google-auth-library-nodejs/tree/v11.0.2) | Apache-2.0 |

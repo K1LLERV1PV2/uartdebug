@@ -1,5 +1,7 @@
 # Обновление ИИ UartDebug: исправления и состав базы
 
+> Historical report: this records an earlier implementation. Paths, versions and flows below may be obsolete. Current behavior is described in [the project workspace](AVR_CANVAS.md) and [materials deployment](AI_MATERIALS_DEPLOYMENT.md).
+
 Подготовлена база **1.2.0**: восемь рецептов для ATtiny1624/1626/1627 и 39 отдельно проверенных фактов из официальных PDF. Итоговый commit и подтверждение развёртывания указываются при публикации релиза.
 
 ## Исправления браузера и бюджета

@@ -1,0 +1,57 @@
+[Unit]
+Description=UartDebug isolated AVR compiler
+After=network.target
+
+[Service]
+Type=simple
+User=uartcompile
+Group=uartcompile
+WorkingDirectory=/var/www/uartdebug/backend
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=8082
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/node /var/www/uartdebug/backend/compile-server.js
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=20
+TimeoutStopSec=15
+
+NoNewPrivileges=true
+UMask=0077
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/tmp /var/tmp
+ProtectClock=true
+ProtectControlGroups=true
+# These read-only host /proc submounts prevent Bubblewrap from mounting its own
+# PID-namespace procfs. The worker mounts that private procfs read-only instead;
+# the parent remains an unprivileged user with an empty capability set.
+ProtectHostname=false
+ProtectKernelLogs=false
+ProtectKernelModules=true
+ProtectKernelTunables=false
+RestrictSUIDSGID=true
+RestrictRealtime=true
+# Bubblewrap needs these namespaces for each compiler invocation.
+RestrictNamespaces=user mnt pid net ipc uts
+LockPersonality=true
+RemoveIPC=true
+SystemCallArchitectures=native
+# Bubblewrap uses netlink while initializing its isolated network namespace.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+IPAddressDeny=any
+IPAddressAllow=localhost
+ProtectProc=invisible
+# Bubblewrap reads overflowuid/overflowgid before entering its user namespace.
+ProcSubset=all
+TasksMax=64
+MemoryMax=256M
+CPUQuota=60%
+
+[Install]
+WantedBy=multi-user.target

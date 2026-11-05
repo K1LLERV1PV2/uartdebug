@@ -152,6 +152,7 @@
     fileName: "",
     hexText: "",
     imageSource: "",
+    imageTargetMcu: "",
     image: null,
     busy: false,
     busyLabel: "",
@@ -163,13 +164,11 @@
   };
 
   const AVR_UPDI_RUNTIME_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI__";
-  const LEGACY_UPDI_RUNTIME_KEY = "__UARTDEBUG_CANVAS_UPDI__";
   const AVR_UPDI_BRIDGE_KEY = "__UARTDEBUG_AVR_PROGRAMMING_UPDI_BRIDGE__";
-  const LEGACY_UPDI_BRIDGE_KEY = "__UARTDEBUG_CANVAS_UPDI_BRIDGE__";
-  const AVR_SERIAL_STATE_EVENT = "ud-avr-programming-serial-state";
-  const LEGACY_SERIAL_STATE_EVENT = "ud-canvas-serial-state";
 
   const els = {};
+  let operationNotificationId = null;
+  let operationWarning = "";
 
   function $(id) {
     return document.getElementById(id);
@@ -193,7 +192,7 @@
     return Number(value).toString(16).padStart(4, "0").toUpperCase();
   }
 
-  function getPortLabelFromInfo(info) {
+  function getPortLabelFromInfo(info, concise = false) {
     if (!info) return "";
 
     const vid = info.usbVendorId;
@@ -201,47 +200,49 @@
 
     if (vid != null && pid != null) {
       const key = `${hex4(vid)}:${hex4(pid)}`;
-      if (USB_FRIENDLY_NAMES[key]) return USB_FRIENDLY_NAMES[key];
-
       const vendor = USB_VENDOR_NAMES[vid] || `USB ${hex4(vid)}`;
-      return `${vendor} (${key})`;
+      const shortVendor = vendor.replace(/\s*\([^)]*\)/g, "").trim();
+      const friendly = USB_FRIENDLY_NAMES[key];
+      if (friendly) {
+        if (!concise) return friendly;
+        const model = friendly.startsWith(shortVendor + " ") ? friendly.slice(shortVendor.length + 1) : friendly;
+        return model.replace(/ USB-Serial$/, "");
+      }
+      return `${concise ? shortVendor : vendor} (${key})`;
     }
 
     if (vid != null) {
       return USB_VENDOR_NAMES[vid] || `USB ${hex4(vid)}`;
     }
 
-    return "Unknown device";
+    return "Selected serial port";
   }
 
-  function getPortLabel(port = state.preferredPort) {
+  function getPortLabel(port = state.preferredPort, concise = false) {
     if (!port || typeof port.getInfo !== "function") return "";
 
     try {
-      return getPortLabelFromInfo(port.getInfo() || {});
+      return getPortLabelFromInfo(port.getInfo() || {}, concise);
     } catch {
       return "";
     }
-  }
-
-  function getSignaturePanelText() {
-    if (state.signatureInfo) {
-      const signature = formatHex(state.signatureInfo.deviceId, 6);
-      const targetLabel = state.signatureInfo.matchedTargetLabel || "";
-
-      if (targetLabel) return `${targetLabel} (${signature})`;
-      return `Unsupported signature ${signature}`;
-    }
-
-    if (state.busy) return state.busyLabel || "Reading signature...";
-    if (state.lastProbeError) return "No chip detected";
-    return "No chip detected";
   }
 
   function updateTextNode(id, text) {
     const element = $(id);
     if (!element) return;
     element.textContent = text;
+    if (String(text).includes("/")) {
+      element.replaceChildren();
+      const parts = String(text).split("/");
+      parts.forEach((part, index) => {
+        element.appendChild(document.createTextNode(part));
+        if (index < parts.length - 1) {
+          element.appendChild(document.createTextNode("/"));
+          element.appendChild(document.createElement("wbr"));
+        }
+      });
+    }
   }
 
   function isPortSelectionError(message) {
@@ -259,14 +260,9 @@
     return "Chip error";
   }
 
-  function resetMcuSelectionToAuto() {
-    if (!els.mcuSelect) return;
-    if (els.mcuSelect.value !== "auto") {
-      els.mcuSelect.value = "auto";
-      els.mcuSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    } else {
-      updateView();
-    }
+  function invalidateDetectedTarget() {
+    state.signatureInfo = null;
+    syncDetectedTarget("");
   }
 
   function clearConnectionPanelError() {
@@ -278,11 +274,10 @@
     const message = getShortConnectionError(target, error);
     state.connectionErrorTarget = target === "adapter" ? "adapter" : "chip";
     state.connectionErrorMessage = message;
-    state.signatureInfo = null;
+    invalidateDetectedTarget();
     if (state.connectionErrorTarget === "adapter") {
       state.preferredPort = null;
     }
-    resetMcuSelectionToAuto();
   }
 
   function updateDevicePanelState() {
@@ -290,12 +285,11 @@
     const panelErrorMessage = state.connectionErrorMessage || "";
     const hasAdapterPanelError = panelErrorTarget === "adapter";
     const hasChipPanelError = panelErrorTarget === "chip";
-    const portText = hasAdapterPanelError
+    const fullPortText = hasAdapterPanelError
       ? panelErrorMessage || "Adapter error"
       : getPortLabel() || "No port selection";
-    const chipText = hasChipPanelError
-      ? panelErrorMessage || "Chip error"
-      : getSignaturePanelText();
+    const portText = hasAdapterPanelError ? fullPortText
+      : getPortLabel(state.preferredPort, true) || "No port selection";
     const hasDetectedChip =
       !panelErrorTarget && !!state.signatureInfo?.matchedTargetKey;
     const hasSignature = !!state.signatureInfo;
@@ -303,14 +297,24 @@
     const hasPortSelectionError =
       hasError && isPortSelectionError(state.lastProbeError);
     const serialAvailable = "serial" in navigator;
-    const blockedByCanvasSerial = isCanvasSerialConnected();
     const button = $("detectChipBtn");
+    const viewport = $("avrDevicePanelViewport");
+    applyDetectedTargetSelection(state.signatureInfo?.matchedTargetKey || "");
+    if (viewport) {
+      viewport.dataset.state = state.busy
+        ? "detecting"
+        : panelErrorTarget || hasError
+          ? "error"
+          : hasSignature
+            ? "detected"
+            : "idle";
+    }
 
     updateTextNode("adapterStatusText", portText);
-    updateTextNode("chipStatusText", chipText);
 
     const adapterValue = $("adapterStatusText");
     if (adapterValue) {
+      adapterValue.title = `UPDI adapter: ${fullPortText}`;
       adapterValue.classList.toggle(
         "is-muted",
         !getPortLabel() && !hasAdapterPanelError
@@ -321,22 +325,22 @@
       );
     }
 
-    const chipValue = $("chipStatusText");
-    if (chipValue) {
-      chipValue.classList.toggle(
-        "is-muted",
-        !hasSignature && (!hasError || hasAdapterPanelError) && !hasChipPanelError
-      );
-      chipValue.classList.toggle(
-        "is-error",
-        hasChipPanelError || (hasError && !hasAdapterPanelError)
-      );
+    const chipSelect = els.mcuSelect;
+    if (chipSelect) {
+      const status = hasChipPanelError ? "Chip error"
+        : hasSignature && !hasDetectedChip ? "Unknown chip"
+          : state.busy ? "Working" : hasDetectedChip ? "From port" : "";
+      const connectionState = hasChipPanelError ? "error"
+        : hasSignature && !hasDetectedChip ? "warning"
+          : state.busy ? "busy" : hasDetectedChip ? "ready" : "idle";
+      if (chipSelect.dataset.controlStatus !== status) chipSelect.dataset.controlStatus = status;
+      if (chipSelect.dataset.connectionState !== connectionState) chipSelect.dataset.connectionState = connectionState;
     }
 
     if (button) {
       const defaultLabel = button.querySelector("[data-detect-default]");
       const hoverLabel = button.querySelector("[data-detect-hover]");
-      const unavailable = !serialAvailable || blockedByCanvasSerial;
+      const unavailable = !serialAvailable;
 
       button.classList.toggle("is-connected", hasDetectedChip);
       button.classList.toggle("is-working", state.busy);
@@ -345,29 +349,21 @@
       if (defaultLabel) {
         defaultLabel.textContent = state.busy
           ? state.busyLabel || "Working..."
-          : hasDetectedChip
-            ? "Connected"
-            : "Disconnected";
+          : hasDetectedChip ? "Connected" : "Disconnected";
       }
-
       if (hoverLabel) {
         hoverLabel.textContent = hasDetectedChip
-          ? "Click to redetect the chip"
-          : "Click to detect the chip";
+          ? "Click to redetect the chip" : "Click to detect the chip";
       }
-
-      button.title = unavailable
-        ? blockedByCanvasSerial
-          ? "Disconnect UART before using UPDI."
-          : "Web Serial API is unavailable."
-        : hasDetectedChip
-          ? "Read chip signature again"
-          : "Read chip signature";
+      button.title = unavailable ? "Web Serial API is unavailable."
+        : hasDetectedChip ? "Read chip signature again" : "Read chip signature";
       button.setAttribute("aria-label", button.title);
     }
   }
 
   function getSelectedTargetKey() {
+    const detected = state.signatureInfo?.matchedTargetKey;
+    if (detected && SUPPORTED_TARGETS[detected]) return detected;
     const value =
       els.mcuSelect && typeof els.mcuSelect.value === "string"
         ? els.mcuSelect.value.trim()
@@ -383,38 +379,12 @@
     return key === "auto" ? null : SUPPORTED_TARGETS[key] || SUPPORTED_TARGETS.attiny1624;
   }
 
-  function getDetectedTargetConfig() {
-    const key = state.signatureInfo?.matchedTargetKey;
-    return key && SUPPORTED_TARGETS[key] ? SUPPORTED_TARGETS[key] : null;
-  }
-
   function getDisplayTargetLabel() {
-    const selectedKey = getSelectedTargetKey();
-    const selectedTarget = getSelectedTargetConfig();
-    const detectedTarget = getDetectedTargetConfig();
-
-    if (selectedKey === "auto") {
-      return detectedTarget ? `${detectedTarget.label} (auto)` : "Auto detect";
-    }
-
-    if (
-      selectedTarget &&
-      detectedTarget &&
-      detectedTarget.key !== selectedTarget.key
-    ) {
-      return `${selectedTarget.label} (detected ${detectedTarget.label})`;
-    }
-
-    return selectedTarget ? selectedTarget.label : "ATtiny1624";
+    return getSelectedTargetConfig()?.label || "Auto detect";
   }
 
   function getProgramButtonLabel() {
-    const selectedKey = getSelectedTargetKey();
-    const selectedTarget = getSelectedTargetConfig();
-    const detectedTarget = getDetectedTargetConfig();
-    const target =
-      selectedKey !== "auto" ? selectedTarget : detectedTarget || null;
-
+    const target = getSelectedTargetConfig();
     return target ? `Flash ${target.label}` : "Flash MCU";
   }
 
@@ -422,28 +392,22 @@
     return TARGETS_BY_DEVICE_ID[deviceId] || null;
   }
 
-  function syncDetectedTarget(targetKey = "") {
-    const bridge = getCanvasUpdiBridge();
-    if (!bridge || typeof bridge.setDetectedTargetKey !== "function") {
-      return;
+  function applyDetectedTargetSelection(targetKey = "") {
+    const select = els.mcuSelect;
+    if (!select) return;
+    const detected = SUPPORTED_TARGETS[targetKey] ? targetKey : "";
+    if (detected) select.value = detected;
+    for (const option of select.options || []) {
+      const disabled = !!detected && option.value !== detected;
+      if (option.disabled !== disabled) option.disabled = disabled;
     }
-
-    try {
-      bridge.setDetectedTargetKey(targetKey);
-    } catch {}
   }
 
-  function applySelectedTarget(targetKey) {
-    if (!els.mcuSelect || !targetKey || !SUPPORTED_TARGETS[targetKey]) {
-      return;
-    }
-
-    if (els.mcuSelect.value === targetKey) {
-      return;
-    }
-
-    els.mcuSelect.value = targetKey;
-    els.mcuSelect.dispatchEvent(new Event("change"));
+  function syncDetectedTarget(targetKey = "") {
+    applyDetectedTargetSelection(targetKey);
+    const bridge = getCanvasUpdiBridge();
+    if (!bridge || typeof bridge.setDetectedTargetKey !== "function") return;
+    try { bridge.setDetectedTargetKey(targetKey); } catch {}
   }
 
   function populateTargetOptions() {
@@ -499,11 +463,37 @@
 
   function getCanvasUpdiBridge() {
     if (typeof window === "undefined") return null;
-    return (
-      window[AVR_UPDI_BRIDGE_KEY] ||
-      window[LEGACY_UPDI_BRIDGE_KEY] ||
-      null
-    );
+    return window[AVR_UPDI_BRIDGE_KEY] || null;
+  }
+
+  function updateHardwareActivity(owner, active, errorStage = "") {
+    const bridge = getCanvasUpdiBridge();
+    try {
+      bridge?.setHardwareActivity?.(owner, active);
+      if (errorStage) bridge?.reportHardwareFailure?.(errorStage);
+    } catch { /* Visual feedback cannot interrupt a device operation. */ }
+  }
+
+  async function preparePortPermission(options = {}) {
+    clearConnectionPanelError();
+    state.lastProbeError = "";
+    updateView();
+    updateHardwareActivity("permission", true);
+    let errorStage = "";
+    try {
+      return await ensureUpdiPortPermission(options);
+    } catch (error) {
+      errorStage = error?.name === "NotFoundError" ? "" : "adapter";
+      if (errorStage) markConnectionPanelError(errorStage, error);
+      state.lastProbeError = state.connectionErrorMessage;
+      const id = window.UartDebugNotifications?.notify({ title: "Serial connection", source: "UPDI", pending: false,
+        tone: "error", ...describeUpdiFailure(error, "Connection", "adapter"), diagnostics: error?.stack || String(error) });
+      if (id) try { error.uartDebugNotificationId = id; } catch {}
+      updateView();
+      throw error;
+    } finally {
+      updateHardwareActivity("permission", false, errorStage);
+    }
   }
 
   function getPortFingerprint(port) {
@@ -533,8 +523,9 @@
           : [];
 
       if (grantedPorts.length) {
+        if (state.preferredPort !== grantedPorts[0]) invalidateDetectedTarget();
         state.preferredPort = grantedPorts[0];
-        updateDevicePanelState();
+        updateView();
         return {
           port: state.preferredPort,
           source: "granted",
@@ -549,76 +540,83 @@
     }
 
     const port = await navigator.serial.requestPort();
+    if (state.preferredPort !== port) invalidateDetectedTarget();
     state.preferredPort = port;
-    updateDevicePanelState();
+    updateView();
     return {
       port,
       source: "prompt",
     };
   }
 
-  function isCanvasSerialConnected() {
-    const bridge = getCanvasUpdiBridge();
-    if (!bridge || typeof bridge.isCanvasSerialConnected !== "function") {
-      return false;
-    }
-
-    try {
-      return !!bridge.isCanvasSerialConnected();
-    } catch {
-      return false;
-    }
-  }
-
   function setBusyLabel(label) {
     state.busyLabel = label || "";
+    if (operationNotificationId) {
+      window.UartDebugNotifications?.append(operationNotificationId, "", {
+        message: state.busyLabel,
+      });
+    }
     updateView();
   }
 
   function appendLog(message) {
-    if (!els.compileLog) return;
+    const text = String(message || "").trim();
+    if (!text) return;
     const timestamp = new Date().toLocaleTimeString("en-GB", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
     });
-    if (els.compileLog.textContent && !els.compileLog.textContent.endsWith("\n")) {
-      els.compileLog.textContent += "\n";
+    const line = `[${timestamp}] ${text}`;
+    if (operationNotificationId) {
+      if (/\bwarning\b/i.test(text)) operationWarning = text;
+      if (state.busy) { console.info(`[UPDI] ${line}`); return operationNotificationId; }
+      return window.UartDebugNotifications?.append(operationNotificationId, line);
     }
-    els.compileLog.textContent += `[${timestamp}] ${message}\n`;
-    els.compileLog.scrollTop = els.compileLog.scrollHeight;
+    const tone = /failed|error/i.test(text) ? "error"
+      : /warning|unsupported/i.test(text) ? "warning" : "info";
+    // Refreshing a previously compiled artifact is device state, not a new
+    // operation. A live compile supplies its record ID for these details.
+    if (tone === "info" && state.imageSource === "compiled") return null;
+    return window.UartDebugNotifications?.notify({
+      key: `updi-artifact:${tone}`,
+      title: "HEX image",
+      source: "Device programming",
+      message: text,
+      details: [line, state.image && `File: ${state.fileName}\nPayload: ${state.image.bytesTotal} bytes\nSegments: ${state.image.segments.length}\nTarget: ${getDisplayTargetLabel()}`].filter(Boolean).join("\n\n"),
+      tone,
+      pending: false,
+    });
   }
 
   function clearLog() {
-    if (els.compileLog) els.compileLog.textContent = "";
+    if (operationNotificationId) {
+      window.UartDebugNotifications?.notify({ id: operationNotificationId, details: "" });
+    }
   }
 
   function updateView() {
     const canUseSerial = "serial" in navigator && !state.busy;
-    const blockedByCanvasSerial = isCanvasSerialConnected();
     const usesExternalProgramHandler =
       !!els.programHexBtn &&
       els.programHexBtn.hasAttribute("data-external-handler");
     const programButtonLabel = getProgramButtonLabel();
-    const disabledReason = blockedByCanvasSerial
-      ? "Disconnect UART before using UPDI."
-      : "";
-
     els.programHexBtn.disabled =
       !canUseSerial ||
-      blockedByCanvasSerial ||
       (!usesExternalProgramHandler && !state.image);
 
     if (els.programHexBtn) {
       els.programHexBtn.textContent = programButtonLabel;
       els.programHexBtn.title =
-        disabledReason ||
         (!usesExternalProgramHandler && !state.image
           ? "Load or compile a HEX image first"
           : programButtonLabel);
     }
 
     updateDevicePanelState();
+    if (window[AVR_UPDI_RUNTIME_KEY]) {
+      getCanvasUpdiBridge()?.refreshCompileControls?.();
+    }
   }
 
   function buildHexSegments(bytesByAddress) {
@@ -860,7 +858,7 @@
     return -1;
   }
 
-  function loadHexText(hexText, sourceName, sourceKind = "external") {
+  function loadHexText(hexText, sourceName, sourceKind = "external", targetMcu = "") {
     const image = parseIntelHex(hexText);
     const target = validateImageForTarget(image);
     const targetLabel =
@@ -872,6 +870,7 @@
     state.hexText = hexText.replace(/\r\n/g, "\n");
     state.fileName = sourceName || "firmware.hex";
     state.imageSource = sourceKind;
+    state.imageTargetMcu = String(targetMcu || (sourceKind !== "compiled" && getSelectedTargetKey() !== "auto" ? getSelectedTargetKey() : "")).toLowerCase();
     state.image = image;
     state.lastProbeError = "";
 
@@ -888,6 +887,7 @@
     state.fileName = "";
     state.hexText = "";
     state.imageSource = "";
+    state.imageTargetMcu = "";
     state.image = null;
     state.lastProbeError = "";
     updateView();
@@ -895,26 +895,32 @@
   }
 
   function resolveProgrammingTarget(info, image) {
-    const actualTarget = info.matchedTarget;
-    const selectedTarget = getSelectedTargetConfig();
+    try {
+      const actualTarget = info.matchedTarget;
+      if (!actualTarget) {
+        throw new Error(
+          `Unsupported device signature ${formatHex(
+            info.deviceId,
+            6
+          )}. Add a profile before programming.`
+        );
+      }
 
-    if (!actualTarget) {
-      throw new Error(
-        `Unsupported device signature ${formatHex(
-          info.deviceId,
-          6
-        )}. Add a profile before programming.`
-      );
+      if (state.imageSource === "compiled" && !state.imageTargetMcu) {
+        throw new Error("The compiled HEX has no build target. Recompile the project for the connected chip before flashing.");
+      }
+      if (state.imageTargetMcu && state.imageTargetMcu !== actualTarget.key) {
+        const imageTarget = SUPPORTED_TARGETS[state.imageTargetMcu];
+        throw new Error(`The loaded HEX targets ${imageTarget?.label || state.imageTargetMcu}, but the connected device is ${actualTarget.label}. Recompile or load firmware for this chip before flashing.`);
+      }
+
+      validateImageForTarget(image, actualTarget);
+      return actualTarget;
+    } catch (error) {
+      // A rejected firmware target does not invalidate a successful chip read.
+      error.updiTargetValidation = true;
+      throw error;
     }
-
-    if (selectedTarget && selectedTarget.key !== actualTarget.key) {
-      throw new Error(
-        `Connected device is ${actualTarget.label}, but selected target is ${selectedTarget.label}. Switch target or use Auto detect.`
-      );
-    }
-
-    validateImageForTarget(image, actualTarget);
-    return actualTarget;
   }
 
   function applyExternalHexArtifact(detail) {
@@ -939,12 +945,16 @@
       return;
     }
 
+    const previousNotificationId = operationNotificationId;
     try {
-      loadExternalHexFile(hexText, fileName, source);
+      operationNotificationId = detail?.notificationId || previousNotificationId;
+      loadExternalHexFile(hexText, fileName, source, detail?.targetMcu || "");
     } catch (error) {
+      operationNotificationId = previousNotificationId;
       state.fileName = "";
       state.hexText = "";
       state.imageSource = "";
+      state.imageTargetMcu = "";
       state.image = null;
       updateView();
       appendLog(
@@ -952,11 +962,13 @@
           source === "uploaded" ? "HEX load failed" : "Compiled HEX sync failed"
         }: ${error.message || error}`
       );
+    } finally {
+      operationNotificationId = previousNotificationId;
     }
   }
 
-  function loadExternalHexFile(hexText, fileName, source = "external") {
-    loadHexText(hexText, fileName, source);
+  function loadExternalHexFile(hexText, fileName, source = "external", targetMcu = "") {
+    loadHexText(hexText, fileName, source, targetMcu);
 
     if (source === "uploaded") {
       appendLog(`HEX loaded from file: ${fileName}.`);
@@ -965,15 +977,16 @@
     }
   }
 
-  function loadHexFileWithFeedback(hexText, fileName, source = "uploaded") {
+  function loadHexFileWithFeedback(hexText, fileName, source = "uploaded", targetMcu = "") {
     try {
-      loadExternalHexFile(hexText, fileName, source);
+      loadExternalHexFile(hexText, fileName, source, targetMcu);
     } catch (error) {
-      appendLog(
+      const notificationId = appendLog(
         `${source === "uploaded" ? "HEX load failed" : "HEX sync failed"}: ${
           error.message || error
         }`
       );
+      if (notificationId) try { error.uartDebugNotificationId = notificationId; } catch {}
       updateView();
       throw error;
     }
@@ -1041,7 +1054,9 @@
     if (closePort) {
       try {
         await session.port.close();
-      } catch {}
+      } catch (error) {
+        appendLog(`Port close warning: ${error.message || error}`);
+      }
     }
   }
 
@@ -1601,9 +1616,6 @@
 
     state.signatureInfo = info;
     syncDetectedTarget(info.matchedTargetKey);
-    if (info.matchedTargetKey) {
-      applySelectedTarget(info.matchedTargetKey);
-    }
 
     appendLog(`Signature: ${formatHex(deviceId, 6)}`);
     appendLog(`Revision byte: ${formatHex(revisionByte, 2)}`);
@@ -1621,12 +1633,19 @@
 
   async function runUpdiAction(actionName, handler, portOptions = {}) {
     if (state.busy) return;
-    if (isCanvasSerialConnected()) {
-      throw new Error("Disconnect UART before using UPDI programming tools.");
-    }
-
+    const inheritedNotification = portOptions.notificationId || null;
+    const title = actionName.startsWith("Programming") ? "Flash MCU" : "Chip detection";
+    operationWarning = "";
+    operationNotificationId = inheritedNotification || window.UartDebugNotifications?.notify({
+      key: null, title, source: "UPDI", message: actionName, details: "",
+      tone: "info", pending: true,
+    }) || null;
+    const notificationId = operationNotificationId;
     let session = null;
+    let succeeded = false;
+    let closeWarning = "";
     let connectionStage = "adapter";
+    let failureStage = "";
     const compileButton = $("compileBtn");
     const compileWasDisabled = compileButton?.disabled;
     if (compileButton) compileButton.disabled = true;
@@ -1634,7 +1653,9 @@
     state.busyLabel = actionName;
     state.lastProbeError = "";
     clearConnectionPanelError();
+    invalidateDetectedTarget();
     updateView();
+    updateHardwareActivity("connection", true);
 
     try {
       let portSelection = await ensureUpdiPortPermission(portOptions);
@@ -1671,11 +1692,24 @@
       const result = await handler(session);
       state.lastProbeError = "";
       clearConnectionPanelError();
+      succeeded = true;
       return result;
     } catch (error) {
-      markConnectionPanelError(connectionStage, error);
-      state.lastProbeError = state.connectionErrorMessage || "Connection error";
+      const cancelled = error?.name === "NotFoundError";
+      failureStage = cancelled ? "" : state.connectionErrorTarget || connectionStage;
+      if (!error.updiTargetValidation && !cancelled) {
+        markConnectionPanelError(failureStage, error);
+        state.lastProbeError = state.connectionErrorMessage || "Connection error";
+      }
       appendLog(`${actionName} failed: ${error.message || String(error)}`);
+      if (notificationId) {
+        console.info("[UPDI]", error?.stack || String(error));
+        const failure = describeUpdiFailure(error, title, failureStage);
+        window.UartDebugNotifications?.notify({
+          id: notificationId, tone: "error", pending: false, ...failure,
+        });
+        try { error.uartDebugNotificationId = notificationId; } catch {}
+      }
       throw error;
     } finally {
       if (session) {
@@ -1683,24 +1717,53 @@
           await closeUpdiSession(session);
           appendLog("Port closed.");
         } catch (closeError) {
+          closeWarning = `Port close warning: ${closeError.message || closeError}`;
           appendLog(
-            `Port close warning: ${closeError.message || closeError}`
+            closeWarning
           );
         }
       }
 
+      if (succeeded && !inheritedNotification && notificationId) {
+        const unsupported = title === "Chip detection" && !state.signatureInfo?.matchedTargetLabel;
+        window.UartDebugNotifications?.notify({
+          id: notificationId, tone: closeWarning || operationWarning || unsupported ? "warning" : "success", pending: false,
+          message: closeWarning ? "Operation completed, but the serial port could not be closed."
+            : operationWarning ? "Operation completed with a device communication warning."
+              : (title === "Flash MCU" ? "Flash programmed and verified."
+            : unsupported ? "Chip signature read; this device is not supported."
+              : `Detected ${state.signatureInfo.matchedTargetLabel}.`),
+        });
+      }
       state.busy = false;
       state.busyLabel = "";
-      updateView();
-      if (compileButton) {
-        const bridge = getCanvasUpdiBridge();
-        if (typeof bridge?.refreshCompileControls === "function") {
-          bridge.refreshCompileControls();
-        } else {
-          compileButton.disabled = compileWasDisabled;
-        }
+      operationNotificationId = null;
+      operationWarning = "";
+      if (compileButton && typeof getCanvasUpdiBridge()?.refreshCompileControls !== "function") {
+        compileButton.disabled = compileWasDisabled;
       }
+      updateView();
+      updateHardwareActivity("connection", false, failureStage);
     }
+  }
+
+  function describeUpdiFailure(error, title, stage) {
+    if (error?.name === "NotFoundError") return {
+      tone: "info", message: "No serial port was selected.", details: "Choose a serial adapter to continue.",
+    };
+    if (error?.updiTargetValidation) return { message: `${title} failed: ${error.message}`, details: "" };
+    if (stage === "adapter") return {
+      message: `${title} failed. The serial adapter is unavailable.`,
+      details: "Stage: opening the serial adapter.\nSelect the correct port, check the USB connection and close other applications that may be using the port.",
+    };
+    if (/Timed out waiting for echo/i.test(error?.message || "")) return {
+      message: `${title} failed. Could not establish communication with the chip.`,
+      details: "Stage: communicating over UPDI.\nThe expected echo of the transmitted byte was not received.\nCheck the selected adapter, UPDI wiring, ground connection and chip power, then try again.",
+    };
+    return {
+      message: `${title} failed. The device operation could not be completed.`,
+      details: "Check the UPDI wiring, chip power and selected serial adapter before trying again.",
+    };
   }
 
   async function readSignature(options = {}) {
@@ -1780,12 +1843,32 @@
         }
       });
     } catch (error) {
-      appendLog(`Flash programming failed: ${error.message || error}`);
+      if (!error?.uartDebugNotificationId) {
+        const id = window.UartDebugNotifications?.notify({
+          title: "Flash MCU", source: "UPDI", tone: "error", pending: false,
+          message: `Flash programming failed: ${error.message || error}`,
+          details: "", diagnostics: error?.stack || String(error),
+        });
+        if (id) try { error.uartDebugNotificationId = id; } catch {}
+      }
       throw error;
     }
   }
 
   function bind() {
+    navigator.serial?.addEventListener?.("disconnect", (event) => {
+      const port = event.port || event.target;
+      if (!state.preferredPort || port !== state.preferredPort) return;
+      markConnectionPanelError("adapter", new Error("Serial adapter disconnected."));
+      updateView();
+      if (!state.busy) {
+        updateHardwareActivity("connection", false, "adapter");
+        window.UartDebugNotifications?.notify({
+          key: "updi-adapter-disconnected", title: "UPDI adapter", tone: "warning",
+          message: "Serial adapter disconnected.", source: "UPDI", pending: false,
+        });
+      }
+    });
     if (
       els.programHexBtn &&
       !els.programHexBtn.hasAttribute("data-external-handler")
@@ -1800,12 +1883,14 @@
           loadHexText(
             state.hexText,
             state.fileName || "firmware.hex",
-            state.imageSource || "external"
+            state.imageSource || "external",
+            state.imageTargetMcu
           );
         } catch (error) {
           state.fileName = "";
           state.hexText = "";
           state.imageSource = "";
+          state.imageTargetMcu = "";
           state.image = null;
           updateView();
           appendLog(`Target validation failed: ${error.message || error}`);
@@ -1820,14 +1905,9 @@
     applyExternalHexArtifact(event?.detail || {});
   }
 
-  function handleCanvasSerialStateEvent() {
-    updateView();
-  }
-
   function boot() {
     els.mcuSelect = $("mcuSelect");
     els.programHexBtn = $("programHexBtn");
-    els.compileLog = $("compileLog");
 
     if (!els.mcuSelect || !els.programHexBtn) {
       return;
@@ -1836,31 +1916,34 @@
     populateTargetOptions();
     bind();
     updateView();
+    if (!("serial" in navigator)) {
+      window.UartDebugNotifications?.notify({
+        key: "serial-unavailable", title: "Web Serial unavailable", tone: "warning",
+        message: "This browser cannot access a serial adapter.",
+        details: "Use a desktop Chromium browser with the Web Serial API and open UARTDebug over HTTPS or localhost.",
+        source: "UPDI", pending: false,
+      });
+    }
 
     if (typeof window !== "undefined") {
       const runtime = {
         isBusy: () => state.busy,
-        preparePortPermission: ensureUpdiPortPermission,
+        getSignatureInfo: () => state.signatureInfo,
+        preparePortPermission,
         ensureSignature,
         readSignature,
         programHex,
         clearLog,
-        loadHexFile: (hexText, fileName, source = "uploaded") =>
-          loadHexFileWithFeedback(hexText, fileName, source),
+        loadHexFile: (hexText, fileName, source = "uploaded", targetMcu = "") =>
+          loadHexFileWithFeedback(hexText, fileName, source, targetMcu),
         clearLoadedHex: () => clearHexState(false),
         hasLoadedImage: () => !!state.image,
       };
 
       window[AVR_UPDI_RUNTIME_KEY] = runtime;
-      window[LEGACY_UPDI_RUNTIME_KEY] = runtime;
     }
 
     window.addEventListener("ud-updi-hex-artifact", handleExternalHexArtifactEvent);
-    window.addEventListener(AVR_SERIAL_STATE_EVENT, handleCanvasSerialStateEvent);
-    window.addEventListener(
-      LEGACY_SERIAL_STATE_EVENT,
-      handleCanvasSerialStateEvent
-    );
 
     const bridge = getCanvasUpdiBridge();
     if (bridge && typeof bridge.getHexArtifact === "function") {
