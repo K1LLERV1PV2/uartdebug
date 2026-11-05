@@ -131,7 +131,6 @@ body {
     box-shadow 120ms ease,
     background-color 120ms ease;
   scrollbar-width: thin;
-  scrollbar-color: #16a085 #2c3e50;
 }
 
 .connection-control select:hover {
@@ -156,15 +155,6 @@ body {
 
 .connection-control select::-webkit-scrollbar {
   width: 8px;
-}
-
-.connection-control select::-webkit-scrollbar-track {
-  background: #2c3e50;
-}
-
-.connection-control select::-webkit-scrollbar-thumb {
-  background: #16a085;
-  border-radius: 999px;
 }
 
 /* Specific styles for UART buttons */
@@ -1500,7 +1490,6 @@ body.terminal-page .terminal-baud-value select {
 
 body.terminal-page .connection-control select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23C8FFDD' d='M5 6 .67.75h8.66z'/%3E%3C/svg%3E");
-  scrollbar-color: var(--terminal-border-hot) var(--terminal-surface-deep);
 }
 
 body.terminal-page .connection-control select:hover,

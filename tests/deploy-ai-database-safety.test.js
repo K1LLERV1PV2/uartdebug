@@ -281,7 +281,7 @@ test(`the rollback guard blocks schema ${liveSchema} from a schema ${targetSchem
   fs.mkdirSync(bin);
   fs.writeFileSync(
     path.join(bin, "sqlite3"),
-    `#!/usr/bin/env bash\nprintf '${liveSchema}\\n'\n`,
+    `#!/usr/bin/env bash\ncase "\${*: -1}" in 'PRAGMA user_version;') printf '${liveSchema}\\n' ;; *) printf '4\\n' ;; esac\n`,
     { mode: 0o755 },
   );
   const posix = (value) =>
@@ -324,6 +324,100 @@ test(`the rollback guard blocks schema ${liveSchema} from a schema ${targetSchem
   assert.match(output, /backend\/20260924-120000-abcdef0/);
 });
 }
+
+test("release chat readers expose the format used by normalization and validation", () => {
+  const frontend = require("../public/avr-project-chat");
+  const backend = require("../backend/avr-conversation-contract");
+  assert.equal(frontend.CONVERSATION_SCHEMA_VERSION, 5);
+  assert.equal(backend.CONVERSATION_SCHEMA_VERSION, frontend.CONVERSATION_SCHEMA_VERSION);
+  const conversation = frontend.normalize(null);
+  assert.equal(conversation.schemaVersion, frontend.CONVERSATION_SCHEMA_VERSION);
+  assert.deepEqual(backend.validateStoredConversation(conversation), conversation);
+});
+
+test("rollback checks actual saved draft and project chat formats before returning release paths", (t) => {
+  const bash = process.platform === "win32" ? "C:\\Program Files\\Git\\bin\\bash.exe" : "bash";
+  if (process.platform === "win32" && !fs.existsSync(bash)) return t.skip("Git Bash is not installed");
+  const { DatabaseSync } = require("node:sqlite");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "uartdebug-chat-rollback-"));
+  const databaseFile = path.join(directory, "live.sqlite");
+  const database = new DatabaseSync(databaseFile);
+  t.after(() => { database.close(); fs.rmSync(directory, { recursive: true, force: true }); });
+  database.exec("PRAGMA user_version = 6; CREATE TABLE account_workspace_snapshots (data_type TEXT, payload_json TEXT);");
+  const release = "20261106-120000-abcdef0";
+  const roots = ["public", "backend"].map(name => path.join(directory, name));
+  for (const root of roots) fs.mkdirSync(path.join(root, release), { recursive: true });
+  fs.writeFileSync(path.join(roots[1], release, "ai-access-service.js"), "const SCHEMA_VERSION = 6;\n");
+  const readers = [path.join(roots[0], release, "avr-project-chat.js"), path.join(roots[1], release, "avr-conversation-contract.js")];
+  const setReaders = (frontend, backend) => {
+    for (const [index, version] of [frontend, backend].entries()) fs.writeFileSync(readers[index], version == null
+      ? "// Historical release without a branched-chat capability declaration.\n" : `const CONVERSATION_SCHEMA_VERSION = ${version};\n`);
+  };
+  const posix = value => process.platform === "win32"
+    ? value.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_, drive) => `/${drive.toLowerCase()}`) : value;
+  const quote = value => `'${value.replace(/'/g, "'\\''")}'`;
+  const bin = path.join(directory, "bin");
+  fs.mkdirSync(bin);
+  const adapter = path.join(directory, "sqlite-cli.cjs");
+  fs.writeFileSync(adapter, `const { DatabaseSync } = require("node:sqlite");
+const database = new DatabaseSync(process.argv.at(-2), { readOnly: true });
+try { for (const row of database.prepare(process.argv.at(-1)).all()) console.log(Object.values(row).join("|")); }
+catch (error) { console.error(error.message); process.exitCode = 1; }
+finally { database.close(); }
+`);
+  const sqlite = path.join(bin, "sqlite3");
+  fs.writeFileSync(sqlite, `#!/usr/bin/env bash\nexec ${quote(posix(process.execPath))} ${quote(posix(adapter))} "$@"\n`, { mode: 0o755 });
+  const environment = { ...process.env };
+  const pathKey = Object.keys(environment).find(key => key.toUpperCase() === "PATH") || "PATH";
+  environment[pathKey] = bin + path.delimiter + (environment[pathKey] || "");
+  const args = [posix(path.join(repositoryRoot, "backend/deploy/guard-ai-access-schema-rollback.sh")), ...roots.map(posix), release, posix(databaseFile)];
+  const run = () => execFileSync(bash, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: environment });
+  const accept = () => assert.deepEqual(run().trim().split(/\r?\n/), roots.map(root => `${posix(root)}/${release}`));
+  const refuse = () => assert.throws(run, error => {
+    assert.equal(error.status, 78);
+    assert.equal(error.stdout, "", "incompatible targets must not be returned for activation");
+    assert.match(error.stderr, /Rollback refused before changing release symlinks/);
+    return true;
+  });
+  const setSnapshots = snapshots => {
+    database.exec("DELETE FROM account_workspace_snapshots;");
+    const insert = database.prepare("INSERT INTO account_workspace_snapshots VALUES ('files', ?)");
+    for (const snapshot of snapshots) insert.run(JSON.stringify(snapshot));
+  };
+  for (const snapshot of [
+    { draftConversation: { schemaVersion: 5 }, miniProjects: {} },
+    { miniProjects: { generated: { conversation: { schemaVersion: 5 } } } },
+    { draftConversation: { schemaVersion: 4 }, miniProjects: { linear: { conversation: { schemaVersion: 4 } }, tree: { conversation: { schemaVersion: 5 } } } },
+  ]) {
+    setSnapshots([snapshot]);
+    setReaders(5, 5); accept();
+    for (const versions of [[4, 5], [5, 4], [null, 5], [5, null], [null, null]]) {
+      setReaders(...versions); refuse();
+    }
+  }
+  setSnapshots([{ draftConversation: { schemaVersion: 4 } }, { miniProjects: { tree: { conversation: { schemaVersion: 5 } } } }]);
+  setReaders(5, 5);
+  for (const root of roots) {
+    const selected = path.join(root, release), unavailable = `${selected}.unavailable`;
+    fs.renameSync(selected, unavailable);
+    try { refuse(); }
+    finally { fs.renameSync(unavailable, selected); }
+  }
+  setReaders(4, 4); refuse();
+  setSnapshots([{ miniProjects: { future: { conversation: { schemaVersion: 6 } } } }]);
+  setReaders(5, 5); refuse();
+  setSnapshots([{ draftConversation: { schemaVersion: 4 }, miniProjects: { linear: { conversation: { schemaVersion: 4 } } } }]);
+  setReaders(null, null); accept();
+  setSnapshots([]); accept();
+  database.prepare("INSERT INTO account_workspace_snapshots VALUES ('files', ?)").run("{malformed JSON");
+  refuse();
+  database.exec("DROP TABLE account_workspace_snapshots;");
+  refuse();
+  database.exec("PRAGMA user_version = 1;");
+  accept();
+  fs.writeFileSync(sqlite, "#!/usr/bin/env bash\ncase \"${*: -1}\" in 'PRAGMA user_version;') printf '6\\n' ;; *) printf 'invalid-version\\n' ;; esac\n");
+  refuse();
+});
 
 test("release readiness passes the private status file through stdin before switching identity", () => {
   const workflow = read(".github/workflows/deploy.yml");

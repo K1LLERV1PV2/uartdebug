@@ -309,7 +309,7 @@ test("multiline values fit equal compact hardware fields without header tooltips
   }
 });
 
-test("hardware errors keep controls aligned and separate user guidance from developer diagnostics", async ({ page }, testInfo) => {
+test("hardware errors keep controls aligned and retain useful stage logs without call stacks", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 900, height: 884 });
   await open(page);
   const diagnostics = [];
@@ -356,7 +356,8 @@ test("hardware errors keep controls aligned and separate user guidance from deve
     await toast.click();
     await expect(page.locator("#notificationModal")).toBeVisible();
     await expect(page.locator(".notification-detail-output")).toContainText(guidance);
-    await expect(page.locator(".notification-detail")).not.toContainText(diagnostic);
+    await expect(page.locator(".notification-detail-output")).toContainText(diagnostic);
+    await expect(page.locator(".notification-detail")).not.toContainText(/https?:\/\/|updi-test\.js|\n\s*at (?:async )?/);
     expect(diagnostics.join("\n")).toContain(diagnostic);
     await page.keyboard.press("Escape");
   };

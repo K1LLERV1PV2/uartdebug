@@ -299,6 +299,10 @@ rows or expiring sessions. The browser consolidates them on its next account
 sync; the first write checks both legacy revisions. Deployment creates a verified
 database backup before activation, and the rollback guard refuses schema-5 code
 against the schema-6 database.
+Project chat format versions are also checked independently of the database
+schema. Once a saved draft or project uses branched chat format 5, rollback
+requires both frontend and backend readers that declare support for that format;
+an older release requires its matching verified database backup.
 
 There is currently no self-service account-data export or deletion UI. Signing
 out, clearing browser storage, or revoking the OAuth connection does not delete

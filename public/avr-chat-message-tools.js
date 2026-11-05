@@ -4,7 +4,6 @@
   const paths = Object.freeze({
     edit: "m15 5 4 4M4 20l4-1L20 7a2.1 2.1 0 0 0-3-3L5 16Z",
     branch: "M7 4v11a5 5 0 0 0 5 5h5M7 10h6a4 4 0 0 0 4-4V4M4 4h6m4 0h6m-6 13 3 3-3 3",
-    regenerate: "M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-2l2 3M4 16l2 3a7 7 0 0 0 12-2",
     retry: "M20 7v5h-5M20 12a8 8 0 1 0-2 6",
     copy: "M8 8h12v12H8zM16 8V4H4v12h4",
   });
@@ -53,12 +52,12 @@
       frame.className = "project-chat-edit-input scroll-frame";
       const input = document.createElement("textarea");
       input.className = "ui-text-input ui-text-input--embedded ui-scroll-region";
-      input.setAttribute("aria-label", "Edit message in a new chat");
+      input.setAttribute("aria-label", "Edit message");
       input.rows = 5;
       input.value = message.content;
       const note = document.createElement("p");
       note.className = "project-chat-edit-note";
-      note.textContent = "Send an edited copy in a new chat. Project files stay current.";
+      note.textContent = "Earlier versions stay available in this chat. Project files stay current.";
       const actions = document.createElement("div");
       actions.className = "project-chat-edit-actions";
       const cancel = document.createElement("button");
@@ -68,7 +67,7 @@
       const send = document.createElement("button");
       send.type = "submit";
       send.className = "ui-action ui-action--compact";
-      send.textContent = "Send in new chat";
+      send.textContent = "Save and send";
       actions.append(cancel, send);
       frame.append(input);
       form.append(frame, note, actions);
@@ -139,8 +138,8 @@
       const actions = row.actions || row.article.querySelector(".project-chat-message-actions");
       if (!actions) return;
       const available = message.role === "user"
-        ? [["edit", "Edit in new chat"], ["branch", "Branch from here"]]
-        : message.status === "complete" ? [["regenerate", "Regenerate in new chat"], ["branch", "Branch from here"]]
+        ? [["edit", "Edit message"], ["branch", "Branch from here"]]
+        : message.status === "complete" ? [["retry", "Retry response"], ["branch", "Branch from here"]]
           : message.status === "error" && context.isLast ? [["retry", "Retry response"]] : [];
       const valid = new Set(available.map(([action]) => action));
       for (const button of actions.querySelectorAll("[data-chat-action]")) {
@@ -160,6 +159,41 @@
         }
         button.disabled = !!context.busy;
       }
+      // Keep pager nodes stable while progress, busy state or unrelated rows
+      // update; a keyboard user's focused control must not be recreated.
+      if (!row.variants) {
+        const group = document.createElement("span");
+        group.className = "project-chat-message-variants";
+        group.setAttribute("role", "group"); group.setAttribute("aria-label", "Conversation branches");
+        const count = document.createElement("span"); count.className = "project-chat-variant-count";
+        const arrows = [-1, 1].map(direction => {
+          const button = document.createElement("button"); button.type = "button"; button.className = "ui-icon-button";
+          const label = direction < 0 ? "Previous branch" : "Next branch";
+          button.dataset.chatVariantDirection = direction < 0 ? "previous" : "next";
+          button.setAttribute("aria-label", label); button.title = label;
+          button.append(icon(direction < 0 ? "m14 6-6 6 6 6" : "m10 6 6 6-6 6"));
+          return button;
+        });
+        const resume = document.createElement("button"); resume.type = "button";
+        resume.className = "ui-action ui-action--compact project-chat-resume";
+        resume.textContent = "Resume saved continuation";
+        group.append(arrows[0], count, arrows[1], resume); row.meta.prepend(group);
+        row.variants = { group, count, arrows, resume };
+      }
+      const { group, count, arrows, resume } = row.variants;
+      const multiple = context.variants.length > 1;
+      group.hidden = !multiple && !context.resume;
+      count.hidden = !multiple;
+      count.textContent = `${context.variantIndex + 1}/${context.variants.length}`;
+      count.setAttribute("aria-label", `Branch ${context.variantIndex + 1} of ${context.variants.length}`);
+      arrows.forEach((button, index) => {
+        const target = context.variantIndex + (index ? 1 : -1);
+        button.hidden = !multiple;
+        button.dataset.chatVariant = context.variants[target] || "";
+        button.disabled = !!context.busy || target < 0 || target >= context.variants.length;
+      });
+      resume.hidden = !context.resume; resume.disabled = !!context.busy;
+      resume.dataset.chatResume = message.id;
       if (editor?.article === row.article) {
         row.content.hidden = true;
         editor.busy = !!context.busy;
@@ -168,6 +202,15 @@
     }
 
     async function handleClick(event) {
+      const variant = event.target.closest?.("[data-chat-variant], [data-chat-resume]");
+      if (variant && !variant.disabled && host.contains(variant)) {
+        const scope = variant.closest(".project-chat-message")?.dataset.chatScope;
+        if (scope !== options.getScope()) return;
+        const callback = variant.hasAttribute("data-chat-resume") ? options.onResume : options.onVariant;
+        try { await callback?.(variant.dataset.chatResume || variant.dataset.chatVariant, scope, variant.dataset.chatVariantDirection); }
+        catch (error) { notice("The saved branch could not be opened.", error); }
+        return;
+      }
       const copy = event.target.closest?.("[data-chat-code-copy]");
       if (copy && host.contains(copy)) {
         const code = copy.closest(".project-chat-code-block")?.querySelector("pre code");
@@ -196,7 +239,7 @@
       if (!message) return;
       const action = button.dataset.chatAction;
       if (action === "edit") { startEditor(article, message, scope, button); return; }
-      const callback = { retry: options.onRetry, branch: options.onBranch, regenerate: options.onRegenerate }[action];
+      const callback = { retry: options.onRetry, branch: options.onBranch }[action];
       if (typeof callback !== "function") return;
       try { await callback(message.id, scope); }
       catch (error) { notice("The chat action could not be completed.", error); }

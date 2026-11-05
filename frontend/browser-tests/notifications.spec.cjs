@@ -218,7 +218,7 @@ test("UART errors use the same toast details without contaminating serial data",
   await expect(page.locator("#notificationModal")).toBeHidden();
 });
 
-test("a real signature echo timeout keeps technical logs in the console and shows actionable guidance", async ({ page }, testInfo) => {
+test("a real signature echo timeout retains timestamped connection stages without call stacks", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 900, height: 700 });
   const consoleLog = [];
   page.on("console", message => { if (message.type() === "info") consoleLog.push(message.text()); });
@@ -246,7 +246,13 @@ test("a real signature echo timeout keeps technical logs in the console and show
   await toast.click();
   await expect(page.locator(".notification-detail-output")).toContainText("Stage: communicating over UPDI");
   await expect(page.locator(".notification-detail-output")).toContainText("chip power");
-  await expect(page.locator(".notification-detail")).not.toContainText(/waitForBuffer|updi-test\.js|Port closed/);
+  const timeline = page.locator(".notification-detail-output");
+  await expect(timeline).toContainText("Opening port with 115200 / 8E2");
+  await expect(timeline).toContainText("Port selected:");
+  await expect(timeline).toContainText("Timed out waiting for echo");
+  await expect(timeline).toContainText("Port closed.");
+  expect(await timeline.textContent()).toMatch(/\[\d{2}:\d{2}:\d{2}\] Reading signature[\s\S]*Opening port[\s\S]*Port selected:[\s\S]*failed:[\s\S]*Port closed\./);
+  await expect(page.locator(".notification-detail")).not.toContainText(/waitForBuffer|updi-test\.js|https?:\/\/|\s+at async/);
   await expect(page.locator(".notification-diagnostics, .notification-diagnostics-copy, .ui-disclosure")).toHaveCount(0);
   expect(consoleLog.join("\n")).toContain("waitForBuffer");
   expect(consoleLog.join("\n")).toContain("Port closed.");
@@ -265,7 +271,7 @@ test("UART also omits old call stacks from notifications and saved history while
     diagnostics: "Raw serial debugging context", tone: "error" }));
   await page.evaluate(id => window.UartDebugNotifications.open(id), id);
   await expect(page.locator(".notification-detail-summary")).toHaveText("The adapter disconnected.");
-  await expect(page.locator(".notification-detail-output")).toBeHidden();
+  await expect(page.locator(".notification-detail-output")).toHaveText("Error: Disconnected");
   await expect(page.locator(".notification-detail")).not.toContainText("legacyReader");
   await expect(page.getByText("Technical diagnostics", { exact: true })).toHaveCount(0);
   expect(logs.join("\n")).toContain("legacyReader");

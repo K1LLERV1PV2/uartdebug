@@ -149,7 +149,7 @@ test("a single chat request creates a project and moves the draft conversation i
   await page.keyboard.press("Escape");
   await page.reload({ waitUntil: "load" });
   await expect(page.locator("#projectChatThread .project-chat-message")).toHaveCount(2);
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v2")));
+  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v3")));
   expect(state.draftConversation?.threads.flatMap(item => item.messages) || []).toHaveLength(0);
   const chats = Object.values(state.miniProjects)[0].conversation;
   expect(chats.threads).toHaveLength(2);
@@ -404,7 +404,7 @@ test("switching chats interrupts the old response before it can alter shared pro
 test("legacy project conversation migrates intact and blank chats have distinct names", async ({ page }) => {
   await open(page);
   await page.addInitScript(() => {
-    const key = "ud_avr_programming_state_v2", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v3", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = { schemaVersion: 1, draft: "Legacy unsent draft", messages: [
       { id: "legacy-message", role: "user", content: "Legacy conversation", createdAt: 1, status: "complete" },
     ] };
@@ -457,7 +457,7 @@ test("chat titles stay concise while restored long names remain accessible", asy
   await expect(page.locator("#projectChatThread")).toContainText("A short reply.");
   const restoredName = "界".repeat(85);
   await page.addInitScript(({ id, title }) => {
-    const key = "ud_avr_programming_state_v2", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v3", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation.threads.find(item => item.id === id).title = title;
     localStorage.setItem(key, JSON.stringify(state));
   }, { id: first, title: restoredName });
@@ -472,7 +472,7 @@ test("chat titles stay concise while restored long names remain accessible", asy
 test("the chat-count limit reports the problem without replacing existing chats", async ({ page }) => {
   await open(page);
   await page.addInitScript(() => {
-    const key = "ud_avr_programming_state_v2", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v3", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = { schemaVersion: 2, activeThreadId: "limit-0",
       threads: Array.from({ length: 32 }, (_, index) => ({ id: `limit-${index}`, title: `Chat ${index + 1}`,
         draft: `Draft ${index + 1}`, messages: [] })) };
@@ -494,7 +494,7 @@ test("a failed chat transfer keeps the received answer and every draft without c
       const original = Storage.prototype.setItem;
       window.__restoreChatStorage = () => { Storage.prototype.setItem = original; };
       Storage.prototype.setItem = function (key, value) {
-        if (key === "ud_avr_programming_state_v2") {
+        if (key === "ud_avr_programming_state_v3") {
           const state = JSON.parse(value);
           if (Object.values(state.miniProjects).some(project => project.conversation?.threads.some(thread =>
             thread.messages.some(message => message.role === "assistant" && message.content === "Created the Blink project.")))) {
@@ -522,7 +522,7 @@ test("a failed chat transfer keeps the received answer and every draft without c
   await expect(page.locator('.project-chat-message[data-role="assistant"][data-status="complete"] .project-chat-message-content')).toHaveText("Created the Blink project.");
   await expect(page.locator(".notification-toast-open")).toContainText(["Response received but could not be saved"]);
   await expect(page.locator('.project-chat-message[data-status="error"]')).toHaveCount(0);
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v2")));
+  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v3")));
   expect(state.draftConversation.threads).toHaveLength(2);
   expect(state.draftConversation.threads[0].draft).toBe("Keep this planning draft");
   expect(state.draftConversation.threads[1].messages[0].content).toContain("Create Blink");
@@ -594,7 +594,7 @@ test("deleting an inactive chat frees quota while retaining the current unsaved 
   await page.addInitScript(() => {
     if (sessionStorage.getItem("chat-quota-seeded")) return;
     sessionStorage.setItem("chat-quota-seeded", "true");
-    const key = "ud_avr_programming_state_v2", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v3", state = JSON.parse(localStorage.getItem(key));
     const chats = { schemaVersion: 2, activeThreadId: "large-0",
       threads: Array.from({ length: 9 }, (_, index) => ({ id: `large-${index}`, title: `Stored chat ${index + 1}`, draft: "",
         messages: Array.from({ length: index ? 8 : 2 }, (_, message) => ({ id: `message-${message}`, role: "assistant", status: "complete",
@@ -714,7 +714,7 @@ test("history exposes rename and export without retired search or organization c
   expect(await page.evaluate(() => window.UartDebugAvrAiWorkspace.getInstruction())).toEqual(specification);
   await page.reload({ waitUntil: "load" });
   const state = await chatState(page);
-  expect(state.schemaVersion).toBe(4);
+  expect(state.schemaVersion).toBe(5);
   expect(state.threads[0]).toMatchObject({ title: "UART planning", titleMode: "manual" });
   expect(Object.hasOwn(state.threads[0], "pinned")).toBe(false);
   expect(Object.hasOwn(state.threads[0], "archived")).toBe(false);
@@ -738,7 +738,7 @@ test("all legacy archived and pinned chats remain visible without retaining the 
   await page.addInitScript(legacy => {
     if (sessionStorage.getItem("removed-chat-flags-migrated")) return;
     sessionStorage.setItem("removed-chat-flags-migrated", "true");
-    const key = "ud_avr_programming_state_v2", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v3", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = legacy;
     localStorage.setItem(key, JSON.stringify(state));
   }, legacy);
@@ -750,7 +750,7 @@ test("all legacy archived and pinned chats remain visible without retaining the 
   expect(await page.locator("[data-chat-open]").evaluateAll(items => items.map(item => item.dataset.chatOpen))).toEqual(["newer", "archived", "pinned"]);
   await expect(page.locator("#projectChatSearch, #projectChatActiveFilter, #projectChatArchivedFilter, #projectChatArchiveNote, #projectChatRestoreBtn, .project-chat-history-group")).toHaveCount(0);
   const state = await chatState(page);
-  expect(state.schemaVersion).toBe(4);
+  expect(state.schemaVersion).toBe(5);
   expect(state.threads).toHaveLength(3);
   for (const original of legacy.threads) {
     const migrated = state.threads.find(item => item.id === original.id);
@@ -779,7 +779,7 @@ test("opening history during a response keeps row focus and scroll position with
   await page.addInitScript(() => {
     if (sessionStorage.getItem("history-many")) return;
     sessionStorage.setItem("history-many", "true");
-    const key = "ud_avr_programming_state_v2", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v3", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = { schemaVersion: 3, activeThreadId: "history-0", threads:
       Array.from({ length: 20 }, (_, index) => ({ id: `history-${index}`, title: `History example ${index}`,
         titleMode: "manual", pinned: false, archived: index % 2 === 1, draft: "", messages: [] })) };
@@ -819,7 +819,7 @@ for (const width of [900, 1543]) {
     await open(page);
     const projectTitle = "A detailed UART project with a long descriptive name for the serial connection and interrupt example";
     await page.addInitScript(title => {
-      const key = "ud_avr_programming_state_v2", state = JSON.parse(localStorage.getItem(key));
+      const key = "ud_avr_programming_state_v3", state = JSON.parse(localStorage.getItem(key));
       Object.values(state.miniProjects)[0].displayName = title;
       localStorage.setItem(key, JSON.stringify(state));
     }, projectTitle);
@@ -980,11 +980,13 @@ for (const width of [900, 1543]) {
       await page.locator("#projectChatHistoryBtn").click();
       await expect(title).toHaveText(name);
       const geometry = await measure();
-      expect(geometry.title.height).toBeGreaterThan(geometry.lineHeight);
-      expect(geometry.title.height).toBeLessThanOrEqual(geometry.lineHeight * 2);
+      expect(geometry.title.height).toBe(geometry.lineHeight);
+      expect(geometry.header.height).toBeLessThanOrEqual(80);
+      await expect(title).toHaveCSS("white-space", "nowrap");
+      await expect(title).toHaveCSS("text-overflow", "ellipsis");
       expect(geometry.content.right).toBeLessThanOrEqual(geometry.menu.left);
       expect(geometry.navigation.bottom).toBeLessThanOrEqual(geometry.title.top);
-      expect(geometry.header.height, "short and wrapped names retain one header footprint").toBe(empty.header.height);
+      expect(geometry.header.height, "short and truncated names retain one compact header footprint").toBe(empty.header.height);
       expect(geometry.overflow).toBe(false);
     }
     const name = await title.textContent(), before = await measure();

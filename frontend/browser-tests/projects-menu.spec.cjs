@@ -149,6 +149,8 @@ test("project actions keep keyboard focus and close before their parent dialog",
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
   const menu = page.getByRole("menu", { name: "Project actions" });
   await expect(menu.getByRole("menuitem").first()).toBeFocused();
+  await page.locator("#fileList").evaluate(element => element.dispatchEvent(new Event("scroll")));
+  await expect(menu).toBeVisible();
   const spacing = await menu.evaluate(element => {
     const buttons = [...element.querySelectorAll("button:not([hidden])")];
     const rects = buttons.map(button => button.getBoundingClientRect());
@@ -160,9 +162,18 @@ test("project actions keep keyboard focus and close before their parent dialog",
   for (const gap of spacing.gaps) expect(gap).toBeCloseTo(spacing.required, 1);
   expect(spacing.gaps[0], "the focused action must not cover the neighboring action").toBeGreaterThan(spacing.focusReach);
   await page.keyboard.press("ArrowDown");
-  await expect(menu.locator('[data-action="delete"]')).toBeFocused();
+  await expect(menu.locator('[data-action="download"]')).toBeFocused();
   await page.keyboard.press("End");
-  await expect(menu.locator('[data-action="download-hex"]')).toBeFocused();
+  const deletion = menu.locator('[data-action="delete"]');
+  await expect(deletion).toBeFocused();
+  await expect(menu.getByRole("menuitem").last()).toHaveAttribute("data-action", "delete");
+  await expect(deletion).toHaveClass(/ui-list-item--destructive/);
+  const warning = await deletion.evaluate(button => {
+    const style = getComputedStyle(button), flash = getComputedStyle(document.getElementById("programHexBtn"));
+    return { color: style.color, flashColor: flash.color, outline: style.outlineColor };
+  });
+  expect(warning.color).toBe(warning.flashColor);
+  expect(warning.outline).toBe("rgb(255, 194, 107)");
   await page.keyboard.press("Home");
   await expect(menu.locator('[data-action="rename"]')).toBeFocused();
   await page.keyboard.press("Escape");
@@ -178,4 +189,29 @@ test("project actions keep keyboard focus and close before their parent dialog",
   await page.keyboard.press("Escape");
   await expect(page.locator("#filesModal")).toBeHidden();
   await expect(page.locator("#filesOpenBtn")).toBeFocused();
+});
+
+test("select menus ignore queued opening scrolls and close on real ancestor movement", async ({ page }) => {
+  await page.goto("/avr", { waitUntil: "load" });
+  await page.waitForFunction(() => window.UartDebugControls);
+  await page.evaluate(() => {
+    const scroller = document.createElement("section");
+    scroller.id = "menu-scroll-fixture";
+    scroller.style.cssText = "position:fixed;left:30px;top:160px;width:320px;height:100px;overflow:auto;z-index:1000";
+    const select = document.createElement("select");
+    select.setAttribute("aria-label", "Scroll test selector");
+    for (const text of ["First", "Second"]) select.add(new Option(text, text));
+    const spacer = document.createElement("div");
+    spacer.style.height = "500px";
+    scroller.append(select, spacer); document.body.append(scroller);
+    window.UartDebugControls.initSelect(select);
+  });
+  const fixture = page.locator("#menu-scroll-fixture");
+  await fixture.getByRole("button", { name: "Scroll test selector" }).click();
+  const menu = fixture.locator(".custom-select-menu");
+  await expect(menu).toBeVisible();
+  await fixture.evaluate(element => element.dispatchEvent(new Event("scroll")));
+  await expect(menu).toBeVisible();
+  await fixture.evaluate(element => { element.scrollTop += 20; });
+  await expect(menu).toBeHidden();
 });

@@ -21,3 +21,8 @@ Do not add phone/tablet layouts, mobile-specific state or controls, touch-only i
 - The assessor is a critic, not another implementer. It should challenge the implementation and earlier assumptions; absence of overlap, successful tests or agreement with the primary agent does not establish visual quality.
 - The primary agent must address reported problems, provide fresh evidence and request another assessment after a material correction. Before handoff, both agents must actively look for the criticism an ordinary user would immediately make of the delivered result and resolve it while the task is still in progress. Do not declare completion while a material problem remains unresolved, or leave an obvious defect as a suggested follow-up. Record any intentional tradeoff explicitly instead of silently dismissing a finding.
 - If independent agents are unavailable, state that limitation; do not claim that an independent assessment took place.
+
+# Publication
+
+- Publish completed requested changes to uartdebug.com after the required checks and independent assessment, unless the user explicitly requests a local preview only. Publication is included in normal project work and does not require another confirmation.
+- Use the normal CI and deployment safeguards. After deployment, verify the published revision, service readiness and the affected user flows on the live site before handing off the result.

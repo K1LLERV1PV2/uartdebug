@@ -1,7 +1,8 @@
 // Desktop AVR projects with a specification, C program, code description and XC8 compilation.
 (function () {
   const STORAGE_KEY = "ud_avr_programming_files_v1";
-  const STORAGE_STATE = "ud_avr_programming_state_v2";
+  const STORAGE_STATE = "ud_avr_programming_state_v3";
+  const LEGACY_STORAGE_STATE = "ud_avr_programming_state_v2";
   const STORAGE_CURRENT = "ud_avr_programming_current_v1";
   const STORAGE_GROUPS = "ud_avr_programming_file_groups_v1";
   const STORAGE_MINI_PROJECTS = "ud_avr_programming_mini_projects_v1";
@@ -94,6 +95,7 @@
   let projectAiNotificationId = null;
   let contextMenuFile = null;
   let contextMenuTrigger = null;
+  let contextMenuScroll = null;
   let inlineFileEdit = null;
   let outlinerWidth = OUTLINER_DEFAULT_WIDTH;
   let outlinerPreferredWidth = OUTLINER_DEFAULT_WIDTH;
@@ -987,6 +989,7 @@
     draftProjectConversation = null;
     try {
       rawState = localStorage.getItem(STORAGE_STATE);
+      if (rawState === null) rawState = localStorage.getItem(LEGACY_STORAGE_STATE);
       if (rawState) {
         const state = JSON.parse(rawState);
         if (
@@ -1008,6 +1011,9 @@
               : {};
           current = typeof state.current === "string" ? state.current : null;
           if (state.draftConversation) draftProjectConversation = normalizeProjectConversation(state.draftConversation, { recoverPending: true });
+          for (const project of Object.values(miniProjects)) {
+            if (project?.conversation) normalizeProjectConversation(project.conversation, { recoverPending: true });
+          }
           if (state.schemaVersion === 3 && state.draftCanvas && typeof state.draftCanvas === "object") {
             unassignedProjectInstructionDocument = normalizeProjectInstructionDocument(state.draftCanvas);
             workspaceDraftCanvasRestored = true;
@@ -1520,7 +1526,11 @@
     $("filesModal")?.addEventListener("click", event => {
       if (event.target === $("filesModal")) closeFilesModal();
     });
-    $("fileList")?.addEventListener("scroll", closeFileContextMenu);
+    document.addEventListener("scroll", event => {
+      const menu = $("fileContextMenu");
+      if (menu?.style.display !== "block" || menu.contains(event.target)) return;
+      if (window.UartDebugControls.hasMenuScrollChanged(contextMenuScroll, event)) closeFileContextMenu();
+    }, true);
   }
 
   function dispatchHexArtifact(detail) {
@@ -2460,6 +2470,9 @@
       element.style.removeProperty("--workspace-content-overflow-x");
     }
     syncWorkspaceCompactState(getWorkspaceWidths());
+    for (const cue of container?.querySelectorAll(".pane-collapse-cue") || []) {
+      if (cue.parentElement?.getBoundingClientRect().width <= WORKSPACE_PANEL_COMPACT_THRESHOLD) cue.remove();
+    }
     if (completing) {
       settleWorkspaceEditors(anchors);
       fitEditorFileWatermark();
@@ -2638,6 +2651,7 @@
       }, WORKSPACE_PANEL_TRANSITION_MS);
     }
     syncSplitResizerAria();
+    if (compactChanged) clearSplitCollapsePreview();
     if (persist) persistWorkspaceLayout();
     refreshWorkspaceEditors();
     return true;
@@ -2729,26 +2743,52 @@
     }
   }
 
-  function clearSplitCollapsePreview() {
-    document.querySelectorAll?.(".pane-collapse-cue").forEach(cue => cue.remove());
+  function clearSplitCollapsePreview({ immediate = false } = {}) {
+    const compactPanels = [
+      [".outliner", "is-outliner-compact"], [".project-ai-layout", "is-project-ai-compact"],
+      [".editor-workspace", "is-editor-compact"], [".documentation-workspace", "is-documentation-compact"],
+    ];
+    document.querySelectorAll?.(".pane-collapse-cue").forEach(cue => {
+      const container = cue.closest?.(".canvas-split-container");
+      const compact = compactPanels.some(([selector, state]) =>
+        cue.parentElement?.matches(selector) && container?.classList.contains(state));
+      const animation = cue.getAnimations?.({ subtree: true })[0];
+      if (immediate || !animation || animation.playState === "finished" ||
+          (compact && !container?.classList.contains("is-workspace-transitioning"))) {
+        cue.remove();
+        return;
+      }
+      if (compact) {
+        const duration = Number(animation.effect.getTiming().duration);
+        const remaining = Math.max(0, duration - (Number(animation.currentTime) || 0));
+        // Finish the existing pass inside the window's 320ms transition.
+        // Repeated pointer samples must never slow it down or restart it.
+        animation.updatePlaybackRate(Math.max(animation.playbackRate, remaining / 180));
+      }
+      cue.dataset.finishing = "true";
+    });
   }
 
   function showSplitCollapsePreview(panel, direction) {
     if (!panel || panel.getBoundingClientRect().width <= WORKSPACE_PANEL_COMPACT_THRESHOLD) {
-      clearSplitCollapsePreview();
+      clearSplitCollapsePreview({ immediate: true });
       return;
     }
     const name = direction < 0 ? "left" : "right";
     let cue = panel.querySelector(":scope > .pane-collapse-cue");
     if (!cue || cue.dataset.direction !== name) {
-      clearSplitCollapsePreview();
+      clearSplitCollapsePreview({ immediate: true });
       cue = document.createElement("div");
       cue.className = "pane-collapse-cue";
       cue.dataset.direction = name;
       cue.setAttribute("aria-hidden", "true");
       cue.setAttribute("inert", "");
+      cue.addEventListener("animationend", () => {
+        if (cue.dataset.finishing === "true") cue.remove();
+      });
       panel.appendChild(cue);
     }
+    delete cue.dataset.finishing;
   }
 
   function bindSplitResizer(handle, options) {
@@ -2831,7 +2871,9 @@
     if (!container) return;
     const panes = [...container.querySelectorAll(
       ".project-instruction-panel, :scope > .editor-workspace, :scope > .documentation-workspace")];
-    const curveDepth = 44;
+    // The matching inward offset also needs a visible radius at the bend.
+    // A shallower curve pinches that radius down to about two pixels.
+    const curveDepth = 52;
     let previousCapsuleCurveTop = 0;
     let previousPaneRight = 0;
     for (const [index, pane] of panes.entries()) {
@@ -3238,7 +3280,8 @@
 
     menu.style.left = x + "px";
     menu.style.top = y + "px";
-    menu.querySelector("button:not([hidden]):not(:disabled)")?.focus();
+    menu.querySelector("button:not([hidden]):not(:disabled)")?.focus({ preventScroll: true });
+    contextMenuScroll = window.UartDebugControls.captureMenuScroll(contextMenuTrigger);
   }
 
   function closeFileContextMenu({ restoreFocus = false } = {}) {
@@ -3248,6 +3291,7 @@
     contextMenuFile = null;
     const trigger = contextMenuTrigger;
     contextMenuTrigger = null;
+    contextMenuScroll = null;
     trigger?.setAttribute("aria-expanded", "false");
     if (restoreFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
   }
@@ -3650,7 +3694,7 @@
 
   function normalizeProjectConversation(value, options = {}) {
     return window.UartDebugProjectChat?.normalize(value, options)
-      || { schemaVersion: 4, activeThreadId: "chat-1", threads: [{ id: "chat-1", title: "New chat", messages: [], draft: "", titleMode: "auto" }] };
+      || { schemaVersion: 5, activeThreadId: "chat-1", threads: [{ id: "chat-1", title: "New chat", messages: [], activeLeafId: null, draft: "", titleMode: "auto" }] };
   }
 
   function getProjectChatContext() {
@@ -3678,7 +3722,7 @@
     const previousDraft = draftProjectConversation, previous = project?.conversation;
     if (project) project.conversation = value;
     else draftProjectConversation = value;
-    if (project && fromScope) draftProjectConversation = null;
+    if (project && fromScope) draftProjectConversation = normalizeProjectConversation(null);
     if (persistState()) return true;
     draftProjectConversation = previousDraft;
     if (project) {
@@ -5469,12 +5513,15 @@
 
   function hasMeaningfulProjectAiLocalWorkspace() {
     const snapshot = getProjectAiAccountFilesSnapshot();
+    const draftChats = snapshot.draftConversation ? normalizeProjectConversation(snapshot.draftConversation).threads : [];
     return Object.entries(snapshot.files || {}).some(
       ([name, content]) => name !== "main.c" || String(content || "").length > 0
     ) ||
       Object.keys(snapshot.miniProjects || {}).length > 0 ||
       String(snapshot.draftCanvas.markdown || "").trim().length > 0 ||
-      !!snapshot.draftConversation?.messages.length || !!snapshot.draftConversation?.draft.trim();
+      draftChats.length > 1 || draftChats.some(
+        chat => chat.messages.length > 0 || chat.draft.trim().length > 0 || chat.titleMode === "manual"
+      );
   }
 
   function expireProjectAiWorkspaceSession(message) {

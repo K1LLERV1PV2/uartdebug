@@ -486,8 +486,9 @@
       errorStage = error?.name === "NotFoundError" ? "" : "adapter";
       if (errorStage) markConnectionPanelError(errorStage, error);
       state.lastProbeError = state.connectionErrorMessage;
+      console.info("[UPDI]", error?.stack || String(error));
       const id = window.UartDebugNotifications?.notify({ title: "Serial connection", source: "UPDI", pending: false,
-        tone: "error", ...describeUpdiFailure(error, "Connection", "adapter"), diagnostics: error?.stack || String(error) });
+        tone: "error", ...describeUpdiFailure(error, "Connection", "adapter") });
       if (id) try { error.uartDebugNotificationId = id; } catch {}
       updateView();
       throw error;
@@ -539,6 +540,7 @@
       );
     }
 
+    if (operationNotificationId) appendLog("Requesting serial port...");
     const port = await navigator.serial.requestPort();
     if (state.preferredPort !== port) invalidateDetectedTarget();
     state.preferredPort = port;
@@ -559,18 +561,27 @@
     updateView();
   }
 
+  function publicUpdiLogText(value) {
+    return String(value || "").replace(/\r\n?/g, "\n").split("\n")
+      .filter(line => !/^\s*at (?:async )?.*(?::\d+:\d+\)?|\(<anonymous>\))\s*$/.test(line))
+      .map(line => line.replace(/(?:https?|file):\/\/[^\s)]+|(?:[A-Za-z]:[\\/]|\/(?:Users|home|var|tmp|etc|opt|usr|private|mnt|app)\/)[^\s)]+/g, "[source location]"))
+      .join("\n").trim();
+  }
+
   function appendLog(message) {
-    const text = String(message || "").trim();
+    const rawText = String(message || "").trim();
+    const text = publicUpdiLogText(rawText);
+    if (text !== rawText) console.info("[UPDI]", rawText);
     if (!text) return;
     const timestamp = new Date().toLocaleTimeString("en-GB", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
     });
-    const line = `[${timestamp}] ${text}`;
+    const line = text.split("\n").map(part => `[${timestamp}] ${part}`).join("\n");
     if (operationNotificationId) {
       if (/\bwarning\b/i.test(text)) operationWarning = text;
-      if (state.busy) { console.info(`[UPDI] ${line}`); return operationNotificationId; }
+      if (state.busy) console.info(`[UPDI] ${line}`);
       return window.UartDebugNotifications?.append(operationNotificationId, line);
     }
     const tone = /failed|error/i.test(text) ? "error"
@@ -1055,9 +1066,12 @@
       try {
         await session.port.close();
       } catch (error) {
+        console.info("[UPDI]", error?.stack || String(error));
         appendLog(`Port close warning: ${error.message || error}`);
+        return false;
       }
     }
+    return true;
   }
 
   async function openUpdiSession(port) {
@@ -1079,7 +1093,7 @@
   }
 
   async function closeUpdiSession(session) {
-    await stopUpdiSessionIo(session, true);
+    return await stopUpdiSessionIo(session, true);
   }
 
   async function reopenUpdiSession(session, options, settleMs = 20) {
@@ -1658,14 +1672,14 @@
     updateHardwareActivity("connection", true);
 
     try {
+      appendLog(actionName);
       let portSelection = await ensureUpdiPortPermission(portOptions);
-      appendLog(
-        portSelection.source === "prompt"
-          ? "Requesting serial port..."
-          : `Using selected serial port${getPortFingerprint(portSelection.port) ? `: ${getPortFingerprint(portSelection.port)}` : "..."}`
+      if (portSelection.source !== "prompt") appendLog(
+        `Using selected serial port${getPortFingerprint(portSelection.port) ? `: ${getPortFingerprint(portSelection.port)}` : "..."}`
       );
 
       try {
+        appendLog(`Opening port with ${SERIAL_BAUD} / 8E2...`);
         session = await openUpdiSession(portSelection.port);
       } catch (openError) {
         if (portSelection.source === "prompt") {
@@ -1681,11 +1695,10 @@
           useCached: false,
           preferPrompt: true,
         });
-        appendLog("Requesting serial port...");
+        appendLog(`Opening port with ${SERIAL_BAUD} / 8E2...`);
         session = await openUpdiSession(portSelection.port);
       }
 
-      appendLog(`Opening port with ${SERIAL_BAUD} / 8E2...`);
       appendLog(`Port selected: ${formatPortInfo(session.port.getInfo?.())}`);
       connectionStage = "chip";
 
@@ -1701,10 +1714,11 @@
         markConnectionPanelError(failureStage, error);
         state.lastProbeError = state.connectionErrorMessage || "Connection error";
       }
-      appendLog(`${actionName} failed: ${error.message || String(error)}`);
+      appendLog(`${actionName} ${cancelled ? "cancelled" : "failed"}: ${error.message || String(error)}`);
+      console.info("[UPDI]", error?.stack || String(error));
       if (notificationId) {
-        console.info("[UPDI]", error?.stack || String(error));
-        const failure = describeUpdiFailure(error, title, failureStage);
+        const { details, ...failure } = describeUpdiFailure(error, title, failureStage);
+        if (details) appendLog(details);
         window.UartDebugNotifications?.notify({
           id: notificationId, tone: "error", pending: false, ...failure,
         });
@@ -1714,8 +1728,8 @@
     } finally {
       if (session) {
         try {
-          await closeUpdiSession(session);
-          appendLog("Port closed.");
+          if (await closeUpdiSession(session)) appendLog("Port closed.");
+          else closeWarning = "The serial port could not be closed.";
         } catch (closeError) {
           closeWarning = `Port close warning: ${closeError.message || closeError}`;
           appendLog(
@@ -1751,7 +1765,7 @@
     if (error?.name === "NotFoundError") return {
       tone: "info", message: "No serial port was selected.", details: "Choose a serial adapter to continue.",
     };
-    if (error?.updiTargetValidation) return { message: `${title} failed: ${error.message}`, details: "" };
+    if (error?.updiTargetValidation) return { message: `${title} failed: ${publicUpdiLogText(error.message).split("\n")[0]}`, details: "" };
     if (stage === "adapter") return {
       message: `${title} failed. The serial adapter is unavailable.`,
       details: "Stage: opening the serial adapter.\nSelect the correct port, check the USB connection and close other applications that may be using the port.",
@@ -1844,10 +1858,11 @@
       });
     } catch (error) {
       if (!error?.uartDebugNotificationId) {
+        console.info("[UPDI]", error?.stack || String(error));
         const id = window.UartDebugNotifications?.notify({
           title: "Flash MCU", source: "UPDI", tone: "error", pending: false,
-          message: `Flash programming failed: ${error.message || error}`,
-          details: "", diagnostics: error?.stack || String(error),
+          message: `Flash programming failed: ${publicUpdiLogText(error.message || error).split("\n")[0]}`,
+          details: "",
         });
         if (id) try { error.uartDebugNotificationId = id; } catch {}
       }

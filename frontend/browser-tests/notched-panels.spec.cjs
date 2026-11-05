@@ -175,7 +175,7 @@ for (const width of [1543, 1024]) {
       expect(geometry.overflow).toBe(false);
       for (const path of geometry.outlines) {
         expect(path.subpaths, "a finished capsule must not contain wireframe construction dividers").toBe(1);
-        expect(path.largestTurn, "the capsule and matching cutout must have no abrupt corners").toBeLessThan(0.55);
+        expect(path.largestTurn, "the capsule and matching cutout must have a visible rounded bend").toBeLessThan(0.25);
       }
       for (const [index, joint] of geometry.joints.entries()) {
         expect(joint.boxGap).toBeCloseTo(14, 1);

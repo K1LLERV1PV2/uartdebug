@@ -25,25 +25,54 @@
     return output.length > limit ? marker + output.slice(-limit + marker.length) : output;
   }
 
+  function redactSourceLocations(value) {
+    // Consume each non-space token once. Repeated attempts inside long dotted
+    // filenames or repeated URL prefixes can otherwise make restore quadratic.
+    return value.replace(/\S+/g, token => {
+      let start = 0, end = token.length;
+      while (start < end && "([{\"'`".includes(token[start])) start++;
+      while (end > start && ")]},\"'`.;".includes(token[end - 1])) end--;
+      const candidate = token.slice(start, end);
+      if (/^(?:https?|file):\/\//.test(candidate)) {
+        const sourcePath = candidate.split(/[?#]/, 1)[0];
+        return /\.m?js(?::\d+(?::\d+)?)?$/.test(sourcePath) || /:\d+:\d+$/.test(candidate)
+          ? "[source location]" : token;
+      }
+      return /^(?:[A-Za-z]:[\\/]|\/(?:Users|home|var|tmp|etc|opt|usr|private|mnt|app|srv)\/)/.test(candidate) ||
+        /\.m?js(?::\d+){1,2}$/.test(candidate) ? "[source location]" : token;
+    });
+  }
+
+  function visibleStackLines(value, redact = false) {
+    const raw = String(value ?? "").replace(/\r\n?/g, "\n");
+    const lines = raw.split("\n");
+    const frame = /^\s*(?:\[\d{2}:\d{2}:\d{2}\]\s*)?at (?:async )?(?:.*:\d+(?::\d+)?\)?|.*\((?:<anonymous>|native)\))\s*$/;
+    const hasStack = lines.some(line => frame.test(line));
+    if (!hasStack && !redact) return { raw, visible: raw, hasStack };
+    return { raw, hasStack, visible: lines.filter(line => !frame.test(line))
+      .map(redactSourceLocations).join("\n").trim() };
+  }
+
   function content(message, details, diagnostics = "") {
-    const stackFrame = /^\s*at (?:async )?.*:\d+:\d+\)?\s*$/m;
     message = text(message).trim();
-    details = String(details ?? "").replace(/\r\n/g, "\n");
+    const messageBlock = visibleStackLines(message);
+    const detailBlock = visibleStackLines(details);
     diagnostics = String(diagnostics ?? "").replace(/\r\n/g, "\n");
-    // Older producers/history mixed call stacks into ordinary output. Move the
-    // whole diagnostic block, without stripping legitimate compiler messages.
-    if (stackFrame.test(message)) {
+    // Remove call frames, preserving the operation log before and after them.
+    // Runtime source locations belong in the console; compiler file.c:line
+    // diagnostics remain part of the useful output.
+    if (messageBlock.hasStack) {
       diagnostics = [diagnostics, message].filter(Boolean).join("\n");
-      if (details.trim() === message) details = "";
       message = "The operation could not be completed.";
+    } else if (detailBlock.hasStack) {
+      message = redactSourceLocations(message);
     }
-    if (stackFrame.test(details)) {
-      diagnostics = [diagnostics, details].filter(Boolean).join("\n");
-      details = "";
+    if (detailBlock.hasStack && detailBlock.raw.trim() !== messageBlock.raw.trim()) {
+      diagnostics = [diagnostics, detailBlock.raw].filter(Boolean).join("\n");
     }
     message = text(message, 500);
     if (diagnostics.trim()) console.info("[UARTDebug diagnostics]", diagnostics);
-    details = tail(details, MAX_DETAILS);
+    details = tail(detailBlock.visible, MAX_DETAILS);
     return { message, details };
   }
 
@@ -52,7 +81,7 @@
     if (saved?.schemaVersion === 1 && Array.isArray(saved.records)) {
       for (const record of saved.records.slice(-MAX_RECORDS)) {
         if (!record || typeof record.id !== "string" || !Number.isFinite(record.createdAt)) continue;
-        records.push({ id: text(record.id, 100), key: text(record.key, 400),
+        records.push({ id: text(record.id, 100), key: text(visibleStackLines(record.key, visibleStackLines(record.details).hasStack).visible, 400),
           title: text(record.title, 120), ...content(record.pending ? "Operation interrupted by page reload." : record.message, record.details, record.diagnostics),
           source: text(record.source, 160),
           tone: record.pending ? "warning" : tones.has(record.tone) ? record.tone : "info",
@@ -67,6 +96,7 @@
     persistTimer = null;
     try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ schemaVersion: 1, records })); } catch {}
   }
+  if (records.length) persist();
 
   function changed() {
     clearTimeout(persistTimer);
@@ -169,13 +199,15 @@
 
   function notify(options = {}) {
     const fresh = options.key === null || (!options.id && options.pending === true && options.key === undefined);
-    const requestedKey = text(options.key || `${options.title || "Notice"}\n${options.message || ""}`, 400);
+    const hasStackDetails = visibleStackLines(options.details).hasStack;
+    const requestedKey = text(visibleStackLines(options.key || `${options.title || "Notice"}\n${options.message || ""}`,
+      hasStackDetails).visible, 400);
     const existing = options.id ? records.find(item => item.id === options.id) : fresh ? null : records.find(item => item.key === requestedKey);
     const output = content(options.message ?? existing?.message ?? "", options.details ?? existing?.details ?? options.message ?? "",
       options.diagnostics ?? "");
     const message = output.message;
     const title = text(options.title ?? existing?.title ?? "Notice", 120).trim();
-    const key = fresh ? "" : text(options.key ?? existing?.key ?? requestedKey, 400);
+    const key = fresh ? "" : text(visibleStackLines(options.key ?? existing?.key ?? requestedKey, hasStackDetails).visible, 400);
     const now = Date.now();
     const record = { id: existing?.id || options.id || `notice-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       key, title, ...output,

@@ -1,5 +1,6 @@
 "use strict";
 
+const CONVERSATION_SCHEMA_VERSION = 5;
 const CONVERSATION_LIMITS = Object.freeze({
   messageBytes: 32 * 1024,
   requestBytes: 16 * 1024,
@@ -17,7 +18,7 @@ const text = (value, limit) => typeof value === "string" && !value.includes("\0"
 const keys = (value, allowed) => Object.keys(value).every(key => allowed.includes(key));
 const id = value => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 
-const conversationContentMessages = messages => messages.map(({ requestSource, status, ...message }) =>
+const conversationContentMessages = messages => messages.map(({ requestSource, parentId, status, ...message }) =>
   status && status !== "complete" ? { ...message, status } : message);
 
 // Chat management metadata must not consume an older conversation's content
@@ -52,24 +53,40 @@ function normalizeChatInput(raw) {
   };
 }
 
-function validateStoredMessages(value, { allowRequestSource = false } = {}) {
+function validateStoredMessages(value, { allowRequestSource = false, tree = false } = {}) {
   if (!Array.isArray(value.messages) || value.messages.length > CONVERSATION_LIMITS.storedMessages ||
       !text(value.draft, CONVERSATION_LIMITS.requestBytes)) {
     throw new Error("The project conversation is invalid.");
   }
   const ids = new Set();
-  const messageKeys = ["id", "role", "content", "createdAt", "status", ...(allowRequestSource ? ["requestSource"] : [])];
+  const messageKeys = ["id", "role", "content", "createdAt", "status", ...(allowRequestSource ? ["requestSource"] : []), ...(tree ? ["parentId"] : [])];
   for (const message of value.messages) {
     if (!object(message) || !keys(message, messageKeys) ||
         !id(message.id) || ids.has(message.id) ||
+        (tree && !(message.parentId === null || id(message.parentId) && ids.has(message.parentId))) ||
         !["user", "assistant"].includes(message.role) || !text(message.content, CONVERSATION_LIMITS.messageBytes) ||
         !Number.isSafeInteger(message.createdAt) || message.createdAt < 0 ||
         (Object.hasOwn(message, "status") && !["complete", "pending", "error"].includes(message.status)) ||
+        (tree && !["complete", "pending", "error"].includes(message.status)) ||
         (Object.hasOwn(message, "requestSource") &&
           (message.role !== "user" || !["message", "review"].includes(message.requestSource)))) {
       throw new Error("The project conversation contains an invalid message.");
     }
     ids.add(message.id);
+  }
+  if (tree && !(value.messages.length ? ids.has(value.activeLeafId) : value.activeLeafId === null)) {
+    throw new Error("The project conversation has an invalid selected branch.");
+  }
+  if (tree && Object.hasOwn(value, "selectedChildIds")) {
+    if (!Array.isArray(value.selectedChildIds) || value.selectedChildIds.length > value.messages.length) {
+      throw new Error("The project conversation has invalid branch selections.");
+    }
+    const parents = new Set(), byId = new Map(value.messages.map(message => [message.id, message]));
+    for (const selected of value.selectedChildIds) {
+      const child = byId.get(selected);
+      if (!child || parents.has(child.parentId)) throw new Error("The project conversation has invalid branch selections.");
+      parents.add(child.parentId);
+    }
   }
   if (Buffer.byteLength(JSON.stringify(allowRequestSource ? conversationContent(value) : value)) > CONVERSATION_LIMITS.storedBytes) {
     throw new Error("The project conversation exceeds its storage limit.");
@@ -83,14 +100,15 @@ function validateStoredConversation(value) {
     validateStoredMessages(value);
     return value;
   }
-  if (!object(value) || ![2, 3, 4].includes(value.schemaVersion) || !keys(value, ["schemaVersion", "activeThreadId", "threads"]) ||
+  if (!object(value) || ![2, 3, 4, CONVERSATION_SCHEMA_VERSION].includes(value.schemaVersion) || !keys(value, ["schemaVersion", "activeThreadId", "threads"]) ||
       !id(value.activeThreadId) || !Array.isArray(value.threads) || !value.threads.length ||
       value.threads.length > CONVERSATION_LIMITS.threads) {
     throw new Error("The project chat collection is invalid.");
   }
   const current = value.schemaVersion >= 3;
+  const tree = value.schemaVersion === CONVERSATION_SCHEMA_VERSION;
   const legacyManagement = value.schemaVersion === 3;
-  const threadKeys = ["id", "title", "messages", "draft", ...(current ? ["titleMode"] : []),
+  const threadKeys = ["id", "title", "messages", "draft", ...(current ? ["titleMode"] : []), ...(tree ? ["activeLeafId", "selectedChildIds"] : []),
     ...(legacyManagement ? ["pinned", "archived"] : [])];
   const ids = new Set();
   for (const thread of value.threads) {
@@ -101,7 +119,7 @@ function validateStoredConversation(value) {
       throw new Error("The project chat collection contains an invalid chat.");
     }
     ids.add(thread.id);
-    validateStoredMessages(thread, { allowRequestSource: current });
+    validateStoredMessages(thread, { allowRequestSource: current, tree });
   }
   if (!ids.has(value.activeThreadId)) throw new Error("The active project chat must identify a stored chat.");
   if (Buffer.byteLength(JSON.stringify(current ? collectionContent(value) : value)) > CONVERSATION_LIMITS.collectionBytes) {
@@ -110,4 +128,4 @@ function validateStoredConversation(value) {
   return value;
 }
 
-module.exports = { CONVERSATION_LIMITS, normalizeChatInput, validateStoredConversation };
+module.exports = { CONVERSATION_SCHEMA_VERSION, CONVERSATION_LIMITS, normalizeChatInput, validateStoredConversation };

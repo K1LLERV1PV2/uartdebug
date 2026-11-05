@@ -127,7 +127,7 @@ function createUpdiSerialMock(deviceId = 0x1e942a) {
           mock.memoryWrites += 1;
           throw new Error("Unexpected programming write");
         }
-        push([...payload, ...response]);
+        if (!mock.suppressEcho || response.length) push([...(mock.suppressEcho ? [] : payload), ...response]);
       },
       releaseLock() {},
     }) },
@@ -250,7 +250,7 @@ test("UPDI reuses a parent compilation record instead of creating a Detect notif
   const { runtime, window, notifications, diagnostics } = loadRuntime({
     serial: { requestPort: async () => { throw new Error("No adapter"); } },
   });
-  const id = window.UartDebugNotifications.notify({ title: "Compilation", message: "Compiling...", pending: true });
+  const id = window.UartDebugNotifications.notify({ title: "Compilation", message: "Compiling...", details: "Compiler preflight completed.", pending: true });
   await assert.rejects(runtime.ensureSignature({ force: true, notificationId: id }), error => {
     assert.equal(error.uartDebugNotificationId, id);
     return /No adapter/.test(error.message);
@@ -259,10 +259,11 @@ test("UPDI reuses a parent compilation record instead of creating a Detect notif
   assert.equal(notifications.get(id).title, "Compilation");
   assert.equal(notifications.get(id).pending, false);
   assert.equal(notifications.get(id).tone, "error");
+  assert.match(notifications.get(id).details, /^Compiler preflight completed\.[\s\S]*Reading signature\.\.\.[\s\S]*Requesting serial port[\s\S]*failed: No adapter/);
   assert.match(diagnostics.join("\n"), /No adapter/);
 });
 
-test("a chatty flash operation appends full diagnostics to one notification and closes its port", async () => {
+test("a chatty flash operation retains timestamped page logs in one notification and closes its port", async () => {
   let closed = 0;
   const port = {
     open: async () => {}, close: async () => { closed += 1; }, getInfo: () => ({ usbVendorId: 0x0403, usbProductId: 0x6001 }),
@@ -280,11 +281,96 @@ test("a chatty flash operation appends full diagnostics to one notification and 
   const record = [...notifications.values()][0];
   assert.equal(record.pending, false);
   assert.equal(record.tone, "success");
+  assert.match(record.details, /^\[\d{2}:\d{2}:\d{2}\] Programming flash\.\.\./);
+  assert.match(record.details, /Verifying page 1\/80/);
+  assert.match(record.details, /Verifying page 80\/80/);
+  assert.match(record.details, /Port closed\.$/);
+  assert.equal(record.details.split("\n").every(line => /^\[\d{2}:\d{2}:\d{2}\] /.test(line)), true);
   assert.match(diagnostics.join("\n"), /Verifying page 1\/80/);
   assert.match(diagnostics.join("\n"), /Verifying page 80\/80/);
   assert.match(diagnostics.join("\n"), /Port closed/);
   assert.equal(closed, 1);
   assert.equal(runtime.isBusy(), false);
+});
+
+test("a real signature echo timeout retains the visible connection timeline without JavaScript stacks", async () => {
+  const mock = createUpdiSerialMock();
+  mock.suppressEcho = true;
+  const { runtime, notifications, diagnostics } = loadRuntime({ serial: mock.serial });
+  await assert.rejects(runtime.ensureSignature({ force: true }), /Timed out waiting for echo of 1 byte/);
+  assert.equal(notifications.size, 1);
+  const notice = [...notifications.values()][0];
+  const expected = ["Reading signature...", "Requesting serial port...", "Opening port with 115200 / 8E2...",
+    "Port selected:", "Reading signature... failed: Timed out waiting for echo of 1 byte(s).",
+    "Stage: communicating over UPDI.", "Port closed."];
+  let previous = -1;
+  for (const fragment of expected) {
+    const index = notice.details.indexOf(fragment);
+    assert.ok(index > previous, `retain stage in order: ${fragment}`);
+    previous = index;
+  }
+  assert.equal(notice.details.split("\n").every(line => /^\[\d{2}:\d{2}:\d{2}\] /.test(line)), true);
+  assert.doesNotMatch(notice.details, /^\s*at\s|https?:\/\/|updi-test\.js:\d+:\d+/m);
+  assert.equal(Object.hasOwn(notice, "diagnostics"), false);
+  assert.match(diagnostics.join("\n"), /at waitForBuffer/);
+  assert.equal(mock.closed, 1);
+});
+
+test("connection stages are visible while awaiting port selection and opening", async () => {
+  const mock = createUpdiSerialMock();
+  let selectPort;
+  let openPort;
+  mock.serial.requestPort = () => new Promise(resolve => { selectPort = resolve; });
+  mock.port.open = () => new Promise(resolve => { openPort = resolve; });
+  const { window, notifications } = loadRuntime({ serial: mock.serial, exposeActions: true });
+  const action = window.testActions.runUpdiAction("Reading signature...", async () => {});
+  const notice = [...notifications.values()][0];
+  assert.match(notice.details, /Reading signature\.\.\.[\s\S]*Requesting serial port\.\.\.$/);
+  assert.doesNotMatch(notice.details, /Opening port/);
+  selectPort(mock.port);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(notice.details, /Opening port with 115200 \/ 8E2\.\.\.$/);
+  assert.doesNotMatch(notice.details, /Port selected/);
+  openPort();
+  await action;
+  assert.match(notifications.get(notice.id).details, /Port selected:[\s\S]*Port closed\.$/);
+});
+
+test("UPDI retains useful log text and device addresses while keeping source paths and stack frames in the console", async () => {
+  const mock = createUpdiSerialMock();
+  const { window, notifications, diagnostics } = loadRuntime({ serial: mock.serial, exposeActions: true });
+  const failure = new Error("Write rejected at /var/www/uartdebug/updi-test.js:1832:7\n    at writer (http://127.0.0.1:8765/updi-test.js?v=test:1832:7)\n    at Array.map (<anonymous>)");
+  await assert.rejects(window.testActions.runUpdiAction("Programming flash...", async () => {
+    window.testActions.appendLog("Signature: 0x1E942A; Writing page 2/80 at 0x8040...");
+    throw failure;
+  }), /Write rejected/);
+  const notice = [...notifications.values()][0];
+  assert.match(notice.details, /Signature: 0x1E942A; Writing page 2\/80 at 0x8040/);
+  assert.match(notice.details, /Programming flash\.\.\. failed: Write rejected at \[source location\]/);
+  assert.match(notice.details, /Port closed\.$/);
+  assert.doesNotMatch(notice.details, /https?:\/\/|\/var\/www|updi-test\.js|\bat writer\b|\bat Array\.map\b/);
+  assert.match(diagnostics.join("\n"), /http:\/\/127\.0\.0\.1:8765\/updi-test\.js/);
+  assert.match(diagnostics.join("\n"), /\/var\/www\/uartdebug\/updi-test\.js/);
+});
+
+test("a serial port close failure retains its warning and never reports Port closed", async () => {
+  for (const failed of [false, true]) {
+    const mock = createUpdiSerialMock();
+    mock.port.close = async () => { throw new Error("The port is still busy"); };
+    const { window, notifications } = loadRuntime({ serial: mock.serial, exposeActions: true });
+    const action = window.testActions.runUpdiAction("Programming flash...", async () => {
+      window.testActions.appendLog("Verifying page 80/80...");
+      if (failed) throw new Error("Verification failed at 0x8040");
+    });
+    if (failed) await assert.rejects(action, /Verification failed/);
+    else await action;
+    const notice = [...notifications.values()][0];
+    assert.match(notice.details, /Verifying page 80\/80/);
+    assert.match(notice.details, /Port close warning: The port is still busy$/);
+    assert.doesNotMatch(notice.details, /Port closed\./);
+    assert.equal(notice.tone, failed ? "error" : "warning");
+    if (!failed) assert.equal(notice.message, "Operation completed, but the serial port could not be closed.");
+  }
 });
 
 test("an echo timeout during flash never claims that the signature was not read", async () => {
@@ -296,6 +382,8 @@ test("an echo timeout during flash never claims that the signature was not read"
   }), /Timed out/);
   const notice = [...notifications.values()][0];
   assert.match(notice.message, /Flash MCU failed/);
+  assert.match(notice.details, /Signature read; writing page 2/);
+  assert.match(notice.details, /Programming flash\.\.\. failed: Timed out/);
   assert.match(notice.details, /communicating over UPDI/);
   assert.doesNotMatch(notice.details, /signature has not|establishing|diagnostics.*below/i);
   assert.equal(mock.closed, 1);
@@ -309,6 +397,8 @@ test("cancelling UPDI port selection is neutral and leaves no adapter error", as
   const notice = [...notifications.values()][0];
   assert.equal(notice.tone, "info");
   assert.equal(notice.message, "No serial port was selected.");
+  assert.match(notice.details, /Requesting serial port[\s\S]*Reading signature\.\.\. cancelled:/);
+  assert.doesNotMatch(notice.details, /Opening port|Port closed|\bat /);
   assert.equal(document.getElementById("adapterStatusText").textContent, "No port selection");
   assert.equal(runtime.isBusy(), false);
 });

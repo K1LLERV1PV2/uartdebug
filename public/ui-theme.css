@@ -22,6 +22,11 @@
   --ui-danger: #e85f5c;
   --ui-danger-text: #ffd0d0;
   --ui-warning: #f2a444;
+  --ui-warning-text: #ffe0aa;
+  --ui-warning-border: rgba(242, 164, 68, 0.38);
+  --ui-warning-surface: rgba(242, 164, 68, 0.22);
+  --ui-warning-hover-border: #ffc26b;
+  --ui-warning-hover-surface: rgba(242, 164, 68, 0.34);
   --ui-radius: 15px;
   --ui-radius-small: 8px;
   --ui-control-height: 44px;
@@ -40,6 +45,36 @@
 *::before,
 *::after {
   box-sizing: border-box;
+}
+
+/* Scrollbars share their colors across every page and native scroll region.
+   Their existing component widths and reserved gutters remain unchanged. */
+* {
+  scrollbar-color: var(--ui-scrollbar-thumb, rgba(70, 255, 120, 0.55)) transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--ui-scrollbar-thumb, rgba(70, 255, 120, 0.55));
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ui-scrollbar-thumb-hover, rgba(70, 255, 120, 0.72));
+}
+
+.CodeMirror-scrollbar-filler,
+.CodeMirror-gutter-filler {
+  background: transparent !important;
+}
+
+.CodeMirror-vscrollbar,
+.CodeMirror-hscrollbar {
+  background: transparent;
 }
 
 body {
