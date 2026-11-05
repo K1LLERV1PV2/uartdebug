@@ -384,7 +384,7 @@ jobs:
                       rm -f "${ai_status_body}"
                       exit 1
                   }
-                  run_sudo -u uartai /usr/bin/node "${BE_DIR}/deploy/verify-ai-release.js" "${ai_status_body}"
+                  run_sudo -u uartai /usr/bin/node "${BE_DIR}/deploy/verify-ai-release.js" - < "${ai_status_body}"
                   rm -f "${ai_status_body}"
 
                   /bin/bash "${BE_DIR}/deploy/smoke-ai-service.sh" \

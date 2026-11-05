@@ -325,7 +325,12 @@ test(`the rollback guard blocks schema ${liveSchema} from a schema ${targetSchem
 });
 }
 
-test("release verification detects mismatched running knowledge or rules", async (t) => {
+test("release readiness passes the private status file through stdin before switching identity", () => {
+  const workflow = read(".github/workflows/deploy.yml");
+  assert.match(workflow, /run_sudo -u uartai \/usr\/bin\/node "\$\{BE_DIR\}\/deploy\/verify-ai-release\.js" - < "\$\{ai_status_body\}"/);
+});
+
+test("release verification accepts file paths and stdin while rejecting mismatched status", async (t) => {
   const directory = fs.mkdtempSync(
     path.join(os.tmpdir(), "canvas-release-check-"),
   );
@@ -340,15 +345,30 @@ test("release verification detects mismatched running knowledge or rules", async
     repositoryRoot,
     "backend/deploy/verify-ai-release.js",
   );
-  fs.writeFileSync(file, JSON.stringify(status));
-  execFileSync(process.execPath, [script, file], executionOptions);
-  for (const field of ["rules", "knowledge"]) {
-    const mismatch = structuredClone(status);
-    mismatch[field].digest = "0".repeat(64);
-    fs.writeFileSync(file, JSON.stringify(mismatch));
-    assert.throws(
-      () => execFileSync(process.execPath, [script, file], executionOptions),
-      (error) => error.status === 1,
-    );
+  fs.writeFileSync(file, JSON.stringify(status), { mode: 0o600 });
+  for (const source of ["file", "stdin"]) {
+    const run = (body) => {
+      if (source === "file") {
+        fs.writeFileSync(file, body);
+        return execFileSync(process.execPath, [script, file], executionOptions);
+      }
+      return execFileSync(process.execPath, [script, "-"], { ...executionOptions, input: body });
+    };
+    run(JSON.stringify(status));
+    for (const field of ["contract", "rules.digest", "knowledge.digest", "knowledge.version", "model"]) {
+      const mismatch = structuredClone(status);
+      const keys = field.split(".");
+      const owner = keys.length === 1 ? mismatch : mismatch[keys[0]];
+      owner[keys.at(-1)] = "mismatched-release";
+      assert.throws(
+        () => run(JSON.stringify(mismatch)),
+        (error) => error.status === 1,
+        `${source} must reject mismatched ${field}`,
+      );
+    }
+    assert.throws(() => run("{invalid JSON"), (error) => error.status === 1);
+  }
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600, "verification must not broaden status file access");
   }
 });
