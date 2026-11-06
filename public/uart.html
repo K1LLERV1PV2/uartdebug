@@ -6,19 +6,19 @@
     <meta name="theme-color" content="#222f3c" />
     <link rel="canonical" href="https://uartdebug.com/uart" />
     <title>UART Terminal - Uart Debug</title>
-    <link rel="manifest" href="/manifest.webmanifest?v=20261106-chat-feedback-v2" />
+    <link rel="manifest" href="/manifest.webmanifest?v=20261107-project-sync-v1" />
     <!-- Link global and UART-specific styles. -->
-    <link rel="stylesheet" href="ui-theme.css?v=20261106-chat-feedback-v2" />
-    <link rel="stylesheet" href="uart.css?v=20261106-chat-feedback-v2" />
-    <link rel="stylesheet" href="ui-controls.css?v=20261106-chat-feedback-v2" />
-    <link rel="stylesheet" href="ui-notifications.css?v=20261106-chat-feedback-v2" />
-    <link rel="stylesheet" href="ui-tooltips.css?v=20261106-chat-feedback-v2" />
+    <link rel="stylesheet" href="ui-theme.css?v=20261107-project-sync-v1" />
+    <link rel="stylesheet" href="uart.css?v=20261107-project-sync-v1" />
+    <link rel="stylesheet" href="ui-controls.css?v=20261107-project-sync-v1" />
+    <link rel="stylesheet" href="ui-notifications.css?v=20261107-project-sync-v1" />
+    <link rel="stylesheet" href="ui-tooltips.css?v=20261107-project-sync-v1" />
     <!-- Include Chart.js. -->
-    <script src="vendor/chart.umd.js?v=20261106-chat-feedback-v2"></script>
-    <script defer src="ui-tooltips.js?v=20261106-chat-feedback-v2"></script>
-    <script defer src="ui-controls.js?v=20261106-chat-feedback-v2"></script>
-    <script defer src="ui-notifications.js?v=20261106-chat-feedback-v2"></script>
-    <script defer src="uart.js?v=20261106-chat-feedback-v2"></script>
+    <script src="vendor/chart.umd.js?v=20261107-project-sync-v1"></script>
+    <script defer src="ui-tooltips.js?v=20261107-project-sync-v1"></script>
+    <script defer src="ui-controls.js?v=20261107-project-sync-v1"></script>
+    <script defer src="ui-notifications.js?v=20261107-project-sync-v1"></script>
+    <script defer src="uart.js?v=20261107-project-sync-v1"></script>
   </head>
   <body class="terminal-page">
     <main>
@@ -660,7 +660,7 @@
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
-          navigator.serviceWorker.register("/sw.js?v=20261106-chat-feedback-v2", { updateViaCache: "none" }).catch(function (error) {
+          navigator.serviceWorker.register("/sw.js?v=20261107-project-sync-v1", { updateViaCache: "none" }).catch(function (error) {
             console.error("Service worker registration failed:", error);
           });
         });

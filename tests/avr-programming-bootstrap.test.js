@@ -314,7 +314,7 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
     "resetProjectAiAccountWorkspaceRuntime", "restoreProjectAiLocalDirtyState", "restoreProjectAiAccountSyncState",
     "getPublicMiniProjectInstance", "getVisibleWorkspaceFileNames", "migrateLooseFilesToProjects", "getEmptyProjectAiAccountWorkspace", "isHiddenMiniProjectFile",
     "getProjectAiRequestPayload", "assertProjectAiUpdateIsFresh",
-    "getProjectChatContext", "saveProjectConversation", "hasMeaningfulProjectAiLocalWorkspace",
+    "getProjectChatContext", "saveProjectConversation", "hasMeaningfulProjectAiLocalWorkspace", "saveCanvasTarget",
     "assertProjectAiInstructionIsFresh", "canvasScope() { return projectInstructionScopeEpoch; }",
     `prepare() {
       resetHexArtifact = updateCompilePanelState = renderOutliner =
@@ -329,7 +329,7 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
       updateProjectInstructionFromUser(markdown, createMarkdownAuthorship(markdown, "human"));
       persistProjectInstruction({ recover: true });
     }`,
-    `confirm(value) { showSiteConfirm = async () => value; }`,
+    `confirm(value) { showSiteConfirm = typeof value === "function" ? value : async () => value; }`,
     `account(accountKey, ready = false) {
       projectAiBootComplete = true;
       projectAiAuthSession = { authenticated: true, accountKey };
@@ -337,6 +337,7 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
       projectAiAccountSync.ready = ready;
     }`,
     `syncState() { return JSON.parse(JSON.stringify(projectAiAccountSync)); }`,
+    `chatController(controller) { projectChatController = controller; }`,
     `dirtyAccount() { projectAiAccountSync.dirty = true; }`,
     `setCanvasDocument(canvas) { projectInstructionDocument = normalizeProjectInstructionDocument(canvas); }`,
     `codeEditor(markdown) {
@@ -669,6 +670,254 @@ function accountSyncStorage(accountKey, revision, overrides = {}) {
 function jsonResponse(data, status = 200) {
   return { ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => data };
 }
+
+function canonicalAccountFixture(accountKey, revision, { conflict = false } = {}) {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  hooks.createEmptyProject();
+  hooks.editCanvas("Shared specification");
+  const snapshot = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
+  storage.set("ud_avr_ai_account_sync_v1", JSON.stringify({
+    schemaVersion: 4, accountKey, revision, dirty: false, conflict,
+  }));
+  storage.set("ud_avr_ai_local_dirty_v1", JSON.stringify({ schemaVersion: 4, dirty: false }));
+  return { storage, snapshot };
+}
+
+function restoreAccountFixture(hooks, accountKey) {
+  hooks.loadState();
+  hooks.restoreProjectInstruction();
+  hooks.restoreProjectAiLocalDirtyState();
+  hooks.restoreProjectAiAccountSyncState();
+  hooks.account(accountKey);
+}
+
+test("flushing unchanged project and canvas data does not create an account mutation", () => {
+  const accountKey = "unchanged-project-flush";
+  const { storage } = canonicalAccountFixture(accountKey, 4);
+  const { hooks } = loadCanvasLifecycleHooks(storage);
+  restoreAccountFixture(hooks, accountKey);
+  const mutation = hooks.syncState().mutation;
+  hooks.persistProjectInstruction({ immediate: true });
+  hooks.persistState();
+  assert.equal(hooks.syncState().dirty, false);
+  assert.equal(hooks.syncState().localDirty, false);
+  assert.equal(hooks.syncState().mutation, mutation);
+  hooks.editCanvas("A real user change");
+  assert.equal(hooks.syncState().dirty, true);
+  assert.equal(hooks.syncState().localDirty, true);
+  assert.ok(hooks.syncState().mutation > mutation);
+});
+
+test("flushing an unused chat leaves it unmaterialized while persisting other queued project edits", () => {
+  const accountKey = "unused-chat-flush";
+  const { storage } = canonicalAccountFixture(accountKey, 4);
+  const { hooks } = loadCanvasLifecycleHooks(storage);
+  restoreAccountFixture(hooks, accountKey);
+  const context = hooks.getProjectChatContext();
+  assert.equal(hooks.saveProjectConversation(context, context.conversation), true);
+  assert.equal(Object.hasOwn(Object.values(hooks.getProjectAiAccountFilesSnapshot().miniProjects)[0], "conversation"), false);
+  assert.equal(hooks.syncState().dirty, false);
+  hooks.queueCanvas("A pending specification edit");
+  assert.equal(hooks.saveProjectConversation(context, context.conversation), true);
+  const saved = JSON.parse(storage.get("ud_avr_programming_state_v3"));
+  assert.equal(Object.values(saved.miniProjects)[0].canvas.markdown, "A pending specification edit");
+  assert.equal(Object.hasOwn(Object.values(saved.miniProjects)[0], "conversation"), false);
+  assert.equal(hooks.syncState().dirty, true);
+});
+
+test("restoring empty target controls does not create a canvas revision while a real chip selection does", () => {
+  const { hooks, document } = loadCanvasLifecycleHooks();
+  hooks.setCanvasDocument({ schemaVersion: 2, revision: 7, markdown: "Keep this specification", annotations: [] });
+  hooks.saveCanvasTarget();
+  assert.equal(hooks.getProjectInstructionSnapshot().revision, 7);
+  assert.equal(hooks.getProjectInstructionSnapshot().target, undefined);
+  document.body.innerHTML = '<select id="mcuSelect"><option value="attiny1624" selected>ATtiny1624</option></select>';
+  hooks.saveCanvasTarget();
+  assert.equal(hooks.getProjectInstructionSnapshot().revision, 8);
+  assert.equal(hooks.getProjectInstructionSnapshot().target.mcu, "attiny1624");
+  hooks.saveCanvasTarget();
+  assert.equal(hooks.getProjectInstructionSnapshot().revision, 8);
+});
+
+test("a chat persistence failure before sync retains its current scope and does not read or replace the cloud", async () => {
+  const accountKey = "chat-storage-failure";
+  const { storage } = canonicalAccountFixture(accountKey, 4);
+  let requests = 0;
+  let refreshes = 0;
+  const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async () => { requests++; throw new Error("No sync before saving the chat"); } });
+  restoreAccountFixture(hooks, accountKey);
+  const epoch = hooks.getProjectChatContext().accountEpoch;
+  hooks.chatController({ cancel() {}, flush: () => false, refresh() { refreshes++; } });
+  await hooks.initializeProjectAiAccountWorkspace();
+  assert.equal(requests, 0);
+  assert.equal(refreshes, 0);
+  assert.equal(hooks.getProjectChatContext().accountEpoch, epoch);
+  assert.equal(hooks.syncState().ready, false);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Shared specification");
+});
+
+test("chat input that cannot be persisted after the cloud read blocks cloud adoption", async () => {
+  const accountKey = "chat-late-storage-failure";
+  const { storage, snapshot } = canonicalAccountFixture(accountKey, 4);
+  Object.values(snapshot.miniProjects)[0].canvas.markdown = "New cloud specification";
+  let flushes = 0;
+  let reads = 0;
+  const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async () => {
+    reads++;
+    return jsonResponse({ ok: true, accountKey, documents: { files: { revision: 5, data: snapshot } } });
+  } });
+  restoreAccountFixture(hooks, accountKey);
+  hooks.chatController({ cancel() {}, flush: () => ++flushes === 1, refresh() {} });
+  await hooks.initializeProjectAiAccountWorkspace();
+  assert.equal(reads, 1);
+  assert.equal(flushes, 2);
+  assert.equal(hooks.syncState().ready, false);
+  assert.equal(hooks.syncState().revision, 4);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Shared specification");
+});
+
+test("unsaved local projects resume a revision-checked save after reload without a false conflict", async () => {
+  const accountKey = "own-unsaved-projects";
+  const { storage, snapshot } = canonicalAccountFixture(accountKey, 4);
+  let remote = snapshot;
+  let revision = 4;
+  let prompts = 0;
+  const writes = [];
+  const fetch = async (_url, init) => {
+    if (init.method === "GET") return jsonResponse({ ok: true, accountKey,
+      documents: { files: { revision, data: remote } } });
+    const body = JSON.parse(init.body);
+    writes.push(body);
+    assert.equal(body.baseRevision, revision);
+    remote = body.data;
+    return jsonResponse({ ok: true, document: { revision: ++revision } });
+  };
+  const first = loadCanvasLifecycleHooks(storage, { fetch }).hooks;
+  restoreAccountFixture(first, accountKey);
+  first.editCanvas("Unsaved work before a reload");
+  const reloaded = loadCanvasLifecycleHooks(storage, { fetch }).hooks;
+  restoreAccountFixture(reloaded, accountKey);
+  reloaded.confirm(async () => { prompts++; return false; });
+  await reloaded.initializeProjectAiAccountWorkspace();
+  assert.equal(prompts, 0);
+  assert.equal(reloaded.syncState().conflict, false);
+  assert.equal(reloaded.getProjectInstructionSnapshot().markdown, "Unsaved work before a reload");
+  await reloaded.saveProjectAiAccountWorkspace();
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].expectedAccountKey, accountKey);
+  assert.equal(writes[0].baseRevision, 4);
+  assert.equal(reloaded.syncState().revision, 5);
+  const again = loadCanvasLifecycleHooks(storage, { fetch }).hooks;
+  restoreAccountFixture(again, accountKey);
+  again.confirm(async () => { prompts++; return false; });
+  await again.initializeProjectAiAccountWorkspace();
+  await again.saveProjectAiAccountWorkspace();
+  assert.equal(prompts, 0);
+  assert.equal(writes.length, 1);
+  assert.equal(again.syncState().dirty, false);
+});
+
+test("identical cloud content acknowledges its latest revision and clears a stale conflict regardless of object key order", async () => {
+  const accountKey = "identical-projects";
+  const { storage, snapshot } = canonicalAccountFixture(accountKey, 4, { conflict: true });
+  const reorder = value => Array.isArray(value) ? value.map(reorder)
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).reverse().map(([key, entry]) => [key, reorder(entry)])) : value;
+  let prompts = 0;
+  let writes = 0;
+  const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async (_url, init) => {
+    if (init.method === "PUT") { writes++; throw new Error("Equal content must not be rewritten"); }
+    return jsonResponse({ ok: true, accountKey, documents: { files: { revision: 7, data: reorder(snapshot) } } });
+  } });
+  restoreAccountFixture(hooks, accountKey);
+  hooks.confirm(async () => { prompts++; return false; });
+  await hooks.initializeProjectAiAccountWorkspace();
+  await hooks.saveProjectAiAccountWorkspace();
+  assert.equal(prompts, 0);
+  assert.equal(writes, 0);
+  assert.equal(hooks.syncState().revision, 7);
+  assert.equal(hooks.syncState().conflict, false);
+  assert.equal(hooks.syncState().dirty, false);
+  assert.equal(hooks.syncState().localDirty, false);
+});
+
+test("a newer divergent cloud copy still requires a choice and never overwrites unsaved projects", async () => {
+  const accountKey = "real-project-conflict";
+  const { storage, snapshot } = canonicalAccountFixture(accountKey, 4);
+  const remoteProject = Object.values(snapshot.miniProjects)[0];
+  remoteProject.canvas.markdown = "Another browser's requirements";
+  let prompts = 0;
+  let writes = 0;
+  const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async (_url, init) => {
+    if (init.method === "PUT") { writes++; throw new Error("Conflicts must not upload"); }
+    return jsonResponse({ ok: true, accountKey, documents: { files: { revision: 5, data: snapshot } } });
+  } });
+  restoreAccountFixture(hooks, accountKey);
+  hooks.editCanvas("My unsaved requirements");
+  hooks.confirm(async () => { prompts++; return false; });
+  await hooks.initializeProjectAiAccountWorkspace();
+  await hooks.saveProjectAiAccountWorkspace();
+  assert.equal(prompts, 1);
+  assert.equal(writes, 0);
+  assert.equal(hooks.syncState().conflict, true);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "My unsaved requirements");
+  assert.equal(remoteProject.canvas.markdown, "Another browser's requirements");
+});
+
+test("another tab advancing the shared sync marker during a GET cannot rebase this tab's unsaved projects", async () => {
+  const accountKey = "shared-marker-race";
+  const { storage, snapshot } = canonicalAccountFixture(accountKey, 4);
+  Object.values(snapshot.miniProjects)[0].canvas.markdown = "Other tab's cloud update";
+  let finish;
+  let prompts = 0;
+  let writes = 0;
+  const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async (_url, init) => {
+    if (init.method === "PUT") { writes++; throw new Error("A changed marker is not a new base"); }
+    return new Promise(resolve => { finish = resolve; });
+  } });
+  restoreAccountFixture(hooks, accountKey);
+  hooks.editCanvas("This tab's unsaved project");
+  hooks.confirm(async () => { prompts++; return false; });
+  const pending = hooks.initializeProjectAiAccountWorkspace();
+  storage.set("ud_avr_ai_account_sync_v1", JSON.stringify({ schemaVersion: 4, accountKey, revision: 5, dirty: false, conflict: false }));
+  finish(jsonResponse({ ok: true, accountKey, documents: { files: { revision: 5, data: snapshot } } }));
+  await pending;
+  await hooks.saveProjectAiAccountWorkspace();
+  assert.equal(prompts, 1);
+  assert.equal(writes, 0);
+  assert.equal(hooks.syncState().revision, 4);
+  assert.equal(hooks.syncState().conflict, true);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "This tab's unsaved project");
+  const again = loadCanvasLifecycleHooks(storage, { fetch: async () => jsonResponse({ ok: true, accountKey,
+    documents: { files: { revision: 5, data: snapshot } } }) }).hooks;
+  restoreAccountFixture(again, accountKey);
+  again.confirm(async () => { prompts++; return false; });
+  await again.initializeProjectAiAccountWorkspace();
+  assert.equal(prompts, 2, "A reload must not convert the unresolved conflict into an acknowledged base");
+  assert.equal(again.syncState().revision, 4);
+  assert.equal(again.syncState().conflict, true);
+  assert.equal(again.getProjectInstructionSnapshot().markdown, "This tab's unsaved project");
+});
+
+test("a cloud write racing the resumed local save is rejected without losing local projects", async () => {
+  const accountKey = "resumed-save-race";
+  const { storage, snapshot } = canonicalAccountFixture(accountKey, 4);
+  const writes = [];
+  const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async (_url, init) => {
+    if (init.method === "GET") return jsonResponse({ ok: true, accountKey, documents: { files: { revision: 4, data: snapshot } } });
+    writes.push(JSON.parse(init.body));
+    return jsonResponse({ ok: false, code: "account_data_revision_conflict" }, 409);
+  } });
+  restoreAccountFixture(hooks, accountKey);
+  hooks.editCanvas("Recoverable local work");
+  hooks.confirm(false);
+  await hooks.initializeProjectAiAccountWorkspace();
+  await hooks.saveProjectAiAccountWorkspace();
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].baseRevision, 4);
+  assert.equal(hooks.syncState().revision, 4);
+  assert.equal(hooks.syncState().conflict, true);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Recoverable local work");
+});
 
 test("legacy account document order does not affect consolidation or the first atomic save", async () => {
   const fixture = loadCanvasLifecycleHooks().hooks;
