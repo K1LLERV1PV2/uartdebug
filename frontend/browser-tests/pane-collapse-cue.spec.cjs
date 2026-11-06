@@ -30,16 +30,16 @@ async function holdAtMinimum(page, boundary, side) {
   return { index, direction, point, handle };
 }
 
-test("every boundary shows a directional wave only before collapsing an expanded pane", async ({ page }, testInfo) => {
-  const errors = [];
-  page.on("pageerror", error => errors.push(error.message));
-  await page.addInitScript(() => {
-    localStorage.setItem("ud_avr_programming_outliner_width_v1", "305");
-    localStorage.setItem("ud_avr_ai_column_width_v1", "318");
-    localStorage.setItem("ud_avr_programming_documentation_width_v1", "360");
-    localStorage.setItem("ud_avr_programming_editor_collapsed_v1", "false");
-  });
-  for (const boundary of [0, 1, 2]) for (const side of [0, 1]) {
+for (const boundary of [0, 1, 2]) for (const side of [0, 1]) {
+  test(`boundary ${boundary + 1}: ${names[boundary + side]} shows a ${side ? "right" : "left"} wave only while expanded`, async ({ page }, testInfo) => {
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.addInitScript(() => {
+      localStorage.setItem("ud_avr_programming_outliner_width_v1", "305");
+      localStorage.setItem("ud_avr_ai_column_width_v1", "318");
+      localStorage.setItem("ud_avr_programming_documentation_width_v1", "360");
+      localStorage.setItem("ud_avr_programming_editor_collapsed_v1", "false");
+    });
     await open(page);
     const { index, direction, handle } = await holdAtMinimum(page, boundary, side);
     const cue = page.locator(`${panes[index]} > .pane-collapse-cue`);
@@ -80,9 +80,9 @@ test("every boundary shows a directional wave only before collapsing an expanded
     await page.keyboard.press(direction < 0 ? "ArrowRight" : "ArrowLeft");
     await expect(page.locator(".canvas-split-container")).not.toHaveClass(/is-workspace-transitioning/);
     expect(await page.locator(panes[index]).evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(112);
-  }
-  expect(errors).toEqual([]);
-});
+    expect(errors).toEqual([]);
+  });
+}
 
 test("reduced motion keeps the minimum-size cue still in either direction", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
