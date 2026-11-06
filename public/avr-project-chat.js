@@ -369,7 +369,7 @@
     }
 
     function atBottom() { return thread.scrollHeight - thread.clientHeight - thread.scrollTop < 32; }
-    function updateJump() { if (jump) jump.hidden = historyOpen || followingLatest || !conversation.messages.length; }
+    function updateJump() { if (jump) jump.hidden = historyOpen || followingLatest || atBottom() || !conversation.messages.length; }
 
     function autosize() {
       if (!input.getClientRects().length) return;
@@ -570,9 +570,11 @@
       const row = { article, content, progress, meta, time, actions, copy, key: null,
         workToggle, workLabel, workEvents, announcement, notice, expanded: null, activityChoice: null, autoFolded: false, workKey: "", announcementKey: "" };
       workToggle.addEventListener("click", () => {
+        followingLatest = false;
         row.activityChoice = row.expanded = !row.expanded;
         workToggle.setAttribute("aria-expanded", String(row.expanded));
         workEvents.hidden = !row.expanded;
+        updateJump();
         scheduleLayout();
       });
       return row;
