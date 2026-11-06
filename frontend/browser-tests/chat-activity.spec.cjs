@@ -67,6 +67,7 @@ test("real activity and response fragments arrive before completion, with a live
   await expect(response.locator("pre code")).toContainText("PORTB.OUTSET");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await toggle.click();
+  await expect(page.locator("#projectChatJumpBtn")).toBeHidden();
   await emit(page, { type: "message_delta", delta: " = PIN1_bm;\n```\n\n[unsafe](javascript:alert(1))" });
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(response.locator('a[href^="javascript:"]')).toHaveCount(0);
@@ -195,6 +196,43 @@ test("ordinary reload freezes the actual elapsed time after a quiet period and r
   await page.waitForTimeout(1100);
   await expect(assistant(page).locator(".project-chat-work-toggle")).toHaveText(label);
   expect((await chat(page)).messages[1].work.finishedAt).toBe(saved.work.finishedAt);
+});
+
+test("manually opening a long activity history keeps its heading in view instead of following the bottom", async ({ page }, testInfo) => {
+  await open(page); await start(page, "Hi");
+  await page.evaluate(() => {
+    const stream = window.__chatStreams.at(-1);
+    for (let attempt = 1; attempt <= 40; attempt++) stream.write({ type: "progress", progress: {
+      id: "documentation", attempt, status: "completed",
+      label: `Read local documentation section ${attempt} and checked the available register information.`,
+    } });
+    stream.finish("A short final answer.");
+  });
+  const response = assistant(page), toggle = response.locator(".project-chat-work-toggle");
+  await expect(response).toHaveAttribute("data-status", "complete");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  const geometry = () => toggle.evaluate(element => {
+    const thread = element.closest(".project-chat-thread"), bounds = element.getBoundingClientRect(), viewport = thread.getBoundingClientRect();
+    return { top: bounds.top, bottom: bounds.bottom, viewportTop: viewport.top, viewportBottom: viewport.bottom,
+      scrollTop: thread.scrollTop, scrollHeight: thread.scrollHeight, clientHeight: thread.clientHeight };
+  });
+  await expect.poll(async () => { const value = await geometry(); return value.scrollHeight - value.clientHeight; }).toBeLessThanOrEqual(1);
+  const before = await geometry();
+  await page.locator(".project-chat-panel").screenshot({ path: testInfo.outputPath("long-activity-before-opening.png") });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const after = await geometry();
+  expect(after.scrollHeight - after.clientHeight).toBeGreaterThan(500);
+  expect(after.scrollTop).toBe(before.scrollTop);
+  expect(Math.abs(after.top - before.top)).toBeLessThan(1);
+  expect(after.top).toBeGreaterThanOrEqual(after.viewportTop);
+  expect(after.bottom).toBeLessThanOrEqual(after.viewportBottom);
+  await expect(page.locator("#projectChatJumpBtn")).toBeVisible();
+  await page.locator(".project-chat-panel").screenshot({ path: testInfo.outputPath("long-activity-heading-kept-in-view.png") });
+  await page.locator("#projectChatJumpBtn").click();
+  await expect.poll(async () => (await geometry()).scrollTop).toBeGreaterThan(0);
+  await expect(page.locator("#projectChatJumpBtn")).toBeHidden();
 });
 
 for (const width of [900, 1543]) test(`user bubbles fit short text and retain multiline, long-token and editing layouts at ${width}px`, async ({ page }, testInfo) => {
