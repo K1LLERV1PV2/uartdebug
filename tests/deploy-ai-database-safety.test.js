@@ -328,7 +328,7 @@ test(`the rollback guard blocks schema ${liveSchema} from a schema ${targetSchem
 test("release chat readers expose the format used by normalization and validation", () => {
   const frontend = require("../public/avr-project-chat");
   const backend = require("../backend/avr-conversation-contract");
-  assert.equal(frontend.CONVERSATION_SCHEMA_VERSION, 5);
+  assert.equal(frontend.CONVERSATION_SCHEMA_VERSION, 6);
   assert.equal(backend.CONVERSATION_SCHEMA_VERSION, frontend.CONVERSATION_SCHEMA_VERSION);
   const conversation = frontend.normalize(null);
   assert.equal(conversation.schemaVersion, frontend.CONVERSATION_SCHEMA_VERSION);
@@ -406,6 +406,10 @@ finally { database.close(); }
   setReaders(4, 4); refuse();
   setSnapshots([{ miniProjects: { future: { conversation: { schemaVersion: 6 } } } }]);
   setReaders(5, 5); refuse();
+  setReaders(6, 6); accept();
+  for (const versions of [[5, 6], [6, 5], [null, 6], [6, null]]) { setReaders(...versions); refuse(); }
+  setSnapshots([{ draftConversation: { schemaVersion: 7 } }]);
+  setReaders(6, 6); refuse();
   setSnapshots([{ draftConversation: { schemaVersion: 4 }, miniProjects: { linear: { conversation: { schemaVersion: 4 } } } }]);
   setReaders(null, null); accept();
   setSnapshots([]); accept();

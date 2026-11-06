@@ -6,7 +6,8 @@
 })(typeof globalThis === "object" ? globalThis : this, function () {
   "use strict";
 
-  const CONVERSATION_SCHEMA_VERSION = 5;
+  const CONVERSATION_SCHEMA_VERSION = 6;
+  const WORK_LIMITS = Object.freeze({ events: 64, textBytes: 1024, storedBytes: 16 * 1024, collectionBytes: 512 * 1024 });
   const LIMITS = Object.freeze({
     messageBytes: 32 * 1024,
     draftBytes: 16 * 1024,
@@ -17,6 +18,10 @@
     collectionBytes: 2 * 1024 * 1024,
     historyMessages: 40,
     historyBytes: 128 * 1024,
+    workEvents: WORK_LIMITS.events,
+    workTextBytes: WORK_LIMITS.textBytes,
+    workBytes: WORK_LIMITS.storedBytes,
+    collectionWorkBytes: WORK_LIMITS.collectionBytes,
   });
   const encoder = new TextEncoder();
   const bytes = value => encoder.encode(value).length;
@@ -47,7 +52,48 @@
   }
 
   function storedMessages(messages) {
-    return messages.map(({ requestSource, parentId, status, ...message }) => status === "complete" ? message : { ...message, status });
+    return messages.map(({ requestSource, parentId, status, work, ...message }) => status === "complete" ? message : { ...message, status });
+  }
+
+  function trimWork(work) {
+    while (work.events.length > LIMITS.workEvents || bytes(JSON.stringify(work)) > LIMITS.workBytes) {
+      work.events.shift();
+      work.truncated = true;
+    }
+    return work;
+  }
+
+  function normalizeWork(value, messageStatus, recoverPending = false) {
+    const integer = number => Number.isSafeInteger(number) && number >= 0;
+    if (!value || typeof value !== "object" || Array.isArray(value) ||
+        Object.keys(value).some(key => !["startedAt", "finishedAt", "events", "truncated"].includes(key)) ||
+        !integer(value.startedAt) || !(value.finishedAt === null || integer(value.finishedAt) && value.finishedAt >= value.startedAt) ||
+        (messageStatus === "pending" ? value.finishedAt !== null : value.finishedAt === null) ||
+        !Array.isArray(value.events) || value.events.length > LIMITS.workEvents ||
+        (Object.hasOwn(value, "truncated") && typeof value.truncated !== "boolean")) {
+      throw new TypeError("The saved response activity is invalid.");
+    }
+    const ids = new Set();
+    const events = value.events.map(event => {
+      if (!event || typeof event !== "object" || Array.isArray(event) ||
+          Object.keys(event).some(key => !["id", "text", "at", "status"].includes(key)) ||
+          !validId(event.id) || ids.has(event.id) || typeof event.text !== "string" || event.text.includes("\0") ||
+          !event.text.trim() || bytes(event.text) > LIMITS.workTextBytes || !integer(event.at) || event.at < value.startedAt ||
+          value.finishedAt !== null && event.at > value.finishedAt || !["active", "complete", "error", "info"].includes(event.status)) {
+        throw new TypeError("The saved response activity contains an invalid event.");
+      }
+      ids.add(event.id);
+      return { id: event.id, text: event.text, at: event.at, status: event.status };
+    });
+    const work = { startedAt: value.startedAt, finishedAt: value.finishedAt, events,
+      ...(value.truncated ? { truncated: true } : {}) };
+    if (recoverPending && work.finishedAt === null) {
+      work.finishedAt = Math.max(work.startedAt, ...events.map(event => event.at));
+      for (const event of work.events) if (event.status === "active") event.status = "error";
+      work.events = work.events.filter(event => event.id !== "interrupted");
+      work.events.push({ id: "interrupted", text: "Response interrupted after leaving the page.", at: work.finishedAt, status: "error" });
+    }
+    return trimWork(work);
   }
 
   // Keep the established content budgets independent of bounded UI metadata.
@@ -67,7 +113,7 @@
    * @param {unknown} value
    * @param {{recoverPending?: boolean}} options
    */
-  function normalizeThread(value, { recoverPending = false, tree = Object.hasOwn(value || {}, "activeLeafId") } = {}) {
+  function normalizeThread(value, { recoverPending = false, tree = Object.hasOwn(value || {}, "activeLeafId"), allowWork = true } = {}) {
     const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
     const ids = new Set();
     const messages = [];
@@ -90,6 +136,10 @@
       let status = ["complete", "pending", "error"].includes(item.status) ? item.status : "complete";
       if (item.role === "user") status = "complete";
       let content = bounded(item.content, LIMITS.messageBytes);
+      if (Object.hasOwn(item, "work") && (!allowWork || item.role !== "assistant")) {
+        throw new TypeError("The saved chat contains unsupported response activity.");
+      }
+      const work = Object.hasOwn(item, "work") ? normalizeWork(item.work, status, recoverPending && status === "pending") : null;
       if (recoverPending && status === "pending") {
         status = "error";
       }
@@ -104,6 +154,7 @@
       }
       ids.add(id);
       messages.push({ id, parentId: tree ? item.parentId : messages.at(-1)?.id || null, role: item.role, content, createdAt, status,
+        ...(work ? { work } : {}),
         ...(item.role === "user" ? { requestSource: ["message", "review"].includes(item.requestSource) ? item.requestSource
           : content === "Review the project specification. Ask any necessary questions in this chat." ? "review" : "message" } : {}) });
     }
@@ -150,12 +201,12 @@
 
   function normalize(value, options = {}) {
     const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-    if (Object.hasOwn(input, "schemaVersion") && ![1, 2, 3, 4, CONVERSATION_SCHEMA_VERSION].includes(input.schemaVersion)) {
+    if (Object.hasOwn(input, "schemaVersion") && ![1, 2, 3, 4, 5, CONVERSATION_SCHEMA_VERSION].includes(input.schemaVersion)) {
       throw new TypeError("This chat uses a newer or unsupported format. Refresh the application before saving.");
     }
-    const tree = input.schemaVersion === CONVERSATION_SCHEMA_VERSION;
+    const tree = input.schemaVersion >= 5;
     if (tree && (!Array.isArray(input.threads) || !input.threads.length)) throw new TypeError("The saved chat collection is invalid.");
-    const source = [2, 3, 4, CONVERSATION_SCHEMA_VERSION].includes(input.schemaVersion) && Array.isArray(input.threads) ? input.threads : [input];
+    const source = [2, 3, 4, 5, CONVERSATION_SCHEMA_VERSION].includes(input.schemaVersion) && Array.isArray(input.threads) ? input.threads : [input];
     if (source.length > LIMITS.threads) throw new RangeError("A project can contain at most 32 chats.");
     const ids = new Set();
     const threads = (source.length ? source : [{}]).map((item, index) => {
@@ -167,8 +218,18 @@
       ids.add(id);
       const firstMessage = Array.isArray(item?.messages) ? item.messages.find(message => message?.role === "user" && cleanText(message.content).trim()) : null;
       const title = item?.title || shortTitle(firstMessage?.content) || (index ? `New chat ${index + 1}` : "New chat");
-      return normalizeThread({ ...item, id, title }, { ...options, tree });
+      return normalizeThread({ ...item, id, title }, { ...options, tree, allowWork: input.schemaVersion === CONVERSATION_SCHEMA_VERSION });
     });
+    const works = threads.flatMap(thread => thread.messages.flatMap(message => message.work ? [message.work] : []))
+      .sort((left, right) => left.startedAt - right.startedAt);
+    let workBytes = works.reduce((total, work) => total + bytes(JSON.stringify(work)), 0);
+    for (const work of works) {
+      if (workBytes <= LIMITS.collectionWorkBytes) break;
+      const before = bytes(JSON.stringify(work));
+      work.events = [];
+      work.truncated = true;
+      workBytes += bytes(JSON.stringify(work)) - before;
+    }
     if (tree && !threads.some(item => item.id === input.activeThreadId)) throw new TypeError("The selected chat is missing.");
     return { schemaVersion: CONVERSATION_SCHEMA_VERSION,
       activeThreadId: threads.some(item => item.id === input.activeThreadId) ? input.activeThreadId : threads[0].id,
@@ -217,7 +278,16 @@
     const stages = Array.isArray(value.stages) ? value.stages : [];
     const stage = [...stages].reverse().find(item =>
       item && ["active", "running", "pending", "in_progress"].includes(item.status)) || stages.at(-1);
-    return bounded(stage?.label || stage?.title || stage?.name || value.message || value.label || value.stage, 320) || "Working…";
+    const item = stage || value;
+    const names = { generation: "Preparing the response", documentation: "Reading local documentation", validation: "Checking the project",
+      compilation: "Compiling the project", repair: "Fixing compiler errors", verification: "Verifying the result" };
+    return bounded(item?.label || item?.title || item?.name || item?.message || value.message || value.label || names[item?.id] || value.stage, 320) || "Preparing the response";
+  }
+
+  function elapsedText(milliseconds) {
+    const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+    const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
+    return [hours ? `${hours}h` : "", minutes ? `${minutes}m` : "", `${seconds % 60}s`].filter(Boolean).join(" ");
   }
 
   /**
@@ -226,7 +296,7 @@
    *
    * getContext(): {key, instanceId, accountEpoch, title, conversation}
    * save(scope, conversation): boolean (false rejects a stale scope)
-   * request({message, history, signal, onProgress, scope, requestSource}): Promise<{message, scope?}>
+   * request({message, history, signal, onProgress, onMessageDelta, onMessageReset, scope, requestSource}): Promise<{message, scope?}>
    * notify({title, message, tone, details?}), onBusy(boolean), openFiles()
    */
   function create(options) {
@@ -255,7 +325,7 @@
     let scope = null, collection = normalize(null), conversation = activeThread(collection), active = null;
     let historyOpen = false, historySignature = "", renamingId = null, renameValue = "";
     let externalBusy = false, composing = false, followingLatest = true, destroyed = false;
-    let saveTimer = null, layoutFrame = null, sequence = 0;
+    let saveTimer = null, layoutFrame = null, sequence = 0, workTimer = null, workSaveTimer = null;
     const messageTools = window.UartDebugChatMessageTools?.create({
       root: thread, getMessage: id => conversation.messages.find(item => item.id === id), getScope: () => scopeStamp(scope),
       notify: options.notify, onEdit: editAndResend, onBranch: branchFromMessage,
@@ -453,7 +523,29 @@
       content.className = "project-chat-message-content";
       const progress = document.createElement("div");
       progress.className = "project-chat-progress";
-      progress.setAttribute("role", "status");
+      // The parent role=log is implicitly live. Only stage announcements below
+      // should interrupt a screen reader, never the once-a-second timer text.
+      progress.setAttribute("aria-live", "off");
+      const workToggle = document.createElement("button");
+      workToggle.type = "button";
+      workToggle.className = "project-chat-work-toggle ui-icon-button ui-icon-button--quiet";
+      const workLabel = document.createElement("span");
+      const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      chevron.setAttribute("viewBox", "0 0 24 24"); chevron.setAttribute("aria-hidden", "true");
+      const chevronPath = document.createElementNS(chevron.namespaceURI, "path");
+      chevronPath.setAttribute("d", "m9 5 7 7-7 7"); chevron.append(chevronPath);
+      workToggle.append(workLabel, chevron);
+      const workEvents = document.createElement("ol");
+      workEvents.className = "project-chat-work-events";
+      workEvents.id = `chat-work-${message.id}`;
+      workEvents.setAttribute("aria-label", "Response activity");
+      workToggle.setAttribute("aria-controls", workEvents.id);
+      const announcement = document.createElement("span");
+      announcement.className = "sr-only"; announcement.setAttribute("role", "status");
+      announcement.setAttribute("aria-live", "polite");
+      progress.append(workToggle, workEvents, announcement);
+      const notice = document.createElement("p");
+      notice.className = "project-chat-work-error";
       const meta = document.createElement("div");
       meta.className = "project-chat-message-meta";
       const time = document.createElement("time");
@@ -474,8 +566,104 @@
       copy.appendChild(svg);
       actions.appendChild(copy);
       meta.append(time, actions);
-      article.append(content, progress, meta);
-      return { article, content, progress, meta, time, actions, copy, key: null };
+      article.append(progress, content, notice, meta);
+      const row = { article, content, progress, meta, time, actions, copy, key: null,
+        workToggle, workLabel, workEvents, announcement, notice, expanded: null, activityChoice: null, autoFolded: false, workKey: "", announcementKey: "" };
+      workToggle.addEventListener("click", () => {
+        row.activityChoice = row.expanded = !row.expanded;
+        workToggle.setAttribute("aria-expanded", String(row.expanded));
+        workEvents.hidden = !row.expanded;
+        scheduleLayout();
+      });
+      return row;
+    }
+
+    function renderWork(row, message) {
+      const work = message.work;
+      row.progress.hidden = !work;
+      row.notice.hidden = true;
+      if (!work) return;
+      const pending = message.status === "pending";
+      if (row.expanded === null) row.expanded = pending && !message.content;
+      if ((!pending || message.content) && !row.autoFolded) {
+        row.autoFolded = true;
+        if (row.activityChoice === null) row.expanded = false;
+      }
+      const latest = work.events.at(-1);
+      const activeEvent = work.events.findLast(event => event.status === "active");
+      const end = pending && active?.assistantId === message.id ? Date.now()
+        : work.finishedAt ?? Math.max(work.startedAt, ...work.events.map(event => event.at));
+      const elapsed = elapsedText(end - work.startedAt);
+      row.workLabel.textContent = pending ? `${activeEvent?.text || active?.progress || "Preparing the response"} · ${elapsed}`
+        : message.status === "error" ? `${latest?.text.startsWith("Response stopped") ? "Stopped" : "Interrupted"} after ${elapsed}`
+          : `Worked for ${elapsed}`;
+      row.workToggle.setAttribute("aria-expanded", String(row.expanded));
+      row.workEvents.hidden = !row.expanded;
+      const key = JSON.stringify(work);
+      if (row.workKey !== key) {
+        row.workKey = key;
+        row.workEvents.replaceChildren();
+        if (work.truncated) {
+          const item = document.createElement("li"); item.className = "project-chat-work-truncated";
+          item.textContent = "Earlier activity was omitted to keep the chat within its storage limit.";
+          row.workEvents.append(item);
+        }
+        for (const event of work.events) {
+          const item = document.createElement("li");
+          item.dataset.status = event.status;
+          item.textContent = event.text;
+          row.workEvents.append(item);
+        }
+      }
+      const stage = pending ? activeEvent?.text || latest?.text || "Request started" : message.status === "error" ? latest?.text : "Response complete";
+      if (stage !== row.announcementKey) { row.announcementKey = stage; row.announcement.textContent = stage || ""; }
+      if (message.status === "error" && latest?.status === "error" && message.content !== latest.text) {
+        row.notice.hidden = false;
+        row.notice.textContent = latest.text;
+      }
+      row.article.classList.toggle("has-partial-response", message.status === "error" && !row.notice.hidden);
+    }
+
+    function stopWorkTimers() {
+      if (workTimer !== null) window.clearTimeout(workTimer);
+      if (workSaveTimer !== null) window.clearTimeout(workSaveTimer);
+      workTimer = workSaveTimer = null;
+    }
+
+    function tickWorkClock(run) {
+      if (active !== run || destroyed) return;
+      const message = conversation.messages.find(item => item.id === run.assistantId);
+      const row = rows.get(run.assistantId);
+      if (message && row) renderWork(row, message);
+      workTimer = window.setTimeout(() => tickWorkClock(run), 1000);
+    }
+
+    function recordWork(run, event) {
+      const message = conversation.messages.find(item => item.id === run.assistantId);
+      if (!message?.work) return;
+      const existing = message.work.events.find(item => item.id === event.id);
+      if (existing) { existing.text = event.text; existing.status = event.status; }
+      else message.work.events.push({ ...event, at: Math.max(message.work.startedAt, Date.now()) });
+      trimWork(message.work);
+      setConversation(conversation);
+    }
+
+    function saveWorkSoon(run) {
+      if (workSaveTimer !== null) return;
+      workSaveTimer = window.setTimeout(() => {
+        workSaveTimer = null;
+        if (active === run && !run.cancelled) persist(run.scope);
+      }, 300);
+    }
+
+    function finishWork(message, reason = null) {
+      if (!message?.work) return;
+      const at = Math.max(message.work.startedAt, Date.now(), ...message.work.events.map(event => event.at));
+      for (const event of message.work.events) if (event.status === "active") event.status = reason ? "error" : "complete";
+      message.work.finishedAt = at;
+      message.work.events.push({ id: reason ? "interrupted" : "result", text: bounded(reason || "Response ready", LIMITS.workTextBytes), at,
+        status: reason ? "error" : "complete" });
+      trimWork(message.work);
     }
 
     function renderThread(clear = false) {
@@ -492,16 +680,15 @@
         row.article.setAttribute("aria-label", message.role === "user" ? "Your message" : "Assistant response");
         const pending = message.status === "pending";
         row.content.hidden = pending && !message.content;
-        row.progress.hidden = !pending;
         row.meta.hidden = pending;
-        if (pending) row.progress.textContent = active?.assistantId === message.id ? active.progress : "Working…";
+        renderWork(row, message);
         const key = `${message.role}\0${message.status}\0${message.content}`;
         if (row.key !== key) {
           row.key = key;
           row.content.replaceChildren();
           row.content.style.whiteSpace = "";
           const markdown = window.UartDebugMarkdown;
-          if (message.role === "assistant" && message.status === "complete" && markdown?.renderInto) {
+          if (message.role === "assistant" && (message.status === "complete" || message.work && message.content) && markdown?.renderInto) {
             try { markdown.renderInto(row.content, message.content, { allowImages: false, sourceId: `chat-${message.id}` }); }
             catch { row.content.textContent = message.content; row.content.style.whiteSpace = "pre-wrap"; }
           } else {
@@ -513,7 +700,7 @@
           row.time.textContent = validDate ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
           if (validDate) row.time.dateTime = date.toISOString();
           else row.time.removeAttribute("datetime");
-          row.copy.hidden = !message.content;
+          row.copy.hidden = pending || !message.content;
         }
         const siblings = conversation.messages.filter(item => item.parentId === message.parentId);
         messageTools?.decorate(row, { scope: scopeStamp(scope), isLast: message === visible.at(-1), busy: !!active || externalBusy,
@@ -534,10 +721,15 @@
       active = null;
       run.cancelled = true;
       run.controller.abort();
+      stopWorkTimers();
       if (saveTimer !== null) window.clearTimeout(saveTimer);
       saveTimer = null;
       const pending = conversation.messages.find(message => message.id === run.assistantId);
-      if (pending) { pending.status = "error"; pending.content = bounded(reason, LIMITS.messageBytes) || "Response interrupted."; }
+      if (pending) {
+        pending.status = "error";
+        if (!pending.content) pending.content = bounded(reason, LIMITS.messageBytes) || "Response interrupted.";
+        finishWork(pending, reason);
+      }
       setConversation(conversation);
       persist(run.scope);
       busyChanged(false);
@@ -599,11 +791,12 @@
       let id;
       do { id = `chat-${createdAt}-${++sequence}`; }
       while (conversation.messages.some(item => item.id === id || item.id === `${id}-assistant`));
-      const run = { scope: { ...scope }, assistantId: replacingFailed ? retried.id : `${id}-assistant`, controller: new AbortController(), progress: "Working…", cancelled: false };
+      const run = { scope: { ...scope }, assistantId: replacingFailed ? retried.id : `${id}-assistant`, controller: new AbortController(), progress: "Sending request", cancelled: false };
       const retainedDraft = reusedUser || optionalMessage !== undefined && cleanText(input.value) !== message
         ? bounded(input.value, LIMITS.draftBytes) : "";
       const user = reusedUser || { id, parentId, role: "user", content: message, createdAt, status: "complete", requestSource };
-      const assistant = { id: run.assistantId, parentId: user.id, role: "assistant", content: "", createdAt, status: "pending" };
+      const assistant = { id: run.assistantId, parentId: user.id, role: "assistant", content: "", createdAt, status: "pending",
+        work: { startedAt: createdAt, finishedAt: null, events: [{ id: "request", text: "Sending request", at: createdAt, status: "active" }] } };
       const messages = replacingFailed ? conversation.messages.map(item => item.id === retried.id ? assistant : item)
         : [...conversation.messages, ...(!reusedUser ? [user] : []), assistant];
       if (messages.length > LIMITS.messages) {
@@ -623,6 +816,7 @@
       followingLatest = true;
       busyChanged(true);
       renderThread();
+      tickWorkClock(run);
       input.focus({ preventScroll: true });
       try {
         const result = await options.request({ message, history, signal: run.controller.signal, scope: { ...run.scope },
@@ -630,6 +824,36 @@
           onProgress: progress => {
             if (active !== run || run.cancelled) return;
             run.progress = progressText(progress);
+            const current = conversation.messages.find(item => item.id === run.assistantId);
+            const requestEvent = current?.work?.events.find(event => event.id === "request");
+            if (requestEvent) requestEvent.status = "complete";
+            for (const stage of Array.isArray(progress?.stages) ? progress.stages : [progress]) {
+              const state = stage?.status;
+              const status = ["in_progress", "active", "running", "pending"].includes(state) ? "active"
+                : ["completed", "complete", "success", "succeeded"].includes(state) ? "complete" : ["failed", "error"].includes(state) ? "error" : "info";
+              const id = bounded(String(stage?.id || stage?.stage || "activity").replace(/[^A-Za-z0-9._:-]/g, "-"), 100) || "activity";
+              const attempt = Number.isSafeInteger(stage?.attempt) && stage.attempt > 0 ? stage.attempt : 1;
+              recordWork(run, { id: `${id}:${attempt}`, text: bounded(progressText(stage), LIMITS.workTextBytes), status });
+            }
+            saveWorkSoon(run);
+            renderThread();
+          },
+          onMessageDelta: delta => {
+            if (active !== run || run.cancelled || typeof delta !== "string") return;
+            const pending = conversation.messages.find(item => item.id === run.assistantId);
+            if (!pending) return;
+            pending.content = bounded(pending.content + delta, LIMITS.messageBytes);
+            setConversation(conversation);
+            saveWorkSoon(run);
+            renderThread();
+          },
+          onMessageReset: () => {
+            if (active !== run || run.cancelled) return;
+            const pending = conversation.messages.find(item => item.id === run.assistantId);
+            if (!pending) return;
+            pending.content = "";
+            setConversation(conversation);
+            saveWorkSoon(run);
             renderThread();
           } });
         if (active !== run || run.cancelled) return false;
@@ -652,6 +876,8 @@
         if (!pending) throw new Error("The conversation changed while the response was running.");
         pending.content = response;
         pending.status = "complete";
+        finishWork(pending);
+        stopWorkTimers();
         setConversation(conversation);
         const moved = scopeStamp(target) !== scopeStamp(run.scope);
         if (!persist(target, collection, moved ? run.scope : null)) {
@@ -672,7 +898,12 @@
         const pending = conversation.messages.find(item => item.id === run.assistantId);
         const unexpected = ["TypeError", "SyntaxError", "ReferenceError", "EvalError", "URIError"].includes(error?.name);
         const message = unexpected ? "The response could not be completed. Try again." : error.message || "The response could not be completed.";
-        if (pending) { pending.status = "error"; pending.content = bounded(message, LIMITS.messageBytes); }
+        if (pending) {
+          pending.status = "error";
+          if (!pending.content) pending.content = bounded(message, LIMITS.messageBytes);
+          finishWork(pending, message);
+        }
+        stopWorkTimers();
         setConversation(conversation);
         persist(run.scope);
         if (error.name !== "AbortError") notice("error", "The response could not be completed.", error);
@@ -680,6 +911,7 @@
         return false;
       } finally {
         if (active === run) {
+          stopWorkTimers();
           active = null;
           busyChanged(false);
           renderThread();
@@ -980,6 +1212,7 @@
         flush();
         cancel("Response interrupted.");
         destroyed = true;
+        stopWorkTimers();
         if (layoutFrame !== null) cancelFrame(layoutFrame);
         observer?.disconnect();
         messageTools?.destroy();
@@ -989,5 +1222,5 @@
     });
   }
 
-  return Object.freeze({ CONVERSATION_SCHEMA_VERSION, normalize, activeMessages, continuationTip, create });
+  return Object.freeze({ CONVERSATION_SCHEMA_VERSION, WORK_LIMITS, normalize, activeMessages, continuationTip, create });
 });

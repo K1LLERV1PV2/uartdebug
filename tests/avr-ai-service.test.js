@@ -915,6 +915,88 @@ test("tool continuation preserves local provenance and usage without network", a
   assert.equal(result._metering.usage.totalTokens, 300);
 });
 
+test("chat previews reset between provider attempts while compilation and validation remain authoritative", async () => {
+  const updates = [], progress = [];
+  let models = 0, compilations = 0;
+  const s = service({ environment: { ...environment, AI_COMPILE_VERIFY_ENABLED: "1", AI_COMPILE_MAX_REPAIR_ATTEMPTS: "1" },
+    compileFetch: async () => compile(++compilations > 1),
+    fetch: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      assert.equal(body.stream, true);
+      const value = { ...generated(), message: ++models === 1 ? "First draft" : "Verified program" };
+      return response(envelope(value));
+    },
+  });
+  const result = await s.processChat({ ...input(), message: "Generate this program." }, {
+    compilerReady: true,
+    onMessageReset: () => updates.push("reset"),
+    onMessageDelta: delta => updates.push(delta),
+    onProgress: stage => progress.push({ ...stage }),
+  });
+  assert.deepEqual(updates, ["reset", "First draft", "reset", "Verified program"]);
+  assert.equal(result.message, "Verified program");
+  assert.equal(result.verification.status, "passed");
+  assert.equal(result.verification.compileAttempts, 2);
+  assert.equal(result._metering.usage.totalTokens, 300);
+  assert.ok(progress.some(stage => stage.id === "generation" && stage.label === "Generating project code and resources"));
+  assert.ok(progress.some(stage => stage.id === "validation" && stage.status === "completed"));
+  assert.ok(progress.some(stage => stage.id === "compilation" && stage.status === "failed"));
+  assert.ok(progress.some(stage => stage.id === "repair" && stage.label === "Repairing compiler errors"));
+  assert.ok(progress.some(stage => stage.id === "repair" && stage.status === "completed" && stage.label === "Compiler repair draft prepared"));
+  assert.ok(progress.some(stage => stage.id === "compilation" && stage.status === "completed"));
+  assert.doesNotMatch(JSON.stringify(updates), /#include|microcontroller:|PORTA/);
+});
+
+test("chat tool-only provider steps stream real documentation activity without fake message text", async () => {
+  let models = 0;
+  const updates = [], stages = [];
+  const result = await service({ fetch: async (_url, options) => {
+    assert.equal(JSON.parse(options.body).stream, true);
+    if (++models === 1) return response({ ...envelope(null), output: [{
+      type: "function_call", name: "read_avr_documentation", call_id: "catalog-step", arguments: JSON.stringify({
+        operation: "catalog", query: "", documentId: "", sectionId: "", page: 0, url: "", gap: "",
+      }),
+    }] });
+    return response(envelope(chatReply("The requested local documents are available.")));
+  } }).processChat({ ...input(), message: "Read the local project documentation." }, {
+    onMessageReset: () => updates.push("reset"), onMessageDelta: delta => updates.push(delta),
+    onProgress: stage => stages.push(stage),
+  });
+  assert.deepEqual(updates, ["reset", "The requested local documents are available."]);
+  assert.equal(result.kind, "chat");
+  assert.equal(result._metering.usage.totalTokens, 300);
+  assert.ok(stages.some(stage => stage.id === "documentation" && stage.label === "Browsing local documentation" && stage.status === "in_progress"));
+  assert.ok(stages.some(stage => stage.id === "documentation" && stage.label === "Local documentation index loaded" && stage.status === "completed"));
+});
+
+test("chat service forwards live provider text but validates the terminal structured reply before returning", async () => {
+  let writer, sawText;
+  const arrived = new Promise(resolve => { sawText = resolve; });
+  const frame = event => new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+  const prefix = '{"action":"reply","message":"Early';
+  const suffix = ' answer","canvas":null,"project":null}';
+  const resultEnvelope = envelope(chatReply("Early answer"));
+  const updates = [], stages = [];
+  let done = false;
+  const pending = service({ fetch: async () => new Response(new ReadableStream({
+    start(controller) { writer = controller; controller.enqueue(frame({ type: "response.output_text.delta", delta: prefix })); },
+  }), { headers: { "Content-Type": "text/event-stream" } }) }).processChat({ ...input(), message: "Explain the project." }, {
+    onMessageDelta: delta => { updates.push(delta); sawText(); },
+    onProgress: stage => stages.push(stage),
+  }).finally(() => { done = true; });
+  await arrived;
+  assert.equal(done, false);
+  assert.equal(updates.join(""), "Early");
+  assert.ok(stages.some(stage => stage.label === "Writing a response" && stage.status === "in_progress"));
+  writer.enqueue(frame({ type: "response.output_text.delta", delta: suffix }));
+  writer.enqueue(frame({ type: "response.completed", response: resultEnvelope })); writer.close();
+  const result = await pending;
+  assert.equal(result.message, "Early answer");
+  assert.equal(result.kind, "chat");
+  assert.equal(result._metering.usage.totalTokens, 150);
+  assert.ok(stages.some(stage => stage.id === "validation" && stage.label === "Response checked" && stage.status === "completed"));
+});
+
 test("real canonical loader supplies rules once and pins tool reads to the request snapshot", async (t) => {
   const { createMaterialsFixture } = require("./helpers/avr-materials-fixture");
   const first = createMaterialsFixture(t);

@@ -2468,7 +2468,7 @@ test("near-limit legacy chats migrate through the real frontend without losing h
       thread.titleMode = "manual";
       for (const message of thread.messages) if (message.role === "user") message.requestSource = "review";
     }
-    assert.equal(migrated.schemaVersion, 5);
+    assert.equal(migrated.schemaVersion, 6);
     validateStoredConversation(migrated);
     const data = unifiedProjectsFixture();
     data.draftConversation = normalize(null);
@@ -2624,7 +2624,7 @@ test("draft branched chats transfer into a new project while retaining an empty 
   assert.equal(stored.revision, 2);
   assert.deepEqual(stored.data, transferred);
   assert.deepEqual(stored.data.miniProjects.blink.conversation, conversation, "all branch nodes, active leaves and other chats survive the move");
-  assert.equal(stored.data.draftConversation.schemaVersion, 5);
+  assert.equal(stored.data.draftConversation.schemaVersion, 6);
   assert.ok(stored.data.draftConversation.threads.every(chat => chat.messages.length === 0 && chat.draft === ""));
 
   for (const location of ["draft", "project"]) for (const legacy of [currentProjectChatsFixture(), undefined]) {
@@ -3094,6 +3094,36 @@ test("unlimited credit policy preserves authentication, model and concurrent-req
   await assert.rejects(service.reserveAiBudget(context, {model: "unpriced-model", inputTokens: 1, maxOutputTokens: 2, minOutputTokens: 1}), error => error.code === "model_price_unavailable");
   await assert.rejects(service.reserveAiBudget(context, {model: "gpt-5.6-terra", inputTokens: 1, maxOutputTokens: 1, minOutputTokens: 2}), error => error.code === "output_budget_invalid");
   await service.releaseAiRequest(context, {providerCalled: false});
+});
+
+test("account snapshots preserve response activity and reject cached format-five overwrites", async t => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "work-history", sub: "work-history-account", email: "work@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const { normalize } = require("../public/avr-project-chat");
+  const data = unifiedProjectsFixture();
+  data.draftConversation = normalize(null);
+  data.miniProjects.blink.conversation = normalize({ schemaVersion: 1, draft: "Keep the draft", messages: [
+    { id: "answer", role: "assistant", content: "Verified answer", createdAt: 100, status: "complete" },
+  ] });
+  const message = data.miniProjects.blink.conversation.threads[0].messages[0];
+  message.work = { startedAt: 100, finishedAt: 300, events: [
+    { id: "compile", text: "Compiled the project", at: 200, status: "complete" },
+  ] };
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data });
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+  const old = structuredClone(data);
+  old.miniProjects.blink.conversation.schemaVersion = 5;
+  delete old.miniProjects.blink.conversation.threads[0].messages[0].work;
+  assert.throws(() => service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: old }),
+    error => error.code === "account_workspace_migration_required");
+  const invalid = structuredClone(data);
+  invalid.miniProjects.blink.conversation.threads[0].messages[0].work.finishedAt = null;
+  assert.throws(() => service.writeAccountWorkspace(context, "files", { baseRevision: 1, expectedAccountKey: context.accountKey, data: invalid }));
+  const stored = service.readAccountWorkspace(context).documents.files;
+  assert.equal(stored.revision, 1);
+  assert.deepEqual(stored.data, data);
 });
 
 test("unlimited reservations and usage do not reduce a shared ordinary free-credit grant", async (t) => {

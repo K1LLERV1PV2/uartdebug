@@ -12,6 +12,7 @@ const {
   mergeOpenAiMetering,
   beginProgressStage,
   finishProgressStage,
+  emitProgressEvent,
   toPublicProgress,
   attachProgressToError,
   attachMeteringToError,
@@ -622,9 +623,13 @@ function createAvrAiService(options = {}) {
       const stage = await beginProgressStage(context, stages, {
         id: stageId,
         attempt: calls + 1,
+        label: stageId === "repair" ? nextStep === "compiler-repair" ? "Repairing compiler errors" : "Correcting the response after validation"
+          : conversation ? "Analyzing the request" : input.operation === "generate" ? "Generating project code and resources"
+            : input.operation === "describe" ? "Writing code documentation" : "Reviewing the specification",
       });
       let started = false,
-        captured = false;
+        captured = false,
+        streamedAction = null;
       try {
         await context.markProviderCalled?.();
         started = true;
@@ -634,13 +639,32 @@ function createAvrAiService(options = {}) {
           apiKey: cfg.apiKey,
           timeoutMs: cfg.timeoutMs,
           requestBody: body,
+          ...(conversation && typeof context.onMessageDelta === "function" ? {
+            onMessageDelta: context.onMessageDelta,
+            onMessageReset: context.onMessageReset,
+            resetAtStart: stageId === "repair",
+            async onAction(action) {
+              streamedAction = action;
+              if (stageId === "repair") return;
+              stage.label = { reply: "Writing a response", clarify: "Reviewing the specification",
+                generate: "Generating project code and resources", describe: "Writing code documentation" }[action];
+              await emitProgressEvent(context, { ...stage });
+            },
+          } : {}),
         });
         const usage = extractOpenAiMetering(response, cfg.model, {
           strict: metered,
         });
         metering = mergeOpenAiMetering(metering, usage);
         captured = true;
-        await finishProgressStage(context, stage, "completed");
+        const stopped = response?.status === "failed" || response?.status === "incomplete";
+        await finishProgressStage(context, stage, stopped ? "failed" : "completed", {
+          label: stopped ? "Response generation stopped"
+            : (response?.output || []).some(item => item.type === "function_call") ? stageId === "repair" ? "Repair step prepared a tool request" : "Prepared a tool request"
+              : stageId === "repair" ? nextStep === "compiler-repair" ? "Compiler repair draft prepared" : "Corrected response draft prepared"
+              : ({ reply: "Response draft written", clarify: "Specification draft reviewed", generate: "Project draft generated",
+                describe: "Documentation draft written" }[streamedAction] || "Response draft prepared"),
+        });
         return response;
       } catch (e) {
         if (started && !captured && e._providerRejected !== true)
@@ -685,6 +709,9 @@ function createAvrAiService(options = {}) {
           const stage = await beginProgressStage(context, stages, {
             id: "documentation",
             attempt: lookups + 1,
+            label: { catalog: "Browsing local documentation", search: "Searching local project documentation",
+              read: "Reading local documentation", registers: "Checking local device registers",
+              external: "Reading official Microchip documentation" }[args.operation] || "Reading documentation",
           });
           const result = await lookup.lookup(args);
           lookups++;
@@ -692,7 +719,10 @@ function createAvrAiService(options = {}) {
             context,
             stage,
             result.ok ? "completed" : "failed",
-            result.ok ? {} : { errorCode: result.code },
+            result.ok ? { label: { catalog: "Local documentation index loaded", search: "Local documentation search completed",
+              read: "Local documentation read", registers: "Local device register definitions checked",
+              external: "Official Microchip documentation read" }[args.operation] || "Documentation loaded" }
+              : { errorCode: result.code, label: "Documentation lookup did not complete" },
           );
           if (result.ok && result.operation !== "catalog") {
             const items =
@@ -759,6 +789,7 @@ function createAvrAiService(options = {}) {
         let outputOperation = input.operation;
         let outputInput = input;
         let outputKnowledge = selected;
+        const validationStage = await beginProgressStage(context, stages, { id: "validation", attempt: calls });
         try {
           const parsed = parseStructuredOutput(response);
           if (conversation) {
@@ -797,6 +828,10 @@ function createAvrAiService(options = {}) {
                   )
                 : undefined,
           });
+          await finishProgressStage(context, validationStage, "completed", {
+            label: { chat: "Response checked", analyze: "Specification checked", generate: "Project format and resources checked",
+              describe: "Description checked" }[outputOperation] || "Response checked",
+          });
           if (output.action === "reply") {
             if (mustGenerateAfterRepair)
               fail(502, "invalid_ai_repair_response", "Compiler repair must return complete C and resource YAML.");
@@ -830,11 +865,13 @@ function createAvrAiService(options = {}) {
             };
           }
         } catch (error) {
+          await finishProgressStage(context, validationStage, "failed", { errorCode: error.code || "invalid_ai_response" });
           if (
             [
               "ai_refusal",
               "ai_content_filtered",
               "ai_output_limit_reached",
+              "ai_response_failed",
             ].includes(error.code) ||
             repairAttempts >= cfg.compileRepairAttempts
           )
@@ -879,6 +916,7 @@ function createAvrAiService(options = {}) {
             id: "compilation",
             attempt: compileAttempts,
             mcu: outputInput.mcu,
+            label: `Compiling for ${outputInput.mcu}`,
           });
           try {
             compilation = await verifyGeneratedProjectCompilation({
@@ -898,9 +936,8 @@ function createAvrAiService(options = {}) {
             context,
             stage,
             compilation.ok ? "completed" : "failed",
-            compilation.compilerStage
-              ? { compilerStage: compilation.compilerStage }
-              : {},
+            { label: compilation.ok ? "Compilation completed successfully" : "Compiler reported errors",
+              ...(compilation.compilerStage ? { compilerStage: compilation.compilerStage } : {}) },
           );
         }
         if (!compilation.ok) {

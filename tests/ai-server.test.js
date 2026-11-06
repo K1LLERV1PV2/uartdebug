@@ -103,6 +103,9 @@ test("project chat shares authorization, budget and NDJSON metering without requ
         assert.equal((await context.extendBudget({ model: "gpt-6.1-sol", additionalInputTokens: 10, additionalMaxOutputTokens: 1000 })).additionalMaxOutputTokens, 1000);
         await context.markProviderCalled();
         await context.onProgress({ schemaVersion: 1, id: "generation", status: "in_progress", attempt: 1 });
+        await context.onMessageReset();
+        await context.onMessageDelta("The program ");
+        await context.onMessageDelta("blinks an LED.");
         return { ok: true, kind: "chat", stage: "chat", baseRevision: 7, message: "The program blinks an LED.", _metering: metering };
       },
     },
@@ -139,12 +142,13 @@ test("project chat shares authorization, budget and NDJSON metering without requ
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type"), /^application\/x-ndjson/);
   const events = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
-  assert.deepEqual(events.map(event => event.type), ["progress", "result"]);
-  assert.equal(events[1].data.kind, "chat");
-  assert.equal(events[1].data.baseRevision, 7);
-  assert.equal(events[1].data.canvas, undefined);
-  assert.equal(events[1].data._metering, undefined);
-  assert.deepEqual(events[1].data.quota, quota);
+  assert.deepEqual(events.map(event => event.type), ["progress", "message_reset", "message_delta", "message_delta", "result"]);
+  assert.equal(events.filter(event => event.type === "message_delta").map(event => event.delta).join(""), "The program blinks an LED.");
+  assert.equal(events[4].data.kind, "chat");
+  assert.equal(events[4].data.baseRevision, 7);
+  assert.equal(events[4].data.canvas, undefined);
+  assert.equal(events[4].data._metering, undefined);
+  assert.deepEqual(events[4].data.quota, quota);
   assert.deepEqual(calls, ["validate", "authorize", "chat", "reserve", "extend", "provider", "record", "release"]);
 });
 
@@ -160,6 +164,63 @@ test("project chat fails closed when its validator is unavailable instead of fal
   });
   assert.equal(response.status, 503);
   assert.equal((await response.json()).code, "ai_unavailable");
+});
+
+test("chat text reaches HTTP clients before completion and disconnected delivery still settles usage", async t => {
+  for (const disconnect of [false, true]) await t.test(disconnect ? "client disconnects" : "client receives final result", async t => {
+    let release, finish;
+    const gate = new Promise(resolve => { release = resolve; });
+    const finished = new Promise(resolve => { finish = resolve; });
+    let completed = false, recorded = 0;
+    const server = createAiHttpServer({ environment: {}, log: { info() {}, warn() {} },
+      aiService: { authorizeAccessToken: () => true, validateChatRequestInput() {},
+        getStatus: async () => ({ enabled: true, configured: true, rules: { packageId: "canonical" },
+          knowledge: { version: "fixture" }, compilerVerification: { enabled: false, ready: false } }),
+        async processChat(_body, context) {
+          await context.markProviderCalled();
+          await context.onMessageReset();
+          await context.onMessageDelta("Early public answer");
+          await gate;
+          await context.onProgress({ id: "validation", status: "completed", label: "Response checked" });
+          completed = true;
+          return { ok: true, kind: "chat", message: "Early public answer, now completed.", _metering: {
+            provider: "openai", model: "gpt-6.1-sol", responseId: "resp_early_http", usage: {
+              inputTokens: 10, outputTokens: 2, totalTokens: 12, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+            },
+          } };
+        },
+      },
+      accessService: { authorizeAiRequest: async () => ({ mode: "google" }),
+        async recordAiUsage(_context, usage) { recorded++; assert.equal(usage.responseId, "resp_early_http"); return { quota: null }; },
+        async releaseAiRequest(_context, outcome) {
+          assert.deepEqual(outcome, { providerCalled: true, providerRejected: false, usageRecorded: true }); finish();
+        },
+      },
+    });
+    const base = await listen(server); t.after(() => close(server));
+    const result = await fetch(`${base}/api/avr/ai/chat`, { method: "POST",
+      headers: { Origin: base, "Content-Type": "application/json", Accept: "application/x-ndjson" },
+      body: JSON.stringify({ message: "Explain it." }),
+    });
+    const reader = result.body.getReader(), decoder = new TextDecoder();
+    let text = "";
+    try {
+      while (!text.includes('"message_delta"')) text += decoder.decode((await reader.read()).value, { stream: true });
+      assert.equal(completed, false, "text must arrive while the provider operation remains incomplete");
+      assert.equal(recorded, 0);
+      assert.match(text, /Early public answer/);
+      if (disconnect) await reader.cancel();
+    } finally { release(); }
+    if (!disconnect) {
+      while (true) { const { value, done } = await reader.read(); if (done) break; text += decoder.decode(value, { stream: true }); }
+      const terminal = text.trim().split("\n").map(JSON.parse).at(-1);
+      assert.equal(terminal.type, "result"); assert.equal(terminal.data.message, "Early public answer, now completed.");
+      assert.equal(terminal.data._metering, undefined);
+    }
+    await finished;
+    assert.equal(recorded, 1);
+    assert.equal(completed, true);
+  });
 });
 
 test("model validation errors expose human messages in JSON and NDJSON while preserving internal repair instructions", async t => {

@@ -8,6 +8,8 @@ const {
   verifyGeneratedProjectCompilation,
   requestOpenAi,
   requestOpenAiInputTokenCount,
+  extractOpenAiMetering,
+  parseStructuredOutput,
 } = require("../backend/avr-ai-runtime");
 const { createCompileEnvelope, AVR_COMPILE_HEALTH_SERVICE } = require("../backend/avr-compiler-contract");
 
@@ -105,5 +107,129 @@ test("OpenAI HTTP error classification survives malformed response bodies", asyn
     });
     await assert.rejects(requestOpenAiInputTokenCount({ fetchImpl, apiKey: "test-only", timeoutMs: 1000, requestBody: {} }), error =>
       error.status === expectedStatus && error.code === (status === 429 ? "openai_rate_limited" : "openai_token_count_failed"));
+  }
+});
+
+const eventFrame = event => `data: ${JSON.stringify(event)}\r\n\r\n`;
+const completed = text => ({ id: "resp_stream_test", model: "gpt-6.1-sol", status: "completed",
+  output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
+  usage: { input_tokens: 9, output_tokens: 4, total_tokens: 13 } });
+
+test("native provider SSE delivers only a decoded top-level public message before completion", async t => {
+  let release, sawPreview;
+  const gate = new Promise(resolve => { release = resolve; });
+  const previewArrived = new Promise(resolve => { sawPreview = resolve; });
+  const prefix = '{"project":{"message":"PRIVATE NESTED CODE"},"action":"reply","message":"Hel';
+  const suffix = 'lo \\"world\\"\\n\\uD83D\\uDE03 \\\\ path","canvas":null}';
+  const authoritative = completed(prefix + suffix);
+  const base = await localServer(t, async (req, res) => {
+    req.resume();
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write(eventFrame({ type: "response.reasoning_text.delta", delta: "PRIVATE REASONING" }));
+    res.write(eventFrame({ type: "response.function_call_arguments.delta", delta: "PRIVATE TOOL ARGUMENTS" }));
+    res.write(eventFrame({ type: "response.output_text.delta", delta: prefix }));
+    await gate;
+    // Both the SSE frames and JSON escapes cross arbitrary transport boundaries.
+    const wire = Array.from({ length: Math.ceil(suffix.length / 3) }, (_, i) =>
+      eventFrame({ type: "response.output_text.delta", delta: suffix.slice(i * 3, i * 3 + 3) })).join("");
+    for (let i = 0; i < wire.length; i += 7) res.write(wire.slice(i, i + 7));
+    res.end(eventFrame({ type: "response.completed", response: authoritative }));
+  });
+  let settled = false;
+  const deltas = [], actions = [], resets = [];
+  const result = requestOpenAi({ fetchImpl: (_url, init) => {
+    assert.equal(JSON.parse(init.body).stream, true);
+    return fetch(base, init);
+  }, apiKey: "test-only", timeoutMs: 2000, requestBody: { model: "gpt-6.1-sol" },
+  onMessageReset: () => resets.push("reset"), onAction: action => actions.push(action),
+  onMessageDelta: delta => { deltas.push(delta); sawPreview(); } }).finally(() => { settled = true; });
+  try {
+    await previewArrived;
+    assert.equal(settled, false);
+    assert.equal(deltas.join(""), "Hel");
+    assert.deepEqual(actions, ["reply"]);
+  } finally { release(); }
+  assert.deepEqual(await result, authoritative);
+  assert.deepEqual(resets, ["reset"]);
+  assert.equal(deltas.join(""), 'Hello "world"\n😃 \\ path');
+  assert.doesNotMatch(deltas.join(""), /PRIVATE/);
+  assert.equal(extractOpenAiMetering(authoritative, "gpt-6.1-sol", { strict: true }).usage.totalTokens, 13);
+});
+
+test("stream delivery failures do not discard authoritative usage or interrupt the provider", async t => {
+  const output = completed(JSON.stringify({ action: "reply", message: "Ready", canvas: null, project: null }));
+  const base = await localServer(t, (req, res) => {
+    req.resume(); res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8" });
+    res.end(eventFrame({ type: "response.output_text.delta", delta: output.output[0].content[0].text }) +
+      eventFrame({ type: "response.completed", response: output }));
+  });
+  const fail = () => { throw Error("Browser disconnected"); };
+  const result = await requestOpenAi({ fetchImpl: (_url, init) => fetch(base, init), apiKey: "test-only", timeoutMs: 2000,
+    requestBody: {}, onMessageReset: fail, onMessageDelta: fail, onAction: fail });
+  assert.deepEqual(result, output);
+  assert.equal(extractOpenAiMetering(result, "gpt-6.1-sol", { strict: true }).usage.totalTokens, 13);
+});
+
+test("tool-only and terminal unsuccessful SSE preserve their envelopes without leaking reasoning", async t => {
+  for (const kind of ["tool", "incomplete", "failed", "refusal"]) {
+    await t.test(kind, async t => {
+      const output = completed("unused");
+      if (kind === "tool") output.output = [{ type: "function_call", name: "read_avr_documentation", arguments: '{"private":"tool"}' }];
+      if (kind === "incomplete") { output.status = "incomplete"; output.incomplete_details = { reason: "max_output_tokens" }; }
+      if (kind === "failed") { output.status = "failed"; output.error = { message: "Internal provider detail" }; }
+      if (kind === "refusal") output.output[0].content = [{ type: "refusal", refusal: "Private refusal detail" }];
+      const base = await localServer(t, (req, res) => {
+        req.resume(); res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.end(eventFrame({ type: "response.reasoning_text.delta", delta: "PRIVATE" }) + eventFrame({
+          type: `response.${output.status}`, response: output,
+        }));
+      });
+      const deltas = [];
+      const result = await requestOpenAi({ fetchImpl: (_url, init) => fetch(base, init), apiKey: "test-only", timeoutMs: 2000,
+        requestBody: {}, onMessageDelta: delta => deltas.push(delta) });
+      assert.deepEqual(result, output);
+      assert.deepEqual(deltas, []);
+      assert.equal(extractOpenAiMetering(result, "gpt-6.1-sol", { strict: true }).usage.totalTokens, 13);
+      if (kind !== "tool") assert.throws(() => parseStructuredOutput(result), error =>
+        error.code === ({ incomplete: "ai_output_limit_reached", failed: "ai_response_failed", refusal: "ai_refusal" })[kind]);
+    });
+  }
+});
+
+test("SSE requests keep the whole-body deadline and reject truncated, malformed or oversized frames", async t => {
+  for (const kind of ["timeout", "truncated", "malformed", "oversized"]) {
+    await t.test(kind, async t => {
+      const base = await localServer(t, (req, res) => {
+        req.resume(); res.writeHead(200, { "Content-Type": "text/event-stream" });
+        if (kind === "timeout") res.write('data: {"type":');
+        else if (kind === "truncated") res.end(eventFrame({ type: "response.output_text.delta", delta: '{"message":"Partial' }));
+        else if (kind === "malformed") res.end("data: broken JSON\n\n");
+        else res.end("data: " + "x".repeat(2 * 1024 * 1024 + 1) + "\n\n");
+      });
+      await assert.rejects(requestOpenAi({ fetchImpl: (_url, init) => fetch(base, init), apiKey: "test-only", timeoutMs: 100,
+        requestBody: {}, onMessageDelta() {} }), error => error.code === (kind === "timeout" ? "openai_timeout" : "openai_stream_invalid"));
+    });
+  }
+});
+
+test("split UTF-8 transport and split surrogate deltas retain public text while invalid escapes never leak artifacts", async () => {
+  for (const invalid of [false, true]) {
+    const text = invalid ? '{"action":"reply","message":"Public prefix\\qPRIVATE ARTIFACT"}'
+      : '{"action":"reply","message":"Привет 😃"}';
+    const output = completed(text);
+    const wire = Buffer.from(eventFrame({ type: "response.output_text.delta", delta: text }) +
+      eventFrame({ type: "response.completed", response: output }));
+    let offset = 0;
+    const deltas = [];
+    const result = await requestOpenAi({ fetchImpl: async () => new Response(new ReadableStream({
+      pull(controller) {
+        if (offset === wire.length) return controller.close();
+        controller.enqueue(wire.subarray(offset, offset + 2)); offset = Math.min(wire.length, offset + 2);
+      },
+    }), { headers: { "Content-Type": "text/event-stream" } }), apiKey: "test-only", timeoutMs: 1000,
+    requestBody: {}, onMessageDelta: delta => deltas.push(delta) });
+    assert.equal(extractOpenAiMetering(result, "gpt-6.1-sol", { strict: true }).usage.totalTokens, 13);
+    assert.equal(deltas.join(""), invalid ? "Public prefix" : "Привет 😃");
+    if (invalid) assert.throws(() => parseStructuredOutput(result), error => error.code === "invalid_ai_response");
   }
 });

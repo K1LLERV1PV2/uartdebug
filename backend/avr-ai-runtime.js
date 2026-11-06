@@ -136,11 +136,14 @@ function getRuntimeConfig(environment = process.env) {
 
 // Headers do not complete a request: keep the deadline active while JSON is
 // received too. Callers retain their own HTTP and malformed-body contracts.
-async function fetchJsonWithTimeout(fetchImpl, url, options, timeoutMs) {
+async function fetchJsonWithTimeout(fetchImpl, url, options, timeoutMs, readStream = null) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetchImpl(url, { ...options, signal: controller.signal });
+    if (readStream && response.ok && String(response.headers?.get?.("content-type") || "").split(";")[0].trim().toLowerCase() === "text/event-stream") {
+      return { response, body: await readStream(response), invalidJson: false };
+    }
     let body = null;
     let invalidJson = false;
     try {
@@ -444,8 +447,155 @@ async function emitProgressEvent(requestContext, stage) {
   }
 }
 
+async function deliverPreview(callback, value) {
+  if (typeof callback !== "function") return;
+  try { await callback(value); } catch {
+    // A disconnected browser must not interrupt provider usage settlement.
+  }
+}
+
+// Decode only the public top-level JSON message/action strings. Other strings
+// (source, resource YAML, nested messages and tool arguments) never leave here.
+function createMessagePreview() {
+  let depth = 0, string = false, escaped = false, unicode = "", unicodeLeft = 0;
+  let keyExpected = false, valueExpected = false, key = "", capture = null, token = "";
+  let broken = false, ended = false, high = "", messageBytes = 0, total = 0;
+  return {
+    push(text) {
+      let delta = "", action = null;
+      const unit = value => {
+        if (capture !== "message") {
+          if (capture && token.length < 128) token += value;
+          return;
+        }
+        const code = value.charCodeAt(0);
+        if (high) {
+          if (code >= 0xdc00 && code <= 0xdfff) { value = high + value; high = ""; }
+          else { high = ""; broken = true; return; }
+        } else if (code >= 0xd800 && code <= 0xdbff) { high = value; return; }
+        else if (code >= 0xdc00 && code <= 0xdfff || value === "\0") { broken = true; return; }
+        messageBytes += Buffer.byteLength(value);
+        if (messageBytes <= 32 * 1024) delta += value;
+      };
+      for (const character of text.split("")) {
+        if (broken || ended) break;
+        if (++total > 512 * 1024) { broken = true; break; }
+        if (string) {
+          if (unicodeLeft) {
+            if (!/[0-9a-f]/i.test(character)) { broken = true; break; }
+            unicode += character;
+            if (!--unicodeLeft) { unit(String.fromCharCode(Number.parseInt(unicode, 16))); unicode = ""; }
+          } else if (escaped) {
+            escaped = false;
+            if (character === "u") { unicodeLeft = 4; unicode = ""; }
+            else {
+              const escapes = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+              if (!Object.hasOwn(escapes, character)) { broken = true; break; }
+              unit(escapes[character]);
+            }
+          } else if (character === "\\") escaped = true;
+          else if (character === '"') {
+            string = false;
+            if (capture === "key") { key = token; keyExpected = false; }
+            else {
+              valueExpected = false;
+              if (capture === "action" && ["reply", "clarify", "generate", "describe"].includes(token)) action = token;
+            }
+            capture = null;
+          } else if (character.charCodeAt(0) < 0x20) broken = true;
+          else unit(character);
+        } else if (character === '"') {
+          string = true; token = "";
+          capture = depth === 1 ? keyExpected ? "key" : valueExpected && ["message", "action"].includes(key) ? key : null : null;
+        } else if (character === "{" || character === "[") {
+          depth++;
+          if (depth === 1) keyExpected = character === "{";
+        } else if (character === "}" || character === "]") {
+          if (--depth <= 0) ended = true;
+        } else if (depth === 1 && character === ":") valueExpected = true;
+        else if (depth === 1 && character === ",") { keyExpected = true; valueExpected = false; key = ""; }
+      }
+      return { delta, action };
+    },
+  };
+}
+
+function streamError() {
+  return new AiServiceError(502, "openai_stream_invalid", "The AI response stream ended unexpectedly. Try again.");
+}
+
+async function readOpenAiStream(response, { onMessageDelta, onAction }) {
+  if (!response.body?.getReader) throw streamError();
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  const preview = createMessagePreview();
+  let buffer = "", data = [], eventBytes = 0, totalBytes = 0, terminal = null, textKey = null;
+  const processData = async () => {
+    if (!data.length) return;
+    const payload = data.join("\n"); data = []; eventBytes = 0;
+    if (payload === "[DONE]") return;
+    let event;
+    try { event = JSON.parse(payload); } catch { throw streamError(); }
+    if (["response.completed", "response.incomplete", "response.failed"].includes(event?.type)) {
+      if (!event.response || typeof event.response !== "object") throw streamError();
+      terminal = event.response;
+    } else if (event?.type === "error") throw streamError();
+    else if (event?.type === "response.output_text.delta" && typeof event.delta === "string") {
+      const item = `${event.output_index ?? 0}:${event.content_index ?? 0}:${event.item_id ?? ""}`;
+      if (textKey !== null && item !== textKey) return;
+      textKey = item;
+      const update = preview.push(event.delta);
+      if (update.action) await deliverPreview(onAction, update.action);
+      if (update.delta) await deliverPreview(onMessageDelta, update.delta);
+    }
+    // Reasoning events and tool argument deltas are intentionally ignored.
+  };
+  const line = async value => {
+    if (value.endsWith("\r")) value = value.slice(0, -1);
+    if (!value) return processData();
+    if (value.startsWith("data:")) {
+      const fragment = value.slice(5).replace(/^ /, "");
+      eventBytes += Buffer.byteLength(fragment);
+      if (eventBytes > 2 * 1024 * 1024) throw streamError();
+      data.push(fragment);
+    }
+  };
+  try {
+    while (!terminal) {
+      const { value, done } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        if (buffer) await line(buffer);
+        await processData();
+        break;
+      }
+      totalBytes += value.byteLength;
+      if (totalBytes > 64 * 1024 * 1024) throw streamError();
+      buffer += decoder.decode(value, { stream: true });
+      let newline;
+      while (!terminal && (newline = buffer.indexOf("\n")) !== -1) {
+        const next = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+        await line(next);
+      }
+      if (Buffer.byteLength(buffer) > 2 * 1024 * 1024) throw streamError();
+    }
+    if (!terminal) throw streamError();
+    return terminal;
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
 async function beginProgressStage(requestContext, stages, fields) {
+  const labels = {
+    generation: "Preparing the response",
+    documentation: "Reading local documentation",
+    validation: "Checking the response and project requirements",
+    compilation: "Compiling the program",
+    repair: "Correcting the response after checks",
+  };
   const stage = {
+    label: labels[fields.id] || "Processing the request",
     ...fields,
     status: "in_progress",
   };
@@ -488,8 +638,15 @@ function attachUncertainProviderUsage(error) {
   return error;
 }
 
-async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody }) {
+async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody, onMessageDelta, onMessageReset, onAction, resetAtStart = false }) {
   let result;
+  const streaming = typeof onMessageDelta === "function";
+  let resetSent = false;
+  const sendDelta = async delta => {
+    if (!resetSent) { await deliverPreview(onMessageReset); resetSent = true; }
+    await deliverPreview(onMessageDelta, delta);
+  };
+  if (streaming && resetAtStart) { await deliverPreview(onMessageReset); resetSent = true; }
 
   try {
     result = await fetchJsonWithTimeout(fetchImpl, OPENAI_RESPONSES_URL, {
@@ -498,8 +655,8 @@ async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody }) {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(requestBody),
-    }, timeoutMs);
+      body: JSON.stringify(streaming ? { ...requestBody, stream: true } : requestBody),
+    }, timeoutMs, streaming ? response => readOpenAiStream(response, { onMessageDelta: sendDelta, onAction }) : null);
   } catch (error) {
     if (error?.name === "AbortError") {
       throw new AiServiceError(
@@ -508,6 +665,7 @@ async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody }) {
         "The AI request timed out.",
       );
     }
+    if (error instanceof AiServiceError) throw error;
     throw new AiServiceError(
       502,
       "openai_unavailable",
@@ -548,6 +706,15 @@ async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody }) {
     throw error;
   }
 
+  if (streaming && String(response.headers?.get?.("content-type") || "").split(";")[0].trim().toLowerCase() !== "text/event-stream") {
+    const preview = createMessagePreview();
+    for (const item of responseJson?.output || []) for (const content of item?.content || []) {
+      if (item.type !== "message" || content.type !== "output_text" || typeof content.text !== "string") continue;
+      const update = preview.push(content.text);
+      if (update.action) await deliverPreview(onAction, update.action);
+      if (update.delta) await sendDelta(update.delta);
+    }
+  }
   return responseJson;
 }
 
@@ -738,6 +905,10 @@ function parseStructuredOutput(responseJson) {
     );
   }
 
+  if (responseJson.status === "failed") {
+    throw new AiServiceError(502, "ai_response_failed", "The AI service could not complete this response. Try again.");
+  }
+
   if (responseJson.status === "incomplete") {
     const reason = String(responseJson.incomplete_details?.reason || "");
     throw new AiServiceError(
@@ -908,6 +1079,7 @@ module.exports = {
   toPublicProgress,
   beginProgressStage,
   finishProgressStage,
+  emitProgressEvent,
   attachProgressToError,
   attachUncertainProviderUsage,
   requestOpenAi,
