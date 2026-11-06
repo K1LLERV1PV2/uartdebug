@@ -1113,11 +1113,11 @@
       if (throwOnError) throw new Error("The original workspace could not be preserved for recovery.");
       return false;
     }
+    let changed = false;
     try {
-      localStorage.setItem(
-        STORAGE_STATE,
-        JSON.stringify(getProjectAiAccountFilesSnapshot({ captureLive: false }))
-      );
+      const serialized = JSON.stringify(getProjectAiAccountFilesSnapshot({ captureLive: false }));
+      changed = localStorage.getItem(STORAGE_STATE) !== serialized;
+      localStorage.setItem(STORAGE_STATE, serialized);
     } catch (error) {
       console.warn("Failed to persist AVR workspace state:", error);
       window.UartDebugNotifications?.notify({ key: "workspace-save", title: "Project storage", tone: "error",
@@ -1139,7 +1139,7 @@
     }
     workspaceDraftCanvasRestored = true;
     if (
-      projectAiBootComplete &&
+      changed && projectAiBootComplete &&
       !projectAiAccountWorkspaceApplying
     ) {
       markProjectAiAccountWorkspaceDirty();
@@ -3720,6 +3720,11 @@
     if (scope.instanceId && !project) return false;
     const value = normalizeProjectConversation(conversation);
     const previousDraft = draftProjectConversation, previous = project?.conversation;
+    // Reading/flushing an unused chat must not materialize a new empty chat or
+    // turn account hydration into an edit. Still persist other pending changes.
+    if (!fromScope && JSON.stringify(normalizeProjectConversation(project ? previous : previousDraft)) === JSON.stringify(value)) {
+      return persistState();
+    }
     if (project) project.conversation = value;
     else draftProjectConversation = value;
     if (project && fromScope) draftProjectConversation = normalizeProjectConversation(null);
@@ -3854,7 +3859,7 @@
   function saveCanvasTarget() {
     const target = getCanvasTarget();
     const previous = projectInstructionDocument.target;
-    if (previous?.mcu === target.mcu && previous?.packageName === target.packageName) return;
+    if ((previous?.mcu || "") === target.mcu && (previous?.packageName || "") === target.packageName) return;
     projectInstructionDocument = { ...projectInstructionDocument, target,
       revision: projectInstructionDocument.revision + 1 };
     persistProjectInstruction({ recover: true });
@@ -4027,11 +4032,14 @@
     projectInstructionSaveJobs.set(scope, job);
     const project = projectInstructionInstanceId
       ? miniProjects[projectInstructionInstanceId] : null;
-    if (project) project.canvas = getProjectInstructionSnapshot();
+    const canvas = getProjectInstructionSnapshot();
+    const previousCanvas = project ? project.canvas : unassignedProjectInstructionDocument;
+    const changed = JSON.stringify(previousCanvas) !== JSON.stringify(canvas);
+    if (project) project.canvas = canvas;
     else if (!projectInstructionInstanceId) {
-      unassignedProjectInstructionDocument = getProjectInstructionSnapshot();
+      unassignedProjectInstructionDocument = canvas;
     }
-    if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
+    if (changed && projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
       markProjectAiAccountWorkspaceDirty();
     }
 
@@ -5155,8 +5163,17 @@
 
   function projectAiAccountWorkspaceMatches(remoteData) {
     try {
-      return JSON.stringify(getProjectAiAccountFilesSnapshot()) ===
-        JSON.stringify(normalizeProjectAiAccountFilesSnapshot(remoteData));
+      // JSON object insertion order is not a project change. Array order and
+      // every stored value, including chat alternatives and drafts, still are.
+      const equal = (left, right) => {
+        if (left === right) return true;
+        if (!left || !right || typeof left !== "object" || typeof right !== "object" ||
+            Array.isArray(left) !== Array.isArray(right)) return false;
+        const keys = Object.keys(left);
+        return keys.length === Object.keys(right).length &&
+          keys.every(key => Object.hasOwn(right, key) && equal(left[key], right[key]));
+      };
+      return equal(getProjectAiAccountFilesSnapshot(), normalizeProjectAiAccountFilesSnapshot(remoteData));
     } catch { return false; }
   }
 
@@ -5578,13 +5595,28 @@
       "The local Projects copy was not replaced because the browser could not safely persist both the local recovery and cloud copies. Free some browser storage and reload to choose again.");
   }
 
+  function flushProjectChatBeforeAccountSync() {
+    if (projectChatController?.flush() !== false) return true;
+    setProjectAiAccountStatus(
+      "Cloud sync is paused because the current chat could not be saved in this browser. Your draft remains open; free browser storage and try again.",
+      "error"
+    );
+    return false;
+  }
 
   async function initializeProjectAiAccountWorkspace() {
     if (!preserveUnreadableWorkspace()) return null;
     if (projectAiAccountSync.ready) return null;
     if (projectAiAccountWorkspacePromise) return projectAiAccountWorkspacePromise;
+    projectChatController?.cancel("Account workspace is being synchronized. No response changes were applied.");
+    if (!flushProjectChatBeforeAccountSync()) return null;
     const workspaceEpoch = ++projectAiAccountWorkspaceEpoch;
+    projectChatController?.refresh({ force: true });
     const mutationAtStart = projectAiAccountSync.mutation;
+    // Another tab can update the shared sync marker while this tab still has
+    // its older copy in memory. Only this copy's known base can authorize a PUT.
+    const baseAccountKey = projectAiAccountSync.accountKey;
+    const baseRevision = projectAiAccountSync.revision;
     const promise = (async () => {
       const response = await fetch(PROJECT_AI_ACCOUNT_WORKSPACE_URL, {
         method: "GET", headers: { Accept: "application/json" }, credentials: "same-origin",
@@ -5597,6 +5629,9 @@
         throw error;
       }
       if (workspaceEpoch !== projectAiAccountWorkspaceEpoch || projectAiAuthSession?.authenticated !== true) return null;
+      // Include input still waiting for the chat debounce in reconciliation and
+      // any recovery copy before an authoritative cloud snapshot is adopted.
+      if (!flushProjectChatBeforeAccountSync()) return null;
       const accountKey = String(result.accountKey || "").trim();
       if (!accountKey) throw new Error("Account workspace identity is missing.");
       const stored = readStoredProjectAiAccountSync();
@@ -5635,12 +5670,14 @@
         if (workspaceEpoch !== projectAiAccountWorkspaceEpoch) return null;
       }
 
-      const storedRevision = sameAccount ? Number(stored.revision) : 0;
+      const hasLocalBase = sameAccount && baseAccountKey === accountKey &&
+        Number.isSafeInteger(baseRevision) && baseRevision >= 0;
+      const sameRevision = hasLocalBase && baseRevision === remote.revision;
       const mutationChangedDuringRequest = projectAiAccountSync.mutation !== mutationAtStart;
       const localDirty = projectAiAccountSync.localDirty || mutationChangedDuringRequest ||
         (sameAccount && stored.dirty) || (!stored && hasMeaningfulProjectAiLocalWorkspace());
       const rememberedConflict = sameAccount && stored.conflict;
-      projectAiAccountSync.revision = sameAccount && Number.isSafeInteger(storedRevision) ? storedRevision : 0;
+      projectAiAccountSync.revision = hasLocalBase ? baseRevision : 0;
       Object.assign(projectAiAccountSync, { dirty: false, conflict: false, retryCount: 0 });
       let pendingConflict = false;
       const preserveLocalCopy = sourceAccountKey => saveProjectAiWorkspaceRecovery(
@@ -5689,18 +5726,22 @@
           } else applyCloudCopy(localRecoveryAccountKey);
           return;
         }
-        if (rememberedConflict) {
-          projectAiAccountSync.conflict = true;
-          pendingConflict = true;
-          return;
-        }
-        if (Number.isSafeInteger(storedRevision) && storedRevision === remote.revision &&
-            projectAiAccountWorkspaceMatches(remote.data)) {
+        const matchesCloud = projectAiAccountWorkspaceMatches(remote.data);
+        if (matchesCloud && (!instructionMigrationRequired || sameRevision && !rememberedConflict)) {
+          projectAiAccountSync.revision = remote.revision;
           setProjectAiLocalDirty(false);
           return;
         }
-        if (localDirty) {
+        // Own unsaved edits are not a conflict when
+        // the unified cloud document has not advanced. The PUT still uses CAS.
+        // Legacy split instruction documents need their separate reconciliation.
+        if (!instructionMigrationRequired && sameRevision && localDirty) {
           projectAiAccountSync.dirty = true;
+          setProjectAiLocalDirty(true);
+          return;
+        }
+        if (rememberedConflict || localDirty) {
+          projectAiAccountSync.dirty = localDirty;
           projectAiAccountSync.conflict = true;
           pendingConflict = true;
           return;
@@ -7627,20 +7668,18 @@
       }
       files[current] = liveMarkdown;
       scheduleMarkdownLivePreview("editor");
-      if (projectAiAccountWorkspaceApplying) {
-        scheduleDocumentationMarkerRefresh();
-        if (resolveGuideFileName(current) === current) {
-          scheduleDocumentationPaneRefresh();
-        }
-        return;
-      }
-      if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
-        markProjectAiAccountWorkspaceDirty();
-      }
       scheduleDocumentationMarkerRefresh();
       if (resolveGuideFileName(current) === current) {
         scheduleDocumentationPaneRefresh();
       }
+      // setValue restores an already-owned model value. A delayed save here
+      // would run after boot and turn a page reload into a user modification.
+      if (projectAiAccountWorkspaceApplying || change?.origin === "setValue") {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = null;
+        return;
+      }
+      if (projectAiBootComplete) markProjectAiAccountWorkspaceDirty();
       if (saveTimer) clearTimeout(saveTimer);
 
       const codeSnapshot = liveMarkdown;
