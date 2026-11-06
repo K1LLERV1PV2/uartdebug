@@ -4,7 +4,7 @@ const { test, expect } = require("playwright/test");
 const fs = require("node:fs");
 
 const accountKey = "browser-sync-regression-account";
-const workspaceKey = "ud_avr_programming_state_v3";
+const workspaceKey = "ud_avr_programming_state_v4";
 const syncKey = "ud_avr_ai_account_sync_v1";
 const dirtyKey = "ud_avr_ai_local_dirty_v1";
 

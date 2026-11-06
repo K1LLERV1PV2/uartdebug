@@ -300,9 +300,12 @@ sync; the first write checks both legacy revisions. Deployment creates a verifie
 database backup before activation, and the rollback guard refuses schema-5 code
 against the schema-6 database.
 Project chat format versions are also checked independently of the database
-schema. Once a saved draft or project uses branched chat format 5, rollback
+schema. Once a saved draft or project uses activity-enabled chat format 6, rollback
 requires both frontend and backend readers that declare support for that format;
-an older release requires its matching verified database backup.
+an older release requires its matching verified database backup. Format 5 remains
+readable and is upgraded without dropping its branches, messages or drafts. Activity
+records and timings share the atomic project snapshot; they never enter the model's
+conversation input. Cached older clients cannot replace a format-6 chat with format 5.
 
 There is currently no self-service account-data export or deletion UI. Signing
 out, clearing browser storage, or revoking the OAuth connection does not delete

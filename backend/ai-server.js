@@ -12,7 +12,7 @@ const {
 } = require("./ai-access-service");
 const { createProjectCatalog } = require("./avr-materials");
 
-const AI_SERVER_VERSION = "20261106-chat-branches-v1";
+const AI_SERVER_VERSION = "20261107-chat-stream-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -598,6 +598,12 @@ function createAiHttpServer(options = {}) {
                   type: "progress",
                   progress: toStreamingProgress(progress),
                 })
+            : undefined,
+          onMessageDelta: ndjsonStarted && chatRequest
+            ? delta => sendNdjsonEvent(res, { type: "message_delta", delta })
+            : undefined,
+          onMessageReset: ndjsonStarted && chatRequest
+            ? () => sendNdjsonEvent(res, { type: "message_reset" })
             : undefined,
           reserveBudget:
             accessContext?.mode === "google" &&

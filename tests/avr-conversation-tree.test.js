@@ -7,7 +7,7 @@ const { validateStoredConversation } = require("../backend/avr-conversation-cont
 
 const node = (id, parentId, content = id, role = "user") => ({ id, parentId, content, role, status: "complete", createdAt: 1,
   ...(role === "user" ? { requestSource: "message" } : {}) });
-const fixture = () => ({ schemaVersion: 5, activeThreadId: "same-chat", threads: [{ id: "same-chat", title: "Manual title",
+const fixture = () => ({ schemaVersion: 6, activeThreadId: "same-chat", threads: [{ id: "same-chat", title: "Manual title",
   titleMode: "manual", draft: "Unsent draft", activeLeafId: "a2-edited", selectedChildIds: ["q1", "a1", "q2-edited", "a2-edited", "a2", "a1-edited"], messages: [
     node("q1", null), node("a1", "q1", "First response", "assistant"),
     node("q2", "a1"), node("a2", "q2", "Original tail", "assistant"),
@@ -34,6 +34,16 @@ test("message trees retain both nested alternatives and select the whole saved c
   assert.equal(continuationTip(selected.threads[0], "q1"), "a2", "returning to an outer branch restores the last chosen nested alternative");
   selected = normalize(JSON.parse(JSON.stringify(selected)));
   assert.equal(continuationTip(selected.threads[0], "q1"), "a2", "nested selections survive a snapshot round-trip");
+});
+
+test("format-five trees upgrade without changing any message, branch selection or draft", () => {
+  const previous = fixture();
+  previous.schemaVersion = 5;
+  validateStoredConversation(previous);
+  const current = normalize(previous);
+  assert.equal(current.schemaVersion, 6);
+  assert.deepEqual(current.threads, previous.threads);
+  validateStoredConversation(current);
 });
 
 test("tree restore rejects corrupt references, duplicate identities, cycles and future schemas", () => {
@@ -80,7 +90,7 @@ test("legacy linear messages migrate into a tree without changing their content 
       { id: "old-answer", content: "Which clock?", role: "assistant", createdAt: 2, status: "pending" },
     ] }] };
   const current = normalize(legacy, { recoverPending: true });
-  assert.equal(current.schemaVersion, 5);
+  assert.equal(current.schemaVersion, 6);
   assert.equal(current.threads[0].id, "existing");
   assert.equal(current.threads[0].title, "Existing name");
   assert.equal(current.threads[0].draft, "Keep this draft");

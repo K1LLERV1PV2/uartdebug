@@ -1,8 +1,8 @@
 // Desktop AVR projects with a specification, C program, code description and XC8 compilation.
 (function () {
   const STORAGE_KEY = "ud_avr_programming_files_v1";
-  const STORAGE_STATE = "ud_avr_programming_state_v3";
-  const LEGACY_STORAGE_STATE = "ud_avr_programming_state_v2";
+  const STORAGE_STATE = "ud_avr_programming_state_v4";
+  const LEGACY_STORAGE_STATES = ["ud_avr_programming_state_v3", "ud_avr_programming_state_v2"];
   const STORAGE_CURRENT = "ud_avr_programming_current_v1";
   const STORAGE_GROUPS = "ud_avr_programming_file_groups_v1";
   const STORAGE_MINI_PROJECTS = "ud_avr_programming_mini_projects_v1";
@@ -989,7 +989,10 @@
     draftProjectConversation = null;
     try {
       rawState = localStorage.getItem(STORAGE_STATE);
-      if (rawState === null) rawState = localStorage.getItem(LEGACY_STORAGE_STATE);
+      for (const key of LEGACY_STORAGE_STATES) {
+        if (rawState !== null) break;
+        rawState = localStorage.getItem(key);
+      }
       if (rawState) {
         const state = JSON.parse(rawState);
         if (
@@ -3694,7 +3697,7 @@
 
   function normalizeProjectConversation(value, options = {}) {
     return window.UartDebugProjectChat?.normalize(value, options)
-      || { schemaVersion: 5, activeThreadId: "chat-1", threads: [{ id: "chat-1", title: "New chat", messages: [], activeLeafId: null, draft: "", titleMode: "auto" }] };
+      || { schemaVersion: 6, activeThreadId: "chat-1", threads: [{ id: "chat-1", title: "New chat", messages: [], activeLeafId: null, draft: "", titleMode: "auto" }] };
   }
 
   function getProjectChatContext() {
@@ -5870,7 +5873,7 @@
       tone: progress.status === "failed" ? "warning" : "info" });
   }
 
-  async function readProjectAiApiResponse(response, onProgress) {
+  async function readProjectAiApiResponse(response, onProgress, { onMessageDelta, onMessageReset } = {}) {
     const contentType = String(response.headers.get("content-type") || "")
       .split(";", 1)[0]
       .trim()
@@ -5904,6 +5907,17 @@
       }
       if (event?.type === "progress" && event.progress) {
         onProgress?.(event.progress);
+        return;
+      }
+      if (event?.type === "message_delta") {
+        if (typeof event.delta !== "string" || event.delta.includes("\0") || event.delta.length > 32768) {
+          throw new Error("The AI server returned an invalid response fragment.");
+        }
+        if (!finalEvent) onMessageDelta?.(event.delta);
+        return;
+      }
+      if (event?.type === "message_reset") {
+        if (!finalEvent) onMessageReset?.();
         return;
       }
       if (event?.type === "result" || event?.type === "error") {
@@ -6698,7 +6712,7 @@
     });
   }
 
-  async function requestProjectChat({ message, history, signal, onProgress, scope, requestSource = "message" }) {
+  async function requestProjectChat({ message, history, signal, onProgress, onMessageDelta, onMessageReset, scope, requestSource = "message" }) {
     const request = { ...getProjectAiRequestPayload(), message, history, requestSource };
     delete request.operation;
     const accountEpoch = projectAiAccountWorkspaceEpoch;
@@ -6711,7 +6725,7 @@
         headers: { Accept: "application/x-ndjson, application/json", "Content-Type": "application/json" },
         body: JSON.stringify(request),
       });
-      const result = await readProjectAiApiResponse(response, progress => onProgress(progress));
+      const result = await readProjectAiApiResponse(response, progress => onProgress?.(progress), { onMessageDelta, onMessageReset });
       if (signal.aborted) throw new DOMException("Response stopped.", "AbortError");
       if (accountEpoch !== projectAiAccountWorkspaceEpoch || accountKey !== (projectAiAuthSession?.accountKey || null) ||
           scope.key !== getProjectChatContext().key || scope.threadId !== getProjectChatContext().threadId) {
@@ -7882,6 +7896,9 @@
     });
 
     window.addEventListener("beforeunload", () => {
+      // Navigation ends this browser's run. Keep the duration observed here;
+      // crash recovery falls back to the last recorded activity instead.
+      projectChatController?.cancel("Response interrupted after leaving the page.");
       projectChatController?.flush();
       persistProjectInstruction({ immediate: true });
       if (documentationSaveTimer) {

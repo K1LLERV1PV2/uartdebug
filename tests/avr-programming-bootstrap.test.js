@@ -433,7 +433,7 @@ test("migrates the former shared canvas to the active legacy project without cop
   files.schemaVersion = 2;
   delete files.draftCanvas;
   delete files.miniProjects[legacy.instanceId].canvas;
-  storage.set("ud_avr_programming_state_v3", JSON.stringify(files));
+  storage.set("ud_avr_programming_state_v4", JSON.stringify(files));
   storage.set("ud_avr_ai_project_instruction_v2", JSON.stringify({
     schemaVersion: 2, revision: 9, markdown: "Existing requirements", annotations: [],
   }));
@@ -467,7 +467,7 @@ test("switching projects preserves failed-save warnings and retries the original
   let failWrites = false;
   const { hooks } = loadCanvasLifecycleHooks(storage, {
     setItem(key, value) {
-      if (failWrites && key === "ud_avr_programming_state_v3") throw new Error("Storage quota");
+      if (failWrites && key === "ud_avr_programming_state_v4") throw new Error("Storage quota");
       storage.set(key, String(value));
     },
     setTimeout(callback) { timers.set(++timerId, callback); return timerId; },
@@ -485,7 +485,7 @@ test("switching projects preserves failed-save warnings and retries the original
   assert.ok(timers.size > 0, "The previous project's retry must survive switching");
   failWrites = false;
   for (const [id, callback] of [...timers]) { timers.delete(id); callback(); }
-  const saved = JSON.parse(storage.get("ud_avr_programming_state_v3"));
+  const saved = JSON.parse(storage.get("ud_avr_programming_state_v4"));
   assert.equal(saved.miniProjects[first.instanceId].canvas.markdown, "Unsaved first project draft");
   assert.equal(hooks.pendingCanvasScopes().length, 0);
   assert.ok(hooks.notifications().some(record => record.id === failedSave.id), "a recovered save must not erase its diagnostic history");
@@ -494,10 +494,10 @@ test("switching projects preserves failed-save warnings and retries the original
 test("restoring a workspace reports an unreadable loose canvas without discarding its recovery source", () => {
   const { hooks, storage } = loadCanvasLifecycleHooks();
   hooks.createEmptyProject();
-  const legacy = JSON.parse(storage.get("ud_avr_programming_state_v3"));
+  const legacy = JSON.parse(storage.get("ud_avr_programming_state_v4"));
   legacy.schemaVersion = 2;
   delete legacy.draftCanvas;
-  storage.set("ud_avr_programming_state_v3", JSON.stringify(legacy));
+  storage.set("ud_avr_programming_state_v4", JSON.stringify(legacy));
   storage.set("ud_avr_ai_project_instruction_v2", "unreadable");
   hooks.loadState();
   hooks.restoreProjectInstruction();
@@ -528,7 +528,7 @@ test("deleting the last project cancels its save and clears the hidden workspace
   assert.equal(hooks.getProjectAiAccountFilesSnapshot().draftCanvas.markdown, "");
   assert.equal(hooks.pendingCanvasScopes().length, 0);
   for (const callback of timers.values()) callback();
-  const saved = JSON.parse(storage.get("ud_avr_programming_state_v3"));
+  const saved = JSON.parse(storage.get("ud_avr_programming_state_v4"));
   assert.equal(saved.schemaVersion, 3);
   assert.equal(saved.draftCanvas.markdown, "");
   assert.equal(Object.keys(saved.miniProjects).length, 0);
@@ -657,7 +657,7 @@ test("cloud project restoration cannot copy the old editor into the restored sou
   assert.equal(hooks.applyProjectAiAccountWorkspace( cloud), true);
   const source = project.files.find(file => file.role === "source").name;
   assert.equal(hooks.getProjectAiAccountFilesSnapshot().files[source], "// Cloud source");
-  assert.equal(JSON.parse(storage.get("ud_avr_programming_state_v3")).files[source], "// Cloud source");
+  assert.equal(JSON.parse(storage.get("ud_avr_programming_state_v4")).files[source], "// Cloud source");
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Cloud specification");
 });
 
@@ -719,7 +719,7 @@ test("flushing an unused chat leaves it unmaterialized while persisting other qu
   assert.equal(hooks.syncState().dirty, false);
   hooks.queueCanvas("A pending specification edit");
   assert.equal(hooks.saveProjectConversation(context, context.conversation), true);
-  const saved = JSON.parse(storage.get("ud_avr_programming_state_v3"));
+  const saved = JSON.parse(storage.get("ud_avr_programming_state_v4"));
   assert.equal(Object.values(saved.miniProjects)[0].canvas.markdown, "A pending specification edit");
   assert.equal(Object.hasOwn(Object.values(saved.miniProjects)[0], "conversation"), false);
   assert.equal(hooks.syncState().dirty, true);
@@ -1114,7 +1114,7 @@ test("failed canonical local writes keep legacy migration sources and do not ack
   const legacyInstruction = JSON.stringify({ schemaVersion: 2, revision: 7, markdown: "Recoverable legacy draft" });
   const storage = new Map([["ud_avr_ai_project_instruction_v2", legacyInstruction]]);
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
-    if (key === "ud_avr_programming_state_v3") throw new Error("Storage quota");
+    if (key === "ud_avr_programming_state_v4") throw new Error("Storage quota");
     storage.set(key, String(value));
   } });
   hooks.restoreProjectInstruction();
@@ -1222,6 +1222,48 @@ test("streams AI progress events before the final NDJSON result", async () => {
     progressEvents.map((progress) => progress.stages[0].id),
     ["generation", "compilation"]
   );
+});
+
+test("chat response fragments and repair resets reach the controller before the terminal result", async () => {
+  const { readProjectAiApiResponse } = loadAvrFrontendFunctionHooks(["readProjectAiApiResponse"]);
+  const encoder = new TextEncoder();
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const chunks = [
+    '{"type":"message_reset"}\n{"type":"message_delta","delta":"Draft 🧪"}\n',
+    '{"type":"progress","progress":{"message":"Compiling the project"}}\n{"type":"message_reset"}\n',
+    '{"type":"message_delta","delta":"Verified answer"}\n',
+  ].map(value => encoder.encode(value));
+  let index = 0;
+  const response = { status: 200, headers: { get: () => "application/x-ndjson" }, body: { getReader: () => ({
+    async read() {
+      if (index < chunks.length) return { value: chunks[index++], done: false };
+      if (index++ === chunks.length) { await held; return { value: encoder.encode('{"type":"result","status":200,"data":{"ok":true,"message":"Verified answer"}}\n'), done: false }; }
+      return { done: true };
+    }, async cancel() {},
+  }) } };
+  const events = [];
+  const pending = readProjectAiApiResponse(response, value => events.push(value.message), {
+    onMessageDelta: value => events.push(value), onMessageReset: () => events.push("reset"),
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(events, ["reset", "Draft 🧪", "Compiling the project", "reset", "Verified answer"]);
+  release();
+  const result = await pending;
+  assert.equal(result.data.message, "Verified answer");
+});
+
+test("invalid chat fragments never reach a controller or become a successful response", async () => {
+  const { readProjectAiApiResponse } = loadAvrFrontendFunctionHooks(["readProjectAiApiResponse"]);
+  for (const delta of [null, 12, "\0", "x".repeat(32769)]) {
+    let read = false, received = false;
+    const response = { status: 200, headers: { get: () => "application/x-ndjson" }, body: { getReader: () => ({
+      async read() { if (read) return { done: true }; read = true; return { value: new TextEncoder().encode(JSON.stringify({ type: "message_delta", delta }) + "\n"), done: false }; },
+      async cancel() {},
+    }) } };
+    await assert.rejects(readProjectAiApiResponse(response, null, { onMessageDelta: () => { received = true; } }), /invalid response fragment/);
+    assert.equal(received, false);
+  }
 });
 
 test("only exposes Markdown source markers for a focused live editor", () => {
@@ -3825,7 +3867,7 @@ test("partial generation and description updates preserve the other stage and hi
 });
 
 test("legacy loose projects migrate without losing code, guides, resources, or answers", () => {
-  const storage=new Map([["ud_avr_programming_state_v3",JSON.stringify({schemaVersion:2,files:{"blink.c":"// user code","blink.md":"# User guide","blink.yaml":"resource: old","unused.txt":"keep"},current:"blink.c",miniProjects:{},fileGroups:{},authorship:{}})],
+  const storage=new Map([["ud_avr_programming_state_v4",JSON.stringify({schemaVersion:2,files:{"blink.c":"// user code","blink.md":"# User guide","blink.yaml":"resource: old","unused.txt":"keep"},current:"blink.c",miniProjects:{},fileGroups:{},authorship:{}})],
     ["ud_avr_ai_project_instruction_v2",JSON.stringify({schemaVersion:2,revision:0,markdown:"Requirements",annotations:[{id:"q1",message:"Clock?",kind:"question",anchor:{quote:"Requirements",line:1},answer:"20 MHz",status:"open"}]})]]);
   const {hooks}=loadCanvasLifecycleHooks(storage);
   hooks.loadState();hooks.restoreProjectInstruction();hooks.migrateLooseFilesToProjects();hooks.selectFile("blink.c");
@@ -3847,7 +3889,7 @@ test("legacy nested groups migrate direct guide links without retaining folder s
   };
   const groupState = { Root: { files: ["alpha.c", "shared.md"], groups: ["Child"], expanded: true },
     Child: { files: ["beta.c", "leaf.md"], groups: ["Root"], expanded: false } };
-  const storage = new Map([["ud_avr_programming_state_v3", JSON.stringify({
+  const storage = new Map([["ud_avr_programming_state_v4", JSON.stringify({
     schemaVersion: 2, files: originalFiles, authorship: {}, miniProjects: {}, fileGroups: groupState, current: "alpha.c",
   })]]);
   const { hooks } = loadCanvasLifecycleHooks(storage);
@@ -3864,13 +3906,13 @@ test("legacy nested groups migrate direct guide links without retaining folder s
   assert.equal(alpha.files.guide, "shared.md");
   assert.equal(beta.files.guide, "leaf.md");
   assert.equal(hooks.persistState(), true);
-  assert.equal("fileGroups" in JSON.parse(storage.get("ud_avr_programming_state_v3")), false);
+  assert.equal("fileGroups" in JSON.parse(storage.get("ud_avr_programming_state_v4")), false);
 });
 
 test("a guide shared by old grouped sources migrates into independently owned project guides", () => {
   const guide = "# Shared guide\nThe program must keep user code.";
   const authorship = { schemaVersion: 1, lines: ["human", "original"], updatedAt: 7 };
-  const storage = new Map([["ud_avr_programming_state_v3", JSON.stringify({
+  const storage = new Map([["ud_avr_programming_state_v4", JSON.stringify({
     schemaVersion: 2, files: { "first.c": "// First", "second.c": "// Second", "manual.md": guide },
     authorship: { "manual.md": authorship }, miniProjects: {}, current: "second.c",
     fileGroups: { Examples: { files: ["first.c", "second.c", "manual.md"] } },
@@ -3896,7 +3938,7 @@ test("a guide shared by old grouped sources migrates into independently owned pr
 test("legacy guide migration keeps case-insensitive stem priority without inheriting parent folders", () => {
   const originalFiles = { "Blink.C": "// Program", "BLINK.guide.md": "# Preferred guide", "Blink.md": "# Other guide",
     "Child.c": "// Child program", "parent.md": "# Parent guide" };
-  const storage = new Map([["ud_avr_programming_state_v3", JSON.stringify({ schemaVersion: 2,
+  const storage = new Map([["ud_avr_programming_state_v4", JSON.stringify({ schemaVersion: 2,
     files: originalFiles, authorship: {}, miniProjects: {}, current: "Blink.C",
     fileGroups: { Parent: { files: ["parent.md"], groups: ["Child"] }, Child: { files: ["Child.c"] } },
   })]]);
@@ -3951,21 +3993,21 @@ test("failed local group migration leaves the old envelope and split keys availa
   const legacy = JSON.stringify({ schemaVersion: 2, files: { "old.c": "// Original", "guide.md": "# Original guide" },
     fileGroups: { Old: { files: ["old.c", "guide.md"] } }, authorship: {}, miniProjects: {}, current: "old.c" });
   const oldGroupKey = "ud_avr_programming_file_groups_v1";
-  const storage = new Map([["ud_avr_programming_state_v3", legacy], [oldGroupKey, "legacy backup"]]);
+  const storage = new Map([["ud_avr_programming_state_v4", legacy], [oldGroupKey, "legacy backup"]]);
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key) {
-    if (key === "ud_avr_programming_state_v3") throw new Error("Storage quota");
+    if (key === "ud_avr_programming_state_v4") throw new Error("Storage quota");
   } });
   const legacyGroups = hooks.loadState();
   hooks.restoreProjectInstruction();
   hooks.migrateLooseFilesToProjects(legacyGroups);
   assert.equal(hooks.persistState(), false);
-  assert.equal(storage.get("ud_avr_programming_state_v3"), legacy);
+  assert.equal(storage.get("ud_avr_programming_state_v4"), legacy);
   assert.equal(storage.get(oldGroupKey), "legacy backup");
 });
 
 test("unreadable and newer workspace envelopes are preserved exactly before any replacement write", () => {
   for (const raw of ["{ damaged workspace", JSON.stringify({ schemaVersion: 99, files: { "future.c": "Future source" }, opaque: [1, 2] })]) {
-    const stateKey = "ud_avr_programming_state_v3";
+    const stateKey = "ud_avr_programming_state_v4";
     const storage = new Map([[stateKey, raw]]);
     const { hooks } = loadCanvasLifecycleHooks(storage);
     hooks.loadState();
@@ -3980,7 +4022,7 @@ test("unreadable and newer workspace envelopes are preserved exactly before any 
 });
 
 test("a failed raw workspace recovery copy blocks local overwrite and cloud initialization or save", async () => {
-  const stateKey = "ud_avr_programming_state_v3", raw = "{ original unreadable projects";
+  const stateKey = "ud_avr_programming_state_v4", raw = "{ original unreadable projects";
   const storage = new Map([[stateKey, raw]]);
   let requests = 0;
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
@@ -4005,7 +4047,7 @@ test("draft chat transfer retains its tree and leaves a current empty unassigned
   let fail = false;
   const storage = new Map();
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
-    if (fail && key === "ud_avr_programming_state_v3") throw new Error("Storage quota");
+    if (fail && key === "ud_avr_programming_state_v4") throw new Error("Storage quota");
     storage.set(key, String(value));
   } });
   const conversation = normalize({ schemaVersion: 1, draft: "Unsent draft", messages: [
@@ -4027,7 +4069,7 @@ test("draft chat transfer retains its tree and leaves a current empty unassigned
   assert.equal(hooks.saveProjectConversation(target, conversation, from), true);
   const saved = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
   assert.deepEqual(saved.miniProjects[project.instanceId].conversation, conversation);
-  assert.equal(saved.draftConversation.schemaVersion, 5);
+  assert.equal(saved.draftConversation.schemaVersion, 6);
   assert.equal(saved.draftConversation.threads.length, 1);
   assert.equal(saved.draftConversation.threads[0].messages.length, 0);
   assert.equal(saved.draftConversation.threads[0].draft, "");
@@ -4047,7 +4089,7 @@ test("meaningful workspace detection reads chat collections and treats the canon
     [{ schemaVersion: 1, messages: [{ id: "question", role: "user", content: "Saved prompt", createdAt: 1 }], draft: "" }, true],
   ]) {
     const draftConversation = normalize(value);
-    const storage = new Map([["ud_avr_programming_state_v3", JSON.stringify({ schemaVersion: 3,
+    const storage = new Map([["ud_avr_programming_state_v4", JSON.stringify({ schemaVersion: 3,
       files: {}, authorship: {}, miniProjects: {}, current: null, draftConversation })]]);
     const { hooks } = loadCanvasLifecycleHooks(storage);
     hooks.loadState();
@@ -4055,8 +4097,8 @@ test("meaningful workspace detection reads chat collections and treats the canon
   }
 });
 
-test("local workspace migration isolates branched storage from later writes by a cached old tab", () => {
-  const canonicalKey = "ud_avr_programming_state_v3", legacyKey = "ud_avr_programming_state_v2";
+test("local workspace migration isolates activity history from later writes by a cached old tab", () => {
+  const canonicalKey = "ud_avr_programming_state_v4", legacyKey = "ud_avr_programming_state_v3";
   const fixture = loadCanvasLifecycleHooks();
   fixture.hooks.createEmptyProject();
   const original = JSON.parse(JSON.stringify(fixture.hooks.getProjectAiAccountFilesSnapshot()));
@@ -4068,14 +4110,22 @@ test("local workspace migration isolates branched storage from later writes by a
   migrated.hooks.loadState();
   assert.equal(migrated.hooks.persistState(), true);
   const current = JSON.parse(storage.get(canonicalKey));
-  assert.equal(Object.values(current.miniProjects)[0].conversation.schemaVersion, 5);
+  assert.equal(Object.values(current.miniProjects)[0].conversation.schemaVersion, 6);
   assert.equal(storage.get(legacyKey), rawLegacy, "the old key is retained without dual-writing or deletion");
+  const conversation = Object.values(current.miniProjects)[0].conversation;
+  const chat = conversation.threads[0];
+  chat.messages.push({ id: "work-answer", parentId: "original-message", role: "assistant", content: "Saved answer", status: "complete", createdAt: 100,
+    work: { startedAt: 100, finishedAt: 300, events: [{ id: "generation", text: "Prepared the response", at: 100, status: "complete" }] } });
+  chat.activeLeafId = "work-answer";
+  assert.equal(migrated.hooks.saveProjectConversation(migrated.hooks.getProjectChatContext(), conversation), true);
+  const savedWithWork = JSON.parse(storage.get(canonicalKey));
   storage.set(legacyKey, JSON.stringify({ ...original, miniProjects: {}, files: {}, current: null }));
   const reloaded = loadCanvasLifecycleHooks(storage);
   reloaded.hooks.loadState();
   const restored = reloaded.hooks.getProjectAiAccountFilesSnapshot();
-  assert.deepEqual(JSON.parse(JSON.stringify(restored.miniProjects)), current.miniProjects);
+  assert.deepEqual(JSON.parse(JSON.stringify(restored.miniProjects)), savedWithWork.miniProjects);
   assert.equal(Object.values(restored.miniProjects)[0].conversation.threads[0].draft, "Unsent text");
+  assert.equal(Object.values(restored.miniProjects)[0].conversation.threads[0].messages.at(-1).work.finishedAt, 300);
 
   const empty = { schemaVersion: 3, files: {}, authorship: {}, miniProjects: {}, current: null };
   storage.set(canonicalKey, JSON.stringify(empty)); storage.set(legacyKey, rawLegacy);
@@ -4084,7 +4134,7 @@ test("local workspace migration isolates branched storage from later writes by a
 });
 
 test("failed canonical-key migration retains the legacy workspace unchanged", () => {
-  const legacyKey = "ud_avr_programming_state_v2", canonicalKey = "ud_avr_programming_state_v3";
+  const legacyKey = "ud_avr_programming_state_v3", canonicalKey = "ud_avr_programming_state_v4";
   const raw = JSON.stringify({ schemaVersion: 3, files: { "notes.txt": "Original bytes" }, authorship: {}, miniProjects: {}, current: null });
   const storage = new Map([[legacyKey, raw]]);
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
@@ -4108,7 +4158,7 @@ test("corrupt new chat trees preserve the complete workspace instead of falling 
     if (future) project.conversation.schemaVersion = 99;
     else project.conversation.threads[0].messages[0].parentId = "missing-parent";
     const raw = JSON.stringify(state), storage = new Map([
-      ["ud_avr_programming_state_v3", raw],
+      ["ud_avr_programming_state_v4", raw],
       ["ud_avr_programming_state_v2", JSON.stringify({ schemaVersion: 3, files: { "old.c": "Do not load this old copy" }, miniProjects: {} })],
     ]);
     const { hooks } = loadCanvasLifecycleHooks(storage);
