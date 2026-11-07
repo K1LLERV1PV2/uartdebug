@@ -3064,14 +3064,16 @@ main,
 .project-chat-edit-actions { --ui-control-height: var(--ui-control-height-compact); display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .project-chat-edit-actions .ui-action { min-width: 0; padding-inline: 10px; }
 .project-chat-progress { margin: 0 0 10px; color: var(--ui-text-soft); font: 12px/1.5 var(--ui-font); }
-.project-chat-work-toggle { --ui-icon-size: 28px; --ui-icon-padding: 3px; display: inline-flex; justify-content: flex-start; gap: 7px; width: auto; max-width: 100%; height: auto; text-align: left; font: 12px/1.5 var(--ui-font); }
+.project-chat-work-toggle { width: 100%; padding-bottom: 7px; border-bottom: 1px solid var(--ui-border); font: 12px/1.5 var(--ui-font); }
 .project-chat-work-toggle span { min-width: 0; overflow-wrap: anywhere; }
 .project-chat-work-toggle svg { flex: none; width: 11px; height: 11px; transition: transform 120ms ease; }
 .project-chat-work-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
-.project-chat-work-events { display: grid; gap: 8px; list-style: none; margin: 8px 0 12px 7px; padding: 0 0 0 14px; border-left: 1px solid var(--ui-border); color: var(--ui-text-soft); }
+.project-chat-work-events { display: grid; gap: 10px; list-style: none; margin: 10px 0 12px; padding: 0; color: var(--ui-text-soft); }
 .project-chat-work-events[hidden] { display: none; }
-.project-chat-work-events li { position: relative; min-width: 0; overflow-wrap: anywhere; }
-.project-chat-work-events li::before { position: absolute; left: -18px; top: 6px; width: 6px; height: 6px; border: 1px solid var(--ui-border-hover); border-radius: 50%; background: var(--ui-window-bg); content: ""; }
+.project-chat-work-events li { position: relative; min-width: 0; padding-left: 14px; overflow-wrap: anywhere; }
+.project-chat-work-events li::before { position: absolute; left: 0; top: 6px; width: 6px; height: 6px; border: 1px solid var(--ui-border-hover); border-radius: 50%; background: var(--ui-window-bg); content: ""; }
+.project-chat-work-events li[data-kind="commentary"] { padding: 0; color: var(--ui-text); font: 14px/1.55 var(--ui-font); }
+.project-chat-work-events li[data-kind="commentary"]::before { display: none; }
 .project-chat-work-events li[data-status="active"]::before { background: var(--ui-accent); animation: chat-working 1400ms ease-in-out infinite; }
 .project-chat-work-events li[data-status="complete"]::before { background: var(--ui-text-soft); }
 .project-chat-work-events li[data-status="error"]::before { background: var(--ui-warning); }

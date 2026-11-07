@@ -3,7 +3,7 @@
 
   const paths = Object.freeze({
     edit: "m15 5 4 4M4 20l4-1L20 7a2.1 2.1 0 0 0-3-3L5 16Z",
-    branch: "M4 17h5a7 7 0 0 0 7-7V4m-4 0h4v4M9 17h11m-4-4 4 4-4 4",
+    branch: "M4 12h4a5 5 0 0 0 4-2l7-6m-5 0h5v5M8 12a5 5 0 0 1 4 2l7 6m-5 0h5v-5",
     retry: "M20 7v5h-5M20 12a8 8 0 1 0-2 6",
     copy: "M8 8h12v12H8zM16 8V4H4v12h4",
   });

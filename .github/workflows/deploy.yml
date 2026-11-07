@@ -218,6 +218,10 @@ jobs:
                   echo "Missing AI workspace nginx migration in staged backend"
                   exit 1
                 }
+                [ -f "${BE_SRC}/deploy/set-frontend-cache-policy.sh" ] || {
+                  echo "Missing frontend cache-policy migration in staged backend"
+                  exit 1
+                }
                 [ -f "${BE_SRC}/deploy/remove-ai-request-limits.sh" ] || {
                   echo "Missing AI request-limit cleanup in staged backend"
                   exit 1
@@ -250,6 +254,11 @@ jobs:
                   "/etc/nginx/sites-available/uartdebug.com" \
                   "${BE_SRC}/deploy/nginx-avr-ai-oauth-callback-location.conf" \
                   "${oauth_log_backup}"
+                frontend_cache_backup="/var/backups/uartdebug-ai/$(date -u +%Y%m%dT%H%M%SZ)-frontend-cache-${SHA:0:7}"
+                run_sudo /bin/bash \
+                  "${BE_SRC}/deploy/set-frontend-cache-policy.sh" \
+                  "/etc/nginx/sites-available/uartdebug.com" \
+                  "${frontend_cache_backup}"
                 run_sudo nginx -t
               fi
 

@@ -290,13 +290,28 @@
     return [hours ? `${hours}h` : "", minutes ? `${minutes}m` : "", `${seconds % 60}s`].filter(Boolean).join(" ");
   }
 
+  function displayWorkEvents(events) {
+    const visible = [];
+    for (const event of events) {
+      const commentary = event.id.startsWith("commentary:");
+      if (!commentary && event.status === "complete" &&
+          ["Prepared a tool request", "Repair step prepared a tool request"].includes(event.text)) continue;
+      const previous = visible.at(-1);
+      if (event.status === "complete" && event.id.startsWith("documentation:") &&
+          previous?.status === event.status && previous.id.startsWith("documentation:") && previous.text === event.text) {
+        previous.repetitions++;
+      } else visible.push({ ...event, repetitions: 1 });
+    }
+    return visible;
+  }
+
   /**
    * Mount the existing project-chat markup. Persistence and project mutations
    * remain owned by the workspace; this controller owns conversation interaction.
    *
    * getContext(): {key, instanceId, accountEpoch, title, conversation}
    * save(scope, conversation): boolean (false rejects a stale scope)
-   * request({message, history, signal, onProgress, onMessageDelta, onMessageReset, scope, requestSource}): Promise<{message, scope?}>
+   * request({message, history, signal, onProgress, onCommentary, onMessageDelta, onMessageReset, scope, requestSource}): Promise<{message, scope?}>
    * notify({title, message, tone, details?}), onBusy(boolean), openFiles()
    */
   function create(options) {
@@ -528,7 +543,7 @@
       progress.setAttribute("aria-live", "off");
       const workToggle = document.createElement("button");
       workToggle.type = "button";
-      workToggle.className = "project-chat-work-toggle ui-icon-button ui-icon-button--quiet";
+      workToggle.className = "project-chat-work-toggle ui-disclosure";
       const workLabel = document.createElement("span");
       const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       chevron.setAttribute("viewBox", "0 0 24 24"); chevron.setAttribute("aria-hidden", "true");
@@ -610,10 +625,11 @@
           item.textContent = "Earlier activity was omitted to keep the chat within its storage limit.";
           row.workEvents.append(item);
         }
-        for (const event of work.events) {
+        for (const event of displayWorkEvents(work.events)) {
           const item = document.createElement("li");
           item.dataset.status = event.status;
-          item.textContent = event.text;
+          item.dataset.kind = event.id.startsWith("commentary:") ? "commentary" : "stage";
+          item.textContent = event.repetitions > 1 ? `${event.text} (${event.repetitions} steps)` : event.text;
           row.workEvents.append(item);
         }
       }
@@ -837,6 +853,13 @@
               const attempt = Number.isSafeInteger(stage?.attempt) && stage.attempt > 0 ? stage.attempt : 1;
               recordWork(run, { id: `${id}:${attempt}`, text: bounded(progressText(stage), LIMITS.workTextBytes), status });
             }
+            saveWorkSoon(run);
+            renderThread();
+          },
+          onCommentary: update => {
+            if (active !== run || run.cancelled || !update ||
+                !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(update.id) || typeof update.text !== "string" || !update.text.trim()) return;
+            recordWork(run, { id: `commentary:${update.id}`, text: bounded(update.text, LIMITS.workTextBytes), status: "info" });
             saveWorkSoon(run);
             renderThread();
           },

@@ -191,7 +191,7 @@ test("ordinary chat uses canonical materials and history without modifying an em
   assert.equal(Object.hasOwn(result, "project"), false);
   assert.equal(empty.markdown, "");
   assert.equal(result._metering.usage.totalTokens, 150);
-  assert.deepEqual(bodies[0].input.slice(0, 2), [{ role: "user", content: "Previous question." }, { role: "assistant", content: "Previous answer." }]);
+  assert.deepEqual(bodies[0].input.slice(0, 2), [{ role: "user", content: "Previous question." }, { role: "assistant", phase: "final_answer", content: "Previous answer." }]);
   assert.equal(JSON.parse(bodies[0].input[2].content).message, "Помоги начать проект.");
   for (const document of knowledge().initialRules) assert.ok(bodies[0].instructions.includes(document.text));
   assert.ok(bodies[0].instructions.includes("The latest chat message authorizes only the requested work"));
@@ -979,7 +979,9 @@ test("chat service forwards live provider text but validates the terminal struct
   const updates = [], stages = [];
   let done = false;
   const pending = service({ fetch: async () => new Response(new ReadableStream({
-    start(controller) { writer = controller; controller.enqueue(frame({ type: "response.output_text.delta", delta: prefix })); },
+    start(controller) { writer = controller; controller.enqueue(frame({ type: "response.output_item.added", output_index: 0,
+      item: { type: "message", role: "assistant", phase: "final_answer" } }));
+      controller.enqueue(frame({ type: "response.output_text.delta", delta: prefix })); },
   }), { headers: { "Content-Type": "text/event-stream" } }) }).processChat({ ...input(), message: "Explain the project." }, {
     onMessageDelta: delta => { updates.push(delta); sawText(); },
     onProgress: stage => stages.push(stage),
@@ -995,6 +997,36 @@ test("chat service forwards live provider text but validates the terminal struct
   assert.equal(result.kind, "chat");
   assert.equal(result._metering.usage.totalTokens, 150);
   assert.ok(stages.some(stage => stage.id === "validation" && stage.label === "Response checked" && stage.status === "completed"));
+});
+
+test("native public commentary preserves phases across tool continuation and prior assistant final history", async () => {
+  const bodies = [], comments = [], answers = [];
+  let resets = 0;
+  const note = text => ({ id: "reused-note-id", type: "message", role: "assistant", phase: "commentary", content: [{ type: "output_text", text }] });
+  const result = await service({ fetch: async (_url, options) => {
+    const body = JSON.parse(options.body); bodies.push(body);
+    if (bodies.length === 1) return response({ ...envelope(null), output: [note("Проверю локальную справку UART."), {
+      type: "function_call", name: "read_avr_documentation", call_id: "native-catalog", arguments: JSON.stringify({
+        operation: "catalog", query: "", documentId: "", sectionId: "", page: 0, url: "", gap: "",
+      }),
+    }] });
+    const final = envelope(chatReply("UART uses a configured baud rate."));
+    final.output[0].phase = "final_answer";
+    final.output.unshift(note("Локальная справка загружена; проверю настройку скорости."));
+    return response(final);
+  } }).processChat({ ...input(), message: "Объясни UART по локальным документам.", history: [
+    { role: "user", content: "Earlier question" }, { role: "assistant", content: "Earlier final answer" },
+  ] }, { onCommentary: value => comments.push(value), onMessageDelta: value => answers.push(value), onMessageReset: () => { resets++; } });
+  assert.equal(result.kind, "chat");
+  assert.equal(result.message, "UART uses a configured baud rate.");
+  assert.equal(result._metering.usage.totalTokens, 300);
+  assert.equal(bodies[0].input[1].phase, "final_answer");
+  assert.ok(bodies[1].input.some(item => item.type === "message" && item.phase === "commentary" && item.id === "reused-note-id"));
+  assert.match(bodies[0].instructions, /language of the latest user message/);
+  assert.match(bodies[0].instructions, /Do not narrate every tool call/);
+  assert.deepEqual(comments.map(item => item.id), ["model-1:reused-note-id", "model-2:reused-note-id"]);
+  assert.deepEqual(answers, ["UART uses a configured baud rate."]);
+  assert.equal(resets, 1, "Commentary must not reset or start the final answer preview");
 });
 
 test("real canonical loader supplies rules once and pins tool reads to the request snapshot", async (t) => {

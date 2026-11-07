@@ -127,6 +127,7 @@ test("native provider SSE delivers only a decoded top-level public message befor
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     res.write(eventFrame({ type: "response.reasoning_text.delta", delta: "PRIVATE REASONING" }));
     res.write(eventFrame({ type: "response.function_call_arguments.delta", delta: "PRIVATE TOOL ARGUMENTS" }));
+    res.write(eventFrame({ type: "response.output_item.added", output_index: 0, item: { type: "message", role: "assistant", phase: "final_answer" } }));
     res.write(eventFrame({ type: "response.output_text.delta", delta: prefix }));
     await gate;
     // Both the SSE frames and JSON escapes cross arbitrary transport boundaries.
@@ -232,4 +233,98 @@ test("split UTF-8 transport and split surrogate deltas retain public text while 
     assert.equal(deltas.join(""), invalid ? "Public prefix" : "Привет 😃");
     if (invalid) assert.throws(() => parseStructuredOutput(result), error => error.code === "invalid_ai_response");
   }
+});
+
+const nativeMessage = (id, phase, text) => ({ id, type: "message", role: "assistant", ...(phase ? { phase } : {}),
+  content: [{ type: "output_text", text }] });
+const eventResponse = events => new Response(new ReadableStream({ start(controller) {
+  for (const event of events) controller.enqueue(new TextEncoder().encode(eventFrame(event)));
+  controller.close();
+} }), { headers: { "Content-Type": "text/event-stream" } });
+
+test("native commentary items stay separate from final JSON with cumulative updates and no done-event duplicates", async () => {
+  const first = nativeMessage("comment-one", "commentary", "Проверю UART.");
+  const second = nativeMessage("comment-two", "commentary", "Нашёл локальные сведения.");
+  const text = JSON.stringify({ action: "reply", message: "Final answer", canvas: null, project: null });
+  const final = nativeMessage("answer", "final_answer", text);
+  const authoritative = { ...completed(text), output: [first, second, final], output_text: "This convenience field includes commentary too." };
+  const events = [
+    { type: "response.output_item.added", output_index: 0, item: { ...first, content: [] } },
+    { type: "response.output_text.delta", output_index: 0, item_id: first.id, delta: "Проверю " },
+    { type: "response.output_text.delta", output_index: 0, item_id: first.id, delta: "UART." },
+    { type: "response.output_item.done", output_index: 0, item: first },
+    { type: "response.output_item.done", output_index: 1, item: second },
+    { type: "response.output_item.added", output_index: 2, item: { ...final, content: [] } },
+    { type: "response.output_text.delta", output_index: 2, item_id: final.id, delta: text },
+    { type: "response.output_item.done", output_index: 2, item: final },
+    { type: "response.completed", response: authoritative },
+  ];
+  const sequence = [];
+  const result = await requestOpenAi({ fetchImpl: async () => eventResponse(events), apiKey: "test-only", timeoutMs: 1000,
+    requestBody: {}, onCommentary: value => sequence.push({ commentary: value }), onMessageReset: () => sequence.push("reset"),
+    onMessageDelta: value => sequence.push({ answer: value }) });
+  assert.deepEqual(sequence, [
+    { commentary: { id: first.id, text: "Проверю" } },
+    { commentary: { id: first.id, text: first.content[0].text } },
+    { commentary: { id: second.id, text: second.content[0].text } }, "reset", { answer: "Final answer" },
+  ]);
+  assert.equal(parseStructuredOutput(result).message, "Final answer");
+  assert.equal(extractOpenAiMetering(result, "gpt-6.1-sol", { strict: true }).usage.totalTokens, 13);
+});
+
+test("unknown or late commentary phase cannot trigger final preview and commentary-only convenience text is never parsed", async () => {
+  const unknown = nativeMessage("late-phase", "commentary", '{"message":"Not the final answer"}');
+  const commentary = nativeMessage("public", "commentary", "Public update");
+  const deltas = [], comments = [];
+  let resets = 0;
+  const output = { ...completed("unused"), output: [unknown, commentary], output_text: '{"message":"Not final"}' };
+  const result = await requestOpenAi({ fetchImpl: async () => eventResponse([
+    { type: "response.output_item.added", output_index: 0, item: { id: unknown.id, type: "message", role: "assistant", content: [] } },
+    { type: "response.output_text.delta", output_index: 0, item_id: unknown.id, delta: unknown.content[0].text },
+    { type: "response.output_item.done", output_index: 0, item: unknown },
+    { type: "response.output_text.delta", output_index: 1, item_id: commentary.id, delta: commentary.content[0].text },
+    { type: "response.output_item.done", output_index: 1, item: commentary },
+    { type: "response.completed", response: output },
+  ]), apiKey: "test-only", timeoutMs: 1000, requestBody: {}, onMessageDelta: value => deltas.push(value),
+  onMessageReset: () => { resets++; }, onCommentary: value => comments.push(value) });
+  assert.deepEqual(deltas, []); assert.equal(resets, 0);
+  assert.deepEqual(comments, [{ id: "public", text: "Public update" }]);
+  assert.throws(() => parseStructuredOutput(result), error => error.code === "empty_ai_response");
+});
+
+test("buffered and streamed phase routing have parity and commentary stays bounded valid public UTF-8", async () => {
+  const text = JSON.stringify({ message: "Native final" });
+  const comment = nativeMessage("unsafe id?", "commentary", "\0" + "я".repeat(600) + "\ud800");
+  const output = { ...completed(text), output: [comment, nativeMessage("legacy", null, '{"message":"Legacy draft"}'), nativeMessage("final", "final_answer", text)] };
+  for (const stream of [false, true]) {
+    const comments = [], deltas = [];
+    const result = await requestOpenAi({ fetchImpl: async () => stream ? eventResponse([{ type: "response.completed", response: output }])
+      : new Response(JSON.stringify(output), { headers: { "Content-Type": "application/json" } }),
+    apiKey: "test-only", timeoutMs: 1000, requestBody: {}, onMessageDelta: delta => deltas.push(delta), onCommentary: value => comments.push(value) });
+    assert.equal(deltas.join(""), "Native final");
+    assert.equal(parseStructuredOutput(result).message, "Native final");
+    assert.equal(comments.length, 1);
+    assert.equal(Buffer.byteLength(comments[0].text), 1024);
+    assert.doesNotMatch(comments[0].text, /[\0\ud800-\udfff]/);
+    assert.match(comments[0].id, /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/);
+  }
+});
+
+test("commentary delivery errors leave final preview, terminal usage and legacy phaseless finals intact", async () => {
+  const text = JSON.stringify({ message: "Final" });
+  const comment = nativeMessage("comment", "commentary", "Reading a local reference");
+  const legacy = nativeMessage("legacy", null, text);
+  const output = { ...completed(text), output: [comment, legacy] };
+  const deltas = [];
+  const result = await requestOpenAi({ fetchImpl: async () => eventResponse([
+    { type: "response.output_item.done", output_index: 0, item: comment },
+    { type: "response.output_item.added", output_index: 1, item: { ...legacy, content: [] } },
+    { type: "response.output_text.delta", output_index: 1, item_id: legacy.id, delta: text },
+    { type: "response.output_item.done", output_index: 1, item: legacy },
+    { type: "response.completed", response: output },
+  ]), apiKey: "test-only", timeoutMs: 1000, requestBody: {}, onMessageDelta: value => deltas.push(value),
+  onCommentary() { throw new Error("Client disconnected"); } });
+  assert.deepEqual(deltas, ["Final"]);
+  assert.equal(parseStructuredOutput(result).message, "Final");
+  assert.equal(extractOpenAiMetering(result, "gpt-6.1-sol", { strict: true }).usage.totalTokens, 13);
 });

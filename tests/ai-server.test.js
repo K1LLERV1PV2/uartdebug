@@ -103,6 +103,7 @@ test("project chat shares authorization, budget and NDJSON metering without requ
         assert.equal((await context.extendBudget({ model: "gpt-6.1-sol", additionalInputTokens: 10, additionalMaxOutputTokens: 1000 })).additionalMaxOutputTokens, 1000);
         await context.markProviderCalled();
         await context.onProgress({ schemaVersion: 1, id: "generation", status: "in_progress", attempt: 1 });
+        await context.onCommentary({ id: "model-1:public-note", text: "I am checking the local reference." });
         await context.onMessageReset();
         await context.onMessageDelta("The program ");
         await context.onMessageDelta("blinks an LED.");
@@ -142,13 +143,14 @@ test("project chat shares authorization, budget and NDJSON metering without requ
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type"), /^application\/x-ndjson/);
   const events = (await response.text()).trim().split("\n").map(line => JSON.parse(line));
-  assert.deepEqual(events.map(event => event.type), ["progress", "message_reset", "message_delta", "message_delta", "result"]);
+  assert.deepEqual(events.map(event => event.type), ["progress", "commentary", "message_reset", "message_delta", "message_delta", "result"]);
+  assert.deepEqual(events[1], { type: "commentary", id: "model-1:public-note", text: "I am checking the local reference." });
   assert.equal(events.filter(event => event.type === "message_delta").map(event => event.delta).join(""), "The program blinks an LED.");
-  assert.equal(events[4].data.kind, "chat");
-  assert.equal(events[4].data.baseRevision, 7);
-  assert.equal(events[4].data.canvas, undefined);
-  assert.equal(events[4].data._metering, undefined);
-  assert.deepEqual(events[4].data.quota, quota);
+  assert.equal(events[5].data.kind, "chat");
+  assert.equal(events[5].data.baseRevision, 7);
+  assert.equal(events[5].data.canvas, undefined);
+  assert.equal(events[5].data._metering, undefined);
+  assert.deepEqual(events[5].data.quota, quota);
   assert.deepEqual(calls, ["validate", "authorize", "chat", "reserve", "extend", "provider", "record", "release"]);
 });
 
@@ -178,9 +180,11 @@ test("chat text reaches HTTP clients before completion and disconnected delivery
           knowledge: { version: "fixture" }, compilerVerification: { enabled: false, ready: false } }),
         async processChat(_body, context) {
           await context.markProviderCalled();
+          await context.onCommentary({ id: "native-note", text: "Checking the local reference." });
           await context.onMessageReset();
           await context.onMessageDelta("Early public answer");
           await gate;
+          await context.onCommentary({ id: "native-finding", text: "The local reference confirms the requested behavior." });
           await context.onProgress({ id: "validation", status: "completed", label: "Response checked" });
           completed = true;
           return { ok: true, kind: "chat", message: "Early public answer, now completed.", _metering: {
@@ -209,6 +213,7 @@ test("chat text reaches HTTP clients before completion and disconnected delivery
       assert.equal(completed, false, "text must arrive while the provider operation remains incomplete");
       assert.equal(recorded, 0);
       assert.match(text, /Early public answer/);
+      assert.match(text, /"type":"commentary","id":"native-note"/);
       if (disconnect) await reader.cancel();
     } finally { release(); }
     if (!disconnect) {

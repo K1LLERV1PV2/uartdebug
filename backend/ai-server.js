@@ -12,7 +12,7 @@ const {
 } = require("./ai-access-service");
 const { createProjectCatalog } = require("./avr-materials");
 
-const AI_SERVER_VERSION = "20261107-chat-stream-v1";
+const AI_SERVER_VERSION = "20261107-public-updates-v1";
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 8083;
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -604,6 +604,9 @@ function createAiHttpServer(options = {}) {
             : undefined,
           onMessageReset: ndjsonStarted && chatRequest
             ? () => sendNdjsonEvent(res, { type: "message_reset" })
+            : undefined,
+          onCommentary: ndjsonStarted && chatRequest
+            ? update => sendNdjsonEvent(res, { type: "commentary", id: update.id, text: update.text })
             : undefined,
           reserveBudget:
             accessContext?.mode === "google" &&

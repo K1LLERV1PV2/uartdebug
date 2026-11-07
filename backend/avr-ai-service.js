@@ -546,9 +546,12 @@ function createAvrAiService(options = {}) {
         conversation
           ? "This is a chat request. Select reply, clarify (specification), generate, or describe from the latest message under the integration policy. The supplied artifacts are the current state; do not restore old versions from conversation history."
           : `Selected stage: ${input.operation}. ${JSON.stringify(PROJECT_STAGES[input.operation])}`,
+        ...(conversation && typeof context.onCommentary === "function" ? [
+          "Give concise natural-language public updates as assistant messages with phase commentary, in the language of the latest user message. Give one before the first lookup; after several steps report only meaningful findings or a change of plan. Do not narrate every tool call or repeat boilerplate. Do not reveal hidden reasoning, raw tool arguments, code or JSON in commentary. Distinguish findings from unverified drafts. The final answer must be a phase final_answer message that strictly matches the configured JSON schema.",
+        ] : []),
       ].join("\n\n"),
       input: conversation
-        ? [...input.history, { role: "user", content: JSON.stringify({ ...input, history: undefined }) }]
+        ? [...input.history.map(item => item.role === "assistant" ? { ...item, phase: "final_answer" } : item), { role: "user", content: JSON.stringify({ ...input, history: undefined }) }]
         : [{ role: "user", content: JSON.stringify(input) }],
       tools: [LOOKUP_TOOL],
       tool_choice: "auto",
@@ -639,9 +642,13 @@ function createAvrAiService(options = {}) {
           apiKey: cfg.apiKey,
           timeoutMs: cfg.timeoutMs,
           requestBody: body,
-          ...(conversation && typeof context.onMessageDelta === "function" ? {
+          ...(conversation && (typeof context.onMessageDelta === "function" || typeof context.onCommentary === "function") ? {
             onMessageDelta: context.onMessageDelta,
             onMessageReset: context.onMessageReset,
+            onCommentary: typeof context.onCommentary === "function" ? update => context.onCommentary({
+              id: `model-${calls}:${update.id}`,
+              text: update.text,
+            }) : undefined,
             resetAtStart: stageId === "repair",
             async onAction(action) {
               streamedAction = action;
