@@ -1230,6 +1230,7 @@ test("chat response fragments and repair resets reach the controller before the 
   let release;
   const held = new Promise(resolve => { release = resolve; });
   const chunks = [
+    '{"type":"commentary","id":"call-1-message-1","text":"Проверю настройки 🧪"}\n',
     '{"type":"message_reset"}\n{"type":"message_delta","delta":"Draft 🧪"}\n',
     '{"type":"progress","progress":{"message":"Compiling the project"}}\n{"type":"message_reset"}\n',
     '{"type":"message_delta","delta":"Verified answer"}\n',
@@ -1244,10 +1245,11 @@ test("chat response fragments and repair resets reach the controller before the 
   }) } };
   const events = [];
   const pending = readProjectAiApiResponse(response, value => events.push(value.message), {
+    onCommentary: value => events.push(`commentary:${value.id}:${value.text}`),
     onMessageDelta: value => events.push(value), onMessageReset: () => events.push("reset"),
   });
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(events, ["reset", "Draft 🧪", "Compiling the project", "reset", "Verified answer"]);
+  assert.deepEqual(events, ["commentary:call-1-message-1:Проверю настройки 🧪", "reset", "Draft 🧪", "Compiling the project", "reset", "Verified answer"]);
   release();
   const result = await pending;
   assert.equal(result.data.message, "Verified answer");
@@ -1262,6 +1264,20 @@ test("invalid chat fragments never reach a controller or become a successful res
       async cancel() {},
     }) } };
     await assert.rejects(readProjectAiApiResponse(response, null, { onMessageDelta: () => { received = true; } }), /invalid response fragment/);
+    assert.equal(received, false);
+  }
+});
+
+test("invalid public commentary cannot enter response activity", async () => {
+  const { readProjectAiApiResponse } = loadAvrFrontendFunctionHooks(["readProjectAiApiResponse"]);
+  for (const value of [{ id: "../other", text: "Checking" }, { id: "safe", text: "\0" },
+    { id: "safe", text: "🧪".repeat(257) }, { id: "safe", text: null }]) {
+    let read = false, received = false;
+    const response = { status: 200, headers: { get: () => "application/x-ndjson" }, body: { getReader: () => ({
+      async read() { if (read) return { done: true }; read = true; return { value: new TextEncoder().encode(JSON.stringify({ type: "commentary", ...value }) + "\n"), done: false }; },
+      async cancel() {},
+    }) } };
+    await assert.rejects(readProjectAiApiResponse(response, null, { onCommentary: () => { received = true; } }), /invalid progress message/);
     assert.equal(received, false);
   }
 });

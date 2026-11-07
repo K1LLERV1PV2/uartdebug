@@ -5873,7 +5873,7 @@
       tone: progress.status === "failed" ? "warning" : "info" });
   }
 
-  async function readProjectAiApiResponse(response, onProgress, { onMessageDelta, onMessageReset } = {}) {
+  async function readProjectAiApiResponse(response, onProgress, { onCommentary, onMessageDelta, onMessageReset } = {}) {
     const contentType = String(response.headers.get("content-type") || "")
       .split(";", 1)[0]
       .trim()
@@ -5907,6 +5907,14 @@
       }
       if (event?.type === "progress" && event.progress) {
         onProgress?.(event.progress);
+        return;
+      }
+      if (event?.type === "commentary") {
+        if (typeof event.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(event.id) ||
+            typeof event.text !== "string" || event.text.includes("\0") || new TextEncoder().encode(event.text).length > 1024) {
+          throw new Error("The AI server returned an invalid progress message.");
+        }
+        if (!finalEvent) onCommentary?.({ id: event.id, text: event.text });
         return;
       }
       if (event?.type === "message_delta") {
@@ -6712,7 +6720,7 @@
     });
   }
 
-  async function requestProjectChat({ message, history, signal, onProgress, onMessageDelta, onMessageReset, scope, requestSource = "message" }) {
+  async function requestProjectChat({ message, history, signal, onProgress, onCommentary, onMessageDelta, onMessageReset, scope, requestSource = "message" }) {
     const request = { ...getProjectAiRequestPayload(), message, history, requestSource };
     delete request.operation;
     const accountEpoch = projectAiAccountWorkspaceEpoch;
@@ -6725,7 +6733,7 @@
         headers: { Accept: "application/x-ndjson, application/json", "Content-Type": "application/json" },
         body: JSON.stringify(request),
       });
-      const result = await readProjectAiApiResponse(response, progress => onProgress?.(progress), { onMessageDelta, onMessageReset });
+      const result = await readProjectAiApiResponse(response, progress => onProgress?.(progress), { onCommentary, onMessageDelta, onMessageReset });
       if (signal.aborted) throw new DOMException("Response stopped.", "AbortError");
       if (accountEpoch !== projectAiAccountWorkspaceEpoch || accountKey !== (projectAiAuthSession?.accountKey || null) ||
           scope.key !== getProjectChatContext().key || scope.threadId !== getProjectChatContext().threadId) {

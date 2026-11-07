@@ -524,11 +524,86 @@ function streamError() {
   return new AiServiceError(502, "openai_stream_invalid", "The AI response stream ended unexpectedly. Try again.");
 }
 
-async function readOpenAiStream(response, { onMessageDelta, onAction }) {
+function messageText(item) {
+  return (Array.isArray(item?.content) ? item.content : []).filter(part => part?.type === "output_text" && typeof part.text === "string").map(part => part.text).join("");
+}
+
+function finalMessages(response) {
+  const messages = (Array.isArray(response?.output) ? response.output : []).filter(item => item?.type === "message" && (!item.role || item.role === "assistant"));
+  const explicit = messages.filter(item => item.phase === "final_answer");
+  return explicit.length ? explicit : messages.filter(item => item.phase == null);
+}
+
+function publicCommentary(text) {
+  // Commentary is public prose. Never expose accidentally structured payloads
+  // or malformed UTF-16 while a provider text fragment is incomplete.
+  if (/^[\s]*[\[{]/.test(text)) return "";
+  let result = "", bytes = 0;
+  for (const character of text) {
+    const code = character.codePointAt(0);
+    if (code === 0 || code >= 0xd800 && code <= 0xdfff) continue;
+    const size = Buffer.byteLength(character);
+    if (bytes + size > 1024) break;
+    bytes += size; result += character;
+  }
+  return result.trim();
+}
+
+function commentaryId(item, index) {
+  const id = String(item?.id || `item-${index}`);
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(id) ? id : `item-${sha256(id).slice(0,32)}`;
+}
+
+async function readOpenAiStream(response, { onMessageDelta, onAction, onCommentary }) {
   if (!response.body?.getReader) throw streamError();
   const reader = response.body.getReader(), decoder = new TextDecoder();
-  const preview = createMessagePreview();
-  let buffer = "", data = [], eventBytes = 0, totalBytes = 0, terminal = null, textKey = null;
+  let buffer = "", data = [], eventBytes = 0, totalBytes = 0, terminal = null, explicitFinal = false;
+  const byIndex = new Map(), byId = new Map();
+  let states = 0;
+  const stateFor = (index = 0, id) => {
+    let state = id ? byId.get(id) : byIndex.get(index);
+    const indexed = byIndex.get(index);
+    if (!state && indexed && (!id || indexed.id === id || indexed.synthetic)) state = indexed;
+    if (!state) {
+      if (++states > 128) throw streamError();
+      state = { index, id: id || `item-${index}`, synthetic: !id, known: false, settled: false, text: "", consumed: 0, commentary: "", parser: createMessagePreview(), revision: 0 };
+      byIndex.set(index, state);
+    }
+    if (id) { state.id = id; state.synthetic = false; byId.set(id, state); }
+    return state;
+  };
+  const deliver = async state => {
+    if (!state.known || state.overLimit || state.type !== "message" || state.role && state.role !== "assistant") return;
+    if (state.phase === "commentary") {
+      const text = publicCommentary(state.text);
+      if (text && text !== state.commentary) {
+        state.commentary = text;
+        await deliverPreview(onCommentary, { id: commentaryId(state, state.index), text });
+      }
+      return;
+    }
+    if (state.phase == null && !state.settled) return;
+    if (state.phase !== "final_answer" && (state.phase != null || explicitFinal)) return;
+    const update = state.parser.push(state.text.slice(state.consumed));
+    state.consumed = state.text.length;
+    if (update.action) await deliverPreview(onAction, update.action);
+    if (update.delta) await deliverPreview(onMessageDelta, { delta: update.delta, item: `${state.id}:${state.revision}` });
+  };
+  const readItem = async (item, index, settled = false) => {
+    const state = stateFor(index, item?.id);
+    Object.assign(state, { known: true, type: item?.type, role: item?.role, phase: item?.phase });
+    state.settled ||= settled;
+    if (state.phase === "final_answer") explicitFinal = true;
+    const text = messageText(item);
+    if (text) {
+      if (Buffer.byteLength(text) > 512 * 1024) state.overLimit = true;
+      else {
+        if (!text.startsWith(state.text)) { state.parser = createMessagePreview(); state.consumed = 0; state.revision++; }
+        state.text = text;
+      }
+    }
+    await deliver(state);
+  };
   const processData = async () => {
     if (!data.length) return;
     const payload = data.join("\n"); data = []; eventBytes = 0;
@@ -538,14 +613,19 @@ async function readOpenAiStream(response, { onMessageDelta, onAction }) {
     if (["response.completed", "response.incomplete", "response.failed"].includes(event?.type)) {
       if (!event.response || typeof event.response !== "object") throw streamError();
       terminal = event.response;
+      const output = Array.isArray(terminal.output) ? terminal.output : [];
+      explicitFinal ||= output.some(item => item?.type === "message" && item.phase === "final_answer");
+      for (const [index, item] of output.entries()) await readItem(item, index, true);
     } else if (event?.type === "error") throw streamError();
+    else if (["response.output_item.added", "response.output_item.done"].includes(event?.type) && event.item) {
+      await readItem(event.item, event.output_index, event.type === "response.output_item.done");
+    }
     else if (event?.type === "response.output_text.delta" && typeof event.delta === "string") {
-      const item = `${event.output_index ?? 0}:${event.content_index ?? 0}:${event.item_id ?? ""}`;
-      if (textKey !== null && item !== textKey) return;
-      textKey = item;
-      const update = preview.push(event.delta);
-      if (update.action) await deliverPreview(onAction, update.action);
-      if (update.delta) await deliverPreview(onMessageDelta, update.delta);
+      const state = stateFor(event.output_index, event.item_id);
+      if (!state.overLimit) {
+        if (Buffer.byteLength(state.text) + Buffer.byteLength(event.delta) > 512 * 1024) { state.overLimit = true; state.text = ""; }
+        else { state.text += event.delta; await deliver(state); }
+      }
     }
     // Reasoning events and tool argument deltas are intentionally ignored.
   };
@@ -638,12 +718,14 @@ function attachUncertainProviderUsage(error) {
   return error;
 }
 
-async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody, onMessageDelta, onMessageReset, onAction, resetAtStart = false }) {
+async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody, onMessageDelta, onMessageReset, onAction, onCommentary, resetAtStart = false }) {
   let result;
-  const streaming = typeof onMessageDelta === "function";
+  const streaming = typeof onMessageDelta === "function" || typeof onCommentary === "function";
   let resetSent = false;
-  const sendDelta = async delta => {
-    if (!resetSent) { await deliverPreview(onMessageReset); resetSent = true; }
+  let previewItem = null;
+  const sendDelta = async ({ delta, item }) => {
+    if (!resetSent || previewItem !== null && previewItem !== item) { await deliverPreview(onMessageReset); resetSent = true; }
+    previewItem = item;
     await deliverPreview(onMessageDelta, delta);
   };
   if (streaming && resetAtStart) { await deliverPreview(onMessageReset); resetSent = true; }
@@ -656,7 +738,7 @@ async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody, onMess
         "Content-Type": "application/json",
       },
       body: JSON.stringify(streaming ? { ...requestBody, stream: true } : requestBody),
-    }, timeoutMs, streaming ? response => readOpenAiStream(response, { onMessageDelta: sendDelta, onAction }) : null);
+    }, timeoutMs, streaming ? response => readOpenAiStream(response, { onMessageDelta: sendDelta, onAction, onCommentary }) : null);
   } catch (error) {
     if (error?.name === "AbortError") {
       throw new AiServiceError(
@@ -707,12 +789,15 @@ async function requestOpenAi({ fetchImpl, apiKey, timeoutMs, requestBody, onMess
   }
 
   if (streaming && String(response.headers?.get?.("content-type") || "").split(";")[0].trim().toLowerCase() !== "text/event-stream") {
-    const preview = createMessagePreview();
-    for (const item of responseJson?.output || []) for (const content of item?.content || []) {
-      if (item.type !== "message" || content.type !== "output_text" || typeof content.text !== "string") continue;
-      const update = preview.push(content.text);
+    for (const [index, item] of (Array.isArray(responseJson?.output) ? responseJson.output : []).entries()) {
+      if (item?.type !== "message" || item.phase !== "commentary" || item.role && item.role !== "assistant") continue;
+      const text = publicCommentary(messageText(item));
+      if (text) await deliverPreview(onCommentary, { id: commentaryId(item, index), text });
+    }
+    for (const [index, item] of finalMessages(responseJson).entries()) {
+      const update = createMessagePreview().push(messageText(item));
       if (update.action) await deliverPreview(onAction, update.action);
-      if (update.delta) await sendDelta(update.delta);
+      if (update.delta) await sendDelta({ delta: update.delta, item: item.id || `final-${index}` });
     }
   }
   return responseJson;
@@ -926,9 +1011,7 @@ function parseStructuredOutput(responseJson) {
     );
   }
 
-  const outputItems = Array.isArray(responseJson.output)
-    ? responseJson.output
-    : [];
+  const outputItems = finalMessages(responseJson);
   let outputText = "";
   for (const item of outputItems) {
     if (!item || item.type !== "message" || !Array.isArray(item.content)) {
@@ -948,7 +1031,7 @@ function parseStructuredOutput(responseJson) {
     }
   }
 
-  if (!outputText && typeof responseJson.output_text === "string") {
+  if (!outputText && !(Array.isArray(responseJson.output) ? responseJson.output : []).some(item => item?.type === "message") && typeof responseJson.output_text === "string") {
     outputText = responseJson.output_text;
   }
   if (!outputText) {

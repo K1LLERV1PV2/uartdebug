@@ -1,4 +1,4 @@
-const CACHE_NAME = "uartdebug-shell-20261107-chat-stream-v1";
+const CACHE_NAME = "uartdebug-shell-20261107-public-updates-v1";
 // Generated from local frontend references by stamp_frontend_build.py --generate.
 const APP_SHELL_ASSETS = [
   "/",
@@ -33,6 +33,7 @@ const APP_SHELL_ASSETS = [
   "/ui-controls.js",
   "/ui-notifications.css",
   "/ui-notifications.js",
+  "/ui-service-worker.js",
   "/ui-theme.css",
   "/ui-tooltips.css",
   "/ui-tooltips.js",
@@ -71,7 +72,8 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL_ASSETS))
+      // A fresh shell must not inherit an older immutable HTTP-cache entry.
+      .then((cache) => cache.addAll(APP_SHELL_ASSETS.map((url) => new Request(url, { cache: "reload" }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -131,7 +133,7 @@ async function handleNavigationRequest(request) {
   const cacheKey = APP_SHELL_PATHS.has(url.pathname) ? url.pathname : "/index.html";
 
   try {
-    const freshResponse = await fetch(request);
+    const freshResponse = await fetch(request, { cache: "no-cache" });
     if (freshResponse && freshResponse.ok && APP_SHELL_PATHS.has(url.pathname)) {
       cache.put(cacheKey, freshResponse.clone());
     }
@@ -157,7 +159,7 @@ async function cacheFirstWithBackgroundUpdate(event, request) {
     return cachedResponse;
   }
 
-  const networkResponse = await fetch(request);
+  const networkResponse = await fetch(request, { cache: "no-cache" });
   if (networkResponse && networkResponse.ok) {
     cache.put(request, networkResponse.clone());
   }
@@ -169,7 +171,7 @@ async function networkFirstWithCacheFallback(request) {
   const cacheKey = new URL(request.url).pathname;
 
   try {
-    const freshResponse = await fetch(request);
+    const freshResponse = await fetch(request, { cache: "no-cache" });
     if (freshResponse && freshResponse.ok) {
       await cache.put(cacheKey, freshResponse.clone());
     }
@@ -183,7 +185,7 @@ async function networkFirstWithCacheFallback(request) {
 
 async function updateCachedAsset(cache, request) {
   try {
-    const freshResponse = await fetch(request);
+    const freshResponse = await fetch(request, { cache: "no-cache" });
     if (freshResponse && freshResponse.ok) {
       await cache.put(request, freshResponse.clone());
     }

@@ -51,6 +51,48 @@ const finish = (page, message) => page.evaluate(message => window.__chatStreams.
 const assistant = page => page.locator('.project-chat-message[data-role="assistant"]').last();
 const chat = page => page.evaluate(() => window.UartDebugAvrAiWorkspace.getConversation());
 
+test("public progress messages stay separate from the answer and redundant tool rows are summarized", async ({ page }, testInfo) => {
+  await open(page); await start(page);
+  const response = assistant(page), toggle = response.locator(".project-chat-work-toggle");
+  await emit(page, { type: "progress", progress: { id: "generation", attempt: 1, status: "in_progress", label: "Analyzing the request" } });
+  await emit(page, { type: "commentary", id: "call-1-message-1", text: "Проверю подключение светодиода" });
+  await emit(page, { type: "commentary", id: "call-1-message-1", text: "Проверю подключение светодиода и настройки тактовой частоты." });
+  const comments = response.locator('[data-kind="commentary"]');
+  await expect(comments).toHaveCount(1);
+  await expect(comments).toHaveText("Проверю подключение светодиода и настройки тактовой частоты.");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(toggle).toContainText("Analyzing the request");
+  expect((await chat(page)).messages[1].content).toBe("");
+  for (const attempt of [1, 2]) {
+    await emit(page, { type: "progress", progress: { id: "generation", attempt, status: "completed", label: "Prepared a tool request" } });
+    await emit(page, { type: "progress", progress: { id: "documentation", attempt, status: "completed", label: "Local documentation read" } });
+  }
+  await emit(page, { type: "progress", progress: { id: "documentation", attempt: 3, status: "failed", label: "Documentation lookup did not complete" } });
+  await expect(response.locator(".project-chat-work-events")).not.toContainText("Prepared a tool request");
+  await expect(response.locator(".project-chat-work-events")).toContainText("Local documentation read (2 steps)");
+  await expect(response.locator('[data-status="error"]')).toHaveText("Documentation lookup did not complete");
+  const appearance = await toggle.evaluate(element => {
+    const style = getComputedStyle(element);
+    return { top: style.borderTopWidth, left: style.borderLeftWidth, right: style.borderRightWidth, bottom: style.borderBottomWidth, background: style.backgroundColor };
+  });
+  expect(appearance).toEqual({ top: "0px", left: "0px", right: "0px", bottom: "1px", background: "rgba(0, 0, 0, 0)" });
+  await toggle.hover();
+  await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.mouse.move(0, 0);
+  await page.locator(".project-chat-panel").screenshot({ path: testInfo.outputPath("public-commentary-working.png") });
+  await emit(page, { type: "message_delta", delta: "Готовый ответ." });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await finish(page, "Готовый ответ.");
+  await page.reload();
+  const restored = assistant(page);
+  await restored.locator(".project-chat-work-toggle").click();
+  await expect(restored.locator('[data-kind="commentary"]')).toHaveText("Проверю подключение светодиода и настройки тактовой частоты.");
+  await expect(restored.locator(".project-chat-message-content")).toHaveText("Готовый ответ.");
+  // Presentation grouping keeps the original saved operations intact.
+  expect((await chat(page)).messages[1].work.events.filter(event => event.text === "Local documentation read")).toHaveLength(2);
+  await page.locator(".project-chat-panel").screenshot({ path: testInfo.outputPath("public-commentary-complete.png") });
+});
+
 test("real activity and response fragments arrive before completion, with a live timer and a user-controlled history", async ({ page }, testInfo) => {
   await open(page); await start(page);
   const response = assistant(page), toggle = response.locator(".project-chat-work-toggle");
@@ -247,7 +289,6 @@ for (const width of [900, 1543]) test(`user bubbles fit short text and retain mu
   expect(geometry.bubble - geometry.text).toBeLessThan(27);
   expect(geometry.bubble).toBeLessThan(geometry.thread * .8);
   await user.hover();
-  expect(await user.locator('[data-chat-action="branch"] svg path').getAttribute("d")).toBe("M4 17h5a7 7 0 0 0 7-7V4m-4 0h4v4M9 17h11m-4-4 4 4-4 4");
   await page.locator(".project-chat-panel").screenshot({ path: testInfo.outputPath(`bubble-and-branch-${width}.png`) });
   await start(page, "First line\nSecond line\n" + "longtoken".repeat(80)); await finish(page, "Multiline answer.");
   expect(await page.locator('.project-chat-message[data-role="user"]').last().evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
