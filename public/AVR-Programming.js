@@ -95,7 +95,7 @@
   let workspaceGeneration = 0;
   let workspaceOwnershipLost = false;
   let workspaceLocalPending = false;
-  const workspaceRecoveryLineage = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+  const workspaceRecoveryLineage = window.UartDebugWorkspacePersistence.createId();
   let legacySyncMarkerRaw = null;
   let legacyDirtyMarkerRaw = null;
   let projectAiNotificationId = null;
@@ -1011,8 +1011,8 @@
       projectAiAccountSync.accountKey, { protectedCopy: true, lineage: workspaceRecoveryLineage });
     window.UartDebugNotifications?.notify({ key: "workspace-ownership", title: "Project storage", tone: "warning",
       message: preserved
-        ? "Another tab changed the saved projects. This tab's changes were kept separately; reload to reconcile before saving."
-        : "Another tab changed the saved projects. This tab's unsaved changes remain open. Free browser storage before reloading." });
+        ? "Another tab changed the saved projects. This copy is preserved in browser recovery. Keep this tab open to copy any needed unsaved text before reloading."
+        : "Another tab changed the saved projects. Browser recovery could not be saved. Keep this tab open to copy your unsaved text." });
     return false;
   }
 

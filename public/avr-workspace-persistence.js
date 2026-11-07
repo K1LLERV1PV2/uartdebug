@@ -11,6 +11,12 @@
   const CHECKPOINT_FIELD = "localCheckpoint";
   const validCheckpoint = value => typeof value === "string" && /^[A-Za-z0-9._:-]{1,100}$/.test(value);
 
+  function createCheckpointId() {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+    if (!globalThis.crypto?.getRandomValues) throw new Error("Secure browser randomness is unavailable. Open the site over HTTPS or localhost.");
+    return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
+  }
+
   function businessData(envelope) {
     if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) throw new TypeError("Invalid saved workspace.");
     const { [CHECKPOINT_FIELD]: _checkpoint, ...data } = envelope;
@@ -27,8 +33,7 @@
 
   function create({ storage, key = KEY, legacyKeys = LEGACY_KEYS, createId } = {}) {
     if (!storage?.getItem || !storage?.setItem) throw new TypeError("Workspace storage is required.");
-    const nextId = createId || (() => globalThis.crypto?.randomUUID?.()
-      || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`);
+    const nextId = createId || createCheckpointId;
     let loaded = false, ownedRaw = null, sourceRaw = null, ownedData = null, checkpoint = null, migratedFrom = null;
 
     function load() {
@@ -87,5 +92,5 @@
     });
   }
 
-  return Object.freeze({ KEY, LEGACY_KEYS, CHECKPOINT_FIELD, businessData, OwnershipError, create });
+  return Object.freeze({ KEY, LEGACY_KEYS, CHECKPOINT_FIELD, businessData, OwnershipError, create, createId: createCheckpointId });
 });
