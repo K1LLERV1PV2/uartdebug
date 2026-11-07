@@ -59,7 +59,11 @@ test("nginx frontend cache migration is idempotent and refuses unsafe layouts or
   fs.writeFileSync(nginx, '#!/bin/bash\nif [ -f "$FAIL_MARKER" ]; then rm "$FAIL_MARKER"; exit 1; fi\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(bin, "install"), '#!/bin/bash\nargs=(); directory=0\nwhile [ "$#" -gt 0 ]; do\n case "$1" in -o|-g|-m) shift 2 ;; -d) directory=1; shift ;; *) args+=("$1"); shift ;; esac\ndone\nif [ "$directory" = 1 ]; then mkdir -p "${args[@]}"; else cp "${args[@]}"; fi\n', { mode: 0o755 });
   const failMarker = path.join(temporaryRoot, "reject-once");
-  const run = backupName => spawnSync(bash, ["-c", 'export PATH="$1:$PATH"; exec bash "$2" "$3" "$4"', "cache-policy-fixture", toPosix(bin),
+  const runner = path.join(temporaryRoot, "run-fixture.sh");
+  // Git Bash prepends its system tools at startup. Put mocks first afterwards;
+  // paths remain separate arguments and never become shell command source.
+  fs.writeFileSync(runner, '#!/bin/bash\nexport PATH="$1:$PATH"\nshift\nexec bash "$@"\n');
+  const run = backupName => spawnSync(bash, [toPosix(runner), toPosix(bin),
     toPosix(path.join(repositoryRoot, "backend/deploy/set-frontend-cache-policy.sh")), toPosix(site), toPosix(path.join(temporaryRoot, backupName))], {
     encoding: "utf8", env: { ...process.env, FAIL_MARKER: toPosix(failMarker) },
   });
