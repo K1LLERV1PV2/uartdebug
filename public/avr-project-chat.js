@@ -1236,6 +1236,9 @@
       refresh, submit, cancel, flush, selectChat, createChat, retryResponse, branchFromMessage, editAndResend,
       getConversation: () => normalizeThread(conversation),
       getChats: () => normalize(collection),
+      // Read without persisting: ownership-loss recovery must retain even the
+      // pending input, and must know which project this controller still owns.
+      getScopedSnapshot: () => ({ scope: { ...scope }, conversation: normalize(collection) }),
       setExternalBusy(value) { externalBusy = !!value; renderControls(); },
       get busy() { return !!active; },
       destroy() {

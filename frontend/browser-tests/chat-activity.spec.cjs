@@ -200,7 +200,7 @@ test("reopening an unfinished saved response preserves its partial text and neve
   await page.addInitScript(() => {
     if (sessionStorage.getItem("old-pending-activity")) return;
     sessionStorage.setItem("old-pending-activity", "true");
-    const key = "ud_avr_programming_state_v4", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v5", state = JSON.parse(localStorage.getItem(key));
     const message = Object.values(state.miniProjects)[0].conversation.threads[0].messages[1];
     // This is a crash snapshot, independent of the ordinary beforeunload path.
     message.status = "pending";

@@ -66,6 +66,7 @@ async function installLegacyWorker(page) {
 async function seedUserData(page) {
   return page.evaluate(async () => {
     const values = {
+      ud_avr_programming_state_v5: '{"projects":["kept current project"],"chats":["kept current chat"]}',
       ud_avr_programming_state_v4: '{"projects":["kept project"],"chats":["kept chat"]}',
       ud_avr_programming_state_v3: "previous workspace kept",
       ud_avr_programming_state_v2: "older workspace kept",
@@ -206,8 +207,8 @@ test("the actual AVR app installs its complete shell and remains usable on an of
     await page.evaluate(() => navigator.serviceWorker.ready);
     await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller?.scriptURL)).toBe(origin + "/sw.js");
     await page.locator("#projectChatInput").fill("Keep my actual project planning draft.");
-    await expect.poll(() => page.evaluate(() => localStorage.getItem("ud_avr_programming_state_v4"))).toContain("Keep my actual project planning draft.");
-    const storedState = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v4")));
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("ud_avr_programming_state_v5"))).toContain("Keep my actual project planning draft.");
+    const storedState = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v5")));
     await page.getByRole("button", { name: "Open projects", exact: true }).click();
     await expect(page.locator("#filesModal")).toBeVisible();
     await page.keyboard.press("Escape");
@@ -217,7 +218,7 @@ test("the actual AVR app installs its complete shell and remains usable on an of
     await page.reload();
     await expect(page.locator("#projectChatInput")).toBeVisible();
     await expect(page.locator("#projectChatInput")).toHaveValue("Keep my actual project planning draft.");
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v4")).draftConversation)).toEqual(storedState.draftConversation);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v5")).draftConversation)).toEqual(storedState.draftConversation);
     await page.getByRole("button", { name: "Open projects", exact: true }).click();
     await expect(page.locator("#filesModal")).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("actual-avr-offline-projects.png") });
