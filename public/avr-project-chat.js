@@ -733,7 +733,7 @@
 
     function busyChanged(value) { options.onBusy?.(value); renderControls(); }
 
-    function cancel(reason = "Response stopped.") {
+    function cancel(reason = "Response stopped.", { save = true } = {}) {
       const run = active;
       if (!run) return false;
       active = null;
@@ -749,7 +749,7 @@
         finishWork(pending, reason);
       }
       setConversation(conversation);
-      persist(run.scope);
+      if (save) persist(run.scope);
       busyChanged(false);
       renderThread();
       return true;
@@ -761,18 +761,24 @@
       const nextScope = scopeOf(context);
       const changed = scopeStamp(nextScope) !== scopeStamp(scope);
       if (changed) { closeChatMenu(); historyOpen = false; renamingId = null; historySignature = ""; }
-      if (scope && !changed && (!force || active)) {
+      if (scope && !changed && !force) {
         scope.title = nextScope.title;
         renderControls();
         scheduleLayout();
         return;
       }
-      if (scope && changed) {
+      if (force) {
+        // The owner has already captured outgoing edits before replacing its
+        // model. Adopting that snapshot must never write this stale collection
+        // back, even if the project/thread IDs or an active request differ.
+        if (active) cancel("The account workspace changed. No response changes were applied.", { save: false });
+        if (saveTimer !== null) window.clearTimeout(saveTimer);
+        saveTimer = null;
+      } else if (scope && changed) {
         if (active) cancel(nextScope.accountEpoch !== scope.accountEpoch
           ? "Response interrupted after changing accounts." : "Response interrupted after changing projects.");
         else flush();
       } else if (saveTimer !== null) {
-        // A forced refresh adopts an authoritative account/workspace snapshot.
         window.clearTimeout(saveTimer);
         saveTimer = null;
       }

@@ -3692,7 +3692,7 @@
     syncCanvasTargetControls(true);
     reportProjectCanvasMessage("", "");
     refreshProjectInstructionSaveState();
-    if (!projectChatApplyingResponse) projectChatController?.refresh();
+    if (!projectChatApplyingResponse && !projectAiAccountWorkspaceApplying) projectChatController?.refresh();
   }
 
   function normalizeProjectConversation(value, options = {}) {
