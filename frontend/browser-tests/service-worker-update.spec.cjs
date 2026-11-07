@@ -52,7 +52,11 @@ async function cacheFixture() {
     res.end("Missing");
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  return { state, origin: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => server.close(resolve)) };
+  return { state, origin: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => {
+    server.close(resolve);
+    // A background worker update can keep its socket alive after the assertions.
+    server.closeAllConnections();
+  }) };
 }
 
 async function installLegacyWorker(page) {
@@ -223,5 +227,8 @@ test("the actual AVR app installs its complete shell and remains usable on an of
     await expect(page.locator("#filesModal")).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("actual-avr-offline-projects.png") });
     expect(errors).toEqual([]);
-  } finally { await context.setOffline(false); await new Promise(resolve => server.close(resolve)); }
+  } finally {
+    await context.setOffline(false);
+    await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+  }
 });
