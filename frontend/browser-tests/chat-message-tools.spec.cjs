@@ -284,7 +284,7 @@ test("editing at the total message limit keeps every saved branch and the edit d
   await page.addInitScript(() => {
     if (sessionStorage.getItem("chat-tree-limit-seeded")) return;
     sessionStorage.setItem("chat-tree-limit-seeded", "true");
-    const key = "ud_avr_programming_state_v4", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v5", state = JSON.parse(localStorage.getItem(key));
     const project = Object.values(state.miniProjects)[0];
     const chat = project.conversation ||= { schemaVersion: 5, activeThreadId: "limit-chat", threads: [{
       id: "limit-chat", title: "Saved chat", titleMode: "manual", draft: "", messages: [], activeLeafId: null, selectedChildIds: [],

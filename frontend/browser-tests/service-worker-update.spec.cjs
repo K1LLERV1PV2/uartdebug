@@ -52,7 +52,11 @@ async function cacheFixture() {
     res.end("Missing");
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  return { state, origin: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => server.close(resolve)) };
+  return { state, origin: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(resolve => {
+    server.close(resolve);
+    // A background worker update can keep its socket alive after the assertions.
+    server.closeAllConnections();
+  }) };
 }
 
 async function installLegacyWorker(page) {
@@ -66,6 +70,7 @@ async function installLegacyWorker(page) {
 async function seedUserData(page) {
   return page.evaluate(async () => {
     const values = {
+      ud_avr_programming_state_v5: '{"projects":["kept current project"],"chats":["kept current chat"]}',
       ud_avr_programming_state_v4: '{"projects":["kept project"],"chats":["kept chat"]}',
       ud_avr_programming_state_v3: "previous workspace kept",
       ud_avr_programming_state_v2: "older workspace kept",
@@ -206,8 +211,8 @@ test("the actual AVR app installs its complete shell and remains usable on an of
     await page.evaluate(() => navigator.serviceWorker.ready);
     await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller?.scriptURL)).toBe(origin + "/sw.js");
     await page.locator("#projectChatInput").fill("Keep my actual project planning draft.");
-    await expect.poll(() => page.evaluate(() => localStorage.getItem("ud_avr_programming_state_v4"))).toContain("Keep my actual project planning draft.");
-    const storedState = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v4")));
+    await expect.poll(() => page.evaluate(() => localStorage.getItem("ud_avr_programming_state_v5"))).toContain("Keep my actual project planning draft.");
+    const storedState = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v5")));
     await page.getByRole("button", { name: "Open projects", exact: true }).click();
     await expect(page.locator("#filesModal")).toBeVisible();
     await page.keyboard.press("Escape");
@@ -217,10 +222,13 @@ test("the actual AVR app installs its complete shell and remains usable on an of
     await page.reload();
     await expect(page.locator("#projectChatInput")).toBeVisible();
     await expect(page.locator("#projectChatInput")).toHaveValue("Keep my actual project planning draft.");
-    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v4")).draftConversation)).toEqual(storedState.draftConversation);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v5")).draftConversation)).toEqual(storedState.draftConversation);
     await page.getByRole("button", { name: "Open projects", exact: true }).click();
     await expect(page.locator("#filesModal")).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("actual-avr-offline-projects.png") });
     expect(errors).toEqual([]);
-  } finally { await context.setOffline(false); await new Promise(resolve => server.close(resolve)); }
+  } finally {
+    await context.setOffline(false);
+    await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
+  }
 });

@@ -5,7 +5,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const workspaceKey = "ud_avr_programming_state_v4";
+const workspaceKey = "ud_avr_programming_state_v5";
 const syncKey = "ud_avr_ai_account_sync_v1";
 const dirtyKey = "ud_avr_ai_local_dirty_v1";
 const accountKey = "shared-two-browser-account";
@@ -61,7 +61,10 @@ async function connectCloud(context, cloud, browserName) {
   });
 }
 
-const workspace = page => page.evaluate(key => JSON.parse(localStorage.getItem(key)), workspaceKey);
+const workspace = page => page.evaluate(key => {
+  const { localCheckpoint: _checkpoint, ...business } = JSON.parse(localStorage.getItem(key));
+  return business;
+}, workspaceKey);
 const syncState = page => page.evaluate(key => JSON.parse(localStorage.getItem(key)), syncKey);
 const chats = (state, selectedProject) => selectedProject ? Object.values(state.miniProjects)[0].conversation : state.draftConversation;
 
@@ -74,8 +77,10 @@ async function open(page, origin) {
 async function cleanAt(page, revision) {
   await expect.poll(async () => {
     const marker = await syncState(page);
-    return { revision: marker?.revision, dirty: marker?.dirty, conflict: marker?.conflict };
-  }).toEqual({ revision, dirty: false, conflict: false });
+    const checkpoint = await page.evaluate(key => JSON.parse(localStorage.getItem(key)).localCheckpoint, workspaceKey);
+    return { accountKey: marker?.accountKey, revision: marker?.revision, dirty: marker?.dirty, conflict: marker?.conflict,
+      bound: marker?.schemaVersion === 5 && !!checkpoint && marker.localCheckpoint === checkpoint };
+  }).toEqual({ accountKey, revision, dirty: false, conflict: false, bound: true });
   await expect(page.locator("#siteDialog")).toBeHidden();
 }
 
@@ -108,16 +113,18 @@ for (const selectedProject of [true, false]) {
       const deletedId = chats(baseline, selectedProject).activeThreadId;
       cloud.data = structuredClone(baseline);
       cloud.authenticated = true;
-      const marker = { schemaVersion: 4, accountKey, revision: 5, dirty: false, conflict: false, legacyInstructionRevision: null };
-      await a.evaluate(({ syncKey, dirtyKey, marker }) => {
-        localStorage.setItem(syncKey, JSON.stringify(marker));
-        localStorage.setItem(dirtyKey, JSON.stringify({ schemaVersion: 4, dirty: false }));
-      }, { syncKey, dirtyKey, marker });
+      const marker = { schemaVersion: 5, accountKey, revision: 5, dirty: false, conflict: false, legacyInstructionRevision: null };
+      await a.evaluate(({ workspaceKey, syncKey, dirtyKey, marker }) => {
+        const localCheckpoint = JSON.parse(localStorage.getItem(workspaceKey)).localCheckpoint;
+        localStorage.setItem(syncKey, JSON.stringify({ ...marker, localCheckpoint }));
+        localStorage.setItem(dirtyKey, JSON.stringify({ schemaVersion: 5, localCheckpoint, dirty: false }));
+      }, { workspaceKey, syncKey, dirtyKey, marker });
       await b.addInitScript(({ workspaceKey, syncKey, dirtyKey, baseline, marker }) => {
         if (localStorage.getItem(workspaceKey) !== null) return;
-        localStorage.setItem(workspaceKey, JSON.stringify(baseline));
-        localStorage.setItem(syncKey, JSON.stringify(marker));
-        localStorage.setItem(dirtyKey, JSON.stringify({ schemaVersion: 4, dirty: false }));
+        const localCheckpoint = crypto.randomUUID();
+        localStorage.setItem(workspaceKey, JSON.stringify({ ...baseline, localCheckpoint }));
+        localStorage.setItem(syncKey, JSON.stringify({ ...marker, localCheckpoint }));
+        localStorage.setItem(dirtyKey, JSON.stringify({ schemaVersion: 5, localCheckpoint, dirty: false }));
       }, { workspaceKey, syncKey, dirtyKey, baseline, marker });
       await a.reload();
       await open(b, app.origin);

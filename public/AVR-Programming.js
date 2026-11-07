@@ -1,8 +1,7 @@
 // Desktop AVR projects with a specification, C program, code description and XC8 compilation.
 (function () {
   const STORAGE_KEY = "ud_avr_programming_files_v1";
-  const STORAGE_STATE = "ud_avr_programming_state_v4";
-  const LEGACY_STORAGE_STATES = ["ud_avr_programming_state_v3", "ud_avr_programming_state_v2"];
+  const STORAGE_STATE = window.UartDebugWorkspacePersistence.KEY;
   const STORAGE_CURRENT = "ud_avr_programming_current_v1";
   const STORAGE_GROUPS = "ud_avr_programming_file_groups_v1";
   const STORAGE_MINI_PROJECTS = "ud_avr_programming_mini_projects_v1";
@@ -92,6 +91,13 @@
   let compileNotificationId = null;
   let compileTask = null;
   let unreadableWorkspaceRaw = null;
+  let workspacePersistence = null;
+  let workspaceGeneration = 0;
+  let workspaceOwnershipLost = false;
+  let workspaceLocalPending = false;
+  const workspaceRecoveryLineage = window.UartDebugWorkspacePersistence.createId();
+  let legacySyncMarkerRaw = null;
+  let legacyDirtyMarkerRaw = null;
   let projectAiNotificationId = null;
   let contextMenuFile = null;
   let contextMenuTrigger = null;
@@ -162,6 +168,7 @@
     retryCount: 0,
     localDirty: false,
     legacyInstructionRevision: null,
+    rejectedMutation: null,
   };
   let projectAiRequestInFlight = false;
   let projectAiAuthSession = null;
@@ -981,6 +988,57 @@
     return result.project;
   }
 
+  function getWorkspacePersistence() {
+    return workspacePersistence ||= window.UartDebugWorkspacePersistence.create({ storage: localStorage });
+  }
+
+  function requireWorkspaceOwnership() {
+    if (!workspaceOwnershipLost && getWorkspacePersistence().owns()) return true;
+    workspaceOwnershipLost = true;
+    projectAiAccountSync.dirty = true;
+    projectAiAccountSync.localDirty = true;
+    projectAiAccountSync.conflict = true;
+    // Never replace a neighbouring tab's envelope or its sync markers. Keep
+    // this tab's distinct unsent candidate outside routine backup pruning.
+    const candidate = getProjectAiAccountFilesSnapshot({ captureLive: false });
+    const chat = projectChatController?.getScopedSnapshot?.();
+    if (chat?.scope.accountEpoch === projectAiAccountWorkspaceEpoch) {
+      if (chat.scope.instanceId && miniProjects[chat.scope.instanceId]) {
+        candidate.miniProjects[chat.scope.instanceId].conversation = chat.conversation;
+      } else if (!chat.scope.instanceId) candidate.draftConversation = chat.conversation;
+    }
+    const preserved = saveProjectAiWorkspaceRecovery(candidate,
+      projectAiAccountSync.accountKey, { protectedCopy: true, lineage: workspaceRecoveryLineage });
+    window.UartDebugNotifications?.notify({ key: "workspace-ownership", title: "Project storage", tone: "warning",
+      message: preserved
+        ? "Another tab changed the saved projects. This copy is preserved in browser recovery. Keep this tab open to copy any needed unsaved text before reloading."
+        : "Another tab changed the saved projects. Browser recovery could not be saved. Keep this tab open to copy your unsaved text." });
+    return false;
+  }
+
+  function captureWorkspaceOperation(project = null) {
+    return { generation: workspaceGeneration, project };
+  }
+
+  function assertWorkspaceOperation(operation, instanceId = null) {
+    if (operation.generation !== workspaceGeneration ||
+        (instanceId && miniProjects[instanceId] !== operation.project)) {
+      throw new Error("The workspace changed before this action completed. No changes were applied.");
+    }
+    if (!requireWorkspaceOwnership()) throw new window.UartDebugWorkspacePersistence.OwnershipError();
+  }
+
+  function invalidateWorkspaceWriters() {
+    workspaceGeneration += 1;
+    if (saveTimer) window.clearTimeout(saveTimer);
+    saveTimer = null;
+    if (documentationSaveTimer) window.clearTimeout(documentationSaveTimer);
+    documentationSaveTimer = null;
+    for (const scope of projectInstructionSaveJobs.keys()) cancelProjectInstructionSave(scope);
+    inlineFileEdit = null;
+    closeFileContextMenu();
+  }
+
   function loadState() {
     let loadedEnvelope = false;
     let legacyGroups = {};
@@ -988,13 +1046,18 @@
     workspaceDraftCanvasRestored = false;
     draftProjectConversation = null;
     try {
-      rawState = localStorage.getItem(STORAGE_STATE);
-      for (const key of LEGACY_STORAGE_STATES) {
-        if (rawState !== null) break;
-        rawState = localStorage.getItem(key);
+      const syncMarkerBeforeLoad = localStorage.getItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC);
+      const dirtyMarkerBeforeLoad = localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY);
+      const saved = getWorkspacePersistence().load();
+      // Trust unbound migration markers only for the source actually loaded:
+      // a legacy envelope, or the older split-key/empty workspace fallback.
+      if (saved.migratedFrom || saved.raw === null) {
+        legacySyncMarkerRaw = syncMarkerBeforeLoad;
+        legacyDirtyMarkerRaw = dirtyMarkerBeforeLoad;
       }
+      rawState = saved.raw;
       if (rawState) {
-        const state = JSON.parse(rawState);
+        const state = saved.data;
         if (
           state &&
           [2, 3].includes(state.schemaVersion) &&
@@ -1028,6 +1091,7 @@
       }
     } catch (error) {
       loadedEnvelope = false;
+      rawState = workspacePersistence?.sourceRaw ?? rawState;
       if (rawState) {
         unreadableWorkspaceRaw = rawState;
         preserveUnreadableWorkspace(error);
@@ -1117,10 +1181,14 @@
       return false;
     }
     let changed = false;
+    let emptyBaseline = false;
     try {
-      const serialized = JSON.stringify(getProjectAiAccountFilesSnapshot({ captureLive: false }));
-      changed = localStorage.getItem(STORAGE_STATE) !== serialized;
-      localStorage.setItem(STORAGE_STATE, serialized);
+      if (!requireWorkspaceOwnership()) throw new window.UartDebugWorkspacePersistence.OwnershipError();
+      adoptConfirmedWorkspaceRevision();
+      const snapshot = getProjectAiAccountFilesSnapshot({ captureLive: false });
+      emptyBaseline = !getWorkspacePersistence().checkpoint && !hasMeaningfulProjectAiLocalWorkspace(snapshot);
+      changed = getWorkspacePersistence().write(snapshot).changed;
+      workspaceLocalPending = false;
     } catch (error) {
       console.warn("Failed to persist AVR workspace state:", error);
       window.UartDebugNotifications?.notify({ key: "workspace-save", title: "Project storage", tone: "error",
@@ -1142,11 +1210,15 @@
     }
     workspaceDraftCanvasRestored = true;
     if (
-      changed && projectAiBootComplete &&
+      changed && !emptyBaseline && projectAiBootComplete &&
       !projectAiAccountWorkspaceApplying
     ) {
-      markProjectAiAccountWorkspaceDirty();
+      markProjectAiAccountWorkspaceDirty({ pending: false });
     }
+    // A changed checkpoint must carry its own markers, including when an
+    // editor already marked the previous checkpoint dirty before debouncing.
+    persistProjectAiLocalDirtyState();
+    persistProjectAiAccountSyncState();
     return true;
   }
 
@@ -1588,18 +1660,23 @@
   function uniqueReservedFileName(baseName, reservedNames) {
     const cleanName = String(baseName || "").trim();
     if (!cleanName) return "";
-    if (!hasFile(cleanName) && !reservedNames.has(cleanName)) return cleanName;
-
     const lastDot = cleanName.lastIndexOf(".");
     const hasExtension = lastDot > 0;
     const stem = hasExtension ? cleanName.slice(0, lastDot) : cleanName;
     const extension = hasExtension ? cleanName.slice(lastDot) : "";
+    const withSuffix = (suffix) => {
+      const available = 96 - extension.length - suffix.length;
+      if (available < 1) throw new Error("The file extension is too long to allocate a unique name.");
+      return stem.slice(0, available) + suffix + extension;
+    };
+    const initial = withSuffix("");
+    if (!hasFile(initial) && !reservedNames.has(initial)) return initial;
     let index = 2;
-    let candidate = `${stem}_${index}${extension}`;
+    let candidate = withSuffix(`_${index}`);
 
     while (hasFile(candidate) || reservedNames.has(candidate)) {
       index += 1;
-      candidate = `${stem}_${index}${extension}`;
+      candidate = withSuffix(`_${index}`);
     }
 
     return candidate;
@@ -1679,10 +1756,17 @@
     const error = validateMiniProjectDisplayName(name, normalizedInstanceId);
     if (error) throw new Error(error);
 
+    const previousName = project.displayName;
     project.displayName = name;
-    persistState();
+    try {
+      persistState({ throwOnError: true });
+    } catch (error) {
+      project.displayName = previousName;
+      throw error;
+    }
     renderOutliner();
     refreshDocumentationPane({ preserveScroll: true });
+    projectChatController?.refresh();
     return getPublicMiniProjectInstance(normalizedInstanceId);
   }
 
@@ -1940,8 +2024,10 @@
       ready: miniProjectBridgeReady,
       normalizeDefinition: miniProjectCore.normalizeDefinition,
       async install(definition, options = {}) {
+        const operation = captureWorkspaceOperation();
         await miniProjectBridgeReady;
         try {
+          assertWorkspaceOperation(operation);
           const project = installMiniProjectDefinition(definition, {
             origin: options?.origin || "api",
           });
@@ -1964,8 +2050,10 @@
         }
       },
       async updateInstance(instanceId, definition, options = {}) {
+        const operation = captureWorkspaceOperation(miniProjects[instanceId]);
         await miniProjectBridgeReady;
         try {
+          assertWorkspaceOperation(operation, instanceId);
           const project = updateMiniProjectInstance(instanceId, definition, {
             origin: options?.origin || "api",
           });
@@ -2014,9 +2102,10 @@
   }
 
   async function createFileFromTemplate(templateId) {
+    const operation = captureWorkspaceOperation();
     const definition = await loadBuiltInMiniProjectDefinition(templateId);
     if (!definition) return false;
-
+    assertWorkspaceOperation(operation);
     installMiniProjectDefinition(definition, { origin: "builtin" });
     return true;
   }
@@ -2078,7 +2167,7 @@
 
   async function handleUploadedFile(file) {
     if (!file) return;
-
+    const operation = captureWorkspaceOperation();
     const fileKind = resolveUploadedFileKind(file.name);
     if (fileKind === "mini-project-archive") {
       const archiveApi = window.UartDebugAvrMiniProjectArchive;
@@ -2088,6 +2177,7 @@
       const definition = await archiveApi.parseMiniProjectArchive(file, {
         limits: MINI_PROJECT_ARCHIVE_WORKSPACE_LIMITS,
       });
+      assertWorkspaceOperation(operation);
       installMiniProjectDefinition(definition, { origin: "archive" });
       if (definition.importWarnings?.length) {
         reportProjectCanvasMessage("warning", definition.importWarnings.join("\n"));
@@ -5022,33 +5112,70 @@
 
   function readStoredProjectAiAccountSync() {
     try {
-      const parsed = JSON.parse(window.localStorage.getItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC) || "null");
-      if (!parsed || ![1, 2, 3, 4].includes(parsed.schemaVersion) || !parsed.accountKey) return null;
-      const current = parsed.schemaVersion === 4;
+      const raw = window.localStorage.getItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC);
+      const parsed = JSON.parse(raw || "null");
+      if (!parsed || ![1, 2, 3, 4, 5].includes(parsed.schemaVersion) || !parsed.accountKey) return null;
+      const current = parsed.schemaVersion >= 4;
+      const bound = parsed.schemaVersion === 5
+        ? !!parsed.localCheckpoint && parsed.localCheckpoint === getWorkspacePersistence().checkpoint
+        : raw === legacySyncMarkerRaw;
       return {
         accountKey: String(parsed.accountKey),
+        localCheckpoint: parsed.localCheckpoint,
+        writerId: parsed.writerId,
+        bound,
         revision: current ? parsed.revision : parsed.revisions?.files,
-        dirty: current ? parsed.dirty === true : parsed.dirty?.files === true || parsed.dirty?.instruction === true,
+        dirty: !bound || (current ? parsed.dirty === true : parsed.dirty?.files === true || parsed.dirty?.instruction === true),
         conflict: current ? parsed.conflict === true : parsed.conflicts?.files === true || parsed.conflicts?.instruction === true,
         legacyInstructionRevision: parsed.legacyInstructionRevision,
       };
     } catch { return null; }
   }
 
+  function getForeignPendingWorkspaceMarker() {
+    try {
+      const marker = JSON.parse(localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY) || "null");
+      return marker?.schemaVersion === 5 && marker.pending === true && marker.dirty === true && marker.writerId &&
+        marker.writerId !== workspaceRecoveryLineage && marker.localCheckpoint === getWorkspacePersistence().checkpoint
+        ? marker : null;
+    } catch { return null; }
+  }
+
+  function adoptConfirmedWorkspaceRevision() {
+    if (projectAiAccountSync.conflict) return;
+    const marker = readStoredProjectAiAccountSync();
+    if (marker?.bound && marker.accountKey === projectAiAccountSync.accountKey && !marker.conflict &&
+        (!marker.dirty || marker.writerId === workspaceRecoveryLineage) &&
+        Number.isSafeInteger(marker.revision) && marker.revision > projectAiAccountSync.revision) {
+      projectAiAccountSync.revision = marker.revision;
+    }
+  }
+
 
   function restoreProjectAiLocalDirtyState() {
     try {
-      const stored = JSON.parse(window.localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY) || "null");
-      projectAiAccountSync.localDirty = stored?.schemaVersion === 4
-        ? stored.dirty === true : stored?.dirty?.files === true || stored?.dirty?.instruction === true;
+      const raw = window.localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY);
+      const stored = JSON.parse(raw || "null");
+      const bound = stored?.schemaVersion === 5
+        ? !!stored.localCheckpoint && stored.localCheckpoint === getWorkspacePersistence().checkpoint
+        : raw === legacyDirtyMarkerRaw;
+      projectAiAccountSync.localDirty = !bound || (stored?.schemaVersion >= 4
+        ? stored.dirty === true : stored?.dirty?.files === true || stored?.dirty?.instruction === true);
     } catch { projectAiAccountSync.localDirty = true; }
   }
 
 
   function persistProjectAiLocalDirtyState() {
     try {
+      if (!requireWorkspaceOwnership()) return false;
+      // A pending editor mutation can precede its debounced envelope write.
+      // A different tab's ACK/no-op must not mark that mutation saved.
+      if (getForeignPendingWorkspaceMarker()) return false;
       window.localStorage.setItem(STORAGE_PROJECT_AI_LOCAL_DIRTY, JSON.stringify({
-        schemaVersion: 4, dirty: projectAiAccountSync.localDirty, updatedAt: Date.now(),
+        schemaVersion: 5, localCheckpoint: getWorkspacePersistence().checkpoint,
+        writerId: workspaceRecoveryLineage,
+        pending: workspaceLocalPending,
+        dirty: projectAiAccountSync.localDirty, updatedAt: Date.now(),
       }));
     } catch (error) {
       console.warn("The local account-sync markers could not be saved:", error);
@@ -5080,8 +5207,26 @@
   function persistProjectAiAccountSyncState() {
     if (!projectAiAccountSync.accountKey) return false;
     try {
+      if (!requireWorkspaceOwnership()) return false;
+      adoptConfirmedWorkspaceRevision();
+      const pending = getForeignPendingWorkspaceMarker();
+      if (pending) {
+        const previous = readStoredProjectAiAccountSync();
+        if (previous?.bound && previous.accountKey === projectAiAccountSync.accountKey) {
+          // The ACK confirms this durable checkpoint's base revision, while
+          // preserving the other writer's still-pending mutation and identity.
+          const raw = JSON.parse(localStorage.getItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC));
+          localStorage.setItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC, JSON.stringify({ ...raw,
+            revision: Math.max(Number(previous.revision) || 0, projectAiAccountSync.revision),
+            dirty: true, writerId: pending.writerId, updatedAt: Date.now() }));
+        }
+        return false;
+      }
       window.localStorage.setItem(STORAGE_PROJECT_AI_ACCOUNT_SYNC, JSON.stringify({
-        schemaVersion: 4,
+        schemaVersion: 5,
+        localCheckpoint: getWorkspacePersistence().checkpoint,
+        writerId: workspaceRecoveryLineage,
+        pending: workspaceLocalPending,
         accountKey: projectAiAccountSync.accountKey,
         revision: projectAiAccountSync.revision,
         dirty: projectAiAccountSync.dirty,
@@ -5164,19 +5309,19 @@
     return snapshot;
   }
 
+  function projectAiWorkspaceValuesEqual(left, right) {
+    // Object insertion order is not a change; arrays and every stored value are.
+    if (left === right) return true;
+    if (!left || !right || typeof left !== "object" || typeof right !== "object" ||
+        Array.isArray(left) !== Array.isArray(right)) return false;
+    const keys = Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every(key =>
+      Object.hasOwn(right, key) && projectAiWorkspaceValuesEqual(left[key], right[key]));
+  }
+
   function projectAiAccountWorkspaceMatches(remoteData) {
     try {
-      // JSON object insertion order is not a project change. Array order and
-      // every stored value, including chat alternatives and drafts, still are.
-      const equal = (left, right) => {
-        if (left === right) return true;
-        if (!left || !right || typeof left !== "object" || typeof right !== "object" ||
-            Array.isArray(left) !== Array.isArray(right)) return false;
-        const keys = Object.keys(left);
-        return keys.length === Object.keys(right).length &&
-          keys.every(key => Object.hasOwn(right, key) && equal(left[key], right[key]));
-      };
-      return equal(getProjectAiAccountFilesSnapshot(), normalizeProjectAiAccountFilesSnapshot(remoteData));
+      return projectAiWorkspaceValuesEqual(getProjectAiAccountFilesSnapshot(), normalizeProjectAiAccountFilesSnapshot(remoteData));
     } catch { return false; }
   }
 
@@ -5190,21 +5335,48 @@
 
   function saveProjectAiWorkspaceRecovery(
     data,
-    sourceAccountKey = projectAiAccountSync.accountKey
+    sourceAccountKey = projectAiAccountSync.accountKey,
+    { protectedCopy = false, lineage = null } = {}
   ) {
     const storageKeyBase = STORAGE_PROJECT_AI_FILES_RECOVERY;
     const recoveryScope =
       String(sourceAccountKey || "browser-local")
         .replace(/[^A-Za-z0-9_-]/g, "")
         .slice(0, 128) || "browser-local";
-    const storageKey = `${storageKeyBase}:${recoveryScope}`;
+    const scopePrefix = `${storageKeyBase}:${recoveryScope}`;
     try {
+      const serializedData = JSON.stringify(data);
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const key = window.localStorage.key(index);
+        if (key !== scopePrefix && !key?.startsWith(`${scopePrefix}:`)) continue;
+        let previous;
+        try { previous = JSON.parse(window.localStorage.getItem(key)); }
+        catch { continue; } // Unreadable evidence is neither replaced nor pruned.
+        if (previous?.schemaVersion !== 1) continue;
+        if (lineage && previous.protectedLineage === lineage) {
+          if (JSON.stringify(previous.data) !== serializedData) window.localStorage.setItem(key,
+            JSON.stringify({ ...previous, data, savedAt: Date.now() }));
+          return true;
+        }
+        if (JSON.stringify(previous.data) !== serializedData ||
+            (lineage && previous.protectedLineage && previous.protectedLineage !== lineage)) continue;
+        if (protectedCopy && (!previous.protectedCopy || lineage && !previous.protectedLineage)) window.localStorage.setItem(key,
+          JSON.stringify({ ...previous, protectedCopy: true, ...(lineage ? { protectedLineage: lineage } : {}) }));
+        return true;
+      }
+      let storageKey = scopePrefix;
+      let suffix = 0;
+      while (window.localStorage.getItem(storageKey) !== null) {
+        storageKey = `${scopePrefix}:${Date.now()}-${suffix++}`;
+      }
       window.localStorage.setItem(
         storageKey,
         JSON.stringify({
           schemaVersion: 1,
           sourceAccountKey: recoveryScope,
           savedAt: Date.now(),
+          ...(protectedCopy ? { protectedCopy: true } : {}),
+          ...(lineage ? { protectedLineage: lineage } : {}),
           data,
           ...(projectInstructionStorageReadFailed ? { unreadableDraft:
             window.localStorage.getItem(STORAGE_PROJECT_INSTRUCTION)
@@ -5220,16 +5392,17 @@
           const candidate = JSON.parse(window.localStorage.getItem(candidateKey) || "null");
           // Unreadable/future workspace envelopes must remain exact recovery
           // evidence, rather than being pruned with normal account snapshots.
-          if (typeof candidate?.rawWorkspace === "string") continue;
+          if (candidate?.schemaVersion !== 1 || !candidate.data || candidate.protectedCopy || typeof candidate.rawWorkspace === "string") continue;
           savedAt = Number(candidate?.savedAt);
-        } catch {}
+        } catch { continue; }
         scopedCopies.push({
           key: candidateKey,
           savedAt: Number.isFinite(savedAt) ? savedAt : 0,
+          order: index,
         });
       }
       scopedCopies
-        .sort((left, right) => right.savedAt - left.savedAt)
+        .sort((left, right) => right.savedAt - left.savedAt || right.order - left.order)
         .slice(3)
         .forEach(({ key }) => window.localStorage.removeItem(key));
       return true;
@@ -5252,8 +5425,9 @@
     ) {
       throw new TypeError("The saved account file workspace is invalid.");
     }
-    projectChatController?.flush();
-    projectChatController?.cancel("The account workspace changed. No response changes were applied.");
+    if (!captureAndPersistWorkspace()) return false;
+    projectChatController?.cancel("The account workspace changed. No response changes were applied.", { save: false });
+    invalidateWorkspaceWriters();
     const previousWorkspace = {
       files,
       fileAuthorship,
@@ -5350,7 +5524,8 @@
 
 
   function scheduleProjectAiAccountWorkspaceSave(delay = 700) {
-    if (!projectAiAccountSync.ready || projectAiAccountSync.conflict) return;
+    if (!projectAiAccountSync.ready || projectAiAccountSync.conflict ||
+        projectAiAccountSync.rejectedMutation === projectAiAccountSync.mutation) return;
     if (projectAiAccountSaveTimer) window.clearTimeout(projectAiAccountSaveTimer);
     projectAiAccountSaveTimer = window.setTimeout(() => {
       projectAiAccountSaveTimer = null;
@@ -5359,9 +5534,12 @@
   }
 
 
-  function markProjectAiAccountWorkspaceDirty() {
+  function markProjectAiAccountWorkspaceDirty({ pending = true } = {}) {
+    adoptConfirmedWorkspaceRevision();
+    workspaceLocalPending = pending;
     projectAiAccountSync.dirty = true;
     projectAiAccountSync.mutation += 1;
+    projectAiAccountSync.rejectedMutation = null;
     setProjectAiLocalDirty(true);
     persistProjectAiAccountSyncState();
     scheduleProjectAiAccountWorkspaceSave();
@@ -5380,13 +5558,17 @@
       !projectAiAccountSync.ready ||
       !projectAiAccountSync.dirty ||
       projectAiAccountSync.saving ||
-      projectAiAccountSync.conflict
+      projectAiAccountSync.conflict ||
+      projectAiAccountSync.rejectedMutation === projectAiAccountSync.mutation
     ) {
       return;
     }
+    if (!captureAndPersistWorkspace()) return;
+    if (projectAiAccountSync.conflict || !requireWorkspaceOwnership()) return;
     const mutation = projectAiAccountSync.mutation;
     const baseRevision = projectAiAccountSync.revision;
-    const data = getProjectAiAccountFilesSnapshot();
+    const data = getProjectAiAccountFilesSnapshot({ captureLive: false });
+    const checkpoint = getWorkspacePersistence().checkpoint;
     const workspaceEpoch = projectAiAccountWorkspaceEpoch;
     const accountKey = projectAiAccountSync.accountKey;
     projectAiAccountSync.saving = true;
@@ -5414,6 +5596,7 @@
       ) {
         return;
       }
+      if (!requireWorkspaceOwnership()) return;
       if (
         response.status === 409 &&
         result?.code === "account_workspace_account_mismatch"
@@ -5422,13 +5605,35 @@
           "system",
           `The local Projects copy remains saved because the Google account changed in another tab. Cloud sync will reconnect to the current account before saving.`
         );
-        resetProjectAiAccountWorkspaceRuntime();
-        void fetchProjectAiAuthSession().catch((error) => {
-          console.warn("Account workspace could not be reconnected:", error);
-        });
+        reconnectProjectAiAccountIdentity();
         return;
       }
-      if (response.status === 409) {
+      let verifiedAcknowledgement = null;
+      if (response.status === 409 && result?.code === "account_data_revision_conflict") {
+        // A successful PUT can lose its ACK. Only exact equality with the
+        // immutable sent snapshot can acknowledge it; never merge newer edits.
+        const check = await fetch(PROJECT_AI_ACCOUNT_WORKSPACE_URL, {
+          method: "GET", headers: { Accept: "application/json" }, credentials: "same-origin",
+        });
+        const latest = await check.json().catch(() => ({}));
+        if (workspaceEpoch !== projectAiAccountWorkspaceEpoch || accountKey !== projectAiAccountSync.accountKey ||
+            !requireWorkspaceOwnership()) return;
+        if (check.status === 401 || check.status === 403) {
+          expireProjectAiWorkspaceSession("The Google session expired. Your local changes are safe; sign in again to resume cloud sync.");
+          return;
+        }
+        if (!check.ok || latest.ok !== true || !latest.accountKey) {
+          throw new Error(`The saved workspace could not be verified (${check.status}).`);
+        }
+        if (latest.accountKey !== accountKey || projectAiAuthSession?.accountKey !== accountKey) {
+          reconnectProjectAiAccountIdentity();
+          return;
+        }
+        const remote = normalizeProjectAiRemoteDocument((latest.documents || latest.workspace || latest).files);
+        if (remote.revision > baseRevision &&
+            projectAiWorkspaceValuesEqual(remote.data, data)) verifiedAcknowledgement = remote;
+      }
+      if (response.status === 409 && !verifiedAcknowledgement) {
         projectAiAccountSync.conflict = true;
         persistProjectAiAccountSyncState();
         reportProjectCanvasMessage(
@@ -5444,7 +5649,13 @@
         return;
       }
       if ([400, 413, 415].includes(response.status)) {
-        projectAiAccountSync.dirty = false;
+        // A rejection acknowledges no data. Block only this unchanged
+        // candidate; a real edit is eligible for a fresh attempt.
+        if (projectAiAccountSync.mutation === mutation && getWorkspacePersistence().checkpoint === checkpoint) {
+          projectAiAccountSync.rejectedMutation = mutation;
+        }
+        projectAiAccountSync.dirty = true;
+        setProjectAiLocalDirty(true);
         persistProjectAiAccountSyncState();
         reportProjectCanvasMessage(
           "system",
@@ -5452,7 +5663,7 @@
         );
         return;
       }
-      if (!response.ok || result?.ok !== true) {
+      if (!verifiedAcknowledgement && (!response.ok || result?.ok !== true)) {
         if (response.status === 429) {
           const retryAfter = Number(response.headers.get("Retry-After"));
           if (Number.isFinite(retryAfter) && retryAfter > 0) {
@@ -5463,7 +5674,7 @@
           String(result?.message || `Account workspace save failed (${response.status}).`)
         );
       }
-      const savedDocument = result.document || result.files || result;
+      const savedDocument = verifiedAcknowledgement || result.document || result.files || result;
       const revision = Number(savedDocument?.revision);
       if (!Number.isSafeInteger(revision) || revision <= baseRevision) {
         throw new Error(`Account workspace save returned an invalid revision.`);
@@ -5471,7 +5682,7 @@
       projectAiAccountSync.revision = revision;
       projectAiAccountSync.legacyInstructionRevision = null;
       projectAiAccountSync.dirty =
-        projectAiAccountSync.mutation !== mutation;
+        projectAiAccountSync.mutation !== mutation || getWorkspacePersistence().checkpoint !== checkpoint;
       projectAiAccountSync.retryCount = 0;
       if (!projectAiAccountSync.dirty) {
         setProjectAiLocalDirty(false);
@@ -5514,9 +5725,27 @@
   }
 
 
+  function reconnectProjectAiAccountIdentity() {
+    resetProjectAiAccountWorkspaceRuntime();
+    projectAiAuthRequestEpoch += 1;
+    projectAiAuthSessionPromise = null;
+    void fetchProjectAiAuthSession().catch(error => console.warn("Account identity could not be refreshed:", error));
+  }
+
   function resetProjectAiAccountWorkspaceRuntime() {
-    projectChatController?.flush();
-    projectChatController?.cancel("Account access changed. No response changes were applied.");
+    const saved = captureAndPersistWorkspace();
+    projectChatController?.cancel("Account access changed. No response changes were applied.", { save: false });
+    // Failed persistence must not discard an input still owned by the chat
+    // controller when its account epoch is invalidated for security.
+    const chat = projectChatController?.getScopedSnapshot?.();
+    if (chat?.scope.accountEpoch === projectAiAccountWorkspaceEpoch) {
+      const project = chat.scope.instanceId ? miniProjects[chat.scope.instanceId] : null;
+      if (project) project.conversation = chat.conversation;
+      else if (!chat.scope.instanceId) draftProjectConversation = chat.conversation;
+    }
+    if (!saved) saveProjectAiWorkspaceRecovery(getProjectAiAccountFilesSnapshot({ captureLive: false }),
+      projectAiAccountSync.accountKey, { protectedCopy: true, lineage: workspaceRecoveryLineage });
+    invalidateWorkspaceWriters();
     projectAiAccountWorkspaceEpoch += 1;
     projectChatController?.refresh({ force: true });
     projectAiAccountWorkspacePromise = null;
@@ -5528,11 +5757,11 @@
     projectAiAccountSaveTimer = null;
     projectAiAccountSync.saving = false;
     projectAiAccountSync.retryCount = 0;
+    projectAiAccountSync.rejectedMutation = null;
   }
 
 
-  function hasMeaningfulProjectAiLocalWorkspace() {
-    const snapshot = getProjectAiAccountFilesSnapshot();
+  function hasMeaningfulProjectAiLocalWorkspace(snapshot = getProjectAiAccountFilesSnapshot()) {
     const draftChats = snapshot.draftConversation ? normalizeProjectConversation(snapshot.draftConversation).threads : [];
     return Object.entries(snapshot.files || {}).some(
       ([name, content]) => name !== "main.c" || String(content || "").length > 0
@@ -5598,10 +5827,15 @@
       "The local Projects copy was not replaced because the browser could not safely persist both the local recovery and cloud copies. Free some browser storage and reload to choose again.");
   }
 
-  function flushProjectChatBeforeAccountSync() {
-    if (projectChatController?.flush() !== false) return true;
+  function captureAndPersistWorkspace() {
+    // Explicit transition barrier: persistence itself must never capture a
+    // stale view while selection/import is staging a new owner model.
+    if (!requireWorkspaceOwnership()) return false;
+    getProjectAiAccountFilesSnapshot();
+    saveDocumentationEditorValue();
+    if (projectChatController?.flush() !== false && persistState()) return true;
     setProjectAiAccountStatus(
-      "Cloud sync is paused because the current chat could not be saved in this browser. Your draft remains open; free browser storage and try again.",
+      "Cloud sync is paused because the current workspace could not be saved in this browser. Your drafts remain open; free browser storage and reload.",
       "error"
     );
     return false;
@@ -5612,7 +5846,7 @@
     if (projectAiAccountSync.ready) return null;
     if (projectAiAccountWorkspacePromise) return projectAiAccountWorkspacePromise;
     projectChatController?.cancel("Account workspace is being synchronized. No response changes were applied.");
-    if (!flushProjectChatBeforeAccountSync()) return null;
+    if (!captureAndPersistWorkspace()) return null;
     const workspaceEpoch = ++projectAiAccountWorkspaceEpoch;
     projectChatController?.refresh({ force: true });
     const mutationAtStart = projectAiAccountSync.mutation;
@@ -5634,9 +5868,14 @@
       if (workspaceEpoch !== projectAiAccountWorkspaceEpoch || projectAiAuthSession?.authenticated !== true) return null;
       // Include input still waiting for the chat debounce in reconciliation and
       // any recovery copy before an authoritative cloud snapshot is adopted.
-      if (!flushProjectChatBeforeAccountSync()) return null;
+      if (!captureAndPersistWorkspace()) return null;
       const accountKey = String(result.accountKey || "").trim();
       if (!accountKey) throw new Error("Account workspace identity is missing.");
+      const verifiedAccountKey = String(projectAiAuthSession?.accountKey || "");
+      if (!verifiedAccountKey || verifiedAccountKey !== accountKey) {
+        reconnectProjectAiAccountIdentity();
+        return null;
+      }
       const stored = readStoredProjectAiAccountSync();
       const sameAccount = stored?.accountKey === accountKey;
       const differentKnownAccount = !!stored?.accountKey && !sameAccount;
@@ -6324,6 +6563,10 @@
       }
 
       const wasAuthenticated = projectAiAuthSession?.authenticated === true;
+      const previousAccountKey = String(projectAiAuthSession?.accountKey || "");
+      if (wasAuthenticated && previousAccountKey !== String(data.accountKey || "")) {
+        resetProjectAiAccountWorkspaceRuntime();
+      }
       projectAiAuthSession = data;
       renderProjectAiAuthSession(data);
       if (data.mode === "google" && data.authenticated === true) {
@@ -7074,7 +7317,7 @@
     if (current === guideFile && editor && editor.getValue() !== markdown) {
       editor.setValue(markdown);
     }
-    if (projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
+    if (previousMarkdown !== markdown && projectAiBootComplete && !projectAiAccountWorkspaceApplying) {
       markProjectAiAccountWorkspaceDirty();
     }
     if (documentationSaveTimer) {
@@ -7413,6 +7656,7 @@
     const displayName = deleteWholeProject
       ? getOutlinerFileLabel(name)
       : name;
+    const operation = captureWorkspaceOperation(linkedProject?.project || null);
     const confirmed = await showSiteConfirm({
       title: deleteWholeProject ? "Delete project" : "Delete file",
       message: deleteWholeProject
@@ -7424,12 +7668,50 @@
     });
     if (!confirmed) return;
 
+    assertWorkspaceOperation(operation, linkedProject?.instanceId || null);
     if (!hasFile(name) || (linkedProject && miniProjects[linkedProject.instanceId] !== linkedProject.project)) return;
+    if (projectChatController?.flush() === false) {
+      throw new Error("The current chat could not be saved. The project was not deleted.");
+    }
+    // Retain live edits in the owner model before staging a discrete deletion.
+    getProjectAiAccountFilesSnapshot();
 
     const namesToDelete = deleteWholeProject
       ? getMiniProjectLocalFileNames(linkedProject.project)
       : [name];
     const deletedCurrent = namesToDelete.includes(current);
+    const previous = { files, fileAuthorship, miniProjects, current,
+      unassignedProjectInstructionDocument, projectInstructionStorageReadFailed };
+    files = createDictionary(files);
+    fileAuthorship = createDictionary(fileAuthorship);
+    miniProjects = createDictionary(miniProjects);
+    if (!deleteWholeProject) {
+      for (const [instanceId, project] of Object.entries(miniProjects)) {
+        if (!getMiniProjectLocalFileNames(project).includes(name)) continue;
+        miniProjects[instanceId] = { ...project, files: { ...project.files },
+          mediaTypes: { ...project.mediaTypes }, guides: { ...project.guides } };
+      }
+    }
+    try {
+      for (const fileName of namesToDelete) {
+        delete files[fileName];
+        delete fileAuthorship[fileName];
+      }
+      if (deleteWholeProject) delete miniProjects[linkedProject.instanceId];
+      else removeMiniProjectFile(name);
+      if (!getVisibleWorkspaceFileNames().length) {
+        unassignedProjectInstructionDocument = normalizeProjectInstructionDocument(null);
+        projectInstructionStorageReadFailed = false;
+      }
+      if (deletedCurrent) current = getVisibleWorkspaceFileNames()[0] || null;
+      persistState({ throwOnError: true });
+    } catch (error) {
+      ({ files, fileAuthorship, miniProjects, current,
+        unassignedProjectInstructionDocument, projectInstructionStorageReadFailed } = previous);
+      throw error;
+    }
+
+    // Only a committed deletion can invalidate queued saves and view state.
     if (deleteWholeProject) cancelProjectInstructionSave(linkedProject.instanceId);
     if (deletedCurrent && saveTimer) {
       window.clearTimeout(saveTimer);
@@ -7440,25 +7722,14 @@
       documentationSaveTimer = null;
     }
     for (const fileName of namesToDelete) {
-      delete files[fileName];
-      delete fileAuthorship[fileName];
       hexArtifactsBySource.delete(fileName);
-    }
-    if (deleteWholeProject) {
-      delete miniProjects[linkedProject.instanceId];
-    } else {
-      removeMiniProjectFile(name);
     }
     if (!getVisibleWorkspaceFileNames().length) {
       cancelProjectInstructionSave(null);
-      unassignedProjectInstructionDocument = normalizeProjectInstructionDocument(null);
-      projectInstructionStorageReadFailed = false;
     }
     if (deletedCurrent) {
-      current = getVisibleWorkspaceFileNames()[0] || null;
       activateCurrentProjectCanvas({ savePrevious: false });
     }
-    persistState();
     if (!current) {
       try {
         localStorage.removeItem(STORAGE_CURRENT);
@@ -7704,13 +7975,8 @@
       if (projectAiBootComplete) markProjectAiAccountWorkspaceDirty();
       if (saveTimer) clearTimeout(saveTimer);
 
-      const codeSnapshot = liveMarkdown;
-      const fileNameSnapshot = current;
-
       saveTimer = setTimeout(() => {
-        if (fileNameSnapshot && hasFile(fileNameSnapshot)) {
-          files[fileNameSnapshot] = codeSnapshot;
-        }
+        saveTimer = null;
         persistState();
       }, 250);
     });

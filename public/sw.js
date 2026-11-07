@@ -12,6 +12,7 @@ const APP_SHELL_ASSETS = [
   "/avr-project-chat.js",
   "/avr-project-format.js",
   "/avr-workspace-layout.js",
+  "/avr-workspace-persistence.js",
   "/avr.html",
   "/favicon.ico",
   "/home.css",

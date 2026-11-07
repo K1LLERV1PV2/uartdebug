@@ -12,6 +12,7 @@ const { resizeEnvironment } = require("./helpers/panel-resizer-harness");
 
 const core = require("../public/avr-mini-projects.js");
 const projectFormat = require("../public/avr-project-format.js");
+const workspacePersistence = require("../public/avr-workspace-persistence.js");
 
 function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
   const windowListeners = new Map();
@@ -20,6 +21,7 @@ function loadAvrFrontendFunctionHooks(functionNames, overrides = {}) {
     UartDebugAvrMiniProjectCore: core,
     UartDebugAvrProjectFormat: projectFormat,
     UartDebugAvrWorkspaceLayout: require("../public/avr-workspace-layout.js"),
+    UartDebugWorkspacePersistence: require("../public/avr-workspace-persistence.js"),
     addEventListener(type, listener) {
       windowListeners.set(type, listener);
     },
@@ -206,6 +208,7 @@ test("exposes the mini-project bridge before DOMContentLoaded", () => {
   const fakeWindow = {
     UartDebugAvrMiniProjectCore: core,
     UartDebugAvrWorkspaceLayout: require("../public/avr-workspace-layout.js"),
+    UartDebugWorkspacePersistence: workspacePersistence,
     addEventListener(type, listener) {
       windowListeners.set(type, listener);
     },
@@ -307,6 +310,7 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
   const { document } = parseHTML('<html><body></body></html>');
   const hooks = loadAvrFrontendFunctionHooks([
     "createEmptyProject", "installMiniProjectDefinition", "updateMiniProjectInstance",
+    "renameMiniProjectInstance",
     "selectFile", "getProjectInstructionSnapshot", "getProjectAiAccountFilesSnapshot",
     "applyProjectAiAccountWorkspace",
     "restoreProjectInstruction", "loadState", "persistState", "persistProjectInstruction", "deleteFile",
@@ -315,6 +319,7 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
     "getPublicMiniProjectInstance", "getVisibleWorkspaceFileNames", "migrateLooseFilesToProjects", "getEmptyProjectAiAccountWorkspace", "isHiddenMiniProjectFile",
     "getProjectAiRequestPayload", "assertProjectAiUpdateIsFresh",
     "getProjectChatContext", "saveProjectConversation", "hasMeaningfulProjectAiLocalWorkspace", "saveCanvasTarget",
+    "requireWorkspaceOwnership", "saveProjectAiWorkspaceRecovery",
     "assertProjectAiInstructionIsFresh", "canvasScope() { return projectInstructionScopeEpoch; }",
     `prepare() {
       resetHexArtifact = updateCompilePanelState = renderOutliner =
@@ -342,7 +347,7 @@ function loadCanvasLifecycleHooks(storage = new Map(), options = {}) {
     `setCanvasDocument(canvas) { projectInstructionDocument = normalizeProjectInstructionDocument(canvas); }`,
     `codeEditor(markdown) {
       let value = markdown;
-      editor = { getValue: () => value, setValue(next) { value = next; }, setOption() {}, refresh() {} };
+      editor = { getValue: () => value, setValue(next) { value = next; }, setOption() {}, refresh() {}, getWrapperElement() { return null; } };
     }`,
     `codeValue() { return editor?.getValue(); }`,
     `pendingCanvasScopes() { return [...projectInstructionSaveJobs.keys()]; }`,
@@ -433,6 +438,7 @@ test("migrates the former shared canvas to the active legacy project without cop
   files.schemaVersion = 2;
   delete files.draftCanvas;
   delete files.miniProjects[legacy.instanceId].canvas;
+  storage.delete(workspacePersistence.KEY);
   storage.set("ud_avr_programming_state_v4", JSON.stringify(files));
   storage.set("ud_avr_ai_project_instruction_v2", JSON.stringify({
     schemaVersion: 2, revision: 9, markdown: "Existing requirements", annotations: [],
@@ -467,7 +473,7 @@ test("switching projects preserves failed-save warnings and retries the original
   let failWrites = false;
   const { hooks } = loadCanvasLifecycleHooks(storage, {
     setItem(key, value) {
-      if (failWrites && key === "ud_avr_programming_state_v4") throw new Error("Storage quota");
+      if (failWrites && key === workspacePersistence.KEY) throw new Error("Storage quota");
       storage.set(key, String(value));
     },
     setTimeout(callback) { timers.set(++timerId, callback); return timerId; },
@@ -485,7 +491,7 @@ test("switching projects preserves failed-save warnings and retries the original
   assert.ok(timers.size > 0, "The previous project's retry must survive switching");
   failWrites = false;
   for (const [id, callback] of [...timers]) { timers.delete(id); callback(); }
-  const saved = JSON.parse(storage.get("ud_avr_programming_state_v4"));
+  const saved = storedAccountWorkspace(storage);
   assert.equal(saved.miniProjects[first.instanceId].canvas.markdown, "Unsaved first project draft");
   assert.equal(hooks.pendingCanvasScopes().length, 0);
   assert.ok(hooks.notifications().some(record => record.id === failedSave.id), "a recovered save must not erase its diagnostic history");
@@ -494,9 +500,10 @@ test("switching projects preserves failed-save warnings and retries the original
 test("restoring a workspace reports an unreadable loose canvas without discarding its recovery source", () => {
   const { hooks, storage } = loadCanvasLifecycleHooks();
   hooks.createEmptyProject();
-  const legacy = JSON.parse(storage.get("ud_avr_programming_state_v4"));
+  const legacy = storedAccountWorkspace(storage);
   legacy.schemaVersion = 2;
   delete legacy.draftCanvas;
+  storage.delete(workspacePersistence.KEY);
   storage.set("ud_avr_programming_state_v4", JSON.stringify(legacy));
   storage.set("ud_avr_ai_project_instruction_v2", "unreadable");
   hooks.loadState();
@@ -528,7 +535,7 @@ test("deleting the last project cancels its save and clears the hidden workspace
   assert.equal(hooks.getProjectAiAccountFilesSnapshot().draftCanvas.markdown, "");
   assert.equal(hooks.pendingCanvasScopes().length, 0);
   for (const callback of timers.values()) callback();
-  const saved = JSON.parse(storage.get("ud_avr_programming_state_v4"));
+  const saved = storedAccountWorkspace(storage);
   assert.equal(saved.schemaVersion, 3);
   assert.equal(saved.draftCanvas.markdown, "");
   assert.equal(Object.keys(saved.miniProjects).length, 0);
@@ -657,8 +664,22 @@ test("cloud project restoration cannot copy the old editor into the restored sou
   assert.equal(hooks.applyProjectAiAccountWorkspace( cloud), true);
   const source = project.files.find(file => file.role === "source").name;
   assert.equal(hooks.getProjectAiAccountFilesSnapshot().files[source], "// Cloud source");
-  assert.equal(JSON.parse(storage.get("ud_avr_programming_state_v4")).files[source], "// Cloud source");
+  assert.equal(storedAccountWorkspace(storage).files[source], "// Cloud source");
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Cloud specification");
+});
+
+test("a first project install cannot replace its source with the initially empty editor", () => {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  assert.equal(storage.has(workspacePersistence.KEY), false, "the fresh browser has no canonical checkpoint");
+  hooks.codeEditor("");
+  const source = "#include <xc.h>\nint main(void) { for (;;) {} }";
+  const project = hooks.installMiniProjectDefinition({ schemaVersion: 1, id: "first-install", title: "First install",
+    files: [{ role: "source", name: "First.c", content: source }] });
+  const file = project.files.find(item => item.role === "source");
+  const storageName = file.storageName || file.name;
+  assert.equal(hooks.getProjectAiAccountFilesSnapshot().files[storageName], source);
+  assert.equal(hooks.codeValue(), source);
+  assert.equal(storedAccountWorkspace(storage).files[storageName], source);
 });
 
 function accountSyncStorage(accountKey, revision, overrides = {}) {
@@ -676,10 +697,11 @@ function canonicalAccountFixture(accountKey, revision, { conflict = false } = {}
   hooks.createEmptyProject();
   hooks.editCanvas("Shared specification");
   const snapshot = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
+  const localCheckpoint = JSON.parse(storage.get(workspacePersistence.KEY)).localCheckpoint;
   storage.set("ud_avr_ai_account_sync_v1", JSON.stringify({
-    schemaVersion: 4, accountKey, revision, dirty: false, conflict,
+    schemaVersion: 5, localCheckpoint, accountKey, revision, dirty: false, conflict,
   }));
-  storage.set("ud_avr_ai_local_dirty_v1", JSON.stringify({ schemaVersion: 4, dirty: false }));
+  storage.set("ud_avr_ai_local_dirty_v1", JSON.stringify({ schemaVersion: 5, localCheckpoint, dirty: false }));
   return { storage, snapshot };
 }
 
@@ -689,6 +711,19 @@ function restoreAccountFixture(hooks, accountKey) {
   hooks.restoreProjectAiLocalDirtyState();
   hooks.restoreProjectAiAccountSyncState();
   hooks.account(accountKey);
+}
+
+function storedAccountWorkspace(storage) {
+  const frontend = fs.readFileSync(path.join(__dirname, "../public/AVR-Programming.js"), "utf8");
+  const key = /const STORAGE_STATE = "([^"]+)"/.exec(frontend)?.[1]
+    || require("../public/avr-workspace-persistence.js").KEY;
+  assert.ok(key, "the canonical local workspace key is declared");
+  return workspacePersistence.businessData(JSON.parse(storage.get(key)));
+}
+
+function workspaceRecoveryCopies(storage) {
+  return [...storage.entries()].filter(([key]) => key.startsWith("ud_avr_ai_files_recovery_v1:"))
+    .map(([key, raw]) => ({ key, ...JSON.parse(raw) }));
 }
 
 test("flushing unchanged project and canvas data does not create an account mutation", () => {
@@ -719,7 +754,7 @@ test("flushing an unused chat leaves it unmaterialized while persisting other qu
   assert.equal(hooks.syncState().dirty, false);
   hooks.queueCanvas("A pending specification edit");
   assert.equal(hooks.saveProjectConversation(context, context.conversation), true);
-  const saved = JSON.parse(storage.get("ud_avr_programming_state_v4"));
+  const saved = storedAccountWorkspace(storage);
   assert.equal(Object.values(saved.miniProjects)[0].canvas.markdown, "A pending specification edit");
   assert.equal(Object.hasOwn(Object.values(saved.miniProjects)[0], "conversation"), false);
   assert.equal(hooks.syncState().dirty, true);
@@ -878,7 +913,9 @@ test("another tab advancing the shared sync marker during a GET cannot rebase th
   hooks.editCanvas("This tab's unsaved project");
   hooks.confirm(async () => { prompts++; return false; });
   const pending = hooks.initializeProjectAiAccountWorkspace();
-  storage.set("ud_avr_ai_account_sync_v1", JSON.stringify({ schemaVersion: 4, accountKey, revision: 5, dirty: false, conflict: false }));
+  storage.set("ud_avr_ai_account_sync_v1", JSON.stringify({ schemaVersion: 5,
+    localCheckpoint: JSON.parse(storage.get(workspacePersistence.KEY)).localCheckpoint,
+    accountKey, revision: 5, dirty: false, conflict: false }));
   finish(jsonResponse({ ok: true, accountKey, documents: { files: { revision: 5, data: snapshot } } }));
   await pending;
   await hooks.saveProjectAiAccountWorkspace();
@@ -919,6 +956,121 @@ test("a cloud write racing the resumed local save is rejected without losing loc
   assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Recoverable local work");
 });
 
+for (const newerEdit of [false, true]) {
+  test(`an exact lost cloud acknowledgement is reconciled${newerEdit ? " while retaining newer edits" : " without another project write"}`, async () => {
+    const accountKey = "lost-ack-account";
+    const { storage } = canonicalAccountFixture(accountKey, 4);
+    const writes = [];
+    let acceptedSnapshot;
+    let finishRead;
+    const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async (_url, init) => {
+      if (init.method === "GET") return new Promise(resolve => { finishRead = resolve; });
+      const body = JSON.parse(init.body);
+      writes.push(body);
+      if (writes.length === 1) {
+        acceptedSnapshot = body.data;
+        throw new Error("The server accepted the write but its acknowledgement was lost");
+      }
+      return writes.length === 2
+        ? jsonResponse({ ok: false, code: "account_data_revision_conflict" }, 409)
+        : jsonResponse({ ok: true, document: { revision: 6 } });
+    } });
+    restoreAccountFixture(hooks, accountKey);
+    hooks.account(accountKey, true);
+    hooks.editCanvas("The snapshot already accepted by the server");
+    await hooks.saveProjectAiAccountWorkspace();
+    assert.equal(hooks.syncState().revision, 4);
+    assert.equal(hooks.syncState().dirty, true);
+    const retry = hooks.saveProjectAiAccountWorkspace();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(typeof finishRead, "function");
+    if (newerEdit) hooks.editCanvas("Newer local requirements while reconciliation waits");
+    finishRead(jsonResponse({ ok: true, accountKey,
+      documents: { files: { revision: 5, data: acceptedSnapshot } } }));
+    await retry;
+    assert.deepEqual(writes[0], writes[1], "the retry uses the immutable previously sent snapshot and CAS base");
+    assert.equal(hooks.syncState().revision, 5);
+    assert.equal(hooks.syncState().conflict, false);
+    assert.equal(hooks.syncState().dirty, newerEdit);
+    assert.equal(hooks.syncState().localDirty, newerEdit);
+    await hooks.saveProjectAiAccountWorkspace();
+    if (newerEdit) {
+      assert.equal(writes.length, 3);
+      assert.equal(writes[2].baseRevision, 5);
+      assert.equal(Object.values(writes[2].data.miniProjects)[0].canvas.markdown,
+        "Newer local requirements while reconciliation waits");
+      assert.equal(hooks.syncState().revision, 6);
+      assert.equal(hooks.syncState().dirty, false);
+    } else assert.equal(writes.length, 2, "an exact accepted snapshot is acknowledged without another PUT");
+  });
+}
+
+test("a divergent cloud snapshot after a revision conflict is never merged into or over local work", async () => {
+  const accountKey = "divergent-ack-account";
+  const { storage, snapshot } = canonicalAccountFixture(accountKey, 4);
+  const remote = JSON.parse(JSON.stringify(snapshot));
+  Object.values(remote.miniProjects)[0].canvas.markdown = "Independent requirements from another browser";
+  let writes = 0;
+  let reads = 0;
+  const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async (_url, init) => {
+    if (init.method === "GET") {
+      reads++;
+      return jsonResponse({ ok: true, accountKey, documents: { files: { revision: 5, data: remote } } });
+    }
+    writes++;
+    return jsonResponse({ ok: false, code: "account_data_revision_conflict" }, 409);
+  } });
+  restoreAccountFixture(hooks, accountKey);
+  hooks.account(accountKey, true);
+  hooks.editCanvas("Independent local requirements must remain intact");
+  await hooks.saveProjectAiAccountWorkspace();
+  await hooks.saveProjectAiAccountWorkspace();
+  assert.equal(reads, 1);
+  assert.equal(writes, 1, "the conflict pauses automatic writes instead of merging snapshots");
+  assert.equal(hooks.syncState().revision, 4);
+  assert.equal(hooks.syncState().conflict, true);
+  assert.equal(hooks.syncState().localDirty, true);
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Independent local requirements must remain intact");
+  assert.equal(Object.values(storedAccountWorkspace(storage).miniProjects)[0].canvas.markdown,
+    "Independent local requirements must remain intact");
+  assert.equal(Object.values(remote.miniProjects)[0].canvas.markdown, "Independent requirements from another browser");
+});
+
+for (const failure of ["unavailable", "network", "expired", "missing-identity"]) {
+  test(`a failed conflict-verification read (${failure}) cannot invent a divergent cloud copy`, async () => {
+    const accountKey = `verification-${failure}`;
+    const { storage, snapshot } = canonicalAccountFixture(accountKey, 4);
+    let writes = 0;
+    let reads = 0;
+    const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async (_url, init) => {
+      if (init.method === "PUT") {
+        writes++;
+        return jsonResponse({ ok: false, code: "account_data_revision_conflict" }, 409);
+      }
+      reads++;
+      if (failure === "network") throw new Error("The verification connection failed");
+      if (failure === "unavailable") return jsonResponse({ ok: false }, 503);
+      if (failure === "expired") return jsonResponse({ ok: false }, 401);
+      return jsonResponse({ ok: true, documents: { files: { revision: 5, data: snapshot } } });
+    } });
+    restoreAccountFixture(hooks, accountKey);
+    hooks.account(accountKey, true);
+    hooks.editCanvas("Unverified cloud data must not replace these local requirements");
+    await hooks.saveProjectAiAccountWorkspace();
+    assert.equal(writes, 1);
+    assert.equal(reads, 1);
+    assert.equal(hooks.syncState().revision, 4);
+    assert.equal(hooks.syncState().dirty, true);
+    assert.equal(hooks.syncState().localDirty, true);
+    assert.equal(hooks.syncState().conflict, false, "an unread or unidentified workspace is not a verified divergent snapshot");
+    assert.equal(hooks.syncState().ready, failure !== "expired");
+    assert.equal(hooks.getProjectInstructionSnapshot().markdown,
+      "Unverified cloud data must not replace these local requirements");
+    assert.equal(Object.values(storedAccountWorkspace(storage).miniProjects)[0].canvas.markdown,
+      "Unverified cloud data must not replace these local requirements");
+  });
+}
+
 test("legacy account document order does not affect consolidation or the first atomic save", async () => {
   const fixture = loadCanvasLifecycleHooks().hooks;
   const active = fixture.createEmptyProject();
@@ -957,7 +1109,7 @@ test("legacy account document order does not affect consolidation or the first a
     assert.equal(body.data.draftCanvas.markdown, "Legacy active specification");
     assert.equal(hooks.syncState().dirty, false);
     const sync = JSON.parse(storage.get("ud_avr_ai_account_sync_v1"));
-    assert.equal(sync.schemaVersion, 4);
+    assert.equal(sync.schemaVersion, 5);
     assert.equal(sync.revision, 8);
   }
 });
@@ -1023,6 +1175,325 @@ test("canonical account saves send draft and projects together and retain edits 
   assert.equal(Object.values(body.data.miniProjects)[0].canvas.markdown, "Submitted draft");
   assert.equal(body.data.draftCanvas.markdown, "");
   assert.equal(body.expectedLegacyInstructionRevision, undefined);
+});
+
+for (const rejectedStatus of [400, 413, 415]) {
+  test(`a rejected account workspace save (${rejectedStatus}) cannot acknowledge a newer corrected snapshot`, async () => {
+    let finishRejectedSave;
+    const writes = [];
+    const { hooks, storage } = loadCanvasLifecycleHooks(new Map(), { fetch: (_url, init) => {
+      writes.push(JSON.parse(init.body));
+      return writes.length === 1
+        ? new Promise(resolve => { finishRejectedSave = resolve; })
+        : Promise.resolve(jsonResponse({ ok: true, document: { revision: 1 } }));
+    } });
+    hooks.account("rejected-save-account", true);
+    hooks.createEmptyProject();
+    hooks.editCanvas("The snapshot rejected by the server");
+    const pending = hooks.saveProjectAiAccountWorkspace();
+    hooks.editCanvas("Corrected requirements that must reach the cloud");
+    const corrected = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
+    finishRejectedSave(jsonResponse({ ok: false, code: "invalid_account_data", message: "The sent snapshot was rejected." }, rejectedStatus));
+    await pending;
+
+    assert.equal(hooks.syncState().dirty, true, "a rejection applies only to the sent snapshot");
+    assert.equal(hooks.syncState().localDirty, true);
+    assert.equal(hooks.syncState().revision, 0);
+    assert.equal(hooks.syncState().conflict, false, "validation failure is not a newer cloud revision");
+    assert.equal(JSON.parse(storage.get("ud_avr_ai_account_sync_v1")).dirty, true);
+    await hooks.saveProjectAiAccountWorkspace();
+    assert.equal(writes.length, 2);
+    assert.equal(writes[1].baseRevision, 0, "a rejected PUT cannot advance the CAS base");
+    assert.deepEqual(writes[1].data, corrected);
+    assert.equal(hooks.syncState().revision, 1);
+    assert.equal(hooks.syncState().dirty, false);
+    assert.equal(hooks.syncState().localDirty, false);
+  });
+
+  test(`an unchanged rejected account workspace (${rejectedStatus}) remains unsaved without repeatedly submitting it`, async () => {
+    const timers = new Map();
+    let timerSequence = 0;
+    const writes = [];
+    const { hooks, storage } = loadCanvasLifecycleHooks(new Map(), {
+      setTimeout(callback) { timers.set(++timerSequence, callback); return timerSequence; },
+      clearTimeout(id) { timers.delete(id); },
+      fetch: async (_url, init) => {
+        writes.push(JSON.parse(init.body));
+        return writes.length === 1
+          ? jsonResponse({ ok: false, code: "invalid_account_data", message: "Correct this snapshot before retrying." }, rejectedStatus)
+          : jsonResponse({ ok: true, document: { revision: 1 } });
+      },
+    });
+    hooks.account("blocked-save-account", true);
+    hooks.editCanvas("A draft rejected by the server");
+    await hooks.saveProjectAiAccountWorkspace();
+    assert.equal(hooks.syncState().dirty, true, "a rejected snapshot has not been synchronized");
+    assert.equal(hooks.syncState().localDirty, true);
+    assert.equal(hooks.syncState().revision, 0);
+    assert.equal(hooks.syncState().conflict, false);
+    assert.equal(JSON.parse(storage.get("ud_avr_ai_account_sync_v1")).dirty, true);
+    await hooks.saveProjectAiAccountWorkspace();
+    for (let round = 0; round < 3 && timers.size; round += 1) {
+      const pendingTimers = [...timers.values()];
+      timers.clear();
+      for (const callback of pendingTimers) callback();
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(writes.length, 1, "the unchanged rejected payload must not loop on automatic retries");
+
+    hooks.editCanvas("A corrected local draft");
+    await hooks.saveProjectAiAccountWorkspace();
+    assert.equal(writes.length, 2, "a real edit must resume saving");
+    assert.equal(writes[1].baseRevision, 0);
+    assert.equal(writes[1].data.draftCanvas.markdown, "A corrected local draft");
+    assert.equal(hooks.syncState().dirty, false);
+    assert.equal(hooks.syncState().localDirty, false);
+  });
+}
+
+test("a pending tab's cloud acknowledgement and no-op flush cannot replace a newer shared local workspace", async () => {
+  const accountKey = "shared-local-ack";
+  const { storage } = canonicalAccountFixture(accountKey, 4);
+  let finishSave;
+  let submitted;
+  const tabA = loadCanvasLifecycleHooks(storage, { fetch: (_url, init) => {
+    submitted = JSON.parse(init.body);
+    return new Promise(resolve => { finishSave = resolve; });
+  } }).hooks;
+  restoreAccountFixture(tabA, accountKey);
+  tabA.account(accountKey, true);
+  tabA.editCanvas("The version submitted by tab A");
+  const pending = tabA.saveProjectAiAccountWorkspace();
+
+  // B opens the latest local checkpoint, then changes it while A's PUT waits.
+  const tabB = loadCanvasLifecycleHooks(storage).hooks;
+  restoreAccountFixture(tabB, accountKey);
+  tabB.account(accountKey, true);
+  tabB.editCanvas("Newer unsent requirements from tab B");
+  finishSave(jsonResponse({ ok: true, document: { revision: 5 } }));
+  await pending;
+  assert.equal(JSON.parse(storage.get("ud_avr_ai_local_dirty_v1")).dirty, true,
+    "A's acknowledgement cannot mark B's newer checkpoint synchronized");
+  assert.equal(JSON.parse(storage.get("ud_avr_ai_account_sync_v1")).dirty, true);
+
+  tabA.persistProjectInstruction({ immediate: true });
+  tabA.persistState();
+  assert.equal(Object.values(storedAccountWorkspace(storage).miniProjects)[0].canvas.markdown,
+    "Newer unsent requirements from tab B", "no-op/unload persistence cannot write the stale in-memory model back");
+
+  let choices = 0;
+  const reloaded = loadCanvasLifecycleHooks(storage, { fetch: async () => jsonResponse({ ok: true, accountKey,
+    documents: { files: { revision: 5, data: submitted.data } } }) }).hooks;
+  restoreAccountFixture(reloaded, accountKey);
+  reloaded.confirm(async () => { choices++; return false; });
+  await reloaded.initializeProjectAiAccountWorkspace();
+  assert.equal(choices, 1, "the unsent local checkpoint must not be mistaken for an acknowledged cloud copy");
+  assert.equal(reloaded.getProjectInstructionSnapshot().markdown, "Newer unsent requirements from tab B");
+  assert.equal(reloaded.syncState().conflict, true);
+});
+
+test("a held cloud acknowledgement cannot clean another tab's draft before its local debounce commits", async () => {
+  let finishSave;
+  const { hooks: tabA, storage } = loadCanvasLifecycleHooks(new Map(), {
+    fetch: () => new Promise(resolve => { finishSave = resolve; }),
+  });
+  tabA.createEmptyProject();
+  tabA.account("pending-marker-account", true);
+  tabA.editCanvas("The immutable snapshot submitted by tab A");
+  const pending = tabA.saveProjectAiAccountWorkspace();
+  const checkpoint = JSON.parse(storage.get(workspacePersistence.KEY)).localCheckpoint;
+  const tabB = loadCanvasLifecycleHooks(storage).hooks;
+  restoreAccountFixture(tabB, "pending-marker-account");
+  tabB.account("pending-marker-account", true);
+  tabB.queueCanvas("Tab B's draft is still waiting for its local debounce");
+  assert.equal(JSON.parse(storage.get(workspacePersistence.KEY)).localCheckpoint, checkpoint);
+  assert.equal(JSON.parse(storage.get("ud_avr_ai_local_dirty_v1")).dirty, true);
+  finishSave(jsonResponse({ ok: true, document: { revision: 1 } }));
+  await pending;
+  assert.equal(JSON.parse(storage.get("ud_avr_ai_local_dirty_v1")).dirty, true);
+  assert.equal(JSON.parse(storage.get("ud_avr_ai_account_sync_v1")).dirty, true);
+});
+
+test("a clean acknowledgement of the same local checkpoint supplies another tab's newer CAS base", async () => {
+  const accountKey = "shared-clean-base";
+  const { storage } = canonicalAccountFixture(accountKey, 4);
+  let finishSave;
+  const tabA = loadCanvasLifecycleHooks(storage, {
+    fetch: () => new Promise(resolve => { finishSave = resolve; }),
+  }).hooks;
+  restoreAccountFixture(tabA, accountKey);
+  tabA.account(accountKey, true);
+  tabA.editCanvas("The same local checkpoint is submitted by tab A");
+  const pending = tabA.saveProjectAiAccountWorkspace();
+  const writes = [];
+  const tabB = loadCanvasLifecycleHooks(storage, { fetch: async (_url, init) => {
+    writes.push(JSON.parse(init.body));
+    return jsonResponse({ ok: true, document: { revision: 6 } });
+  } }).hooks;
+  restoreAccountFixture(tabB, accountKey);
+  tabB.account(accountKey, true);
+  finishSave(jsonResponse({ ok: true, document: { revision: 5 } }));
+  await pending;
+  tabB.editCanvas("A later edit based on the acknowledged checkpoint");
+  await tabB.saveProjectAiAccountWorkspace();
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].baseRevision, 5, "a bound clean acknowledgement is a valid newer base for the exact same data");
+  assert.equal(Object.values(writes[0].data.miniProjects)[0].canvas.markdown,
+    "A later edit based on the acknowledged checkpoint");
+  assert.equal(tabB.syncState().revision, 6);
+  assert.equal(tabB.syncState().dirty, false);
+});
+
+test("a stale tab's meaningful edit preserves both local versions instead of overwriting the newer workspace", async () => {
+  const accountKey = "shared-local-divergence";
+  const { storage } = canonicalAccountFixture(accountKey, 4);
+  let writes = 0;
+  const tabA = loadCanvasLifecycleHooks(storage, { fetch: async () => {
+    writes++;
+    return jsonResponse({ ok: true, document: { revision: 5 } });
+  } }).hooks;
+  const tabB = loadCanvasLifecycleHooks(storage).hooks;
+  for (const tab of [tabA, tabB]) {
+    restoreAccountFixture(tab, accountKey);
+    tab.account(accountKey, true);
+  }
+  tabB.editCanvas("Tab B's newer local requirements");
+  tabA.editCanvas("Tab A's independent requirements");
+  await tabA.saveProjectAiAccountWorkspace();
+  assert.equal(writes, 0, "an unresolved local divergence must not submit either version as authoritative");
+  assert.equal(Object.values(storedAccountWorkspace(storage).miniProjects)[0].canvas.markdown,
+    "Tab B's newer local requirements");
+  const recoveries = [...storage.entries()].filter(([key]) => key.startsWith("ud_avr_ai_files_recovery_v1:"))
+    .map(([, raw]) => JSON.parse(raw));
+  assert.ok(recoveries.some(copy => Object.values(copy.data?.miniProjects || {}).some(
+    project => project.canvas?.markdown === "Tab A's independent requirements")),
+  "the unsaved candidate must survive in recovery before the stale writer is paused");
+  assert.equal(tabA.syncState().conflict, true);
+});
+
+test("protected recoveries keep distinct tab candidates without creating a full copy per keystroke", () => {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  hooks.createEmptyProject();
+  const base = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
+  const save = (lineage, markdown, protectedCopy = true) => {
+    const data = JSON.parse(JSON.stringify(base));
+    data.draftCanvas.markdown = markdown;
+    assert.equal(hooks.saveProjectAiWorkspaceRecovery(data, "lineage-account", { protectedCopy, lineage }), true);
+  };
+  for (let index = 0; index < 25; index++) save("tab-A", `Latest A ${index}`);
+  for (let index = 0; index < 10; index++) save("tab-B", `Latest B ${index}`);
+  let copies = workspaceRecoveryCopies(storage);
+  assert.equal(copies.filter(copy => copy.protectedLineage === "tab-A").length, 1);
+  assert.equal(copies.filter(copy => copy.protectedLineage === "tab-B").length, 1);
+  assert.equal(copies.find(copy => copy.protectedLineage === "tab-A").data.draftCanvas.markdown, "Latest A 24");
+  assert.equal(copies.find(copy => copy.protectedLineage === "tab-B").data.draftCanvas.markdown, "Latest B 9");
+  for (let index = 0; index < 6; index++) save("", `Routine copy ${index}`, false);
+  copies = workspaceRecoveryCopies(storage);
+  assert.equal(copies.filter(copy => copy.protectedCopy).length, 2);
+  assert.ok(copies.filter(copy => !copy.protectedCopy).length <= 3);
+});
+
+test("foreign checkpoint recovery retains an unflushed chat under its outgoing project scope", () => {
+  const { hooks: tabA, storage } = loadCanvasLifecycleHooks();
+  const first = tabA.createEmptyProject();
+  tabA.account("scope-account", true);
+  const context = JSON.parse(JSON.stringify(tabA.getProjectChatContext()));
+  const second = tabA.createEmptyProject();
+  const conversation = context.conversation;
+  conversation.threads[0].draft = "The pending draft belongs to the first project";
+  tabA.chatController({ getScopedSnapshot: () => ({ scope: context, conversation }),
+    flush: () => false, cancel() {}, refresh() {} });
+  const tabB = loadCanvasLifecycleHooks(storage).hooks;
+  restoreAccountFixture(tabB, "scope-account");
+  tabB.account("scope-account", true);
+  tabB.editCanvas("Another tab now owns the saved checkpoint");
+  const foreignEnvelope = storage.get(workspacePersistence.KEY);
+  const foreignSync = storage.get("ud_avr_ai_account_sync_v1");
+  const foreignDirty = storage.get("ud_avr_ai_local_dirty_v1");
+  assert.equal(tabA.requireWorkspaceOwnership(), false);
+  assert.equal(storage.get(workspacePersistence.KEY), foreignEnvelope);
+  assert.equal(storage.get("ud_avr_ai_account_sync_v1"), foreignSync);
+  assert.equal(storage.get("ud_avr_ai_local_dirty_v1"), foreignDirty);
+  const copy = workspaceRecoveryCopies(storage).find(item => item.protectedCopy &&
+    item.data.miniProjects[first.instanceId]?.conversation?.threads.some(chat => chat.draft === conversation.threads[0].draft));
+  assert.ok(copy, "the pending controller draft must survive in protected recovery");
+  assert.equal(copy.data.current, second.files.find(file => file.role === "source").name);
+  assert.equal(copy.data.miniProjects[second.instanceId].conversation, undefined);
+});
+
+test("a failed account-transition barrier retains the pending chat in its live owner and recovery", () => {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  const project = hooks.createEmptyProject();
+  hooks.account("outgoing-account", true);
+  const context = JSON.parse(JSON.stringify(hooks.getProjectChatContext()));
+  const conversation = context.conversation;
+  conversation.threads[0].draft = "Pending input survives a failed persistence barrier";
+  let refreshed;
+  hooks.chatController({ flush: () => false, cancel() {}, getScopedSnapshot: () => ({ scope: context, conversation }),
+    refresh() { refreshed = hooks.getProjectChatContext(); } });
+  hooks.resetProjectAiAccountWorkspaceRuntime();
+  const model = hooks.getProjectAiAccountFilesSnapshot();
+  assert.equal(model.miniProjects[project.instanceId].conversation.threads[0].draft, conversation.threads[0].draft);
+  assert.ok(refreshed.accountEpoch > context.accountEpoch);
+  assert.equal(refreshed.conversation.threads[0].draft, conversation.threads[0].draft);
+  assert.ok(workspaceRecoveryCopies(storage).some(copy => copy.protectedCopy &&
+    copy.data.miniProjects[project.instanceId]?.conversation?.threads[0].draft === conversation.threads[0].draft));
+  assert.equal(storedAccountWorkspace(storage).miniProjects[project.instanceId].conversation, undefined,
+    "a failed barrier cannot claim that the canonical write succeeded");
+});
+
+for (const action of ["rename", "delete"]) {
+  test(`a failed local workspace write rolls back project ${action}`, async () => {
+    let failCanonicalWrite = false;
+    const storage = new Map();
+    const { hooks } = loadCanvasLifecycleHooks(storage, {
+      setItem(key, value) {
+        const frontend = fs.readFileSync(path.join(__dirname, "../public/AVR-Programming.js"), "utf8");
+        const canonicalKey = /const STORAGE_STATE = "([^"]+)"/.exec(frontend)?.[1]
+          || require("../public/avr-workspace-persistence.js").KEY;
+        if (failCanonicalWrite && key === canonicalKey) throw new Error("Local storage quota exceeded");
+        storage.set(key, String(value));
+      },
+      fetch: async () => jsonResponse({ ok: true, document: { revision: 1 } }),
+    });
+    hooks.account("local-action-failure", true);
+    const project = hooks.createEmptyProject();
+    hooks.editCanvas("Requirements that must remain attached to the saved project");
+    await hooks.saveProjectAiAccountWorkspace();
+    const previousModel = JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot()));
+    const previousCanonical = JSON.parse(JSON.stringify(storedAccountWorkspace(storage)));
+    const previousNotifications = new Set(hooks.notifications().map(item => item.id));
+    hooks.confirm(true);
+    failCanonicalWrite = true;
+    let failed = false;
+    let result;
+    try {
+      result = action === "rename"
+        ? hooks.renameMiniProjectInstance(project.instanceId, "Unsaved new project name")
+        : await hooks.deleteFile(project.files.find(file => file.role === "source").name);
+    } catch { failed = true; }
+    assert.deepEqual(JSON.parse(JSON.stringify(hooks.getProjectAiAccountFilesSnapshot())), previousModel,
+      "a discrete action that could not commit locally must restore the owner model");
+    assert.deepEqual(storedAccountWorkspace(storage), previousCanonical);
+    assert.ok(failed || result === false || hooks.notifications().some(item =>
+      !previousNotifications.has(item.id) && item.tone === "error"), "the failed action must be observable");
+  });
+}
+
+test("colliding maximum-length source names stay within the account filename contract", () => {
+  const { hooks } = loadCanvasLifecycleHooks();
+  const name = "a".repeat(94) + ".c";
+  for (let collision = 0; collision < 12; collision += 1) {
+    hooks.installMiniProjectDefinition({ schemaVersion: 1, id: `long-source-${collision}`, title: `Long source ${collision}`,
+      canvasName: "Requirements.md", files: [{ role: "source", name, content: `// Import ${collision}` }] });
+  }
+  const names = Object.keys(hooks.getProjectAiAccountFilesSnapshot().files);
+  assert.equal(names.length, 12);
+  assert.equal(new Set(names).size, 12);
+  for (const allocated of names) {
+    assert.ok(allocated.length <= 96, `the stored name must fit the account API: ${allocated.length}`);
+    assert.match(allocated, /\.c$/i, "collision suffixes must preserve the source extension");
+  }
 });
 
 test("stale account save responses cannot acknowledge another account's projects", async () => {
@@ -1100,6 +1571,7 @@ test("canonical cloud data ignores stale instruction rows and never starts a sec
       files: { revision: 4, data: canonical },
     } });
   } });
+  hooks.loadState();
   hooks.restoreProjectAiAccountSyncState();
   hooks.account(accountKey);
   await hooks.initializeProjectAiAccountWorkspace();
@@ -1114,7 +1586,7 @@ test("failed canonical local writes keep legacy migration sources and do not ack
   const legacyInstruction = JSON.stringify({ schemaVersion: 2, revision: 7, markdown: "Recoverable legacy draft" });
   const storage = new Map([["ud_avr_ai_project_instruction_v2", legacyInstruction]]);
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
-    if (key === "ud_avr_programming_state_v4") throw new Error("Storage quota");
+    if (key === workspacePersistence.KEY) throw new Error("Storage quota");
     storage.set(key, String(value));
   } });
   hooks.restoreProjectInstruction();
@@ -3922,7 +4394,7 @@ test("legacy nested groups migrate direct guide links without retaining folder s
   assert.equal(alpha.files.guide, "shared.md");
   assert.equal(beta.files.guide, "leaf.md");
   assert.equal(hooks.persistState(), true);
-  assert.equal("fileGroups" in JSON.parse(storage.get("ud_avr_programming_state_v4")), false);
+  assert.equal("fileGroups" in storedAccountWorkspace(storage), false);
 });
 
 test("a guide shared by old grouped sources migrates into independently owned project guides", () => {
@@ -3988,6 +4460,7 @@ test("cloud group migration writes one canonical snapshot without reopening the 
       files: { revision: 7, data: cloud }, instruction: { revision: 99, data: { markdown: "Inactive draft" } },
     } }) : jsonResponse({ ok: true, document: { revision: 8 } });
   } });
+  hooks.loadState();
   hooks.restoreProjectAiAccountSyncState();
   hooks.account(accountKey);
   await hooks.initializeProjectAiAccountWorkspace();
@@ -4011,7 +4484,7 @@ test("failed local group migration leaves the old envelope and split keys availa
   const oldGroupKey = "ud_avr_programming_file_groups_v1";
   const storage = new Map([["ud_avr_programming_state_v4", legacy], [oldGroupKey, "legacy backup"]]);
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key) {
-    if (key === "ud_avr_programming_state_v4") throw new Error("Storage quota");
+    if (key === workspacePersistence.KEY) throw new Error("Storage quota");
   } });
   const legacyGroups = hooks.loadState();
   hooks.restoreProjectInstruction();
@@ -4022,8 +4495,8 @@ test("failed local group migration leaves the old envelope and split keys availa
 });
 
 test("unreadable and newer workspace envelopes are preserved exactly before any replacement write", () => {
-  for (const raw of ["{ damaged workspace", JSON.stringify({ schemaVersion: 99, files: { "future.c": "Future source" }, opaque: [1, 2] })]) {
-    const stateKey = "ud_avr_programming_state_v4";
+  for (const raw of ["{ damaged workspace", "[]", "null", JSON.stringify({ schemaVersion: 99, files: { "future.c": "Future source" }, opaque: [1, 2] })]) {
+    const stateKey = workspacePersistence.KEY;
     const storage = new Map([[stateKey, raw]]);
     const { hooks } = loadCanvasLifecycleHooks(storage);
     hooks.loadState();
@@ -4038,7 +4511,7 @@ test("unreadable and newer workspace envelopes are preserved exactly before any 
 });
 
 test("a failed raw workspace recovery copy blocks local overwrite and cloud initialization or save", async () => {
-  const stateKey = "ud_avr_programming_state_v4", raw = "{ original unreadable projects";
+  const stateKey = workspacePersistence.KEY, raw = "{ original unreadable projects";
   const storage = new Map([[stateKey, raw]]);
   let requests = 0;
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
@@ -4063,7 +4536,7 @@ test("draft chat transfer retains its tree and leaves a current empty unassigned
   let fail = false;
   const storage = new Map();
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
-    if (fail && key === "ud_avr_programming_state_v4") throw new Error("Storage quota");
+    if (fail && key === workspacePersistence.KEY) throw new Error("Storage quota");
     storage.set(key, String(value));
   } });
   const conversation = normalize({ schemaVersion: 1, draft: "Unsent draft", messages: [
@@ -4114,7 +4587,7 @@ test("meaningful workspace detection reads chat collections and treats the canon
 });
 
 test("local workspace migration isolates activity history from later writes by a cached old tab", () => {
-  const canonicalKey = "ud_avr_programming_state_v4", legacyKey = "ud_avr_programming_state_v3";
+  const canonicalKey = workspacePersistence.KEY, legacyKey = "ud_avr_programming_state_v4";
   const fixture = loadCanvasLifecycleHooks();
   fixture.hooks.createEmptyProject();
   const original = JSON.parse(JSON.stringify(fixture.hooks.getProjectAiAccountFilesSnapshot()));
@@ -4150,7 +4623,7 @@ test("local workspace migration isolates activity history from later writes by a
 });
 
 test("failed canonical-key migration retains the legacy workspace unchanged", () => {
-  const legacyKey = "ud_avr_programming_state_v3", canonicalKey = "ud_avr_programming_state_v4";
+  const legacyKey = "ud_avr_programming_state_v4", canonicalKey = workspacePersistence.KEY;
   const raw = JSON.stringify({ schemaVersion: 3, files: { "notes.txt": "Original bytes" }, authorship: {}, miniProjects: {}, current: null });
   const storage = new Map([[legacyKey, raw]]);
   const { hooks } = loadCanvasLifecycleHooks(storage, { setItem(key, value) {
@@ -4174,7 +4647,7 @@ test("corrupt new chat trees preserve the complete workspace instead of falling 
     if (future) project.conversation.schemaVersion = 99;
     else project.conversation.threads[0].messages[0].parentId = "missing-parent";
     const raw = JSON.stringify(state), storage = new Map([
-      ["ud_avr_programming_state_v4", raw],
+      [workspacePersistence.KEY, raw],
       ["ud_avr_programming_state_v2", JSON.stringify({ schemaVersion: 3, files: { "old.c": "Do not load this old copy" }, miniProjects: {} })],
     ]);
     const { hooks } = loadCanvasLifecycleHooks(storage);

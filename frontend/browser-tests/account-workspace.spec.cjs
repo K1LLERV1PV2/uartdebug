@@ -4,7 +4,7 @@ const { test, expect } = require("playwright/test");
 const fs = require("node:fs");
 
 const accountKey = "browser-sync-regression-account";
-const workspaceKey = "ud_avr_programming_state_v4";
+const workspaceKey = "ud_avr_programming_state_v5";
 const syncKey = "ud_avr_ai_account_sync_v1";
 const dirtyKey = "ud_avr_ai_local_dirty_v1";
 
@@ -34,7 +34,10 @@ async function open(page) {
 }
 
 async function readWorkspace(page) {
-  return page.evaluate(key => JSON.parse(localStorage.getItem(key)), workspaceKey);
+  return page.evaluate(key => {
+    const { localCheckpoint: _checkpoint, ...business } = JSON.parse(localStorage.getItem(key));
+    return business;
+  }, workspaceKey);
 }
 
 async function readSync(page) {
@@ -58,10 +61,11 @@ async function seedProject(page) {
 }
 
 async function setSyncMarker(page, revision, { dirty = false, conflict = false } = {}) {
-  await page.evaluate(({ syncKey, dirtyKey, accountKey, revision, dirty, conflict }) => {
-    localStorage.setItem(syncKey, JSON.stringify({ schemaVersion: 4, accountKey, revision, dirty, conflict, legacyInstructionRevision: null }));
-    localStorage.setItem(dirtyKey, JSON.stringify({ schemaVersion: 4, dirty }));
-  }, { syncKey, dirtyKey, accountKey, revision, dirty, conflict });
+  await page.evaluate(({ workspaceKey, syncKey, dirtyKey, accountKey, revision, dirty, conflict }) => {
+    const localCheckpoint = JSON.parse(localStorage.getItem(workspaceKey)).localCheckpoint;
+    localStorage.setItem(syncKey, JSON.stringify({ schemaVersion: 5, localCheckpoint, accountKey, revision, dirty, conflict, legacyInstructionRevision: null }));
+    localStorage.setItem(dirtyKey, JSON.stringify({ schemaVersion: 5, localCheckpoint, dirty }));
+  }, { workspaceKey, syncKey, dirtyKey, accountKey, revision, dirty, conflict });
 }
 
 async function mockCloud(page, data, revision = 5) {
@@ -100,8 +104,10 @@ async function mockCloud(page, data, revision = 5) {
 async function waitForCleanSync(page, revision) {
   await expect.poll(async () => {
     const state = await readSync(page);
-    return { revision: state?.revision, dirty: state?.dirty, conflict: state?.conflict };
-  }).toEqual({ revision, dirty: false, conflict: false });
+    const checkpoint = await page.evaluate(key => JSON.parse(localStorage.getItem(key)).localCheckpoint, workspaceKey);
+    return { accountKey: state?.accountKey, revision: state?.revision, dirty: state?.dirty, conflict: state?.conflict,
+      bound: state?.schemaVersion === 5 && !!checkpoint && state.localCheckpoint === checkpoint };
+  }).toEqual({ accountKey, revision, dirty: false, conflict: false, bound: true });
   await expect(page.locator("#siteDialog")).toBeHidden();
 }
 
@@ -218,7 +224,10 @@ test("different saved chat branches remain a conflict when project code and canv
   const remoteThread = Object.values(remote.miniProjects)[0].conversation.threads[0];
   remoteThread.activeLeafId = "branch-second";
   remoteThread.selectedChildIds = ["branch-question", "branch-second"];
-  await page.addInitScript(({ key, data }) => localStorage.setItem(key, JSON.stringify(data)), { key: workspaceKey, data: local });
+  await page.addInitScript(({ key, data }) => {
+    const localCheckpoint = JSON.parse(localStorage.getItem(key))?.localCheckpoint || crypto.randomUUID();
+    localStorage.setItem(key, JSON.stringify({ ...data, localCheckpoint }));
+  }, { key: workspaceKey, data: local });
   await setSyncMarker(page, 5, { dirty: true });
   const cloud = await mockCloud(page, remote, 6);
   await page.reload({ waitUntil: "load" });
@@ -324,9 +333,10 @@ test("an unused missing conversation does not turn clean cloud adoption into a c
   const remote = structuredClone(local);
   remote.files[remote.current] = "// Newer cloud source with no local edits\n" + remote.files[remote.current];
   await page.addInitScript(({ workspaceKey, syncKey, dirtyKey, accountKey, data }) => {
-    localStorage.setItem(workspaceKey, JSON.stringify(data));
-    localStorage.setItem(syncKey, JSON.stringify({ schemaVersion: 4, accountKey, revision: 5, dirty: false, conflict: false, legacyInstructionRevision: null }));
-    localStorage.setItem(dirtyKey, JSON.stringify({ schemaVersion: 4, dirty: false }));
+    const localCheckpoint = crypto.randomUUID();
+    localStorage.setItem(workspaceKey, JSON.stringify({ ...data, localCheckpoint }));
+    localStorage.setItem(syncKey, JSON.stringify({ schemaVersion: 5, localCheckpoint, accountKey, revision: 5, dirty: false, conflict: false, legacyInstructionRevision: null }));
+    localStorage.setItem(dirtyKey, JSON.stringify({ schemaVersion: 5, localCheckpoint, dirty: false }));
   }, { workspaceKey, syncKey, dirtyKey, accountKey, data: local });
   const cloud = await mockCloud(page, remote, 6);
   await page.reload({ waitUntil: "load" });
