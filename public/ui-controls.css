@@ -56,9 +56,14 @@
   }
 }
 
-:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar {
-  width: var(--ui-scrollbar-size, 8px);
-  height: var(--ui-scrollbar-size, 8px);
+/* Match Chromium's native thin track and painted thumb with the arrows hidden. */
+:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints, .connection-control select)::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints, .connection-control select)::-webkit-scrollbar-thumb {
+  border-width: 2px;
 }
 
 body.is-column-resizing,

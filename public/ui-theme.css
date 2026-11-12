@@ -56,8 +56,7 @@
 }
 
 ::-webkit-scrollbar {
-  width: var(--ui-scrollbar-size, 12px);
-  height: var(--ui-scrollbar-size, 12px);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-button {
@@ -72,12 +71,14 @@
 }
 
 ::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
   border-radius: 999px;
   background: var(--ui-scrollbar-thumb, rgba(70, 255, 120, 0.55));
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--ui-scrollbar-thumb-hover, rgba(70, 255, 120, 0.72));
+  background-color: var(--ui-scrollbar-thumb-hover, rgba(70, 255, 120, 0.72));
 }
 
 .CodeMirror-scrollbar-filler,
