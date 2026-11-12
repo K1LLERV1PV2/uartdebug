@@ -218,7 +218,7 @@ function normalizeChatRequest(raw) {
 function specificationTarget(markdown, devices) {
   const header = v3ProjectTarget(markdown);
   const hardware =
-    /^##[ \t]+(?:Требования к аппаратной части|Аппаратные требования|Hardware requirements|Requisitos de hardware|Exigences matérielles|Hardwareanforderungen)(?:[ \t]+[1-9][0-9]*)?[ \t]*\n([\s\S]*?)(?=^##[ \t]|$(?![\s\S]))/im.exec(
+    /^##[ \t]+(?:[1-9][0-9]*[ \t]+)?(?:Требования к аппаратной части|Аппаратные требования|Hardware requirements|Requisitos de hardware|Exigences matérielles|Hardwareanforderungen)(?:[ \t]+[1-9][0-9]*)?[ \t]*\n([\s\S]*?)(?=^##[ \t]|$(?![\s\S]))/im.exec(
       specificationText(markdown),
     )?.[1] || "";
   const text = [hardware, header?.mcu, header?.packageName].filter(Boolean).join("\n");

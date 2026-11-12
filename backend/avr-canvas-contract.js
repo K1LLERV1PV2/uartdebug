@@ -660,7 +660,7 @@ function validateV3Model(content, { identity, markdown, source, device, mcu, pac
   const sourceHash = digest(source);
   const tasks = [];
   const headings = projectFormat.v3TaskHeadings(markdown);
-  const canonicalNumbers = projectFormat.v3TaskHeadingNumberError(headings) === null;
+  const consecutiveNumbers = projectFormat.v3TaskHeadingNumberError(headings, { allowSuffix: true }) === null;
   const headingsByLine = new Map(headings.map(heading => [heading.line, heading]));
   const repliesByLine = new Map(projectFormat.v3Dialogue(markdown).map(reply => [reply.startLine, reply]));
   const approvedLines = new Set();
@@ -699,7 +699,10 @@ function validateV3Model(content, { identity, markdown, source, device, mcu, pac
   const ids = new Map();
   const refs = [];
   const pins = [];
-  const matchesHeading = (title, heading) => title === (canonicalNumbers ? heading.title : heading.rawTitle);
+  const matchesHeading = (title, heading) =>
+    (heading.number === heading.expected && title === heading.title) ||
+    (!!heading.legacyTitle && title === heading.legacyTitle) ||
+    (!consecutiveNumbers && title === heading.rawTitle);
   const identify = (value, kind, path) => {
     if (!isObject(value)) invalid(path, "must be a mapping");
     if (typeof value.id !== "string" || !/^[a-z][a-z0-9_]*$/.test(value.id))
@@ -1106,11 +1109,11 @@ function validateCanvasOutput(raw, options = {}) {
       fail("Put newly agreed requirement quotes in canvas.dialogue with kind requirement.", true);
     }
     if (markdown !== input.markdown) {
-      const badHeading = projectFormat.v3TaskHeadingNumberError(markdown);
+      const badHeading = projectFormat.v3TaskHeadingNumberError(markdown, { previousMarkdown: input.markdown });
       if (badHeading) {
         fail(badHeading.expected
-          ? `Task heading at line ${badHeading.line + 1} must end with block number ${badHeading.expected}.`
-          : `Check the heading hierarchy at line ${badHeading.line + 1}. Use a parent heading and leave the continuation heading unnumbered.`, true);
+          ? `Task heading at line ${badHeading.line + 1} must begin with block number ${badHeading.expected}, followed by its title.`
+          : `Check the heading hierarchy at line ${badHeading.line + 1}. Use a parent heading and leave workflow headings unnumbered.`, true);
       }
     }
   }
