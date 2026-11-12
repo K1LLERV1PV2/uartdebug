@@ -11,7 +11,7 @@ const storageKey = "ud_notifications_session_v1";
 
 function loadNotifications({ saved = new Map(), storageThrows = false, motion = false, reducedMotion = false } = {}) {
   const { document, window: domWindow, Event } = parseHTML(
-    '<html><body><button id="bell" data-notifications-open><span data-notifications-count hidden></span></button></body></html>'
+    '<html><body><button id="bell" data-notifications-open></button><span data-notifications-latest></span></body></html>'
   );
   document.readyState = "loading";
   const nativeMatches = domWindow.Element.prototype.matches;
@@ -74,7 +74,7 @@ test("keyed notification updates keep one toast and preserve omitted fields", ()
   flushFrames();
   assert.equal(document.querySelector(".notification-toast").dataset.tone, "success");
   assert.equal(document.querySelector(".notification-toast-open > span").textContent, "Build completed");
-  assert.equal(document.querySelector("[data-notifications-count]").textContent, "1");
+  assert.equal(document.querySelector("[data-notifications-latest]").textContent, "Build completed");
 });
 
 test("notification history and visible toasts are bounded independently", () => {
