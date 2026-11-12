@@ -98,6 +98,7 @@
   const workspaceRecoveryLineage = window.UartDebugWorkspacePersistence.createId();
   let legacySyncMarkerRaw = null;
   let legacyDirtyMarkerRaw = null;
+  let legacyCheckpoint = null;
   let projectAiNotificationId = null;
   let contextMenuFile = null;
   let contextMenuTrigger = null;
@@ -181,6 +182,7 @@
   let projectAiLatestQuota = null;
   let workspaceResizeFrame = null;
   let workspaceTransitionTimer = null;
+  let pendingSpecificationReveal = null;
   let workspaceTransitionFrame = null;
   const workspaceTextAnimations = new Map();
   const workspaceMotionScrollAnchors = new Map();
@@ -922,6 +924,7 @@
     if (builtInMiniProjectCardsPromise) return builtInMiniProjectCardsPromise;
     const grid = $("fileTemplateGrid");
     if (!grid) return;
+    const heading = $("fileTemplatesTitle");
     builtInMiniProjectCardsPromise = (async () => {
       grid.setAttribute("aria-busy", "true");
       try {
@@ -946,6 +949,8 @@
         });
         const restoreFocus = !!document.activeElement && grid.contains(document.activeElement);
         grid.replaceChildren(...cards);
+        if (heading) heading.hidden = cards.length === 0;
+        grid.hidden = cards.length === 0;
         if (restoreFocus) cards[0]?.focus({ preventScroll: true });
         builtInMiniProjectCardsReady = true;
       } catch (error) {
@@ -965,6 +970,8 @@
         });
         const restoreFocus = !!document.activeElement && grid.contains(document.activeElement);
         grid.replaceChildren(message, retry);
+        if (heading) heading.hidden = false;
+        grid.hidden = false;
         if (restoreFocus) retry.focus({ preventScroll: true });
         console.warn("Project catalog could not be rendered:", error);
       } finally {
@@ -1054,6 +1061,7 @@
       if (saved.migratedFrom || saved.raw === null) {
         legacySyncMarkerRaw = syncMarkerBeforeLoad;
         legacyDirtyMarkerRaw = dirtyMarkerBeforeLoad;
+        legacyCheckpoint = saved.sourceCheckpoint;
       }
       rawState = saved.raw;
       if (rawState) {
@@ -1344,11 +1352,13 @@
         delete mediaTypes.guide;
       }
 
+      const contract = rawProject.contract === projectFormat.V3_CONTRACT ? projectFormat.V3_CONTRACT : projectFormat.V2_CONTRACT;
+      const title = String(rawProject.title || rawProject.definitionId || instanceId);
       normalized[instanceId] = {
         schemaVersion: 1,
-        contract: "uartdebug-project/v2",
+        contract,
         definitionId,
-        title: String(rawProject.title || rawProject.definitionId || instanceId),
+        title,
         displayName: String(
           rawProject.displayName ||
             rawProject.title ||
@@ -1361,6 +1371,9 @@
         canvasName: String(rawProject.canvasName || getFileStem(roleFiles.source) + ".md"),
         projectPath: String(rawProject.projectPath || "Target_Projects/" + getSafeProjectFolderName(rawProject.title || definitionId, instanceId)),
         projectDocuments: projectFormat.normalizeProjectDocuments(rawProject.projectDocuments),
+        ...(contract === projectFormat.V3_CONTRACT ? {
+          referenceFiles: projectFormat.normalizeReferenceFiles(rawProject.referenceFiles, title),
+        } : {}),
         fileNames: createDictionary(rawProject.fileNames),
         files: roleFiles,
         mediaTypes,
@@ -1727,7 +1740,7 @@
 
     return {
       schemaVersion: 1,
-      contract: "uartdebug-project/v2",
+      contract: project.contract || projectFormat.V2_CONTRACT,
       instanceId,
       id: project.definitionId,
       title: project.title,
@@ -1738,6 +1751,9 @@
       canvasName: project.canvasName,
       projectPath: project.projectPath,
       projectDocuments: projectFormat.normalizeProjectDocuments(project.projectDocuments),
+      ...(project.contract === projectFormat.V3_CONTRACT ? {
+        referenceFiles: projectFormat.normalizeReferenceFiles(project.referenceFiles, project.title),
+      } : {}),
       canvas: normalizeProjectInstructionDocument(project.canvas),
       defaultLocale: project.defaultLocale || "",
       selectedLocale: project.selectedLocale || project.defaultLocale || "",
@@ -1862,7 +1878,7 @@
 
       miniProjects[instanceId] = {
         schemaVersion: 1,
-        contract: "uartdebug-project/v2",
+        contract: definition.contract,
         definitionId: definition.id,
         title: definition.title,
         displayName: String(
@@ -1874,6 +1890,7 @@
         canvasName: definition.canvasName || getFileStem(definition.files.source.name) + ".md",
         projectPath: definition.projectPath || "Target_Projects/" + getSafeProjectFolderName(definition.title, definition.id),
         projectDocuments: definition.projectDocuments,
+        ...(definition.contract === projectFormat.V3_CONTRACT ? { referenceFiles: definition.referenceFiles } : {}),
         fileNames: Object.fromEntries(pendingFiles.map((file, index) => [file.name, definitionFiles[index].name])),
         files: roleFiles,
         mediaTypes,
@@ -1947,6 +1964,8 @@
     const allGuides = [...merged, ...incomingGuides].filter(file => file.role === "guide");
     const definition = miniProjectCore.normalizeDefinition({
       ...live, ...rawDefinition, files: [...merged, ...incoming],
+      contract: live.contract === projectFormat.V3_CONTRACT ? live.contract : rawDefinition.contract || live.contract,
+      referenceFiles: live.referenceFiles,
       defaultLocale: allGuides.some(file => file.locale === defaultLocale)
         ? defaultLocale : incomingGuides[0]?.locale || allGuides[0]?.locale || "en",
     });
@@ -1997,7 +2016,18 @@
         delete project.fileNames[name];
       }
       project.title = definition.title;
-      project.displayName = rawDefinition.displayName || definition.title;
+      project.contract = definition.contract;
+      if (definition.contract === projectFormat.V3_CONTRACT) {
+        project.referenceFiles = definition.referenceFiles;
+        if (existing.contract !== projectFormat.V3_CONTRACT) {
+          const placeholder = project.files.guide;
+          if (placeholder && !files[placeholder].trim()) {
+            project.fileNames[placeholder] = definition.title + ".Description.md";
+          }
+        }
+      }
+      project.displayName = existing.displayName && existing.displayName !== existing.title
+        ? existing.displayName : rawDefinition.displayName || definition.title;
       project.summary = definition.summary;
       project.version = definition.version;
       project.canvasName = definition.canvasName || project.canvasName;
@@ -2358,14 +2388,9 @@
   // Dividers resize adjacent panels; a closed neighbor passes spare width to an
   // expanded pane so compact panels can be reopened independently.
   function getWorkspacePanelSpecs() {
-    const container = getCanvasSplitContainer();
-    const style = container && window.getComputedStyle?.(container);
-    const notch = Number.parseFloat(style?.getPropertyValue?.("--panel-action-width")) || 34;
     return workspacePanelMinWidths.map((_, index) => ({
       min: getWorkspacePanelMinWidth(index),
-      // Code and guide include the incoming capsule's notch. Canvas has no
-      // incoming notch, so its closed body must exclude that extra width.
-      compact: WORKSPACE_PANEL_COMPACT_WIDTH - (index === 1 ? notch : 0),
+      compact: WORKSPACE_PANEL_COMPACT_WIDTH,
     }));
   }
 
@@ -2592,6 +2617,11 @@
       }).catch(() => {});
     }
     if (!completing) workspaceTextAnimations.clear();
+    if (completing && pendingSpecificationReveal) {
+      const instruction = pendingSpecificationReveal;
+      pendingSpecificationReveal = null;
+      window.requestAnimationFrame(() => revealSpecificationQuestions(instruction));
+    }
   }
 
   function measureWorkspaceContent() {
@@ -2767,6 +2797,16 @@
       resizeWorkspacePanels(getWorkspaceWidths(), getWorkspacePanelSpecs(), index, requested),
       { persist }
     );
+  }
+
+  function revealSpecificationQuestions(instruction) {
+    if (projectInstructionDocument !== instruction ||
+        projectAiColumnWidth > WORKSPACE_PANEL_COMPACT_THRESHOLD) return;
+    if (workspaceTransitionTimer !== null) {
+      pendingSpecificationReveal = instruction;
+      return;
+    }
+    resizeWorkspacePanel(1, PROJECT_AI_COLUMN_DEFAULT_WIDTH, { persist: false });
   }
 
   function syncEditorCollapseState(collapsed = editorCollapsed) {
@@ -2962,8 +3002,7 @@
   function updatePanelActionContours() {
     const container = getCanvasSplitContainer();
     if (!container) return;
-    const panes = [...container.querySelectorAll(
-      ".project-instruction-panel, :scope > .editor-workspace, :scope > .documentation-workspace")];
+    const panes = [...container.querySelectorAll(".panel-action-host, .panel-action-notched")];
     // The matching inward offset also needs a visible radius at the bend.
     // A shallower curve pinches that radius down to about two pixels.
     const curveDepth = 52;
@@ -2981,7 +3020,7 @@
       const capsuleCurveTop = actions ? actions.getBoundingClientRect().bottom - bounds.top + 12 : 0;
       const overhang = actions ? rail : 0;
       const right = bodyRight + overhang;
-      const notch = index ? rail : 0;
+      const notch = pane.classList.contains("panel-action-notched") ? rail : 0;
       // Keep both top corners inside the narrowest compact panel's contour.
       const radius = Math.min(15, Math.max(0, (right - notch - 0.5) / 2));
       const bottomRadius = Math.min(15, Math.max(0, (bodyRight - 0.5) / 2));
@@ -3031,8 +3070,7 @@
     if (!container) return;
     const contourTemplate = $("panelActionContour")?.content?.firstElementChild;
     if (contourTemplate) {
-      for (const pane of container.querySelectorAll(
-        ".project-instruction-panel, :scope > .editor-workspace, :scope > .documentation-workspace")) {
+      for (const pane of container.querySelectorAll(".panel-action-host, .panel-action-notched")) {
         if (pane.querySelector(":scope > [data-panel-action-contour]")) continue;
         const contour = contourTemplate.cloneNode(true);
         contour.setAttribute("data-panel-action-contour", "");
@@ -3282,6 +3320,10 @@
   function renderOutliner() {
     const list = $("fileList");
     list.innerHTML = "";
+
+    const currentProject = $("currentProjectCardDetail");
+    const selectedProject = getMiniProjectForFile(current)?.project;
+    if (currentProject) currentProject.textContent = selectedProject ? getOutlinerFileLabel(selectedProject.files.source) : "";
 
     const names = getVisibleWorkspaceFileNames();
     if (!names.length) {
@@ -3887,20 +3929,11 @@
     const automatic = select.value === "auto";
     const autoOption = [...select.options].find(option => option.value === "auto");
     const autoLabel = automatic && info && !detected ? "Unknown chip" : busy && automatic ? "Working…" : "Auto detect";
-    const accessibleLabel = detected ? "Target MCU, from connection"
-      : automatic ? "Target MCU, auto detection" : "Target MCU, manual choice";
     const status = select.dataset.controlStatus || "";
-    const presentationChanged = optionsChanged || autoOption?.dataset.displayLabel !== autoLabel
-      || select.getAttribute("aria-label") !== accessibleLabel;
+    const presentationChanged = optionsChanged || autoOption?.dataset.displayLabel !== autoLabel;
     if (autoOption) autoOption.dataset.displayLabel = autoLabel;
-    select.setAttribute("aria-label", accessibleLabel);
-    select.closest(".avr-target-controls").dataset.targetRelation = detected ? "connected" : automatic ? "pending" : "manual";
     const targetLabel = select.selectedOptions[0]?.textContent || select.value;
-    const signature = describeSignatureInfo(info) || "No chip signature available";
-    const explanation = detected
-      ? "The chip identified through the selected port takes priority. Change the connected chip or clear its connection before choosing another target."
-      : "Choose a project chip manually while no supported chip is identified through the port.";
-    select.dataset.tooltip = `${accessibleLabel}: ${targetLabel}. ${status ? status + ". " : ""}Connection: ${signature}. ${explanation}`;
+    select.dataset.tooltip = status ? `Target MCU: ${targetLabel}. ${status}.` : `Target MCU: ${targetLabel}`;
     const custom = select.nextElementSibling;
     if (presentationChanged && custom?.classList.contains("custom-select")) updateCustomSelect(select, custom);
     custom?.querySelector(".custom-select-trigger")?.setAttribute("data-tooltip", select.dataset.tooltip);
@@ -4382,7 +4415,9 @@
         state.resolveImageUrl(href, node, context),
     });
     const index = createMarkdownLiveRenderIndex(rendered);
-    state.renderCache = { key, analysis, rendered, ...index };
+    const questions = state.id === "instruction" ? projectFormat.v3Dialogue(markdown)
+      .filter(reply => reply.valid && reply.marker === "?:") : [];
+    state.renderCache = { key, analysis, rendered, questions, ...index };
     return state.renderCache;
   }
 
@@ -4430,7 +4465,8 @@
     state,
     element,
     fallbackOffset,
-    cache
+    cache,
+    prepareOffset = (offset) => offset
   ) {
     if (!element) return;
     const navigate = (event) => {
@@ -4438,7 +4474,7 @@
       event.stopPropagation();
       revealMarkdownLiveSource(
         state,
-        getMarkdownLiveNavigationOffset(event, cache, fallbackOffset)
+        prepareOffset(getMarkdownLiveNavigationOffset(event, cache, fallbackOffset))
       );
     };
     element.addEventListener("pointerdown", navigate);
@@ -4483,13 +4519,13 @@
     }
   }
 
-  function addMarkdownLiveBlockWidget(state, node, renderedElement, cache) {
+  function addMarkdownLiveBlockWidget(state, node, renderedElement, cache, collapseUntil) {
     const offsets = getMarkdownNodeOffsets(node);
     const start = markdownPositionToCodeMirror(node.position, "start");
     const end = markdownPositionToCodeMirror(node.position, "end");
     if (!offsets || !start || !end || !renderedElement) return null;
 
-    const marker = addMarkdownLiveMark(state, start, end, { collapsed: true });
+    const marker = addMarkdownLiveMark(state, start, collapseUntil || end, { collapsed: true });
     if (!marker) return null;
     const wrapper = document.createElement("div");
     wrapper.className =
@@ -4602,9 +4638,38 @@
     );
     const showFootnotes = !!renderedFootnotes && !footnoteDefinitionIsActive;
     const scrollAnchor = captureMarkdownLiveScrollAnchor(state.editor);
+    const focusedAnswer = state.id === "instruction" ? document.activeElement?.dataset?.projectQuestionAnswer : null;
+    let answerToRefocus = null;
 
     state.editor.operation(() => {
       clearMarkdownLiveDecorations(state);
+      const questionsByLine = new Map(cache.questions.map(question => [question.startLine, question]));
+      for (const question of cache.questions) {
+        const line = question.promptLine;
+        if (line < firstVisibleLine || line >= lastVisibleLine) continue;
+        if (activeLines.has(line)) continue;
+        const rawLine = state.editor.getLine(line) || "";
+        const marker = /(?:^|`[ \t]+)\?:/.exec(rawLine);
+        if (!marker) continue;
+        const column = marker.index + marker[0].length - 2;
+        const from = CodeMirror.Pos(line, column);
+        const to = CodeMirror.Pos(line, column + 2);
+        const label = document.createElement("span");
+        label.className = "project-inline-answer-label";
+        label.dataset.projectQuestionAnswer = question.id;
+        label.textContent = question.answered ? "Answer" : "Write an answer…";
+        const hasSpace = /[ \t]/.test(rawLine[column + 2] || "");
+        const answerColumn = column + (hasSpace ? 3 : 2);
+        const answerPosition = CodeMirror.Pos(line, answerColumn);
+        bindMarkdownLiveSourceReveal(state, label, state.editor.indexFromPos(answerPosition), cache, (offset) => {
+          if (hasSpace) return offset;
+          state.editor.replaceRange(" ", answerPosition, answerPosition, "+input");
+          return offset + 1;
+        });
+        label.setAttribute("aria-label", `Answer ${question.id}`);
+        addMarkdownLiveMark(state, from, to, { replacedWith: label });
+        if (question.id === focusedAnswer) answerToRefocus = label;
+      }
       for (const activeLine of activeLines) {
         if (activeLine < firstVisibleLine || activeLine >= lastVisibleLine) continue;
         addMarkdownLiveLineClass(
@@ -4700,6 +4765,27 @@
         }
 
         if (!inViewport) return;
+
+        const question = questionsByLine.get(start.line);
+        const longQuestion = node.type === "code" && question?.endLine === end.line;
+        const shortQuestion = node.type === "inlineCode" && question &&
+          question.startLine === question.endLine && String(node.value).startsWith(question.id + " ");
+        if (question && !active && (longQuestion || shortQuestion)) {
+          const card = document.createElement("section");
+          card.className = "project-inline-question";
+          const heading = document.createElement("strong");
+          heading.textContent = `Clarifying question · ${question.id}`;
+          const body = document.createElement("span");
+          body.textContent = question.text;
+          card.append(heading, body);
+          const separator = longQuestion ? 0 : state.editor.getLine(end.line).slice(end.ch).match(/^[ \t]*/)[0].length;
+          const until = longQuestion ? CodeMirror.Pos(question.promptLine, 0) :
+            CodeMirror.Pos(end.line, end.ch + separator);
+          if (addMarkdownLiveBlockWidget(state, node, card, cache, until)) {
+            addMarkdownLiveLineClass(state, question.startLine, "text", "project-inline-answer-line");
+            return false;
+          }
+        }
 
         if (node.type === "table" && !active) {
           const table = getMarkdownLiveRenderedElement(cache, node, "table");
@@ -4904,6 +4990,7 @@
       }
     });
     restoreMarkdownLiveScrollAnchor(state.editor, scrollAnchor);
+    answerToRefocus?.focus({ preventScroll: true });
     state.onHeadings?.(headings);
   }
 
@@ -5117,7 +5204,8 @@
       if (!parsed || ![1, 2, 3, 4, 5].includes(parsed.schemaVersion) || !parsed.accountKey) return null;
       const current = parsed.schemaVersion >= 4;
       const bound = parsed.schemaVersion === 5
-        ? !!parsed.localCheckpoint && parsed.localCheckpoint === getWorkspacePersistence().checkpoint
+        ? !!parsed.localCheckpoint && (parsed.localCheckpoint === getWorkspacePersistence().checkpoint ||
+          raw === legacySyncMarkerRaw && parsed.localCheckpoint === legacyCheckpoint)
         : raw === legacySyncMarkerRaw;
       return {
         accountKey: String(parsed.accountKey),
@@ -5157,7 +5245,8 @@
       const raw = window.localStorage.getItem(STORAGE_PROJECT_AI_LOCAL_DIRTY);
       const stored = JSON.parse(raw || "null");
       const bound = stored?.schemaVersion === 5
-        ? !!stored.localCheckpoint && stored.localCheckpoint === getWorkspacePersistence().checkpoint
+        ? !!stored.localCheckpoint && (stored.localCheckpoint === getWorkspacePersistence().checkpoint ||
+          raw === legacyDirtyMarkerRaw && stored.localCheckpoint === legacyCheckpoint)
         : raw === legacyDirtyMarkerRaw;
       projectAiAccountSync.localDirty = !bound || (stored?.schemaVersion >= 4
         ? stored.dirty === true : stored?.dirty?.files === true || stored?.dirty?.instruction === true);
@@ -6800,6 +6889,7 @@
     if (project && source) {
       payload.currentProject = {
         instanceId: project.instanceId,
+        contract: project.contract,
         id: project.id,
         title: project.title,
         displayName: project.displayName,
@@ -6903,8 +6993,9 @@
 
     const definition = {
       schemaVersion: Number(project.schemaVersion) || 1,
+      contract: project.contract === projectFormat.V3_CONTRACT ? projectFormat.V3_CONTRACT : undefined,
       id: String(project.id || project.name || "ai-mini-project").trim(),
-      title: displayName,
+      title: String(project.title || project.name || displayName).trim(),
       displayName,
       summary: String(project.summary || ""),
       version: project.version ?? 1,
@@ -6953,7 +7044,8 @@
         await window.UartDebugAvrMiniProjects.updateInstance(instanceId, definition, { origin: "ai" });
       } else if (data.operation === "create") {
         if (operation !== "generate" || request.currentProject) throw new Error("The response cannot create a different project.");
-        definition.files.push({ role: "guide", name: getFileStem(definition.files.find(file => file.role === "source").name) + " (description).md", content: "", mediaType: "text/markdown", locale: "en" });
+        const guideSuffix = definition.contract === projectFormat.V3_CONTRACT ? ".Description.md" : " (description).md";
+        definition.files.push({ role: "guide", name: getFileStem(definition.files.find(file => file.role === "source").name) + guideSuffix, content: "", mediaType: "text/markdown", locale: "en" });
         await window.UartDebugAvrMiniProjects.install(definition, { origin: "ai" });
       } else throw new Error("The response did not specify a project action.");
     }
@@ -6961,6 +7053,11 @@
       annotations: data.canvas.annotations, locale: data.canvas.locale,
       target: data.canvas.target, expectedRevision: baseRevision,
     });
+    if (operation === "analyze" && data.canvas.markdown !== request.canvas.markdown &&
+        projectAiColumnWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD &&
+        projectFormat.v3Dialogue(data.canvas.markdown).some(reply => reply.valid && reply.marker === "?:" && !reply.answered)) {
+      revealSpecificationQuestions(projectInstructionDocument);
+    }
   }
 
   async function requestProjectChat({ message, history, signal, onProgress, onCommentary, onMessageDelta, onMessageReset, scope, requestSource = "message" }) {
@@ -6994,7 +7091,7 @@
       projectChatApplyingResponse = true;
       try { await applyProjectAiResponse(data, request, data.stage, scopeEpoch, { allowChat: true }); }
       finally { projectChatApplyingResponse = false; }
-      return { message: String(data.message || "Project updated."), scope: getProjectChatContext() };
+      return { message: data.message, scope: getProjectChatContext() };
     } finally {
       if (projectAiAuthSession?.mode === "google" && !quotaUpdated && !signal.aborted) {
         void fetchProjectAiAuthSession().catch(() => {});
@@ -7047,7 +7144,7 @@
 
   function handleProjectCanvasSubmit(event) {
     event.preventDefault();
-    if (projectChatController) void projectChatController.submit("Review the project specification. Ask any necessary questions in this chat.", { requestSource: "review" });
+    if (projectChatController) void projectChatController.submit("Review the project specification.", { requestSource: "review" });
     else void submitProjectCanvas();
   }
 
@@ -7083,7 +7180,7 @@
     const controls = new Map();
     for (const element of section.querySelectorAll(
       ".detect-chip-btn, .hardware-port, .hardware-flow .custom-select, .hardware-flow-light, " +
-      ".project-ai-auth > :not(button), .project-ai-budget > *"
+      ".avr-action-title > :not(button), .avr-card-detail, .project-ai-budget > *"
     )) {
       const bounds = element.getBoundingClientRect();
       if (bounds.width && bounds.height) {

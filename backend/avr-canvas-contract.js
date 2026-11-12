@@ -1,6 +1,7 @@
 "use strict";
 
 const YAML = require("yaml");
+const { createHash } = require("node:crypto");
 const projectFormat = require("./avr-project-format");
 const { PROJECT_STAGES } = require("./avr-project-policy");
 const MAX_CANVAS_BYTES = 128 * 1024;
@@ -34,7 +35,7 @@ const CANVAS_OUTPUT_SCHEMA = object({
     object({
       title: text(96, 1),
       summary: text(1000),
-      version: text(32, 1),
+      version: text(32),
       source: nullable(fileSchema),
       guide: nullable(
         object({
@@ -180,6 +181,32 @@ function validateRemarkLocale(markdown, input, locale) {
       );
   }
   return remarks;
+}
+
+function validateV3TaskDialogue(markdown, previousMarkdown) {
+  const previous = projectFormat.v3Dialogue(previousMarkdown);
+  const replies = projectFormat.v3Dialogue(markdown);
+  const previousIds = new Set(previous.map(reply => reply.id));
+  const legacyIds = new Set(inlineRemarks(previousMarkdown).map(remark => remark.id));
+  if (inlineRemarks(markdown).some(remark => !legacyIds.has(remark.id))) {
+    fail("Write new questions directly in the task using UartDebug3 AI-N dialogue.", true);
+  }
+  const ids = new Set();
+  let nextNumber = Math.max(0, ...previous.map(reply => Number(reply.id.slice(3)))) + 1;
+  for (const reply of replies) {
+    if (ids.has(reply.id)) fail("The task dialogue must use unique AI-N identifiers.", true);
+    ids.add(reply.id);
+    if (previousIds.has(reply.id)) {
+      if (!reply.valid && !previous.some(old => old.id === reply.id && !old.valid && old.text === reply.text)) {
+        fail("Keep the answer or follow-up marker directly after its AI-N reply.", true);
+      }
+      continue;
+    }
+    if (!reply.valid || Number(reply.id.slice(3)) !== nextNumber++) {
+      fail("Use the next AI-N identifier and place the answer marker directly after its reply.", true);
+    }
+  }
+  return replies;
 }
 
 function normalizeAnnotations(
@@ -415,7 +442,7 @@ function projectOutputNames(markdown, identity, currentProject = null) {
   }
 }
 
-function parseProjectResources(content, target = {}) {
+function parseResourceMapping(content) {
   boundedText(content, "project.resources.content", 128 * 1024, {
     empty: false,
     generated: true,
@@ -438,6 +465,11 @@ function parseProjectResources(content, target = {}) {
   }
   if (!isObject(resources))
     fail("Project resources must be a YAML mapping.", true);
+  return resources;
+}
+
+function parseProjectResources(content, target = {}) {
+  const resources = parseResourceMapping(content);
   const required = [
     "microcontroller",
     "hardware_resources",
@@ -493,6 +525,121 @@ function parseProjectResources(content, target = {}) {
     device.package,
   );
   return resources;
+}
+
+function validateV3Model(content, { identity, markdown, source, device, mcu, packageName }) {
+  const model = parseResourceMapping(content);
+  if (Object.keys(model).join(",") !== "consistency_checks,project,blocks,shared,code" ||
+      !isObject(model.consistency_checks) || !isObject(model.project) ||
+      !Array.isArray(model.blocks) || !Array.isArray(model.shared) ||
+      !isObject(model.code) || !Array.isArray(model.code.objects)) {
+    fail("Use the UartDebug3 consistency_checks, project, blocks, shared and code sections.", true);
+  }
+  const project = model.project;
+  if (project.name !== identity.title || String(project.microcontroller).toLowerCase() !== mcu.toLowerCase() ||
+      String(project.package).toLowerCase() !== packageName.toLowerCase()) {
+    fail("The information model must identify the selected project, microcontroller and package.", true);
+  }
+  const digest = value => createHash("sha256").update(value).digest("hex");
+  const sourceHash = digest(source);
+  const tasks = [];
+  const repliesByLine = new Map(projectFormat.v3Dialogue(markdown).map(reply => [reply.startLine, reply]));
+  let task;
+  let fragment;
+  for (const [line, content] of projectFormat.specificationText(markdown).split("\n").entries()) {
+    const blockTitle = /^##[ \t]+(.+)$/.exec(content)?.[1];
+    const fragmentTitle = /^###[ \t]+(.+)$/.exec(content)?.[1];
+    if (blockTitle) {
+      const title = blockTitle.trim();
+      task = /^(?:Продолжение работы|Continue work)$/iu.test(title) ? null : { title, fragments: [] };
+      if (task) tasks.push(task);
+      fragment = null;
+    } else if (fragmentTitle && task) {
+      fragment = { title: fragmentTitle.trim(), agreed: false };
+      task.fragments.push(fragment);
+    }
+    const reply = repliesByLine.get(line);
+    if (fragment && reply?.valid && reply.marker === "+:" && !reply.answered &&
+        !/^(?:Техническое решение|Technical decision|Technical solution)\.?\s*$/iu.test(reply.text)) {
+      fragment.agreed = true;
+    }
+  }
+  if (!tasks.length || tasks.some(task => !task.fragments.length || task.fragments.some(fragment => !fragment.agreed)) ||
+      [...repliesByLine.values()].some(reply => !reply.valid || reply.marker === "?:" || reply.answered) ||
+      model.blocks.length !== tasks.length) {
+    fail("Resolve and record the technical decisions for every task fragment before generation.", true);
+  }
+  const ids = new Map();
+  const refs = [];
+  const pins = [];
+  const identify = (value, kind) => {
+    if (!isObject(value) || typeof value.id !== "string" || !/^[a-z][a-z0-9_]*$/.test(value.id) || ids.has(value.id))
+      fail("The information model requires unique canonical IDs.", true);
+    ids.set(value.id, kind);
+  };
+  const collectReferences = (values, kind = null) => {
+    if (values === undefined) return;
+    if (!Array.isArray(values) || values.some(value => typeof value !== "string"))
+      fail("Model reference lists must contain identifiers.", true);
+    refs.push(...values.map(ref => ({ ref, kind })));
+  };
+  const element = (value, kind) => {
+    identify(value, kind);
+    if (!["resource", "parameter", "register", "algorithm"].includes(value.kind) ||
+        !isObject(value.data) || typeof value.purpose !== "string" || !value.purpose.trim() ||
+        !Array.isArray(value.origins) || !value.origins.length) {
+      fail("Each model element needs its kind, purpose, origins and data.", true);
+    }
+    for (const origin of value.origins) {
+      if (!isObject(origin) || !["task", "code"].includes(origin.kind) ||
+          typeof origin.ref !== "string" || !origin.ref.startsWith(origin.kind + ":") ||
+          typeof origin.contribution !== "string" || !origin.contribution.trim())
+        fail("Model origins must identify their task or code contribution.", true);
+      refs.push({ ref: origin.ref.slice(origin.kind.length + 1), kind: origin.kind === "task" ? "fragment" : "code" });
+    }
+    collectReferences(value.depends_on);
+    collectReferences(value.code_refs, "code");
+    if (value.kind === "resource" && (value.data.port_pin != null || value.data.package_pin != null)) {
+      if (typeof value.data.port_pin !== "string" || !/^P[A-Z][0-7]$/.test(value.data.port_pin) ||
+          !Number.isSafeInteger(value.data.package_pin)) {
+        fail("A physical model pin requires its exact port pin and package pin number.", true);
+      }
+      pins.push({ pin_symbol: value.data.port_pin, package_pin: value.data.package_pin });
+    }
+  };
+  for (const [index, block] of model.blocks.entries()) {
+    identify(block, "block");
+    if (block.title !== tasks[index].title || !Array.isArray(block.fragments) ||
+        block.fragments.length !== tasks[index].fragments.length)
+      fail("The information model must follow the approved task headings and order.", true);
+    for (const [fragmentIndex, fragment] of block.fragments.entries()) {
+      identify(fragment, "fragment");
+      const solution = fragment.solution;
+      if (fragment.title !== tasks[index].fragments[fragmentIndex].title || fragment.proposed_revision ||
+          !isObject(solution) || solution.status !== "approved" || !Array.isArray(solution.elements) || !solution.elements.length)
+        fail("Generation requires detailed approved model solutions for every fragment.", true);
+      collectReferences(solution.shared_refs, "shared");
+      for (const entry of solution.elements) element(entry, "element");
+    }
+  }
+  for (const value of model.shared) {
+    element(value, "shared");
+    if (value.status !== "approved") fail("Generation requires approved shared resources.", true);
+    collectReferences(value.used_by);
+  }
+  for (const value of model.code.objects) identify(value, "code");
+  if (refs.some(({ ref, kind }) => !ids.has(ref) || kind && ids.get(ref) !== kind)) {
+    fail("The information model contains a missing or mismatched reference.", true);
+  }
+  if (model.code.observed_sha256 !== null && model.code.observed_sha256 !== sourceHash)
+    fail("The model's observed code checksum does not match the returned C.", true);
+  for (const key of ["task_matches_model", "code_matches_model"]) {
+    const check = model.consistency_checks[key];
+    if (!isObject(check) || check.status !== "not_checked" || check.sha256 !== null || check.scope !== null) {
+      fail("The generated model's semantic checks must use not_checked with null scope and checksum.", true);
+    }
+  }
+  validateHardwarePins(pins, device, packageName);
 }
 
 function validateHardwarePins(hardware, device, packageName) {
@@ -673,6 +820,7 @@ function validateSource(
   resources,
   currentSource = "",
   identity = null,
+  projectV3 = false,
 ) {
   boundedText(source, "project.source.content", 64 * 1024, {
     empty: false,
@@ -724,8 +872,8 @@ function validateSource(
     fail("Temporary //X instructions must not remain in generated C.", true);
   const regions = codeRegions(source);
   if (
-    regions.filter((region) => region.user).length < 3 ||
-    regions.filter((region) => !region.user).length < 4
+    !projectV3 && (regions.filter((region) => region.user).length < 3 ||
+    regions.filter((region) => !region.user).length < 4)
   )
     fail("C must preserve the canonical AI and user insertion regions.", true);
   const previous = codeRegions(currentSource);
@@ -751,10 +899,10 @@ function validateSource(
   ].map((match) => `#include ${match[1]}`);
   if (
     includes.filter((line) => line === "#include <xc.h>").length !== 1 ||
-    JSON.stringify([...new Set(includes)].sort()) !==
+    (!projectV3 && JSON.stringify([...new Set(includes)].sort()) !==
       JSON.stringify(
         [...new Set(resources.software_dependencies.includes)].sort(),
-      )
+      ))
   )
     fail("C includes and resource YAML dependencies must agree exactly.", true);
   if (/\.\s*(?:PIT)?INTFLAGS\s*\|=/.test(executable))
@@ -787,11 +935,13 @@ function validateCanvasOutput(raw, options = {}) {
     MAX_CANVAS_BYTES,
     { generated: true },
   );
-  const remarks =
-    operation === "analyze" ? validateRemarkLocale(markdown, input, locale) : [];
+  const taskDialogue = options.dialogueV3 || options.projectV3;
+  const remarks = operation === "analyze"
+    ? taskDialogue ? validateV3TaskDialogue(markdown, input.markdown) : validateRemarkLocale(markdown, input, locale)
+    : [];
   if (
     operation === "analyze" &&
-    !options.conversation &&
+    !options.conversation && !taskDialogue &&
     !input.locale &&
     !input.markdown.trim() &&
     locale.toLowerCase().split("-")[0] !== "en"
@@ -799,7 +949,7 @@ function validateCanvasOutput(raw, options = {}) {
     fail("An empty draft without a selected language must use English.", true);
   if (
     operation === "analyze" &&
-    !options.conversation &&
+    !options.conversation && !taskDialogue &&
     !input.markdown.trim() &&
     !remarks.some((remark) => remark.hasBody)
   )
@@ -807,7 +957,11 @@ function validateCanvasOutput(raw, options = {}) {
       "Reviewing an empty draft must put initial questions in canonical inline Markdown remark blocks on that draft, not only in the service message. This stage explicitly authorizes those remarks before project identity is confirmed.",
       true,
     );
-  if (operation !== "analyze" && !(options.conversation && operation === "generate") && markdown !== input.markdown)
+  if (operation === "analyze" && taskDialogue && (!options.conversation || options.requestSource === "review") &&
+      !input.markdown.trim() && !remarks.some(reply => reply.valid && reply.marker === "?:")) {
+    fail("Ask the initial setup questions directly in the empty task using AI-N and ?:.", true);
+  }
+  if (operation !== "analyze" && !(options.conversation && operation === "generate" && !options.projectV3) && markdown !== input.markdown)
     fail(
       "Code generation and description must preserve the specification exactly.",
       true,
@@ -831,38 +985,46 @@ function validateCanvasOutput(raw, options = {}) {
       fail(`This stage must return only ${expectedRoles.join(" and ")}.`, true);
     validateFileName(`${project.title}.md`, /\.md$/i);
     const projectMarkdown = options.conversation && operation === "generate" ? markdown : input.markdown;
-    const identity = projectIdentity(projectMarkdown);
+    const identity = options.projectV3 ? projectFormat.v3ProjectIdentity(projectMarkdown) : projectIdentity(projectMarkdown);
     if (
       !identity ||
       project.title !== identity.title ||
       project.version !== identity.version
     )
       fail(
-        "Use the exact project name and Ver.X.Y from the specification.",
+        options.projectV3 ? "Use the exact UartDebug3 task heading and an empty version." :
+          "Use the exact project name and Ver.X.Y from the specification.",
         true,
       );
     if (raw.action === "generate") {
       validateFileName(project.source.name, /\.c$/i);
       validateFileName(project.resources.name, /\.yaml$/i);
-      const names = projectOutputNames(
-        projectMarkdown,
-        identity,
-        options.currentProject,
-      );
+      let names;
+      try {
+        names = options.projectV3
+          ? projectFormat.v3ProjectOutputNames(identity, options.currentProject)
+          : projectOutputNames(projectMarkdown, identity, options.currentProject);
+      } catch (error) { fail(error.message, true); }
       if (
         project.source.name !== names.sourceName ||
         project.resources.name !== names.resourcesName
       )
         fail("Preserve existing or canonical output file names.", true);
-      const resources = parseProjectResources(
-        project.resources.content,
-        options,
-      );
+      let resources;
+      if (options.projectV3) {
+        const target = projectFormat.v3ProjectTarget(projectMarkdown);
+        if (!target || target.mcu !== options.mcu || target.packageName.toLowerCase() !== options.packageName.toLowerCase()) {
+          fail("Record the exact selected microcontroller and package in the task header.", true);
+        }
+        if (/\r/.test(project.source.content)) fail("Use LF line endings in generated C so its checked bytes remain stable.", true);
+        validateV3Model(project.resources.content, { ...options, identity, markdown, source: project.source.content });
+      } else resources = parseProjectResources(project.resources.content, options);
       validateSource(
         project.source.content,
         resources,
         options.currentProject?.source || "",
-        identity,
+        options.projectV3 ? null : identity,
+        options.projectV3,
       );
     } else {
       if (!options.currentProject?.source?.trim())
@@ -881,7 +1043,7 @@ function validateCanvasOutput(raw, options = {}) {
         : locale;
       const expectedName = hasDescription
         ? options.currentProject.guideName
-        : `${identity.title} (description).md`;
+        : identity.title + (options.projectV3 ? ".Description.md" : " (description).md");
       if (
         project.guide.locale.toLowerCase() === "und" ||
         (expectedLocale && project.guide.locale.toLowerCase() !== expectedLocale.toLowerCase())

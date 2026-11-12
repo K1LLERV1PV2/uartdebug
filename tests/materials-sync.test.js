@@ -18,11 +18,11 @@ const jwk = { ...publicKey.export({ format: "jwk" }), kid: "test-key", use: "sig
 function claims(changes = {}) {
   return {
     iss: "https://token.actions.githubusercontent.com", aud: AUDIENCE,
-    sub: "repo:Sergey-Bulanov@11813891/UartDebug2@1408960831:ref:refs/heads/main",
-    repository: "Sergey-Bulanov/UartDebug2", repository_id: "1408960831",
+    sub: "repo:Sergey-Bulanov@11813891/UartDebug3@1436150343:ref:refs/heads/main",
+    repository: "Sergey-Bulanov/UartDebug3", repository_id: "1436150343",
     repository_owner_id: "11813891", repository_visibility: "private",
     ref: "refs/heads/main", ref_type: "branch", sha: COMMIT,
-    workflow_ref: "Sergey-Bulanov/UartDebug2/.github/workflows/sync-ai-materials.yml@refs/heads/main",
+    workflow_ref: "Sergey-Bulanov/UartDebug3/.github/workflows/sync-ai-materials.yml@refs/heads/main",
     workflow_sha: COMMIT, event_name: "push", runner_environment: "github-hosted",
     run_id: "10", run_attempt: "1", jti: "test-token", iat: seconds, nbf: seconds, exp: seconds + 300,
     ...changes,
@@ -47,13 +47,18 @@ test("materials identity verifies the signed main workflow and immutable reposit
   const verify = verifier();
   assert.deepEqual(await verify(token(claims())), { commit: COMMIT, runId: "10", runAttempt: "1", jti: "test-token" });
   await verify(token(claims({ event_name: "workflow_dispatch" })));
-  await verify(token(claims({ sub: "repo:Sergey-Bulanov/UartDebug2:ref:refs/heads/main" })));
+  await verify(token(claims({ sub: "repo:Sergey-Bulanov/UartDebug3:ref:refs/heads/main" })));
+  await assert.rejects(verify(token(claims({
+    sub: "repo:Sergey-Bulanov@11813891/UartDebug2@1408960831:ref:refs/heads/main",
+    repository: "Sergey-Bulanov/UartDebug2", repository_id: "1408960831",
+    workflow_ref: "Sergey-Bulanov/UartDebug2/.github/workflows/sync-ai-materials.yml@refs/heads/main",
+  }))), { code: "materials_identity_required" });
 });
 
 test("materials identity rejects wrong audience, repository, branch, workflow, events and expiry", async () => {
   for (const change of [
     { aud: "another-server" }, { repository_id: "1" }, { repository_owner_id: "1" },
-    { repository: "attacker/UartDebug2" }, { sub: "repo:attacker/UartDebug2:ref:refs/heads/main" },
+    { repository: "attacker/UartDebug3" }, { sub: "repo:attacker/UartDebug3:ref:refs/heads/main" },
     { ref: "refs/heads/test" }, { ref_type: "tag" }, { repository_visibility: "public" },
     { workflow_ref: "another-workflow" }, { workflow_sha: "b".repeat(40) },
     { event_name: "pull_request" }, { event_name: "dynamic" }, { runner_environment: "self-hosted" },
@@ -154,7 +159,8 @@ function archive(root, commit, additions = [], omitted = []) {
 function install(root, archiveFile, commit, extra = []) {
   return JSON.parse(execFileSync(process.platform === "win32" ? "python" : "python3", [
     path.join(__dirname, "../backend/deploy/install-materials.py"),
-    "--archive", archiveFile, "--root", path.join(root, "materials"), "--commit", commit, ...extra,
+    "--archive", archiveFile, "--root", path.join(root, "materials"), "--commit", commit,
+    "--repository", "Sergey-Bulanov/UartDebug2", ...extra,
   ], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
 }
 

@@ -25,10 +25,10 @@ for (const width of [1543, 1024]) {
     await client.send("DOM.enable");
     const { root } = await client.send("DOM.getDocument", { depth: -1, pierce: true });
     const captionIds = [];
-    for (const [selector, pseudoType] of [["#editorWorkspace", "after"], ["#projectDocumentationPane", "before"]]) {
+    for (const selector of [".project-instruction-panel", "#editorWorkspace", "#projectDocumentationPane"]) {
       const { nodeId } = await client.send("DOM.querySelector", { nodeId: root.nodeId, selector });
       const { node } = await client.send("DOM.describeNode", { nodeId, depth: -1, pierce: true });
-      captionIds.push(node.pseudoElements.find(pseudo => pseudo.pseudoType === pseudoType).backendNodeId);
+      captionIds.push(node.pseudoElements.find(pseudo => pseudo.pseudoType === "after").backendNodeId);
     }
 
     const readGeometry = async () => {
@@ -43,14 +43,14 @@ for (const width of [1543, 1024]) {
       }
       return page.evaluate(captions => {
       const panes = [...document.querySelectorAll(
-        ".project-instruction-panel, .canvas-split-container > .editor-workspace, .canvas-split-container > .documentation-workspace")];
+        ".project-chat-panel, .project-instruction-panel, #editorWorkspace, #projectDocumentationPane")];
       const rect = element => element.getBoundingClientRect();
       const outline = pane => pane.querySelector(":scope > [data-panel-action-contour] .panel-action-outline");
       const fill = pane => pane.querySelector(":scope > [data-panel-action-contour] .panel-action-fill");
       const world = (pane, x, y) => new DOMPoint(x, y).matrixTransform(
         pane.querySelector(":scope > [data-panel-action-contour]").getScreenCTM());
       const frames = panes.map((pane, index) => pane.querySelector([
-        ".project-instruction-live-editor", ".editor-container", "#projectDocumentationScroll",
+        ".project-chat-surface", ".project-instruction-live-editor", ".editor-container", "#projectDocumentationScroll",
       ][index]));
       const visibleFrame = pane => {
         const element = frames[panes.indexOf(pane)];
@@ -108,10 +108,11 @@ for (const width of [1543, 1024]) {
         return { clearance, boxGap: bounds.left - previousRect.right,
           topNotchEmpty: !fill(pane).isPointInFill(new DOMPoint(5, actionsBottom - 15)),
           lowerRailFilled: fill(pane).isPointInFill(new DOMPoint(5, notchBottom + 15)),
-          caption: getComputedStyle(pane, index ? "::before" : "::after").content,
-          writingMode: getComputedStyle(pane, index ? "::before" : "::after").writingMode };
+          caption: getComputedStyle(pane, "::after").content,
+          writingMode: getComputedStyle(pane, "::after").writingMode };
       });
-      const buttons = [...document.querySelectorAll(".panel-action-lobe button")].map(button => {
+      const actionButtons = [...document.querySelectorAll(".panel-action-lobe button")].filter(button => button.getClientRects().length);
+      const buttons = actionButtons.map(button => {
         const pane = button.closest(".panel-action-host");
         const bounds = rect(button), host = rect(pane);
         const matrix = pane.querySelector(":scope > [data-panel-action-contour]").getScreenCTM().inverse();
@@ -125,7 +126,7 @@ for (const width of [1543, 1024]) {
           top: bounds.y - host.y, font: getComputedStyle(button).fontSize,
           unblocked: samples.every(Boolean) };
       });
-      const buttonBands = [...document.querySelectorAll(".panel-action-lobe button")].map(button => {
+      const buttonBands = actionButtons.map(button => {
         const pane = button.closest(".panel-action-host"), bounds = rect(button), host = rect(pane);
         const centerX = bounds.x + bounds.width / 2, centerY = bounds.y + bounds.height / 2;
         const outer = boundary(pane, centerX,
@@ -143,7 +144,7 @@ for (const width of [1543, 1024]) {
       });
       return { joints, buttons, contours: panes.map(pane => pane.querySelectorAll(":scope > [data-panel-action-contour]").length),
         buttonBands, captionBands,
-        bodyBands: [panes[0], panes[2]].map(pane => ({
+        bodyBands: [panes[1], panes[3]].map(pane => ({
           upper: paintedWidth(pane, rect(pane).top + 40),
           lower: paintedWidth(pane, rect(pane).bottom - 60),
         })),
@@ -171,7 +172,7 @@ for (const width of [1543, 1024]) {
 
     const reference = await readGeometry();
     const assertGeometry = geometry => {
-      expect(geometry.contours).toEqual([1, 1, 1]);
+      expect(geometry.contours).toEqual([1, 1, 1, 1]);
       expect(geometry.overflow).toBe(false);
       for (const path of geometry.outlines) {
         expect(path.subpaths, "a finished capsule must not contain wireframe construction dividers").toBe(1);
@@ -181,7 +182,7 @@ for (const width of [1543, 1024]) {
         expect(joint.boxGap).toBeCloseTo(14, 1);
         expect(joint.topNotchEmpty, "the next page must leave space around the preceding capsule").toBe(true);
         expect(joint.lowerRailFilled, "the left rail is part of the following page below its notch").toBe(true);
-        expect(joint.caption).toBe(index ? '"Description"' : '"Code"');
+        expect(joint.caption).toBe(['"Specification"', '"Code"', '"Description"'][index]);
         expect(joint.writingMode).toBe("vertical-rl");
         expect(joint.clearance, "curves must not pinch the gap or touch their neighbor").toBeGreaterThanOrEqual(12);
         expect(joint.clearance).toBeLessThan(18);
@@ -213,7 +214,7 @@ for (const width of [1543, 1024]) {
     await page.locator("#fileListResizer").focus();
     await page.keyboard.press("End");
     await expect(page.locator(".canvas-split-container")).not.toHaveClass(/is-workspace-transitioning/);
-    await expect(page.locator(".project-instruction-panel")).toHaveJSProperty("clientWidth", 26);
+    await expect(page.locator(".project-instruction-panel")).toHaveJSProperty("clientWidth", 60);
     assertGeometry(await readGeometry());
     await page.locator("#documentationResizer").focus();
     await page.keyboard.press("Home");
@@ -224,14 +225,14 @@ for (const width of [1543, 1024]) {
     await page.keyboard.press("End");
     await expect(page.locator(".canvas-split-container")).not.toHaveClass(/is-workspace-transitioning/);
     await expect(page.locator("#projectDocumentationPane")).toHaveJSProperty("clientWidth", 60);
-    await expect(page.locator(".project-instruction-panel")).toHaveJSProperty("clientWidth", 26);
+    await expect(page.locator(".project-instruction-panel")).toHaveJSProperty("clientWidth", 60);
     const compactEnds = await readGeometry();
     assertGeometry(compactEnds);
     const [canvas, documentation] = compactEnds.bodyBands;
-    expect(canvas.lower, "closed Canvas body and the guide's upper rail must have equal painted widths")
-      .toBeCloseTo(documentation.upper, 1);
-    expect(canvas.upper, "the complementary wide portions of both closed outlines must also match")
+    expect(canvas.lower, "closed specification and description bodies must have equal painted widths")
       .toBeCloseTo(documentation.lower, 1);
+    expect(canvas.upper, "the specification's incoming and outgoing rails must balance")
+      .toBeCloseTo(canvas.lower, 1);
     await page.screenshot({ path: testInfo.outputPath("equal-compact-rails.png") });
     expect(errors).toEqual([]);
   });

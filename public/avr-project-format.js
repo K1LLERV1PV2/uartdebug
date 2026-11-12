@@ -203,6 +203,137 @@
     return { specification, source, resources, guide, guides, alternatives: confirmed, identity, warnings };
   }
 
+  const V2_CONTRACT = "uartdebug-project/v2";
+  const V3_CONTRACT = "uartdebug-project/v3";
+  const V3_NAME = /^[A-Za-z0-9_]{1,86}$/;
+
+  function v3ProjectIdentity(markdown) {
+    const headings = [...specificationText(markdown).matchAll(/^#[ \t]+([^\n]+)$/gm)];
+    const title = headings[0]?.[1].trim();
+    return headings.length === 1 && typeof title === "string" && V3_NAME.test(title) ? { title, version: "" } : null;
+  }
+
+  function v3ProjectTarget(markdown) {
+    const header = specificationText(markdown).split(/^##[ \t]+/m, 1)[0];
+    const matches = [...header.matchAll(/^(?:Microcontroller|Микроконтроллер):[ \t]*([A-Za-z0-9-]{2,32})[ \t]*;[ \t]*(?:Package|Корпус):[ \t]*([A-Za-z0-9-]{2,32})[ \t]*$/gmi)];
+    return matches.length === 1 ? { mcu: matches[0][1].toLowerCase(), packageName: matches[0][2] } : null;
+  }
+
+  function v3Dialogue(markdown) {
+    const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
+    const replies = [];
+    const prefix = /^(AI-[1-9][0-9]{0,11})[ \t]+:[ \t]+(.+)$/;
+    const markerLine = /^([?+]:)(?:[ \t]+(.*))?$/;
+    for (let startLine = 0; startLine < lines.length; startLine++) {
+      const line = lines[startLine];
+      const fence = /^ {0,3}([\x60~]{3,})(.*)$/.exec(line);
+      if (fence && /^([\x60]+|~+)$/.test(fence[1])) {
+        const marker = fence[1];
+        const closing = new RegExp("^ {0,3}" + marker[0] + "{" + marker.length + ",}[ \\t]*$");
+        let endLine = startLine + 1;
+        while (endLine < lines.length && !closing.test(lines[endLine])) endLine++;
+        const match = prefix.exec(lines[startLine + 1] || "");
+        if (match && marker[0] === "\x60" && fence[2].trim() === "text") {
+          const promptLine = endLine + 1;
+          const prompt = markerLine.exec(lines[promptLine] || "");
+          replies.push({
+            id: match[1], startLine, endLine, promptLine, marker: prompt?.[1] || "",
+            text: [match[2], ...lines.slice(startLine + 2, endLine)].join("\n"),
+            answered: !!prompt?.[2]?.trim(), valid: marker.length === 3 && !!prompt &&
+              lines[endLine]?.trim() === "\x60\x60\x60",
+          });
+        }
+        startLine = endLine;
+        continue;
+      }
+      const short = /^ {0,3}\x60([^\x60]+)\x60(?:[ \t]+(\?:)(?:[ \t]+(.*))?)?$/.exec(line);
+      const match = short && prefix.exec(short[1]);
+      if (!match) continue;
+      const accepted = !short[2] && markerLine.exec(lines[startLine + 1] || "");
+      const marker = short[2] || (accepted?.[1] === "+:" ? "+:" : "");
+      replies.push({
+        id: match[1], startLine, endLine: startLine, promptLine: startLine + (short[2] ? 0 : 1),
+        marker, text: match[2], answered: !!(short[3] || accepted?.[2])?.trim(),
+        valid: [...match[2]].length <= 35 && !!marker,
+      });
+    }
+    const starts = new Set(replies.map(reply => reply.startLine));
+    for (const reply of replies) {
+      if (!reply.valid || reply.answered) continue;
+      let answerLine = reply.promptLine + 1;
+      while (answerLine < lines.length && !lines[answerLine].trim()) answerLine++;
+      reply.answered = answerLine < lines.length && !starts.has(answerLine) &&
+        !/^ {0,3}#{1,6}[ \t]/.test(lines[answerLine]);
+    }
+    return replies;
+  }
+
+  function v3ProjectOutputNames(identity, currentProject = null) {
+    const title = identity?.title;
+    if (typeof title !== "string" || !V3_NAME.test(title)) throw Error("Specify a project name with Latin letters, digits or underscores.");
+    const sourceName = safeFilename(title + ".c", /\.c$/);
+    const resourcesName = safeFilename(title + ".yaml", /\.yaml$/);
+    if ((currentProject?.source?.trim() && currentProject.sourceName !== sourceName) ||
+        (currentProject?.specification?.content?.trim() && currentProject.specification.name !== resourcesName)) {
+      throw Error("The existing C file and information model must share the task filename stem.");
+    }
+    return { sourceName, resourcesName };
+  }
+
+  function normalizeReferenceFiles(value, title) {
+    if (value == null || (Array.isArray(value) && value.length === 0)) return [];
+    if (typeof title !== "string" || !V3_NAME.test(title) || !Array.isArray(value) || value.length !== 3) {
+      throw Error("A saved reference group requires exactly three files.");
+    }
+    return ["md", "yaml", "c"].map(extension => {
+      const name = safeFilename(`${title}.1.${extension}`);
+      const file = value.find(candidate => candidate?.name === name);
+      if (!file || typeof file.content !== "string" || file.content.includes("\0") || bytes(file.content) > 256 * 1024) {
+        throw Error(`Missing or invalid reference file: ${name}.`);
+      }
+      return { name, content: file.content };
+    });
+  }
+
+  function resolveV3ProjectFiles(entries, folderTitle = "") {
+    const specs = entries.filter(entry => {
+      const identity = v3ProjectIdentity(entry.content);
+      if (!identity || entry.name !== identity.title + ".md") return false;
+      const title = identity.title;
+      const hasReference = entries.some(file =>
+        [".1.md", ".1.yaml", ".1.c"].some(suffix => file.name === title + suffix));
+      const primaryNames = [title + ".md", title + ".c", title + ".yaml", title + ".Description.md"];
+      return v3ProjectTarget(entry.content) || hasReference ||
+        (!metadata(entry.content, versionLabel).length && entries.every(file => primaryNames.includes(file.name)));
+    });
+    if (!specs.length) return null;
+    if (specs.length !== 1) throw Error("Choose one project task before importing.");
+    const specification = specs[0];
+    const identity = v3ProjectIdentity(specification.content);
+    const title = identity.title;
+    if (folderTitle && folderTitle !== title) {
+      throw Error("The UartDebug3 folder, task heading and primary files must share the same name.");
+    }
+    const names = v3ProjectOutputNames(identity);
+    const byName = new Map(entries.map(entry => [safeFilename(entry.name), entry]));
+    if (byName.size !== entries.length) throw Error("Duplicate project filenames.");
+    const source = byName.get(names.sourceName) || null;
+    const resources = byName.get(names.resourcesName) || null;
+    const referenceFiles = normalizeReferenceFiles(
+      entries.filter(entry => [".1.md", ".1.yaml", ".1.c"].some(suffix => entry.name === title + suffix)),
+      title,
+    );
+    const guides = entries.filter(entry => entry !== specification && entry.name.startsWith(title + ".") && /\.md$/i.test(entry.name) &&
+      !/^\d+$/.test(entry.name.slice(title.length + 1, -3)));
+    if (guides.length > 1) throw Error("Select one Markdown description before importing.");
+    const workingFile = name => name.startsWith(title + ".") && /^\d+\.(?:md|c|yaml)$/.test(name.slice(title.length + 1));
+    const selected = new Set([specification, source, resources, ...guides]);
+    const unexpected = entries.find(entry => !selected.has(entry) && !workingFile(entry.name));
+    if (unexpected) throw Error(`Unexpected UartDebug3 project file: ${unexpected.name}.`);
+    return { specification, source, resources, guide: guides[0] || null, guides, identity, referenceFiles,
+      contract: V3_CONTRACT, target: v3ProjectTarget(specification.content), warnings: [] };
+  }
+
   function isLocaleTag(value) {
     if (typeof value !== "string" || value.length > 35 || !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*(?:-[0-9a-wy-z](?:-[a-z0-9]{2,8})+)*(?:-x(?:-[a-z0-9]{1,8})+)?$/i.test(value)) return false;
     const singletons = new Set();
@@ -239,5 +370,7 @@
       return { name: document.name, content: document.content };
     });
   }
-  return { specificationText, projectIdentity, projectOutputNames, parseProjectFilename, resolveProjectFiles, isLocaleTag, inferLocale, remarkLabels, normalizeProjectDocuments };
+  return { specificationText, projectIdentity, projectOutputNames, parseProjectFilename, resolveProjectFiles,
+    V2_CONTRACT, V3_CONTRACT, v3ProjectIdentity, v3ProjectTarget, v3Dialogue, v3ProjectOutputNames, normalizeReferenceFiles, resolveV3ProjectFiles,
+    isLocaleTag, inferLocale, remarkLabels, normalizeProjectDocuments };
 });

@@ -4,7 +4,7 @@ const { test, expect } = require("playwright/test");
 
 test("page curves retain their geometry throughout header height changes", async ({ page }) => {
   await page.goto("/avr", { waitUntil: "load" });
-  await page.waitForFunction(() => document.querySelectorAll(".panel-action-contour").length === 3);
+  await expect(page.locator(".panel-action-contour")).toHaveCount(4);
   const transitions = await page.evaluate(async () => {
     const section = document.getElementById("avrDeviceSection");
     const handle = document.getElementById("devicePanelToggle");

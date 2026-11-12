@@ -41,6 +41,10 @@ const {
   normalizeProjectDocuments,
   inferLocale,
   isLocaleTag,
+  V3_CONTRACT,
+  v3ProjectIdentity,
+  v3ProjectOutputNames,
+  v3ProjectTarget,
 } = require("./avr-project-format");
 const {
   PROJECT_STAGES,
@@ -156,6 +160,7 @@ function normalizeRequest(raw) {
       );
     currentProject = {
       instanceId: project.instanceId,
+      ...(project.contract === V3_CONTRACT ? { contract: V3_CONTRACT } : {}),
       id: bounded(project.id, 128, "project id"),
       title: bounded(project.title, 96, "project title"),
       version: bounded(project.version, 32, "project version"),
@@ -209,11 +214,12 @@ function normalizeChatRequest(raw) {
   };
 }
 function specificationTarget(markdown, devices) {
+  const header = v3ProjectTarget(markdown);
   const hardware =
     /^##\s+(?:Требования к аппаратной части|Аппаратные требования|Hardware requirements|Requisitos de hardware|Exigences matérielles|Hardwareanforderungen)\s*\n([\s\S]*?)(?=^##\s|$(?![\s\S]))/im.exec(
       specificationText(markdown),
     )?.[1] || "";
-  const text = hardware;
+  const text = [hardware, header?.mcu, header?.packageName].filter(Boolean).join("\n");
   const models = [
     ...new Set(
       (text.match(/\bAT(?:tiny|mega)\d+[A-Za-z0-9-]*\b/gi) || []).map((value) =>
@@ -273,6 +279,7 @@ function publicProject(project, input, manifest, randomUUID) {
     });
   return {
     schemaVersion: 1,
+    ...(input.projectV3 ? { contract: V3_CONTRACT } : {}),
     id: input.currentProject?.id || `generated-${randomUUID()}`,
     displayName: project.title,
     title: project.title,
@@ -280,10 +287,10 @@ function publicProject(project, input, manifest, randomUUID) {
     version: project.version,
     defaultLocale: project.guide?.locale || input.canvas.locale || "en",
     canvasName:
-      input.currentProject?.id === "empty-project" && !input.currentProject.source.trim()
+      input.projectV3 || input.currentProject?.id === "empty-project" && !input.currentProject.source.trim()
         ? `${project.title}.md`
         : input.currentProject?.canvasName || `${project.title}.md`,
-    projectPath: `Target_Projects/${project.title} ${project.version}`,
+    projectPath: `Target_Projects/${project.title}${input.projectV3 ? "" : " " + project.version}`,
     specificationMarkdown: input.canvas.markdown,
     projectDocuments: input.currentProject?.projectDocuments || [],
     files,
@@ -314,10 +321,11 @@ function createAvrAiService(options = {}) {
         environment.AI_EXTERNAL_DOCUMENTATION_ENABLED === "1",
     };
   }
-  function rules(knowledge, conversation = false) {
+  function rules(knowledge, conversation = false, projectV3 = knowledge.repository === "Sergey-Bulanov/UartDebug3") {
     const documents = knowledge.initialRules || [];
+    const v3 = knowledge.repository === "Sergey-Bulanov/UartDebug3";
     if (
-      documents.length !== 4 ||
+      (v3 ? documents.length < 5 : documents.length !== 4) ||
       documents.some((document) => !document.text?.trim())
     )
       fail(
@@ -325,13 +333,15 @@ function createAvrAiService(options = {}) {
         "materials_rules_unavailable",
         "The canonical project rules are unavailable.",
       );
-    const sources = documents.map((document) =>
+    const legacyOnV3 = v3 && !projectV3;
+    const sources = legacyOnV3 ? "" : documents.map((document) =>
       `Repository project rules (${document.path}):\n${document.text}`,
     ).join("\n\n");
-    const policies = [buildProjectPolicy(), buildProjectPolicy({ conversation: true })];
+    const policies = [buildProjectPolicy({ projectV3, legacyOnV3 }),
+      buildProjectPolicy({ conversation: true, projectV3, legacyOnV3 })];
     const policy = policies[conversation ? 1 : 0];
     return {
-      packageId: `UartDebug2@${knowledge.version}`,
+      packageId: `${knowledge.repository?.split("/").at(-1) || "UartDebug2"}@${knowledge.version}`,
       digest: hash(`${sources}\n\n${policies.join("\n\n")}`),
       sources,
       policy,
@@ -347,7 +357,7 @@ function createAvrAiService(options = {}) {
       const data = await knowledgeLoader();
       ruleData = rules(data);
       knowledge = {
-        id: data.id || "UartDebug2",
+        id: data.id || data.repository?.split("/").at(-1) || "UartDebug2",
         version: data.version,
         digest: hash(
           JSON.stringify(data.manifest || data.sourceManifest || {}),
@@ -427,11 +437,21 @@ function createAvrAiService(options = {}) {
     const input = conversation ? normalizeChatRequest(raw) : normalizeRequest(raw);
     const explicitTarget = { mcu: input.mcu, packageName: input.packageName };
     const knowledge = await knowledgeLoader();
+    const materialsV3 = knowledge.repository === "Sergey-Bulanov/UartDebug3";
+    input.dialogueV3 = materialsV3;
+    const existingProject = input.currentProject;
+    input.projectV3 = existingProject?.contract === V3_CONTRACT || materialsV3 &&
+      (!existingProject || existingProject.id === "empty-project" && !existingProject.source.trim() && !existingProject.guide.trim() &&
+        !projectIdentity(input.canvas.markdown));
+    if (input.projectV3 && !materialsV3) {
+      fail(503, "materials_rules_unavailable", "The UartDebug3 rules are unavailable for this project.");
+    }
+    const identifyProject = input.projectV3 ? v3ProjectIdentity : projectIdentity;
     const language = input.canvas.locale || inferLocale(specificationText(input.canvas.markdown), "en");
-    const clarify = (key) => canvasResult(input, localizedMessage(key, language));
+    const clarify = (key) => canvasResult(input, localizedMessage(input.projectV3 && key === "identity" ? "identityV3" : key, language));
     if (
       !conversation && input.operation !== "analyze" &&
-      !projectIdentity(input.canvas.markdown)
+      !identifyProject(input.canvas.markdown)
     )
       return clarify("identity");
     if (input.operation === "describe" && !input.currentProject?.source?.trim())
@@ -454,11 +474,9 @@ function createAvrAiService(options = {}) {
       input.packageName ||= specified.packageName;
       input.canvas.target = { mcu: input.mcu, packageName: input.packageName };
       try {
-        projectOutputNames(
-          input.canvas.markdown,
-          projectIdentity(input.canvas.markdown),
-          input.currentProject,
-        );
+        const identity = identifyProject(input.canvas.markdown);
+        if (input.projectV3) v3ProjectOutputNames(identity, input.currentProject);
+        else projectOutputNames(input.canvas.markdown, identity, input.currentProject);
       } catch {
         return clarify("outputNames");
       }
@@ -466,8 +484,8 @@ function createAvrAiService(options = {}) {
         try {
           const regions = codeRegions(input.currentProject.source);
           if (
-            regions.filter((region) => region.user).length < 3 ||
-            regions.filter((region) => !region.user).length < 4
+            !input.projectV3 && (regions.filter((region) => region.user).length < 3 ||
+            regions.filter((region) => !region.user).length < 4)
           )
             return clarify("damagedMarkers");
           if (userCodeEditsRequested(input.currentProject.source))
@@ -504,7 +522,7 @@ function createAvrAiService(options = {}) {
               )
               .join("\n\n"),
             manifest: {
-              id: "UartDebug2",
+              id: knowledge.id || knowledge.repository?.split("/").at(-1) || "UartDebug2",
               version: knowledge.version,
               repository: knowledge.repository,
             },
@@ -521,7 +539,7 @@ function createAvrAiService(options = {}) {
         healthUrl: cfg.compileHealthUrl,
         timeoutMs: cfg.compileHealthTimeoutMs,
       });
-    const ruleData = rules(knowledge, conversation);
+    const ruleData = rules(knowledge, conversation, input.projectV3);
     const lookup = createDocumentationLookup({
       knowledge,
       fetch: options.documentationFetch || globalThis.fetch,
@@ -810,7 +828,8 @@ function createAvrAiService(options = {}) {
               if (!mcu || !packageName || specified.ambiguous ||
                   (specified.mcu && specified.mcu !== mcu) ||
                   (specified.packageName && specified.packageName.toLowerCase() !== packageName.toLowerCase())) {
-                fail(502, "invalid_generated_canvas", "Code generation requires one supported, consistent microcontroller and package. Ask for the missing target in the chat.");
+                fail(502, "invalid_generated_canvas", "Code generation requires one supported, consistent microcontroller and package. " +
+                  (input.dialogueV3 ? "Ask for the missing target in the task." : "Ask for the missing target in the chat."));
               }
               outputKnowledge = mcu === input.mcu && packageName === input.packageName ? selected :
                 await knowledgeResolver({ mcu, packageName, knowledge });
@@ -897,7 +916,9 @@ function createAvrAiService(options = {}) {
                   repairAttempt: repairAttempts,
                   validationError: { code: error.code, message: error.message },
                   instruction:
-                    conversation
+                    input.dialogueV3
+                      ? "Correct the response within the same authorized action and artifact format. Use clarify with the complete task Markdown for questions and decisions in AI-N dialogue. Preserve the agreed task during UartDebug3 generation and preserve it during description. Never fabricate checksums or verification."
+                      : conversation
                       ? "Correct this response within the latest user's authorized request. A generate response may create or update the specification for that same requested work; preserve unrelated requirements and every user C region. A describe response preserves the specification exactly. If a required decision is missing, return reply with canvas null/project null and ask in the chat. Do not create new inline question blocks."
                       : "Correct this response within the same authorized project stage. Preserve the input specification during generate/describe and preserve every user C region. Return clarify if a required decision is missing.",
                 }),

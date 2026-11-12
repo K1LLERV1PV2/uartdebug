@@ -140,6 +140,7 @@
       "Mini-project summary"
     );
     const version = normalizeVersion(definition.version);
+    const contract = definition.contract === projectFormat.V3_CONTRACT ? projectFormat.V3_CONTRACT : projectFormat.V2_CONTRACT;
     const rawFiles = collectDefinitionFiles(definition);
     const filesByRole = {};
     const guides = [];
@@ -181,7 +182,8 @@
     }
 
     if (!filesByRole[ROLES.SOURCE]) {
-      if (definition.contract !== "uartdebug-project/v2" || typeof definition.canvas?.markdown !== "string") {
+      if (![projectFormat.V2_CONTRACT, projectFormat.V3_CONTRACT].includes(definition.contract) ||
+          typeof definition.canvas?.markdown !== "string") {
         throw new Error("Mini-project definition is missing a source file.");
       }
       const name = normalizeFileName(String(definition.canvasName || title + ".md").replace(/\.md$/i, "") + ".c");
@@ -203,7 +205,7 @@
 
     const normalized = {
       schemaVersion: SCHEMA_VERSION,
-      contract: "uartdebug-project/v2",
+      contract,
       id,
       title,
       summary,
@@ -212,6 +214,9 @@
       guides,
       defaultLocale: guideSelection.defaultLocale,
       projectDocuments: projectFormat.normalizeProjectDocuments(definition.projectDocuments),
+      ...(contract === projectFormat.V3_CONTRACT ? {
+        referenceFiles: projectFormat.normalizeReferenceFiles(definition.referenceFiles, title),
+      } : {}),
     };
 
     if (definition.canvasName !== undefined) {

@@ -7,6 +7,7 @@ const { DatabaseSync } = require("node:sqlite");
 const { OAuth2Client } = require("google-auth-library");
 const { normalizeCanvas } = require("./avr-canvas-contract");
 const { validateStoredConversation } = require("./avr-conversation-contract");
+const { V3_CONTRACT, normalizeReferenceFiles } = require("./avr-project-format");
 const { MAX_PROVIDER_RESPONSES } = require("./avr-ai-limits");
 
 const COMPLETED_PROVIDER_USAGE = Symbol("completedProviderUsage");
@@ -445,6 +446,16 @@ class AiAccessService {
               Object.hasOwn(input.data.miniProjects, id) && downgraded(project.conversation, input.data.miniProjects[id].conversation))) {
           throw new AiAccessError(409, "account_workspace_migration_required",
             "Projects now use an updated chat format. Refresh the application before saving again.");
+        }
+        for (const [id, project] of Object.entries(previous.miniProjects || {})) {
+          if (project.contract !== V3_CONTRACT || !Object.hasOwn(input.data.miniProjects, id)) continue;
+          const next = input.data.miniProjects[id];
+          if (next.contract !== V3_CONTRACT ||
+              JSON.stringify(normalizeReferenceFiles(project.referenceFiles, project.title)) !==
+              JSON.stringify(normalizeReferenceFiles(next.referenceFiles, next.title))) {
+            throw new AiAccessError(409, "account_workspace_migration_required",
+              "Projects contain UartDebug3 reference files. Refresh the application before saving again.");
+          }
         }
       }
       if (dataType === "files" && input.schemaVersion === 3 &&
@@ -2791,6 +2802,14 @@ function validateAccountProjects(data) {
       throwInvalidAccountData("The project workspace contains an invalid project.");
     }
     validateAccountInstruction(project.canvas);
+    if (project.contract === V3_CONTRACT || Object.hasOwn(project, "referenceFiles")) {
+      try {
+        if (project.contract !== V3_CONTRACT) throw Error("Reference groups require UartDebug3 projects.");
+        normalizeReferenceFiles(project.referenceFiles, project.title);
+      } catch (error) {
+        throwInvalidAccountData(error.message);
+      }
+    }
     if (Object.hasOwn(project, "conversation")) validateAccountConversation(project.conversation);
     const projectRoles = new Map();
     const claimFile = (name, role) => {

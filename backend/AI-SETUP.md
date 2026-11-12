@@ -37,9 +37,9 @@ nginx allows 16 simultaneous transport requests per IP for the AI routes so stat
 
 ## Canonical materials
 
-AI_MATERIALS_ROOT=/var/lib/uartdebug-ai/materials/current/repository points to the complete immutable private UartDebug2 snapshot. The manifest and indexes remain outside the mirror. The backend verifies its exact file set and SHA-256 digests, then pins one release per request.
+AI_MATERIALS_ROOT=/var/lib/uartdebug-ai/materials/current/repository points to the complete immutable private UartDebug3 snapshot. The deployment manifest and prepared website catalog sit beside the mirror. The backend verifies the file set, SHA-256 digests and source index inputs, then pins one release per request.
 
-The website no longer ships duplicate ai/knowledge, recipes or mini-project source trees. Update UartDebug2; its GitHub Action updates materials independently of website releases. See [materials deployment](../docs/AI_MATERIALS_DEPLOYMENT.md) and [project contract](../docs/AVR_CANVAS.md).
+Update UartDebug3 to change the canonical rules and references. Its materials sync workflow activates reviewed snapshots independently of website releases. See [materials deployment](../docs/AI_MATERIALS_DEPLOYMENT.md) and [project contract](../docs/AVR_CANVAS.md).
 
 For local development, export a Git archive and prepare it with backend/deploy/install-materials.py --no-activate. Set AI_MATERIALS_ROOT to the returned root. Supply separate development credentials through OPENAI_API_KEY_FILE and start npm run start:ai --prefix backend. AI_EXTERNAL_DOCUMENTATION_ENABLED=0 disables network reference retrieval; when enabled, official HTML is a bounded fallback after local search.
 

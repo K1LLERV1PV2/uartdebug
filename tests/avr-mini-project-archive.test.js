@@ -11,6 +11,43 @@ const archive = require("../public/avr-mini-project-archive.js");
 const miniProjectCore = require("../public/avr-mini-projects.js");
 const projectFormat = require("../public/avr-project-format.js");
 
+test("UartDebug3 ZIP round-trips the primary files and the exact saved reference group", async () => {
+  const name = "Demo";
+  const markdown = "# Demo\nMicrocontroller: ATtiny1624; Package: SOIC-14\n";
+  const referenceFiles = ["md", "yaml", "c"].map(extension => ({
+    name: "Demo.1." + extension,
+    content: "Saved bytes for " + extension + "\r\n",
+  }));
+  const definition = {
+    id: name, title: name, contract: projectFormat.V3_CONTRACT, version: "",
+    canvasName: "Demo.md", projectPath: "Target_Projects/Demo",
+    canvas: { markdown }, referenceFiles,
+    files: [
+      { role: "source", name: "Demo.c", content: "int main(void) {}" },
+      { role: "specification", name: "Demo.yaml", content: "project:\n  name: Demo\n" },
+      { role: "guide", name: "Demo.Description.md", content: "# Current description\n", locale: "en" },
+    ],
+  };
+  const imported = await archive.parseMiniProjectArchive(archive.createProjectArchive(definition));
+  assert.equal(imported.contract, projectFormat.V3_CONTRACT);
+  assert.equal(imported.canvas.markdown, markdown);
+  assert.deepEqual(imported.canvas.target, { mcu: "attiny1624", packageName: "SOIC-14" });
+  assert.deepEqual(imported.referenceFiles, referenceFiles);
+  assert.deepEqual(imported.files.map(file => file.name), ["Demo.c", "Demo.Description.md", "Demo.yaml"]);
+  assert.throws(() => archive.createProjectArchive({ ...definition, referenceFiles: referenceFiles.slice(0, 2) }), /three files/);
+});
+
+test("UartDebug3 imports a draft task before the user has selected hardware", async () => {
+  const parsed = await archive.parseMiniProjectArchive(makeZip([
+    { name: "Target_Projects/Draft/Draft.md", content: "# Draft\n\nMake a prototype.\n" },
+  ]));
+  assert.equal(parsed.contract, projectFormat.V3_CONTRACT);
+  assert.equal(parsed.canvas.target, undefined);
+  assert.equal(parsed.files.find(file => file.role === "source").content, "");
+  assert.equal(parsed.files.some(file => file.role === "specification"), false);
+  assert.equal(parsed.version, "");
+});
+
 const PNG_1X1 = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64"

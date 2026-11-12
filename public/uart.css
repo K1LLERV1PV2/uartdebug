@@ -130,7 +130,6 @@ body {
     border-color 120ms ease,
     box-shadow 120ms ease,
     background-color 120ms ease;
-  scrollbar-width: thin;
 }
 
 .connection-control select:hover {

@@ -2296,6 +2296,32 @@ test("invalid or oversized project chat collections cannot replace saved threads
   }
 });
 
+test("cached clients cannot discard a retained UartDebug3 reference group", async (t) => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "reference-project", sub: "reference-owner", email: "reference@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const saved = unifiedProjectsFixture();
+  const project = saved.miniProjects.blink;
+  Object.assign(project, {
+    title: "Blink",
+    contract: "uartdebug-project/v3",
+    referenceFiles: ["md", "yaml", "c"].map(extension => ({
+      name: "Blink.1." + extension, content: "Saved " + extension + "\r\n",
+    })),
+  });
+  service.writeAccountWorkspace(context, "files", { baseRevision: 0, expectedAccountKey: context.accountKey, data: saved });
+  for (const contract of ["uartdebug-project/v2", "uartdebug-project/v3"]) {
+    const stale = structuredClone(saved);
+    stale.miniProjects.blink.contract = contract;
+    delete stale.miniProjects.blink.referenceFiles;
+    assert.throws(() => service.writeAccountWorkspace(context, "files", {
+      baseRevision: 1, expectedAccountKey: context.accountKey, data: stale,
+    }), error => error.status === 409 && error.code === "account_workspace_migration_required");
+  }
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, saved);
+});
+
 test("cached single-chat clients cannot downgrade saved project chat collections at the current revision", async (t) => {
   const { service, oauthClient } = makeService(); t.after(() => service.close());
   const login = await signIn(service, oauthClient, { code: "chats-upgrade", sub: "chats-upgrade-account", email: "chat-upgrade@example.com" });

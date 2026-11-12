@@ -756,9 +756,14 @@
     let selected;
     let documents;
     try {
-      selected = projectFormat.resolveProjectFiles(coreEntries.filter(file => !projectDocuments.includes(file)).map(file => ({
-        ...file, name: file.baseName, content: decodeProjectText(file, limits),
-      })));
+      const projectFiles = coreEntries.filter(file => !projectDocuments.includes(file)).map(file => ({
+        name: file.baseName, content: decodeProjectText(file, limits, true),
+      }));
+      const folderName = basename(projectFolder || (root === "Target_Projects" ? "" : root));
+      selected = projectFormat.resolveV3ProjectFiles(projectFiles, folderName) ||
+        projectFormat.resolveProjectFiles(projectFiles.map(file => ({
+          ...file, content: file.content.replace(/^\ufeff/, "").replace(/\r\n?/g, "\n"),
+        })));
       documents = projectFormat.normalizeProjectDocuments(projectDocuments.map(file => ({
         name: file.baseName, content: decodeProjectText(file, limits, true),
       })));
@@ -786,16 +791,19 @@
         guide.label = language + " (default)";
       }
     }
-    if (!guides.length) guides.push({ role: "guide", name: title + " (description).md", content: "", locale: projectFormat.inferLocale(markdown, "en"), mediaType: "text/markdown", hidden: true });
+    const isV3 = selected.contract === projectFormat.V3_CONTRACT;
+    if (!guides.length) guides.push({ role: "guide", name: title + (isV3 ? ".Description.md" : " (description).md"), content: "", locale: projectFormat.inferLocale(markdown, "en"), mediaType: "text/markdown", hidden: true });
     const assets = images.map(file => buildImageAsset({ ...file,
       relativePath: stripSharedRoot(file.relativePath, projectFolder),
       extension: extensionOf(file.baseName.toLowerCase()),
     }, limits));
     return {
-      schemaVersion: 1, contract: "uartdebug-project/v2", id: stem, title, version, summary: "",
+      schemaVersion: 1, contract: selected.contract || projectFormat.V2_CONTRACT, id: stem, title, version, summary: "",
       defaultLocale: guides.find(file => file.name === selected.guide?.name)?.locale || guides[0].locale, canvasName: specification.name,
       projectPath: "Target_Projects/" + title + (version ? " " + version : ""),
-      canvas: { markdown, locale: "" }, assets, projectDocuments: documents, importWarnings: selected.warnings || [],
+      canvas: { markdown, locale: "", ...(selected.target ? { target: selected.target } : {}) },
+      ...(isV3 ? { referenceFiles: selected.referenceFiles } : {}),
+      assets, projectDocuments: documents, importWarnings: selected.warnings || [],
       files: [
         { role: "source", name: source?.name || selected.alternatives?.sourceName || title + ".c", content: source?.content || "", mediaType: "text/x-c" },
         ...guides,
@@ -839,6 +847,7 @@
     add(normalized.canvasName || normalized.title + ".md", encoder.encode(normalized.canvas?.markdown || ""));
     const files = [normalized.files.source, normalized.files.specification, ...normalized.guides].filter(Boolean);
     for (const file of files) add(file.name, encoder.encode(file.content));
+    for (const file of normalized.referenceFiles || []) add(file.name, encoder.encode(file.content));
     for (const document of normalized.projectDocuments) add(document.name, encoder.encode(document.content));
     const assets = [...(Array.isArray(normalized.assets) ? normalized.assets : Object.values(normalized.assets || {})),
       ...normalized.guides.flatMap(guide => Array.isArray(guide.assets) ? guide.assets : Object.values(guide.assets || {}))];

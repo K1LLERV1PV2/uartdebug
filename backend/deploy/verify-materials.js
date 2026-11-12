@@ -1,10 +1,11 @@
 "use strict";
 
-const { loadMaterials, createProjectCatalog } = require("../avr-materials");
+const { loadMaterials, createProjectCatalog, REPOSITORY, REQUIRED_RULES, REQUIRED_RULES_V3 } = require("../avr-materials");
 
 try {
   const materials = loadMaterials({ root: process.argv[2] });
-  if (!materials.manifest?.commit || materials.initialRules?.length !== 4) {
+  const requiredRules = materials.repository === REPOSITORY ? REQUIRED_RULES_V3 : REQUIRED_RULES;
+  if (!materials.manifest?.commit || !requiredRules.every(file => materials.initialRules.some(rule => rule.path === file))) {
     throw new Error("The canonical materials release is incomplete.");
   }
   if (process.argv.includes("--prepare-catalog")) {

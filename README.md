@@ -34,15 +34,15 @@ The repository is under active development. Hardware access requires a browser t
 - Follow `//# Heading` through `//###### Heading` comment links from C code to matching guide sections.
 - Compile supported tinyAVR projects with Microchip XC8 on the compiler service.
 - Detect a supported chip and flash Intel HEX over UPDI from the browser.
-- Use Chat beside Project Specification, C Code and Code Description in the desktop workspace. Ask questions, review requirements, request code or describe the current program in ordinary language. A complete request can create its specification and program together; missing decisions are asked in the chat. Add project → Empty project starts a blank draft, and an empty specification can also be reviewed.
+- Use Chat beside Project Specification, C Code and Code Description in the desktop workspace. Ask questions, review requirements, request code or describe the current program in ordinary language. Specification review displays clarification questions in the Markdown document and saves the answers there. Projects → Empty project starts a blank draft, and an empty specification can also be reviewed.
 - Verify AI-created or updated source with the server-side AVR compiler and let
   the assistant repair compiler errors before returning the project.
-- Keep questions and answers in each project's chat, beside its requirements and selected MCU/package. Existing inline document remarks remain available. Open the project/file list from Files in the upper middle target panel. Resource YAML stays hidden from that list and editor, while remaining part of AI requests, saved projects and project ZIPs.
-- Use the private UartDebug2 repository as the local source of project rules and AVR knowledge. Other compiler-supported devices remain available for manual programming.
+- Keep project conversations alongside the specification and selected MCU/package. Open the project/file list from Projects in the top row. Internal YAML stays hidden from that list and editor, while remaining part of AI requests, saved projects and project ZIPs.
+- Use the private UartDebug3 repository as the local source of project rules and AVR knowledge. Other compiler-supported devices remain available for manual programming.
 
 ## Desktop workspace
 
-The desktop workspace has four panes: Chat, Project Specification, C Code and Code Description. The project/file list opens in a standard modal from the upper middle panel. AI progress and responses stay in Chat; errors also appear in the shared notification history. Compiler, UPDI and UART feedback use shared toasts with actionable details in standard dialogs, without a separate compiler-log pane. The established smooth action capsules and matching curved cutouts stay coherent when panes collapse; the placement sketch is not copied as literal construction lines. Technical stack traces and protocol logs remain in browser DevTools. See [workspace behavior and storage](docs/AVR_CANVAS.md#desktop-workspace).
+The desktop workspace has four panes: Chat, Project Specification, C Code and Code Description. Chat has a framed conversation above its composer. The top row shows the current project and latest notification. AI progress and responses stay in Chat. Compiler, UPDI and UART feedback use shared toasts with actionable details in standard dialogs. Technical stack traces and protocol logs remain in browser DevTools. See [workspace behavior and storage](docs/AVR_CANVAS.md#desktop-workspace).
 
 ## Browser and hardware requirements
 
@@ -105,18 +105,18 @@ The compiler and AI services bind to loopback by default. nginx is the public sa
 
 ## AVR mini-project format
 
-Projects use the canonical repository structure:
+New projects use the UartDebug3 repository structure:
 
 1. **Project Specification** — editable project requirements in `Name.md`.
 2. **C Code** — standalone XC8 source in `Name.c`, with preserved AI/user regions.
-3. **Resources** — internal `Name.yaml`, hidden from the user file list.
+3. **Information Model** — internal `Name.yaml`, hidden from the user file list.
 4. **Code Description** — a separate Markdown description generated from the current C.
 
-During materials installation, reviewed `User_Examples` are converted into the common project format and canonical `Target_Projects` are imported directly. The derived `project-catalog.json` is stored beside the immutable source mirror. Runtime requests read this prepared catalog instead of rewriting source examples. Their functional C tokens are preserved.
+The same-stem `.md`, `.yaml` and `.c` files can be imported and exported as one ZIP. A complete `.1` reference group is preserved on import and export. Existing projects retain their format.
 
-Project rules, technical references and examples are maintained in the private `Sergey-Bulanov/UartDebug2` repository. Its tracked files are mirrored on the server without rearranging or rewriting them. See [the project architecture](docs/AVR_CANVAS.md) and [materials deployment](docs/AI_MATERIALS_DEPLOYMENT.md).
+Project rules, technical references and examples are maintained in the private `Sergey-Bulanov/UartDebug3` repository. Its tracked files are mirrored on the server without rearranging or rewriting them. See [the project architecture](docs/AVR_CANVAS.md) and [materials deployment](docs/AI_MATERIALS_DEPLOYMENT.md).
 
-Built-in project cards come from the prepared server catalog. Selecting a card copies the project into the editable browser workspace; rules and raw knowledge remain private.
+Built-in project cards come from a catalog prepared during materials installation. The current UartDebug3 revision contains technical examples and test projects, with no reviewed website templates. Rules and raw knowledge remain private.
 
 Frontend resources are discovered from local HTML, CSS, JavaScript and manifest references. After adding a page or dependency, run `python .github/scripts/stamp_frontend_build.py --generate`; CI checks this generated service-worker list with `--check`. Deployment revisions local page resources automatically; no filename/count registry is maintained.
 

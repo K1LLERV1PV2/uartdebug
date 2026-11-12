@@ -50,8 +50,10 @@
   box-shadow: inset 0 0 0 2px var(--ui-panel-focus-border, var(--ui-border-hover));
 }
 
-:where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints) {
-  scrollbar-width: thin;
+@supports not selector(::-webkit-scrollbar) {
+  :where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints, .connection-control select) {
+    scrollbar-width: thin;
+  }
 }
 
 :where(.ui-scroll-region, .ui-dialog-body, .CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-hints)::-webkit-scrollbar {
@@ -314,7 +316,9 @@ body.is-row-resizing * {
 
 .custom-select-trigger::after {
   position: absolute;
+  top: 50%;
   right: var(--custom-select-arrow-inset, 14px);
+  translate: 0 -50%;
   width: 0;
   height: 0;
   border-right: 5px solid transparent;
@@ -753,5 +757,3 @@ li.CodeMirror-hint-active {
 .custom-select.has-control-caption[data-connection-state="error"] .custom-select-status { color: var(--ui-danger-text); }
 .custom-select.has-control-caption:is([data-connection-state="warning"], [data-connection-state="busy"]) .custom-select-trigger { border-color: var(--ui-warning); }
 .custom-select.has-control-caption[data-connection-state="error"] .custom-select-trigger { border-color: var(--ui-danger); }
-
-.custom-select.has-control-caption .custom-select-trigger::after { top: 50%; margin-top: -3px; }

@@ -1,5 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
+const { createHash } = require("node:crypto");
 const test = require("node:test");
 const {
   createAvrAiService,
@@ -91,6 +92,11 @@ const knowledge = () => ({
   reviewedFacts: { facts: [] },
   dfpRegisters: { devices: [] },
 });
+const knowledgeV3 = () => ({
+  ...knowledge(), repository: "Sergey-Bulanov/UartDebug3",
+  initialRules: ["AGENTS.md", "Rules/01.md", "Rules/02.md", "Rules/03.md", "Rules/04.md"]
+    .map(path => ({ path, text: "UartDebug3 rules." })),
+});
 const envelope = (value) => ({
   id: "resp_test",
   model: "gpt-6.1-sol",
@@ -157,6 +163,104 @@ test("optional access credentials remain server-side and fail closed", () => {
   assert.equal(s.authorizeAccessToken("wrong"), false);
   assert.equal(s.authorizeAccessToken("secret-test"), true);
   assert.equal(service().authorizeAccessToken(""), true);
+});
+
+test("UartDebug3 uses its own task, model and generation contract", async () => {
+  const markdown = [
+    "# led", "Microcontroller: ATtiny1624; Package: SOIC-14", "",
+    "## Indication", "### LED", "Set PA3 high.", "",
+    String.fromCharCode(96).repeat(3) + "text",
+    "AI-1 : Technical decision.", "Set PA3 high as a GPIO output.",
+    String.fromCharCode(96).repeat(3), "+: ", "",
+  ].join("\n");
+  const code = "#include <xc.h>\nint main(void) {\n  PORTA.OUTSET = PIN3_bm;\n  PORTA.DIRSET = PIN3_bm;\n  while (1) {}\n}\n";
+  const model = [
+    "consistency_checks:",
+    "  task_matches_model: {status: not_checked, scope: null, sha256: null}",
+    "  code_matches_model: {status: not_checked, scope: null, sha256: null}",
+    "project: {name: led, microcontroller: ATtiny1624, package: SOIC-14}",
+    "blocks:",
+    "  - id: indication",
+    "    title: Indication",
+    "    fragments:",
+    "      - id: led",
+    "        title: LED",
+    "        solution:",
+    "          status: approved",
+    "          elements:",
+    "            - id: led_pin",
+    "              kind: resource",
+    "              purpose: Drive the LED",
+    "              origins: [{kind: task, ref: 'task:led', contribution: Use PA3}]",
+    "              data: {peripheral: PORT, instance: PORTA, port_pin: PA3, package_pin: 13}",
+    "shared: []",
+    "code: {observed_sha256: null, objects: []}",
+  ].join("\n");
+  const output = {
+    ...generated(),
+    canvas: { ...generated().canvas, markdown },
+    project: {
+      ...generated().project, version: "",
+      source: { name: "led.c", content: code },
+      resources: { name: "led.yaml", content: model },
+    },
+  };
+  const requests = [];
+  const s = service({
+    loadKnowledge: knowledgeV3,
+    fetch: async (_url, init) => {
+      requests.push(JSON.parse(init.body));
+      return response(envelope(output));
+    },
+  });
+  const request = { ...input(), canvas: { ...canvas(), markdown }, message: "Generate C from the agreed task.", history: [] };
+  const result = await s.processChat(request);
+  assert.equal(result.project.contract, "uartdebug-project/v3");
+  assert.equal(result.project.projectPath, "Target_Projects/led");
+  assert.equal(result.canvas.markdown, markdown);
+  assert.match(requests[0].instructions, /Rules\/03\.md/);
+  assert.match(requests[0].instructions, /Accepting a technical proposal does not authorize generation/);
+  await assert.rejects(s.processChat({ ...request, requestSource: "review" }), /cannot change code/);
+  output.project.resources.content = model.replace("package_pin: 13", "package_pin: 8");
+  await assert.rejects(s.processChat(request), /disagrees with the selected package pin map/);
+  output.project.resources.content = model.replace("status: not_checked, scope: null, sha256: null",
+    "status: consistent, scope: {kind: full}, sha256: " + createHash("sha256").update(markdown).digest("hex"));
+  await assert.rejects(s.processChat(request), /semantic checks must use not_checked/);
+  output.project.resources.content = model;
+  const reopened = markdown + "\nPlease change the output pin.\n";
+  output.canvas.markdown = reopened;
+  await assert.rejects(s.processChat({ ...request, canvas: { ...canvas(), markdown: reopened } }),
+    /Resolve and record the technical decisions/);
+  const emptyDecision = markdown.replace("\nSet PA3 high as a GPIO output.", "");
+  output.canvas.markdown = emptyDecision;
+  await assert.rejects(s.processChat({ ...request, canvas: { ...canvas(), markdown: emptyDecision } }),
+    /Resolve and record the technical decisions/);
+  const withServiceHeading = markdown + "\n## Продолжение работы\n";
+  output.canvas.markdown = withServiceHeading;
+  assert.equal((await s.processChat({ ...request, canvas: { ...canvas(), markdown: withServiceHeading } })).canvas.markdown,
+    withServiceHeading);
+});
+
+test("UartDebug3 review adds document dialogue while retaining a legacy project's artifact format", async () => {
+  const raw = {
+    ...input("analyze"), message: "Review the project specification.", history: [], requestSource: "review",
+    currentProject: {
+      contract: "uartdebug-project/v2", id: "led", instanceId: "led", title: "led",
+      version: "Ver.1.0", sourceName: "led.c", source: source(),
+    },
+  };
+  const output = clarify();
+  const tick = String.fromCharCode(96);
+  output.canvas.markdown += "\n\n" + tick + "AI-1 : Should PA3 start low?" + tick + " ?: ";
+  const s = service({ loadKnowledge: knowledgeV3, fetch: async (_url, init) => {
+    assert.match(JSON.parse(init.body).instructions, /retains the existing v2 artifact format/);
+    return response(envelope(output));
+  } });
+  const result = await s.processChat(raw);
+  assert.equal(result.canvas.markdown, output.canvas.markdown);
+  assert.equal(result.kind, "canvas");
+  output.canvas.markdown += "\n\n> ###### *[AI.2] Question.*\n> Another question?";
+  await assert.rejects(s.processChat(raw), /Write new questions directly in the task/);
 });
 
 test("chat input accepts bounded conversational roles and rejects injected or oversized history", () => {
