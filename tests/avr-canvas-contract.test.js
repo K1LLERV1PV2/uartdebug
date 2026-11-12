@@ -149,13 +149,16 @@ test("UartDebug3 reports precise bounded field paths for model and code errors",
 });
 
 test("UartDebug3 resolves approved structured decisions against numbered task fragments", () => {
-  const task = ["# blink", "Microcontroller: ATtiny1624; Package: SOIC-14", "", "## Indicator 1",
-    "### LED 1.1", "Turn on the LED.", "#### Output 1.1.1", "Use PA3.", "## Continue work", ""].join("\n");
+  const task = ["# blink", "Microcontroller: ATtiny1624; Package: SOIC-14", "", "## 1 Indicator",
+    "### 1.1 LED", "Turn on the LED.", "#### 1.1.1 Output", "Use PA3.", "## Continue work", ""].join("\n");
   const decision = { id: "AI-1", kind: "decision", anchor: { title: "LED", number: "1.1", level: 3 },
     message: "Use PA3 as a GPIO output.", options: [], choice: null, answer: "" };
   const question = { ...decision, id: "AI-2", kind: "question", message: "Confirm PA3?", options: ["Yes", "No"] };
   const accepted = v3ModelFixture({ task, dialogue: [decision, { ...question, choice: 0 }] });
   assert.equal(accepted.validate().canvas.markdown, task);
+  const suffix = task.replace("## 1 Indicator", "## Indicator 1").replace("### 1.1 LED", "### LED 1.1")
+    .replace("#### 1.1.1 Output", "#### Output 1.1.1");
+  assert.equal(v3ModelFixture({ task: suffix, dialogue: [decision] }).validate().action, "generate");
   accepted.model.blocks[0].title = "Indicator 1";
   assert.throws(accepted.validate, /follow the approved task headings/);
   assert.throws(v3ModelFixture({ task, dialogue: [decision, question] }).validate, /Resolve and record the technical decisions/);
@@ -181,6 +184,8 @@ test("UartDebug3 can generate from imported decisions and historical unnumbered 
   const decision = { id: "AI-1", kind: "decision", anchor: { title: "LED", number: "", level: 3, parents: ["Indicator"] },
     message: "Use PA3 as a GPIO output.", options: [], choice: null, answer: "" };
   assert.equal(v3ModelFixture({ task, dialogue: [decision] }).validate().action, "generate");
+  const mixed = task.replace("## Indicator", "## Indicator 1");
+  assert.equal(v3ModelFixture({ task: mixed, dialogue: [decision] }).validate().action, "generate");
 });
 
 test("empty draft review requires inline remarks and accepts an explicitly authorized initial question", () => {

@@ -99,7 +99,7 @@ test("structured questions offer choices and a custom answer inside the specific
   const received = [];
   let releaseFirst;
   const firstReply = new Promise(resolve => { releaseFirst = resolve; });
-  const markdown = "# Blink\n\n## Hardware 1\n\n### LED 1.1\n\nUse an external LED.\n";
+  const markdown = "# Blink\n\n## 1 Hardware\n\n### 1.1 LED\n\nUse an external LED.\n";
   const emptyAnchor = { title: "", number: "", level: 0 };
   const dialogue = [
     { id: "AI-1", kind: "question", anchor: { title: "LED", number: "1.1", level: 3, parents: ["Hardware"] },

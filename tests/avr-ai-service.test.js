@@ -246,7 +246,7 @@ test("UartDebug3 uses its own task, model and generation contract", async () => 
 
 const numberedV3Task = [
   "# led", "Microcontroller: ATtiny1624; Package: SOIC-14", "",
-  "## Indication 1", "### LED 1.1", "Set PA3 high.", "",
+  "## 1 Indication", "### 1.1 LED", "Set PA3 high.", "",
 ].join("\n");
 
 test("UartDebug3 normal chat handoff generates after the user selects Generate code in the task", async () => {
@@ -394,8 +394,18 @@ test("UartDebug3 normal chat preserves unchanged legacy task headings and valida
   assert.equal(result.canvas.markdown, raw.canvas.markdown);
   assert.deepEqual(result.canvas.dialogue[0].options, ["On", "Off"]);
 
-  output.canvas.markdown = raw.canvas.markdown.replace("## Hardware requirements", "## Hardware requirements 3");
-  await assert.rejects(s.processChat(raw), /must end with block number 1/);
+  const legacy = raw.canvas.markdown.replace("## Hardware requirements", "## Hardware requirements 1")
+    .replace("## Software requirements", "## Software requirements 2");
+  output.canvas.markdown = legacy + "\nKeep the LED low at startup.\n";
+  assert.equal((await s.processChat({ ...raw, canvas: { ...raw.canvas, markdown: legacy } })).canvas.markdown, output.canvas.markdown);
+
+  output.canvas.markdown = raw.canvas.markdown.replace("## Hardware requirements", "## Hardware requirements 1");
+  await assert.rejects(s.processChat(raw), /must begin with block number 1/);
+  output.canvas.markdown = raw.canvas.markdown.replace("## Hardware requirements", "## 1 Hardware requirements")
+    .replace("## Software requirements", "## 2 Software requirements");
+  assert.equal((await s.processChat(raw)).canvas.markdown, output.canvas.markdown);
+  const prefixedInput = { ...raw, mcu: "", packageName: "", canvas: { ...raw.canvas, markdown: output.canvas.markdown, target: {} } };
+  assert.deepEqual((await s.processChat(prefixedInput)).canvas.target, { mcu: "attiny1624", packageName: "SOIC-14" });
 });
 
 test("chat input accepts bounded conversational roles and rejects injected or oversized history", () => {

@@ -49,8 +49,8 @@ test("legacy decisions with a reopened response or no substantive decision remai
 });
 
 test("UartDebug3 task headings parse consecutive numbers and exclude the service heading and examples", () => {
-  const markdown = ["# Blink", "## Indicator 1", "### LED 1.1", "#### Output 1.1.1", "### Timing 1.2", "",
-    "> ## Quoted example 9", "```markdown", "## Fenced example 8", "```", "## Continue work", "## UART 2", "### Baud 2.1"].join("\n");
+  const markdown = ["# Blink", "## 1 Indicator", "### 1.1 LED", "#### 1.1.1 Output", "### 1.2 Timing", "",
+    "> ## 9 Quoted example", "```markdown", "## 8 Fenced example", "```", "## Continue work", "## 2 UART", "### 2.1 Baud"].join("\n");
   const headings = format.v3TaskHeadings(markdown);
   assert.deepEqual(headings.map(({ title, number, service }) => [title, number, service]), [
     ["Indicator", "1", false], ["LED", "1.1", false], ["Output", "1.1.1", false], ["Timing", "1.2", false],
@@ -58,14 +58,30 @@ test("UartDebug3 task headings parse consecutive numbers and exclude the service
   ]);
   assert.deepEqual(headings[2].parents, ["Indicator", "LED"]);
   assert.equal(format.v3TaskHeadingNumberError(markdown), null);
-  assert.equal(format.v3TaskHeadingNumberError(markdown.replace("Timing 1.2", "Timing 1.3")).expected, "1.2");
-  assert.equal(format.v3TaskHeadingNumberError("# Blink\n### Orphan 1.1").expected, null);
-  assert.equal(format.v3TaskHeadingNumberError(markdown.replace("Continue work", "Continue work 2")).expected, "");
+  assert.equal(format.v3TaskHeadingNumberError(markdown.replace("1.2 Timing", "1.3 Timing")).expected, "1.2");
+  assert.equal(format.v3TaskHeadingNumberError("# Blink\n### 1.1 Orphan").expected, null);
+  assert.equal(format.v3TaskHeadingNumberError(markdown.replace("Continue work", "2 Continue work")).expected, "");
+});
+
+test("prefix numbering preserves literal numbers in titles and recognizes legacy suffixes", () => {
+  const prefix = "## 1 Timer 2\n### 1.1 Overflow";
+  const suffix = "## 5 V supply 1\n### Output 1.1";
+  assert.equal(format.v3TaskHeadings(prefix)[0].title, "Timer 2");
+  assert.equal(format.v3TaskHeadings(suffix)[0].title, "5 V supply");
+  assert.equal(format.v3TaskHeadingNumberError(suffix).numberPosition, "suffix");
+  assert.equal(format.v3TaskHeadingNumberError(suffix, { allowSuffix: true }), null);
+  assert.equal(format.v3TaskHeadingNumberError(suffix + "\nNew prose.", { previousMarkdown: suffix }), null);
+  const anchor = { title: "Output", level: 3, parents: ["5 V supply"] };
+  assert.equal(format.findV3TaskHeading("## 5 V supply\n### Output", anchor).line, 1);
+  assert.equal(format.findV3TaskHeading("## 1 5 V supply\n### 1.1 Output", anchor).number, "1.1");
+  assert.equal(format.findV3TaskHeading("## 1 MHz clock 1\n### Output 1.1", {
+    ...anchor, parents: ["1 MHz clock"],
+  }).number, "1.1");
 });
 
 test("UartDebug3 resolves repeated headings by ancestry after reordering and refuses ambiguous old anchors", () => {
   const markdown = "# Demo\n## Receive 1\n### Clock 1.1\n## Send 2\n### Clock 2.1\n";
-  const reordered = "# Demo\n## Send 1\n### Clock 1.1\n## Receive 2\n### Clock 2.1\n";
+  const reordered = "# Demo\n## 1 Send\n### 1.1 Clock\n## 2 Receive\n### 2.1 Clock\n";
   const anchor = { title: "Clock", number: "1.1", level: 3, parents: ["Receive"] };
   assert.equal(format.findV3TaskHeading(markdown, anchor).number, "1.1");
   assert.equal(format.findV3TaskHeading(reordered, anchor).number, "2.1");

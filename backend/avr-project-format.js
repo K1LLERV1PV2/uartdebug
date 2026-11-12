@@ -221,6 +221,8 @@
 
   function v3TaskHeadings(markdown) {
     const headings = [];
+    const counts = [0, 0, 0];
+    const isServiceTitle = title => /^(?:Продолжение работы|Continue work|Ввод нового блока задания|Enter a new task block)$/iu.test(title);
     let ancestors = [];
     for (const [line, text] of specificationText(markdown).split("\n").entries()) {
       const heading = /^ {0,3}(#{2,4})[ \t]+(.+)$/.exec(text);
@@ -228,13 +230,34 @@
       const level = heading[1].length;
       const rawTitle = heading[2].replace(/[ \t]+#+[ \t]*$/, "").trim();
       if (!rawTitle) continue;
-      const suffix = /^(.*\S)[ \t]+([1-9]\d*(?:\.[1-9]\d*){0,2})$/.exec(rawTitle);
-      const number = suffix && suffix[2].split(".").length === level - 1 ? suffix[2] : "";
-      const title = number ? suffix[1] : rawTitle;
-      const service = level === 2 && /^(?:Продолжение работы|Continue work|Ввод нового блока задания|Enter a new task block)$/iu.test(title);
-      const parents = ancestors.slice(0, level - 2);
-      headings.push({ line, level, title, rawTitle, number, parents, service });
-      ancestors = service ? [] : [...parents, title];
+      const depth = level - 2;
+      const leading = /^([1-9]\d*(?:\.[1-9]\d*){0,2})[ \t]+(\S.*)$/.exec(rawTitle);
+      const trailing = /^(.*\S)[ \t]+([1-9]\d*(?:\.[1-9]\d*){0,2})$/.exec(rawTitle);
+      const prefix = leading?.[1].split(".").length === depth + 1
+        ? { number: leading[1], title: leading[2], position: "prefix" } : null;
+      const suffix = trailing?.[2].split(".").length === depth + 1
+        ? { number: trailing[2], title: trailing[1], position: "suffix" } : null;
+      const serviceNumber = level === 2 && [prefix, suffix].find(item => item && isServiceTitle(item.title));
+      const service = level === 2 && (isServiceTitle(rawTitle) || !!serviceNumber);
+      const lineage = ancestors.slice(0, depth);
+      if (!service) {
+        counts[depth]++;
+        counts.fill(0, depth + 1);
+      }
+      const expected = service ? "" : lineage.length === depth ? counts.slice(0, depth + 1).join(".") : null;
+      // When a legacy title starts with digits, its expected trailing ordinal
+      // distinguishes it from a prefixed heading with a numeric word in its title.
+      const numbering = serviceNumber || (suffix?.number === expected && prefix?.number !== expected ? suffix : prefix || suffix);
+      const title = numbering?.title ?? rawTitle;
+      const legacyTitle = prefix?.number === expected && suffix?.number === expected ? suffix.title : "";
+      const record = {
+        line, level, title, rawTitle, number: numbering?.number ?? "",
+        numberPosition: numbering?.position ?? "", service, expected, legacyTitle,
+        parents: lineage.map(parent => parent.title),
+        parentTitles: lineage.map(parent => [parent.title, parent.rawTitle, parent.legacyTitle].filter(Boolean)),
+      };
+      headings.push(record);
+      ancestors = service ? [] : [...lineage, record];
     }
     return headings;
   }
@@ -248,30 +271,28 @@
     const matches = headings.filter(heading => !heading.service &&
       (level === undefined || level === heading.level) &&
       (!parents || parents.length === heading.parents.length &&
-        parents.every((parent, index) => normalizeTitle(parent) === normalizeTitle(heading.parents[index]))) &&
-      (normalizeTitle(heading.title) === expectedTitle || normalizeTitle(heading.rawTitle) === expectedTitle));
+        parents.every((parent, index) => heading.parentTitles[index].some(title => normalizeTitle(parent) === normalizeTitle(title)))) &&
+      [heading.title, heading.rawTitle, heading.legacyTitle].some(title => normalizeTitle(title) === expectedTitle));
     // A reused number after reordering is not an identity for duplicate headings.
     return matches.length === 1 ? matches[0] : null;
   }
 
-  function v3TaskHeadingNumberError(markdown) {
-    const counts = [0, 0, 0];
-    let lastLevel = 1;
+  function v3TaskHeadingNumberError(markdown, { allowSuffix = false, previousMarkdown = "" } = {}) {
     const headings = Array.isArray(markdown) ? markdown : v3TaskHeadings(markdown);
+    const previous = v3TaskHeadings(previousMarkdown);
+    const previousBlocks = previous.filter(heading => !heading.service);
+    const previousServices = new Set(previous.filter(heading => heading.service).map(heading => heading.rawTitle));
+    let index = 0;
     for (const heading of headings) {
       if (heading.service) {
-        if (heading.number) return { ...heading, expected: "" };
-        lastLevel = 1;
+        if (heading.number && !previousServices.has(heading.rawTitle)) return heading;
         continue;
       }
-      const level = heading.level;
-      if (level > lastLevel + 1) return { ...heading, expected: null };
-      const depth = level - 2;
-      counts[depth]++;
-      counts.fill(0, depth + 1);
-      const expected = counts.slice(0, depth + 1).join(".");
-      if (heading.number !== expected) return { ...heading, expected };
-      lastLevel = level;
+      const old = previousBlocks[index++];
+      if (old?.rawTitle === heading.rawTitle && old.level === heading.level &&
+          old.expected === heading.expected && old.parents.join("\n") === heading.parents.join("\n")) continue;
+      if (heading.expected === null || heading.number !== heading.expected ||
+          (!allowSuffix && heading.numberPosition !== "prefix")) return heading;
     }
     return null;
   }

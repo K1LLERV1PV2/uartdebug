@@ -32,7 +32,7 @@ ZIP export stores the structured discussion in `.uartdebug-dialogue.json` alongs
 
 The **Your turn** button sends `Your turn.` as an ordinary chat message. A current user instruction or selected Generate code option can authorize generation when the task is ready. The short handoff uses the task language and natural conversation context. Previously saved review messages retain their original stage restriction on retry.
 
-New and edited functional headings end with their block number, as in `## Inputs 1`, `### Button 1.1` and `#### Debounce 1.1.1`. The project title and workflow headings for continuation or new task input are unnumbered. YAML uses the heading titles without their numbers.
+New and edited functional headings start with their block number, as in `## 1 Inputs`, `### 1.1 Button` and `#### 1.1.1 Debounce`. The project title and workflow headings for continuation or new task input are unnumbered. YAML uses the heading titles without their block numbers. Older tasks with trailing numbers can still be read and compiled.
 
 `POST /api/avr/ai/canvas` retains the explicit `analyze`, `generate` and `describe` contract for existing integrations. Its review uses inline Markdown remarks; its generation preserves the input specification exactly. The chat transport is an explicit adaptation of those constraints: an authorized chat generation may also author the requested specification. Both transports share canonical materials, resource/code validation, compiler verification, access checks and usage accounting.
 
