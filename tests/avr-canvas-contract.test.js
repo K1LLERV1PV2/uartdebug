@@ -1,5 +1,6 @@
 "use strict";
 const assert = require("node:assert/strict");
+const { createHash } = require("node:crypto");
 const test = require("node:test");
 const {
   CANVAS_OUTPUT_SCHEMA,
@@ -61,6 +62,125 @@ const options = (operation = "generate", overrides = {}) => ({
   mcu: "attiny1624",
   packageName: "SOIC-14",
   ...overrides,
+});
+
+function v3ModelFixture({ task, dialogue } = {}) {
+  const raw = generation();
+  const markdown = task ?? [
+    "# blink", "Microcontroller: ATtiny1624; Package: SOIC-14", "",
+    "## Indicator", "### LED", "Turn on the LED.", "",
+    "```text", "AI-1 : Technical decision.", "Use PA3 as a GPIO output.", "```", "+: ", "",
+  ].join("\n");
+  raw.canvas.markdown = markdown;
+  if (dialogue) Object.assign(raw.canvas, { dialogue: [], acknowledged: [] });
+  raw.project.version = "";
+  const main = "int main(void) { PORTA.OUTSET = PIN3_bm; PORTA.DIRSET = PIN3_bm; while (1) {} }";
+  const isr = "ISR(RTC_CNT_vect) { RTC.INTFLAGS = RTC_OVF_bm; }";
+  raw.project.source.content = ["#include <xc.h>", "#include <avr/interrupt.h>", main, isr, ""].join("\n");
+  const digest = value => createHash("sha256").update(value).digest("hex");
+  const observed = (symbol, source) => ({
+    state: "added", candidates: [{ selector: { symbol, match: `${symbol} definition` }, source, sha256: digest(source) }],
+  });
+  const status = { status: "not_checked", scope: null, sha256: null };
+  const origin = { kind: "task", ref: "task:led", contribution: "Indicator behavior" };
+  const element = (kind, data) => ({ id: `element_${kind}`, kind, purpose: `Use ${kind}`, origins: [{ ...origin }], data });
+  const model = {
+    consistency_checks: { task_matches_model: status, code_matches_model: status },
+    project: { name: "blink", microcontroller: "ATtiny1624", package: "SOIC-14" },
+    blocks: [{ id: "indicator", title: "Indicator", fragments: [{
+      id: "led", title: "LED", solution: { status: "approved", shared_refs: ["element_variable"], elements: [
+        element("resource", { peripheral: "PORT", instance: "PORTA", port_pin: "PA3", package_pin: 13 }),
+        element("parameter", { name: "active_level", value: { literal: 1 } }),
+        element("register", { resource_ref: "element_resource", name: "OUTSET", operation: "set", semantics: "Set output bit" }),
+        element("algorithm", { phase: "initialization", steps: [{ action: "Set PA3 high" }], result: "LED lit" }),
+        element("constant", { name: "mask", c_type: "unsigned char", value: { literal: 8 }, qualifiers: ["const"] }),
+        element("define", { name: "LED_PIN", value: { expression: "PIN3_bm" } }),
+        element("include", { header: "<xc.h>" }),
+        element("build_option", { name: "optimization", value: { literal: "O2" }, tool: "XC8" }),
+        element("setting", { name: "output_state", value: { literal: 1 }, application: "Initialize the LED" }),
+        { ...element("function", { name: "main", return_type: "int", parameters: [], algorithm_refs: ["element_algorithm"] }), code_refs: ["code_main"] },
+        { ...element("isr", { name: "rtc_interrupt", vector: "RTC_CNT_vect", algorithm_refs: ["element_algorithm"] }), code_refs: ["code_rtc"] },
+      ] },
+    }] }],
+    shared: [{ ...element("variable", { name: "led_state", c_type: "unsigned char", initial: { literal: 0 }, access: [] }),
+      status: "approved", used_by: ["led"] }],
+    code: { observed_sha256: digest(raw.project.source.content), objects: [
+      { id: "code_main", kind: "function", observed: observed("main", main) },
+      { id: "code_rtc", kind: "isr", observed: observed("RTC_CNT_vect", isr) },
+    ] },
+  };
+  const validate = () => {
+    raw.project.resources.content = JSON.stringify(model);
+    return validateCanvasOutput(raw, options("generate", {
+      projectV3: true, conversation: !!dialogue, structuredDialogue: !!dialogue,
+      canvas: canvas({ markdown, dialogue }),
+    }));
+  };
+  return { model, validate };
+}
+
+test("UartDebug3 accepts every documented model element kind and separate code-object records", () => {
+  const { validate } = v3ModelFixture();
+  assert.equal(validate().action, "generate");
+});
+
+test("UartDebug3 reports precise bounded field paths for model and code errors", () => {
+  const cases = [
+    ["shared[0].kind", model => { model.shared[0].kind = "private rejected value"; }, "must be one of"],
+    ["shared[0].purpose", model => { model.shared[0].purpose = ""; }, "must describe"],
+    ["shared[0].data", model => { model.shared[0].data = []; }, "must be a mapping"],
+    ["shared[0].origins", model => { model.shared[0].origins = []; }, "must be a nonempty list"],
+    ["shared[0].origins[0].ref", model => { model.shared[0].origins[0].ref = "task:indicator"; },
+      "must refer to an existing fragment identifier"],
+    ["blocks[0].fragments[0].solution.elements[0].data.package_pin",
+      model => { model.blocks[0].fragments[0].solution.elements[0].data.package_pin = "13"; }, "must be the exact package pin number"],
+    ["shared[0].used_by[0]", model => { model.shared[0].used_by = ["code_main"]; }, "must refer to an existing fragment identifier"],
+    ["code.objects[0].kind", model => { model.code.objects[0].kind = "parameter"; }, "must be one of"],
+    ["code.objects[0]", model => { delete model.code.objects[0].observed; }, "must have a checked snapshot or an observed record"],
+    ["blocks[0].title", model => { model.blocks[0].title = "Wrong"; }, "must follow the approved task headings"],
+    ["project.package", model => { model.project.package = ["SOIC-14"]; }, "must match the selected package"],
+  ];
+  for (const [path, mutate, reason] of cases) {
+    const { model, validate } = v3ModelFixture();
+    mutate(model);
+    assert.throws(validate, error => error.code === "invalid_generated_canvas" && error.modelPath === path &&
+      error.message.startsWith(`Model ${path} ${reason}`) && !error.message.includes("private rejected value"));
+  }
+});
+
+test("UartDebug3 resolves approved structured decisions against numbered task fragments", () => {
+  const task = ["# blink", "Microcontroller: ATtiny1624; Package: SOIC-14", "", "## Indicator 1",
+    "### LED 1.1", "Turn on the LED.", "#### Output 1.1.1", "Use PA3.", "## Continue work", ""].join("\n");
+  const decision = { id: "AI-1", kind: "decision", anchor: { title: "LED", number: "1.1", level: 3 },
+    message: "Use PA3 as a GPIO output.", options: [], choice: null, answer: "" };
+  const question = { ...decision, id: "AI-2", kind: "question", message: "Confirm PA3?", options: ["Yes", "No"] };
+  const accepted = v3ModelFixture({ task, dialogue: [decision, { ...question, choice: 0 }] });
+  assert.equal(accepted.validate().canvas.markdown, task);
+  accepted.model.blocks[0].title = "Indicator 1";
+  assert.throws(accepted.validate, /follow the approved task headings/);
+  assert.throws(v3ModelFixture({ task, dialogue: [decision, question] }).validate, /Resolve and record the technical decisions/);
+  assert.equal(v3ModelFixture({ task, dialogue: [decision, { ...question, submitted: true }] }).validate().action, "generate");
+  const orphanQuestion = { ...question, anchor: { ...question.anchor, title: "Removed fragment" } };
+  assert.equal(v3ModelFixture({ task, dialogue: [decision, orphanQuestion] }).validate().action, "generate");
+  const obsolete = { ...decision, anchor: { ...decision.anchor, title: "Other indicator" } };
+  assert.throws(v3ModelFixture({ task, dialogue: [obsolete] }).validate, /Resolve and record the technical decisions/);
+});
+
+test("UartDebug3 historical task titles can end in an ordinary number", () => {
+  const task = ["# blink", "Microcontroller: ATtiny1624; Package: SOIC-14", "## Indicator 2", "### LED", "Turn on the LED.",
+    "```text", "AI-1 : Technical decision.", "Use PA3 as a GPIO output.", "```", "+: ", ""].join("\n");
+  const { model, validate } = v3ModelFixture({ task });
+  model.blocks[0].title = "Indicator 2";
+  assert.equal(validate().action, "generate");
+  model.blocks[0].title = "Indicator";
+  assert.throws(validate, /follow the approved task headings/);
+});
+
+test("UartDebug3 can generate from imported decisions and historical unnumbered headings", () => {
+  const task = ["# blink", "Microcontroller: ATtiny1624; Package: SOIC-14", "## Indicator", "### LED", "Turn on the LED.", ""].join("\n");
+  const decision = { id: "AI-1", kind: "decision", anchor: { title: "LED", number: "", level: 3, parents: ["Indicator"] },
+    message: "Use PA3 as a GPIO output.", options: [], choice: null, answer: "" };
+  assert.equal(v3ModelFixture({ task, dialogue: [decision] }).validate().action, "generate");
 });
 
 test("empty draft review requires inline remarks and accepts an explicitly authorized initial question", () => {

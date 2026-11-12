@@ -447,6 +447,13 @@ class AiAccessService {
           throw new AiAccessError(409, "account_workspace_migration_required",
             "Projects now use an updated chat format. Refresh the application before saving again.");
         }
+        const dropsDialogue = (before, after) => before?.dialogue?.length > 0 && !Array.isArray(after?.dialogue);
+        if (dropsDialogue(previous.draftCanvas, input.data.draftCanvas) ||
+            Object.entries(previous.miniProjects || {}).some(([id, project]) =>
+              Object.hasOwn(input.data.miniProjects, id) && dropsDialogue(project.canvas, input.data.miniProjects[id].canvas))) {
+          throw new AiAccessError(409, "account_workspace_migration_required",
+            "Projects now use an updated task discussion format. Refresh the application before saving again.");
+        }
         for (const [id, project] of Object.entries(previous.miniProjects || {})) {
           if (project.contract !== V3_CONTRACT || !Object.hasOwn(input.data.miniProjects, id)) continue;
           const next = input.data.miniProjects[id];
@@ -2865,7 +2872,7 @@ function validateAccountConversation(value) {
 function validateAccountInstruction(data) {
   if (data.schemaVersion === 2) {
     const allowedKeys = new Set([
-      "schemaVersion", "revision", "markdown", "locale", "annotations", "target", "authorship",
+      "schemaVersion", "revision", "markdown", "locale", "annotations", "target", "authorship", "dialogue",
     ]);
     if (Object.keys(data).some((key) => !allowedKeys.has(key))) {
       throwInvalidAccountData("The canvas structure contains unsupported fields.");

@@ -200,7 +200,7 @@ test("branching selects a prefix inside the same chat and can resume its saved c
   await expect(page.locator(".project-chat-message-content")).toHaveText(["First question.", "Response 1.", "Second question.", "Response 2."]);
 });
 
-test("retrying a completed specification review retains its chat and the review action guard", async ({ page }) => {
+test("retrying the Your turn message retains its chat and normal request source", async ({ page }) => {
   const received = [];
   await replies(page, received, "Please confirm the intended baud rate.");
   await open(page);
@@ -211,7 +211,7 @@ test("retrying a completed specification review retains its chat and the review 
   await page.getByRole("button", { name: "Retry response", exact: true }).click();
   await expect.poll(() => received.length).toBe(2);
   await expect(page.locator("#projectChatSendBtn")).toHaveAttribute("aria-label", "Send message");
-  expect(received.map(item => item.requestSource)).toEqual(["review", "review"]);
+  expect(received.map(item => item.requestSource)).toEqual(["message", "message"]);
   const updated = await chats(page);
   expect(updated.threads).toHaveLength(1);
   expect(updated.activeThreadId).toBe(original.activeThreadId);
@@ -284,7 +284,7 @@ test("editing at the total message limit keeps every saved branch and the edit d
   await page.addInitScript(() => {
     if (sessionStorage.getItem("chat-tree-limit-seeded")) return;
     sessionStorage.setItem("chat-tree-limit-seeded", "true");
-    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v7", state = JSON.parse(localStorage.getItem(key));
     const project = Object.values(state.miniProjects)[0];
     const chat = project.conversation ||= { schemaVersion: 5, activeThreadId: "limit-chat", threads: [{
       id: "limit-chat", title: "Saved chat", titleMode: "manual", draft: "", messages: [], activeLeafId: null, selectedChildIds: [],

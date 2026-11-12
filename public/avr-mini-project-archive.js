@@ -61,6 +61,7 @@
 
   const LIMIT_NAMES = Object.freeze(Object.keys(DEFAULT_LIMITS));
   const CRC_TABLE = createCrcTable();
+  const TASK_DIALOGUE_FILE = ".uartdebug-dialogue.json";
 
   class MiniProjectArchiveError extends Error {
     constructor(code, message) {
@@ -732,6 +733,7 @@
     const entries = extractedFiles.map(file => ({ ...file,
       relativePath: stripSharedRoot(file.path, root), baseName: basename(file.path),
     }));
+    const dialogueFiles = entries.filter(file => file.baseName === TASK_DIALOGUE_FILE);
     const projectDocuments = entries.filter(file => /^(?:AGENTS|00_README)\.md$/.test(file.baseName));
     const specs = entries.filter(file => /\.md$/i.test(file.baseName) &&
       !/(?:_help|_ai|[._]description|\(description\)|\.guide)(?:[^/]*)\.md$/i.test(file.baseName) &&
@@ -741,7 +743,7 @@
     const resourceEntries = entries.filter(file => /\.ya?ml$/i.test(file.baseName));
     const guideEntries = entries.filter(file => /(?:[._]description|\(description\)|\.guide)(?:[^/]*)\.md$/i.test(file.baseName));
     const images = entries.filter(file => Object.hasOwn(IMAGE_EXTENSIONS, extensionOf(file.baseName.toLowerCase())));
-    const allowed = new Set([...specs, ...sourceEntries, ...resourceEntries, ...guideEntries, ...images, ...projectDocuments]);
+    const allowed = new Set([...specs, ...sourceEntries, ...resourceEntries, ...guideEntries, ...images, ...projectDocuments, ...dialogueFiles]);
     if (entries.some(file => !allowed.has(file))) {
       fail("UNSUPPORTED_PROJECT_FILE", "The archive contains files outside the selected project structure.");
     }
@@ -750,6 +752,9 @@
       fail("INVALID_PROJECT", "All project documents must be in the same project folder.");
     }
     const projectFolder = dirname(coreEntries[0].relativePath);
+    if (dialogueFiles.length > 1 || (dialogueFiles[0] && dirname(dialogueFiles[0].relativePath) !== projectFolder)) {
+      fail("INVALID_PROJECT", "The task discussion record must be in the selected project folder.");
+    }
     if (projectFolder && images.some(file => !canonicalPathKey(file.relativePath).startsWith(canonicalPathKey(projectFolder) + "/"))) {
       fail("INVALID_PROJECT", "Project images must be inside the selected project folder.");
     }
@@ -777,6 +782,20 @@
     const stem = projectFormat.parseProjectFilename(specification.name)?.baseName || specification.name.replace(/\.md$/i, "");
     const title = selected.identity?.title || stem;
     const version = selected.identity?.version || "";
+    let dialogue;
+    if (dialogueFiles[0]) {
+      try {
+        const record = JSON.parse(decodeProjectText(dialogueFiles[0], limits));
+        if (record?.schemaVersion !== 1 || record.specification !== specification.name || record.title !== title ||
+            !Array.isArray(record.dialogue) || Object.keys(record).some(key => !["schemaVersion", "specification", "title", "dialogue"].includes(key))) {
+          throw Error("The task discussion record does not match the selected specification.");
+        }
+        dialogue = projectFormat.normalizeTaskDialogue(record.dialogue);
+      } catch (error) {
+        if (error instanceof MiniProjectArchiveError) throw error;
+        fail("INVALID_PROJECT", error.message);
+      }
+    }
     const source = selected.source;
     const resources = selected.resources;
     const guides = selected.guides.map(file => {
@@ -801,7 +820,8 @@
       schemaVersion: 1, contract: selected.contract || projectFormat.V2_CONTRACT, id: stem, title, version, summary: "",
       defaultLocale: guides.find(file => file.name === selected.guide?.name)?.locale || guides[0].locale, canvasName: specification.name,
       projectPath: "Target_Projects/" + title + (version ? " " + version : ""),
-      canvas: { markdown, locale: "", ...(selected.target ? { target: selected.target } : {}) },
+      canvas: { markdown, locale: "", ...(selected.target ? { target: selected.target } : {}),
+        ...(dialogue !== undefined ? { dialogue } : {}) },
       ...(isV3 ? { referenceFiles: selected.referenceFiles } : {}),
       assets, projectDocuments: documents, importWarnings: selected.warnings || [],
       files: [
@@ -844,7 +864,14 @@
       if (data.byteLength > DEFAULT_LIMITS.maxEntryUncompressedBytes) fail("ENTRY_TOO_LARGE", "Project file exceeds the export limit: " + name);
       entries.push({ path, data });
     };
-    add(normalized.canvasName || normalized.title + ".md", encoder.encode(normalized.canvas?.markdown || ""));
+    const specification = normalized.canvasName || normalized.title + ".md";
+    add(specification, encoder.encode(normalized.canvas?.markdown || ""));
+    const dialogue = projectFormat.normalizeTaskDialogue(normalized.canvas?.dialogue);
+    if (dialogue.length) {
+      add(TASK_DIALOGUE_FILE, encoder.encode(JSON.stringify({
+        schemaVersion: 1, specification, title: normalized.title, dialogue,
+      })));
+    }
     const files = [normalized.files.source, normalized.files.specification, ...normalized.guides].filter(Boolean);
     for (const file of files) add(file.name, encoder.encode(file.content));
     for (const file of normalized.referenceFiles || []) add(file.name, encoder.encode(file.content));

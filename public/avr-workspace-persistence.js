@@ -6,8 +6,8 @@
 })(typeof globalThis === "object" ? globalThis : this, function () {
   "use strict";
 
-  const KEY = "ud_avr_programming_state_v6";
-  const LEGACY_KEYS = Object.freeze(["ud_avr_programming_state_v5", "ud_avr_programming_state_v4", "ud_avr_programming_state_v3", "ud_avr_programming_state_v2"]);
+  const KEY = "ud_avr_programming_state_v7";
+  const LEGACY_KEYS = Object.freeze(["ud_avr_programming_state_v6", "ud_avr_programming_state_v5", "ud_avr_programming_state_v4", "ud_avr_programming_state_v3", "ud_avr_programming_state_v2"]);
   const CHECKPOINT_FIELD = "localCheckpoint";
   const validCheckpoint = value => typeof value === "string" && /^[A-Za-z0-9._:-]{1,100}$/.test(value);
 
@@ -36,15 +36,19 @@
     const nextId = createId || createCheckpointId;
     let loaded = false, ownedRaw = null, sourceRaw = null, ownedData = null, checkpoint = null, migratedFrom = null;
 
+    function readLegacy() {
+      for (const legacyKey of legacyKeys) {
+        const raw = storage.getItem(legacyKey);
+        if (raw !== null) return { raw, key: legacyKey };
+      }
+      return { raw: null, key: null };
+    }
+
     function load() {
       const current = storage.getItem(key);
-      let raw = current;
-      migratedFrom = null;
-      for (const legacyKey of legacyKeys) {
-        if (raw !== null) break;
-        raw = storage.getItem(legacyKey);
-        if (raw !== null) migratedFrom = legacyKey;
-      }
+      const source = current === null ? readLegacy() : { raw: current, key: null };
+      const { raw } = source;
+      migratedFrom = source.key;
       // A caller can preserve an unreadable envelope and replace it, but only
       // while this exact raw value still belongs to this tab.
       ownedRaw = current;
@@ -63,7 +67,10 @@
 
     function owns(expectedCheckpoint = checkpoint) {
       if (!loaded) load();
-      return expectedCheckpoint === checkpoint && storage.getItem(key) === ownedRaw;
+      if (expectedCheckpoint !== checkpoint || storage.getItem(key) !== ownedRaw) return false;
+      if (ownedRaw !== null) return true;
+      const source = readLegacy();
+      return source.key === migratedFrom && source.raw === sourceRaw;
     }
 
     function write(snapshot) {

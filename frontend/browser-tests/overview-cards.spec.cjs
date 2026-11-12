@@ -19,6 +19,16 @@ test("overview cards show the active project and latest notification in their cl
   await expect(notifications).toHaveAccessibleDescription("Built <example> successfully");
   await expect(page.locator("#latestNotificationCardDetail")).toHaveText("Built <example> successfully");
 
+  const creditStyle = await page.locator("#projectAiBudgetValue").evaluate(output => {
+    const { color, fontWeight } = getComputedStyle(output);
+    return { color, fontWeight };
+  });
+  for (const detail of await page.locator(".avr-card-detail").all()) {
+    await expect(detail).toHaveCSS("color", creditStyle.color);
+    await expect(detail).toHaveCSS("font-weight", creditStyle.fontWeight);
+    await expect(detail).toHaveCSS("text-overflow", "ellipsis");
+  }
+
   for (const [card, detailId, modalId] of [
     [projects, "currentProjectCardDetail", "filesModal"],
     [notifications, "latestNotificationCardDetail", "notificationModal"],

@@ -219,6 +219,63 @@
     return matches.length === 1 ? { mcu: matches[0][1].toLowerCase(), packageName: matches[0][2] } : null;
   }
 
+  function v3TaskHeadings(markdown) {
+    const headings = [];
+    let ancestors = [];
+    for (const [line, text] of specificationText(markdown).split("\n").entries()) {
+      const heading = /^ {0,3}(#{2,4})[ \t]+(.+)$/.exec(text);
+      if (!heading) continue;
+      const level = heading[1].length;
+      const rawTitle = heading[2].replace(/[ \t]+#+[ \t]*$/, "").trim();
+      if (!rawTitle) continue;
+      const suffix = /^(.*\S)[ \t]+([1-9]\d*(?:\.[1-9]\d*){0,2})$/.exec(rawTitle);
+      const number = suffix && suffix[2].split(".").length === level - 1 ? suffix[2] : "";
+      const title = number ? suffix[1] : rawTitle;
+      const service = level === 2 && /^(?:Продолжение работы|Continue work|Ввод нового блока задания|Enter a new task block)$/iu.test(title);
+      const parents = ancestors.slice(0, level - 2);
+      headings.push({ line, level, title, rawTitle, number, parents, service });
+      ancestors = service ? [] : [...parents, title];
+    }
+    return headings;
+  }
+
+  function findV3TaskHeading(markdown, { title, level, parents } = {}) {
+    if (typeof title !== "string" || !title.trim() ||
+        (parents != null && (!Array.isArray(parents) || parents.some(parent => typeof parent !== "string")))) return null;
+    const normalizeTitle = value => value.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
+    const expectedTitle = normalizeTitle(title);
+    const headings = Array.isArray(markdown) ? markdown : v3TaskHeadings(markdown);
+    const matches = headings.filter(heading => !heading.service &&
+      (level === undefined || level === heading.level) &&
+      (!parents || parents.length === heading.parents.length &&
+        parents.every((parent, index) => normalizeTitle(parent) === normalizeTitle(heading.parents[index]))) &&
+      (normalizeTitle(heading.title) === expectedTitle || normalizeTitle(heading.rawTitle) === expectedTitle));
+    // A reused number after reordering is not an identity for duplicate headings.
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function v3TaskHeadingNumberError(markdown) {
+    const counts = [0, 0, 0];
+    let lastLevel = 1;
+    const headings = Array.isArray(markdown) ? markdown : v3TaskHeadings(markdown);
+    for (const heading of headings) {
+      if (heading.service) {
+        if (heading.number) return { ...heading, expected: "" };
+        lastLevel = 1;
+        continue;
+      }
+      const level = heading.level;
+      if (level > lastLevel + 1) return { ...heading, expected: null };
+      const depth = level - 2;
+      counts[depth]++;
+      counts.fill(0, depth + 1);
+      const expected = counts.slice(0, depth + 1).join(".");
+      if (heading.number !== expected) return { ...heading, expected };
+      lastLevel = level;
+    }
+    return null;
+  }
+
   function v3Dialogue(markdown) {
     const lines = String(markdown || "").replace(/\r\n?/g, "\n").split("\n");
     const replies = [];
@@ -226,20 +283,21 @@
     const markerLine = /^([?+]:)(?:[ \t]+(.*))?$/;
     for (let startLine = 0; startLine < lines.length; startLine++) {
       const line = lines[startLine];
-      const fence = /^ {0,3}([\x60~]{3,})(.*)$/.exec(line);
+      const listFence = /^ {0,3}(?:[-+*]|\d{1,9}[.)])[ \t]+/.exec(line);
+      const fence = /^ {0,3}([\x60~]{3,})(.*)$/.exec(listFence ? line.slice(listFence[0].length) : line);
       if (fence && /^([\x60]+|~+)$/.test(fence[1])) {
         const marker = fence[1];
         const closing = new RegExp("^ {0,3}" + marker[0] + "{" + marker.length + ",}[ \\t]*$");
         let endLine = startLine + 1;
         while (endLine < lines.length && !closing.test(lines[endLine])) endLine++;
         const match = prefix.exec(lines[startLine + 1] || "");
-        if (match && marker[0] === "\x60" && fence[2].trim() === "text") {
+        if (!listFence && match && marker[0] === "\x60" && fence[2].trim() === "text") {
           const promptLine = endLine + 1;
           const prompt = markerLine.exec(lines[promptLine] || "");
           replies.push({
             id: match[1], startLine, endLine, promptLine, marker: prompt?.[1] || "",
             text: [match[2], ...lines.slice(startLine + 2, endLine)].join("\n"),
-            answered: !!prompt?.[2]?.trim(), valid: marker.length === 3 && !!prompt &&
+            inlineAnswer: prompt?.[2] || "", answered: !!prompt?.[2]?.trim(), valid: marker.length === 3 && !!prompt &&
               lines[endLine]?.trim() === "\x60\x60\x60",
           });
         }
@@ -253,7 +311,8 @@
       const marker = short[2] || (accepted?.[1] === "+:" ? "+:" : "");
       replies.push({
         id: match[1], startLine, endLine: startLine, promptLine: startLine + (short[2] ? 0 : 1),
-        marker, text: match[2], answered: !!(short[3] || accepted?.[2])?.trim(),
+        marker, text: match[2], inlineAnswer: short[3] || accepted?.[2] || "",
+        answered: !!(short[3] || accepted?.[2])?.trim(),
         valid: [...match[2]].length <= 35 && !!marker,
       });
     }
@@ -266,6 +325,104 @@
         !/^ {0,3}#{1,6}[ \t]/.test(lines[answerLine]);
     }
     return replies;
+  }
+
+
+  function normalizeTaskDialogue(value = []) {
+    const invalid = () => { throw Error("Invalid task discussion records."); };
+    const validText = (text, max, empty = true) => typeof text === "string" &&
+      (empty || !!text.trim()) && !text.includes("\0") && bytes(text) <= max;
+    if (!Array.isArray(value) || value.length > 100 || bytes(JSON.stringify(value)) > 128 * 1024) invalid();
+    const ids = new Set();
+    return value.map(record => {
+      const { id, kind, anchor, message, options, answer = "", choice = null, submitted = false } = record || {};
+      if (typeof id !== "string" || !/^AI-[1-9][0-9]{0,11}$/.test(id) || ids.has(id) ||
+          !["question", "requirement", "decision", "note", "next"].includes(kind) ||
+          !anchor || ![0, 2, 3, 4].includes(anchor.level) ||
+          !validText(anchor.title, 1024) || !validText(anchor.number, 48) ||
+          (anchor.parents !== undefined && (!Array.isArray(anchor.parents) || anchor.parents.length > 2 ||
+            anchor.parents.some(title => !validText(title, 1024, false)))) ||
+          !validText(message, 24000, false) || !Array.isArray(options) || options.length > 4 ||
+          (kind === "next" && options.length !== 3) ||
+          (["requirement", "decision", "note"].includes(kind) && options.length) ||
+          options.some(option => !validText(option, 1120, false)) ||
+          (choice !== null && (!Number.isInteger(choice) || choice < 0 || choice >= options.length)) ||
+          !validText(answer, 12000) || typeof submitted !== "boolean") invalid();
+      ids.add(id);
+      const clean = text => text.replace(/\r\n?/g, "\n");
+      const heading = {
+        title: clean(anchor.title), number: clean(anchor.number), level: anchor.level,
+        ...(anchor.parents !== undefined ? { parents: anchor.parents.map(clean) } : {}),
+      };
+      return { id, kind, anchor: heading, message: clean(message), options: options.map(clean),
+        answer: clean(choice === null ? answer : options[choice]), choice, submitted };
+    });
+  }
+
+  function migrateV3TaskDialogue(markdown, value) {
+    const dialogue = normalizeTaskDialogue(value);
+    const replies = v3Dialogue(markdown);
+    if (!replies.length) return { markdown, dialogue };
+    const ids = new Set(dialogue.map(record => record.id));
+    const duplicateIds = new Set(replies.filter((reply, index) =>
+      replies.findIndex(candidate => candidate.id === reply.id) !== index).map(reply => reply.id));
+    const headings = v3TaskHeadings(markdown);
+    const lines = markdown.split(/\r\n?|\n/);
+    const separators = markdown.match(/\r\n?|\n/g) || [];
+    const replyStarts = new Set(replies.map(reply => reply.startLine));
+    const removed = new Set();
+    for (const reply of replies) {
+      if (!reply.valid || ids.has(reply.id) || duplicateIds.has(reply.id)) continue;
+      const boundary = line => /^ {0,3}(?:#{1,6}[ \t]|>|[\x60~]{3,}|(?:[-+*]|\d+[.)])[ \t]+[\x60~]{3,}|[-*_]{3,}[ \t]*$)/.test(line);
+      const followingHeadings = headings.filter(heading => heading.line < reply.startLine);
+      let heading = followingHeadings.at(-1);
+      const acceptedMarker = reply.marker === "+:";
+      const firstAnswer = reply.inlineAnswer.trim();
+      const followingLine = lines[reply.promptLine + 1] || "";
+      const immediateAnswer = followingLine.trim() && !replyStarts.has(reply.promptLine + 1) && !boundary(followingLine);
+      // A +: followed by text after a blank line may be a reopened decision or
+      // unrelated prose. Keep that ambiguous exchange byte-for-byte.
+      if (acceptedMarker && reply.answered && !firstAnswer && !immediateAnswer) continue;
+      const bareDecision = /^(?:Техническое решение|Technical decision|Technical solution)\.?\s*$/iu.test(reply.text);
+      const decision = acceptedMarker && !reply.answered && !bareDecision;
+      if (decision && heading?.level === 4) {
+        heading = followingHeadings.findLast(heading => heading.level === 2 || heading.level === 3);
+      }
+      const next = !acceptedMarker && heading?.service && /^(?:Продолжение работы|Continue work)$/iu.test(heading.title);
+      let answerEnd = reply.promptLine;
+      // An empty +: marker leaves surrounding task prose in place. A ?: marks
+      // an active answer, which may continue across paragraphs until a boundary.
+      if (!acceptedMarker || firstAnswer || immediateAnswer) {
+        for (let index = reply.promptLine + 1; index < lines.length; index++) {
+          const line = lines[index];
+          if (replyStarts.has(index) || boundary(line)) break;
+          if (line.trim()) answerEnd = index;
+        }
+      }
+      const answer = [firstAnswer, ...lines.slice(reply.promptLine + 1, answerEnd + 1)].join("\n").trim();
+      const options = !next ? [] : /^Продолжение работы$/iu.test(heading.title)
+        ? ["Сгенерировать код", "Продолжить работу над следующим блоком", "Приостановить работу"]
+        : ["Generate code", "Continue with the next block", "Pause"];
+      const anchor = heading && !heading.service
+        ? { title: heading.title, number: heading.number, level: heading.level, parents: heading.parents }
+        : { title: "", number: "", level: 0 };
+      const record = { id: reply.id, kind: decision ? "decision" : next ? "next" : "question", anchor,
+        message: reply.text, options, answer, choice: null, submitted: false };
+      try {
+        normalizeTaskDialogue([...dialogue, record]);
+      } catch {
+        // Keep malformed and over-limit legacy blocks in the original document.
+        continue;
+      }
+      dialogue.push(record);
+      ids.add(record.id);
+      for (let index = reply.startLine; index <= answerEnd; index++) removed.add(index);
+    }
+    return {
+      markdown: removed.size ? lines.map((line, index) =>
+        removed.has(index) ? "" : line + (separators[index] || "")).join("") : markdown,
+      dialogue,
+    };
   }
 
   function v3ProjectOutputNames(identity, currentProject = null) {
@@ -372,5 +529,6 @@
   }
   return { specificationText, projectIdentity, projectOutputNames, parseProjectFilename, resolveProjectFiles,
     V2_CONTRACT, V3_CONTRACT, v3ProjectIdentity, v3ProjectTarget, v3Dialogue, v3ProjectOutputNames, normalizeReferenceFiles, resolveV3ProjectFiles,
+    v3TaskHeadings, findV3TaskHeading, v3TaskHeadingNumberError, normalizeTaskDialogue, migrateV3TaskDialogue,
     isLocaleTag, inferLocale, remarkLabels, normalizeProjectDocuments };
 });

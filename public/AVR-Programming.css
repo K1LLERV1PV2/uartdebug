@@ -285,15 +285,22 @@ main,
   min-height: 0;
 }
 
+:is(.avr-card-detail, .project-ai-budget output) {
+  color: var(--avr-text-soft);
+  font-family: var(--ui-font);
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
 .avr-card-detail {
   grid-row: 2;
   align-self: start;
   margin-inline-start: calc(20px + var(--avr-card-gap));
   overflow: hidden;
-  color: var(--avr-text-muted);
-  font: 500 12px/16px var(--ui-font);
+  font-size: 13px;
+  line-height: 16px;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .avr-action-title svg {
@@ -1487,12 +1494,10 @@ main,
 }
 
 .project-ai-budget output {
-  color: var(--avr-text-soft);
   grid-column: 2;
   grid-row: 1;
-  font: 750 14px/1 Inter, Arial, sans-serif;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1;
 }
 
 .project-ai-budget-track {
@@ -2589,9 +2594,10 @@ main,
   background: rgba(7, 13, 20, 0.2);
 }
 
-.project-inline-question {
+.project-task-dialogue {
   display: grid;
-  gap: 5px;
+  gap: var(--ui-control-gap);
+  margin: 8px 10px 12px;
   padding: 9px 10px;
   border: 1px solid var(--ui-border);
   border-inline-start: 3px solid var(--avr-border-hot);
@@ -2601,23 +2607,27 @@ main,
   font: 13px/1.45 var(--ui-font);
   overflow-wrap: anywhere;
 }
-.project-inline-question strong { color: var(--avr-text-soft); font-size: 11px; }
-.project-inline-question > span { white-space: pre-wrap; }
-.markdown-live-editor .markdown-live-block-widget:has(.project-inline-question) {
-  padding-bottom: 4px;
-}
-.markdown-live-editor .CodeMirror pre.project-inline-answer-line {
-  padding-inline: 10px;
-}
-.project-inline-answer-label {
-  margin-inline-end: 4px;
-  color: var(--avr-text-soft);
-  font: 600 12px/1.45 var(--ui-font);
-  cursor: text;
+.project-task-dialogue strong { color: var(--avr-text-soft); font-size: 11px; }
+.project-task-dialogue p { margin: 0; white-space: pre-wrap; }
+.project-task-dialogue-choices { display: grid; gap: 4px; min-width: 0; }
+.project-task-dialogue-choices .ui-action {
+  justify-content: flex-start;
+  height: auto;
+  min-height: var(--ui-control-height-compact);
+  padding-block: 5px;
+  line-height: 1.35;
+  text-align: left;
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.project-inline-answer-label:focus-visible { outline: 1px solid var(--avr-border-hot); }
+.project-task-dialogue-custom {
+  display: grid;
+  gap: 4px;
+  color: var(--avr-text-soft);
+  font: 600 12px/1.45 var(--ui-font);
+}
+.project-task-dialogue-custom textarea { --ui-input-height: auto; --ui-input-padding: 6px 8px; resize: vertical; }
+.project-task-dialogue-answer { color: var(--avr-text-soft); }
 
 .markdown-live-editor .markdown-live-footnotes-widget {
   margin-top: 8px;

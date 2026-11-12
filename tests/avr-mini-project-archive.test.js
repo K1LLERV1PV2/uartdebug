@@ -18,10 +18,12 @@ test("UartDebug3 ZIP round-trips the primary files and the exact saved reference
     name: "Demo.1." + extension,
     content: "Saved bytes for " + extension + "\r\n",
   }));
+  const dialogue = [{ id: "AI-1", kind: "question", anchor: { title: "", number: "", level: 0 },
+    message: "Which pin?", options: ["PA3", "PA4"], answer: "PA4", choice: 1, submitted: true }];
   const definition = {
     id: name, title: name, contract: projectFormat.V3_CONTRACT, version: "",
     canvasName: "Demo.md", projectPath: "Target_Projects/Demo",
-    canvas: { markdown }, referenceFiles,
+    canvas: { markdown, dialogue }, referenceFiles,
     files: [
       { role: "source", name: "Demo.c", content: "int main(void) {}" },
       { role: "specification", name: "Demo.yaml", content: "project:\n  name: Demo\n" },
@@ -31,10 +33,20 @@ test("UartDebug3 ZIP round-trips the primary files and the exact saved reference
   const imported = await archive.parseMiniProjectArchive(archive.createProjectArchive(definition));
   assert.equal(imported.contract, projectFormat.V3_CONTRACT);
   assert.equal(imported.canvas.markdown, markdown);
+  assert.deepEqual(imported.canvas.dialogue, dialogue);
   assert.deepEqual(imported.canvas.target, { mcu: "attiny1624", packageName: "SOIC-14" });
   assert.deepEqual(imported.referenceFiles, referenceFiles);
   assert.deepEqual(imported.files.map(file => file.name), ["Demo.c", "Demo.Description.md", "Demo.yaml"]);
   assert.throws(() => archive.createProjectArchive({ ...definition, referenceFiles: referenceFiles.slice(0, 2) }), /three files/);
+});
+
+test("ZIP import rejects a task discussion record for a different specification", async () => {
+  const sidecar = { schemaVersion: 1, specification: "Other.md", title: "Draft", dialogue: [] };
+  const zip = makeZip([
+    { name: "Target_Projects/Draft/Draft.md", content: "# Draft\n\nMake a prototype.\n" },
+    { name: "Target_Projects/Draft/.uartdebug-dialogue.json", content: JSON.stringify(sidecar) },
+  ]);
+  await assert.rejects(archive.parseMiniProjectArchive(zip), /does not match the selected specification/);
 });
 
 test("UartDebug3 imports a draft task before the user has selected hardware", async () => {
