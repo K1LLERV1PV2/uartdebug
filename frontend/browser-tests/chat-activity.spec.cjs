@@ -284,7 +284,10 @@ for (const width of [900, 1543]) test(`user bubbles fit short text and retain mu
   const geometry = await user.evaluate(element => {
     const body = element.querySelector(".project-chat-message-content"), range = document.createRange();
     range.selectNodeContents(body);
-    return { bubble: body.getBoundingClientRect().width, text: range.getBoundingClientRect().width, thread: element.parentElement.clientWidth };
+    const thread = element.parentElement;
+    const style = getComputedStyle(thread);
+    const width = thread.clientWidth - parseFloat(style.paddingInlineStart) - parseFloat(style.paddingInlineEnd);
+    return { bubble: body.getBoundingClientRect().width, text: range.getBoundingClientRect().width, thread: width };
   });
   expect(geometry.bubble - geometry.text).toBeLessThan(27);
   expect(geometry.bubble).toBeLessThan(geometry.thread * .8);
@@ -294,6 +297,6 @@ for (const width of [900, 1543]) test(`user bubbles fit short text and retain mu
   expect(await page.locator('.project-chat-message[data-role="user"]').last().evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
   await user.locator('[data-chat-action="edit"]').click();
   await expect(user.locator(".project-chat-edit textarea")).toBeVisible();
-  expect((await user.boundingBox()).width).toBeGreaterThan((await page.locator("#projectChatThread").boundingBox()).width * .9);
+  expect(Math.abs((await user.boundingBox()).width - geometry.thread)).toBeLessThan(1);
   await page.locator(".project-chat-panel").screenshot({ path: testInfo.outputPath(`bubble-edit-${width}.png`) });
 });

@@ -3055,8 +3055,9 @@ main,
 .project-chat-rename-actions { display: flex; justify-content: flex-end; gap: var(--ui-control-gap); }
 .project-chat-surface svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .project-chat-thread { grid-area: 2 / 1; padding-block: 4px 16px; overflow-anchor: none; }
+/* The 10px track uses 2px of the former trailing inset, preserving text width. */
 .project-chat-thread,
-.project-chat-history-list { padding-inline: calc(var(--panel-content-inset) + 2px); }
+.project-chat-history-list { padding-inline: calc(var(--panel-content-inset) + 2px) var(--panel-content-inset); }
 .project-chat-message { min-width: 0; margin: 0 0 24px; font: 14px/1.55 var(--ui-font); }
 .project-chat-message[data-role="user"] { width: fit-content; max-width: 92%; margin-left: auto; }
 .project-chat-message[data-role="user"].is-editing { width: 100%; max-width: 100%; margin-left: 0; }
@@ -3115,7 +3116,7 @@ main,
 .project-chat-message.has-partial-response[data-status="error"] .project-chat-message-content { color: var(--ui-text); }
 .project-chat-message[data-status="error"] .project-chat-message-content { color: #edb5a0; }
 .project-chat-composer { --ui-panel-radius: 16px; --scroll-frame-border: var(--ui-control-border); --scroll-frame-bg: var(--ui-surface-dark); --project-chat-composer-inset: 10px; padding-block: var(--project-chat-composer-inset); transition: border-color 140ms ease; }
-.project-chat-composer textarea { --ui-input-padding: 2px calc(var(--project-chat-composer-inset) + 2px); --ui-input-font: 14px/1.5 var(--ui-font); display: block; min-height: 46px; max-height: min(240px, 34vh); resize: none; }
+.project-chat-composer textarea { --ui-input-padding: 2px; --ui-input-font: 14px/1.5 var(--ui-font); display: block; min-height: 46px; max-height: min(240px, 34vh); padding-inline: calc(var(--project-chat-composer-inset) + 2px) var(--project-chat-composer-inset); resize: none; }
 .project-chat-composer textarea::placeholder { color: var(--ui-text-muted); }
 .project-chat-composer-toolbar { display: flex; align-items: center; gap: var(--ui-control-gap); margin: 8px var(--project-chat-composer-inset) 0; min-width: 0; }
 .project-chat-context { display: flex; align-items: center; flex: 1; min-width: 19px; gap: 5px; padding: 4px 0; border: 0; background: transparent; color: var(--ui-text-muted); text-align: left; font: 11px/1.4 var(--ui-font); cursor: pointer; }
