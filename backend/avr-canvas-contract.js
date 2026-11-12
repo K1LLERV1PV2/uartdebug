@@ -54,6 +54,24 @@ const CHAT_OUTPUT_SCHEMA = object({
   message: text(32 * 1024, 1),
   canvas: nullable(CANVAS_OUTPUT_SCHEMA.properties.canvas),
 });
+const TASK_DIALOGUE_KINDS = ["question", "decision", "note", "next"];
+const TASK_DIALOGUE_OUTPUT_SCHEMA = object({
+  ...CHAT_OUTPUT_SCHEMA.properties,
+  canvas: nullable(object({
+    ...CANVAS_OUTPUT_SCHEMA.properties.canvas.properties,
+    acknowledged: { type: "array", maxItems: 12, items: text(15, 4) },
+    dialogue: {
+      type: "array", maxItems: 12,
+      items: object({
+        kind: enumeration(...TASK_DIALOGUE_KINDS),
+        block: text(48),
+        replaces: text(15),
+        message: text(6000, 1),
+        options: { type: "array", maxItems: 4, items: text(280, 1) },
+      }),
+    },
+  })),
+});
 
 class CanvasContractError extends Error {
   constructor(message, generated = false) {
@@ -288,6 +306,84 @@ function normalizeAnnotations(
   });
 }
 
+function normalizeTaskDialogue(value) {
+  try { return projectFormat.normalizeTaskDialogue(value); }
+  catch { fail("The task discussion is invalid or exceeds its size limit."); }
+}
+
+function applyTaskDialogue(raw, acknowledged, input, operation, markdown, message) {
+  const existing = input.dialogue ?? [];
+  if (operation !== "analyze" && (raw.length || acknowledged.length)) fail("Only a task edit may change discussion blocks.", true);
+  if (existing.length + raw.filter(record => !record.replaces).length > MAX_ANNOTATIONS)
+    fail("The task discussion has reached its limit.", true);
+  const byId = new Map(existing.map(record => [record.id, record]));
+  const resolved = new Set(acknowledged);
+  const handoff = message?.trim() === "Your turn.";
+  for (const id of resolved) {
+    const record = byId.get(id);
+    if (!record || record.submitted || !["question", "next"].includes(record.kind) ||
+        (!record.answer.trim() && (!message?.trim() || handoff))) {
+      fail("Acknowledge only an open question that the user answered in the task or their latest chat message.", true);
+    }
+  }
+  const replacements = new Map();
+  const headings = projectFormat.v3TaskHeadings(markdown).filter(heading => !heading.service);
+  let nextNumber = Math.max(0, ...existing.map(record => Number(record.id.slice(3))),
+    ...projectFormat.v3Dialogue(input.markdown).map(record => Number(record.id.slice(3))));
+  const appended = [];
+  for (const record of raw) {
+    const count = record.options.length;
+    const options = record.options.map(option => boundedText(option, "dialogue option", 1120, { empty: false, generated: true }).trim());
+    if ((record.kind === "next" && (count !== 3 || record.block)) ||
+        (record.kind === "question" && count < 2) ||
+        (["decision", "note"].includes(record.kind) && count !== 0) ||
+        new Set(options).size !== options.length) {
+      fail("Questions need two to four distinct choices. Next-step questions use the three workflow choices in order. Notes and agreed decisions have no choices.", true);
+    }
+    const matching = record.block ? headings.filter(heading => heading.number === record.block) : [];
+    if (record.block && matching.length !== 1) fail("Use an existing numbered task heading for each attached discussion block.", true);
+    const heading = matching[0];
+    if (record.kind === "decision" && (!heading || heading.level !== 3)) {
+      fail("Attach each agreed technical decision to a numbered third-level task fragment.", true);
+    }
+    const text = boundedText(record.message, "dialogue message", 24000, { empty: false, generated: true });
+    if (record.replaces) {
+      const prior = byId.get(record.replaces);
+      if (!prior || prior.kind !== "question" || prior.options.length || prior.answer.trim() || prior.submitted ||
+          record.kind !== "question" || replacements.has(prior.id) || resolved.has(prior.id)) {
+        fail("Only an unanswered imported question without options may be updated with choices.", true);
+      }
+      replacements.set(prior.id, { ...prior, options });
+      continue;
+    }
+    if (record.kind === "decision" && !existing.some(item =>
+      item.kind === "question" && resolved.has(item.id) &&
+      projectFormat.findV3TaskHeading(headings, item.anchor)?.line === heading.line)) {
+      fail("An agreed technical decision must acknowledge the user's answer to a proposal attached to that fragment.", true);
+    }
+    appended.push({
+      id: "AI-" + (++nextNumber), kind: record.kind,
+      anchor: heading ? { title: heading.title, number: heading.number, level: heading.level, parents: heading.parents } : { title: "", number: "", level: 0 },
+      message: text,
+      options, answer: "", choice: null, submitted: false,
+    });
+  }
+  const openNextSteps = existing.filter(record => record.kind === "next" && !record.submitted && !resolved.has(record.id)).length;
+  const addedNextSteps = appended.filter(record => record.kind === "next").length;
+  if (addedNextSteps && openNextSteps + addedNextSteps > 1) fail("Reuse the existing open next-step question.", true);
+  if (operation === "generate") {
+    const step = existing.findLast(record => record.kind === "next" && !record.submitted);
+    if (handoff && step?.choice > 0) {
+      fail("The user's current next-step choice asks to add a task block or pause. Continue that choice without generating code.", true);
+    }
+    if (step?.answer.trim() && (step.choice == null || step.choice === 0)) resolved.add(step.id);
+  }
+  const result = [...existing.map(record => resolved.has(record.id) ? { ...record, submitted: true } :
+    replacements.get(record.id) || record), ...appended];
+  try { return normalizeTaskDialogue(result); }
+  catch { fail("The resulting task discussion is invalid or exceeds its size limit.", true); }
+}
+
 // Legacy instructions can be opened as a canvas without keeping obsolete skill references.
 // Input anchors may become stale while the user edits; generation must relocate open anchors.
 function normalizeCanvas(input) {
@@ -313,6 +409,7 @@ function normalizeCanvas(input) {
       ? normalizeLocale(input.locale)
       : "",
     annotations: normalizeAnnotations(input.annotations ?? [], markdown),
+    ...(input.dialogue !== undefined ? { dialogue: normalizeTaskDialogue(input.dialogue) } : {}),
   };
   if (input.target != null) {
     if (
@@ -527,35 +624,63 @@ function parseProjectResources(content, target = {}) {
   return resources;
 }
 
-function validateV3Model(content, { identity, markdown, source, device, mcu, packageName }) {
+const V3_MODEL_ELEMENT_KINDS = [
+  "resource", "parameter", "register", "algorithm", "variable", "constant",
+  "define", "include", "build_option", "setting", "function", "isr",
+];
+const V3_CODE_OBJECT_KINDS = [
+  "function", "isr", "declaration", "define", "include", "pragma", "region", "other",
+];
+
+function validateV3Model(content, { identity, markdown, source, device, mcu, packageName, dialogue = [] }) {
   const model = parseResourceMapping(content);
-  if (Object.keys(model).join(",") !== "consistency_checks,project,blocks,shared,code" ||
-      !isObject(model.consistency_checks) || !isObject(model.project) ||
-      !Array.isArray(model.blocks) || !Array.isArray(model.shared) ||
-      !isObject(model.code) || !Array.isArray(model.code.objects)) {
+  const invalid = (path, reason) => {
+    const error = new CanvasContractError(`Model ${path} ${reason}.`, true);
+    error.modelPath = path;
+    throw error;
+  };
+  for (const key of ["consistency_checks", "project", "code"]) {
+    if (!isObject(model[key])) invalid(key, "must be a mapping");
+  }
+  for (const key of ["blocks", "shared"]) {
+    if (!Array.isArray(model[key])) invalid(key, "must be a list");
+  }
+  if (!Array.isArray(model.code.objects)) invalid("code.objects", "must be a list");
+  if (Object.keys(model).join(",") !== "consistency_checks,project,blocks,shared,code") {
     fail("Use the UartDebug3 consistency_checks, project, blocks, shared and code sections.", true);
   }
   const project = model.project;
-  if (project.name !== identity.title || String(project.microcontroller).toLowerCase() !== mcu.toLowerCase() ||
-      String(project.package).toLowerCase() !== packageName.toLowerCase()) {
-    fail("The information model must identify the selected project, microcontroller and package.", true);
-  }
+  if (project.name !== identity.title) invalid("project.name", "must match the task heading");
+  if (typeof project.microcontroller !== "string" || project.microcontroller.toLowerCase() !== mcu.toLowerCase())
+    invalid("project.microcontroller", "must match the selected microcontroller");
+  if (typeof project.package !== "string" || project.package.toLowerCase() !== packageName.toLowerCase())
+    invalid("project.package", "must match the selected package");
   const digest = value => createHash("sha256").update(value).digest("hex");
   const sourceHash = digest(source);
   const tasks = [];
+  const headings = projectFormat.v3TaskHeadings(markdown);
+  const canonicalNumbers = projectFormat.v3TaskHeadingNumberError(headings) === null;
+  const headingsByLine = new Map(headings.map(heading => [heading.line, heading]));
   const repliesByLine = new Map(projectFormat.v3Dialogue(markdown).map(reply => [reply.startLine, reply]));
+  const approvedLines = new Set();
+  let pendingQuestion = false;
+  for (const record of dialogue) {
+    if (record.kind !== "decision" && record.kind !== "question") continue;
+    const heading = record.anchor?.level ? projectFormat.findV3TaskHeading(headings, record.anchor) : null;
+    if (record.kind === "decision" && heading?.level === 3) approvedLines.add(heading.line);
+    if (record.kind === "question" && !record.submitted && !record.answer?.trim() && (!record.anchor?.level || heading))
+      pendingQuestion = true;
+  }
   let task;
   let fragment;
-  for (const [line, content] of projectFormat.specificationText(markdown).split("\n").entries()) {
-    const blockTitle = /^##[ \t]+(.+)$/.exec(content)?.[1];
-    const fragmentTitle = /^###[ \t]+(.+)$/.exec(content)?.[1];
-    if (blockTitle) {
-      const title = blockTitle.trim();
-      task = /^(?:Продолжение работы|Continue work)$/iu.test(title) ? null : { title, fragments: [] };
+  for (const line of new Set([...headingsByLine.keys(), ...repliesByLine.keys()].sort((a, b) => a - b))) {
+    const heading = headingsByLine.get(line);
+    if (heading?.level === 2) {
+      task = heading.service ? null : { heading, fragments: [] };
       if (task) tasks.push(task);
       fragment = null;
-    } else if (fragmentTitle && task) {
-      fragment = { title: fragmentTitle.trim(), agreed: false };
+    } else if (heading?.level === 3 && task) {
+      fragment = { heading, agreed: approvedLines.has(line) };
       task.fragments.push(fragment);
     }
     const reply = repliesByLine.get(line);
@@ -565,78 +690,108 @@ function validateV3Model(content, { identity, markdown, source, device, mcu, pac
     }
   }
   if (!tasks.length || tasks.some(task => !task.fragments.length || task.fragments.some(fragment => !fragment.agreed)) ||
-      [...repliesByLine.values()].some(reply => !reply.valid || reply.marker === "?:" || reply.answered) ||
-      model.blocks.length !== tasks.length) {
+      pendingQuestion ||
+      [...repliesByLine.values()].some(reply => !reply.valid || reply.marker === "?:" || reply.answered)) {
     fail("Resolve and record the technical decisions for every task fragment before generation.", true);
   }
+  if (model.blocks.length !== tasks.length) invalid("blocks", "must match the number of approved task blocks");
   const ids = new Map();
   const refs = [];
   const pins = [];
-  const identify = (value, kind) => {
-    if (!isObject(value) || typeof value.id !== "string" || !/^[a-z][a-z0-9_]*$/.test(value.id) || ids.has(value.id))
-      fail("The information model requires unique canonical IDs.", true);
+  const matchesHeading = (title, heading) => title === (canonicalNumbers ? heading.title : heading.rawTitle);
+  const identify = (value, kind, path) => {
+    if (!isObject(value)) invalid(path, "must be a mapping");
+    if (typeof value.id !== "string" || !/^[a-z][a-z0-9_]*$/.test(value.id))
+      invalid(`${path}.id`, "must use a lowercase identifier matching [a-z][a-z0-9_]*");
+    if (ids.has(value.id)) invalid(`${path}.id`, "must be unique in the information model");
     ids.set(value.id, kind);
   };
-  const collectReferences = (values, kind = null) => {
+  const collectReferences = (values, path, kind = null) => {
     if (values === undefined) return;
-    if (!Array.isArray(values) || values.some(value => typeof value !== "string"))
-      fail("Model reference lists must contain identifiers.", true);
-    refs.push(...values.map(ref => ({ ref, kind })));
+    if (!Array.isArray(values)) invalid(path, "must be a list of identifiers");
+    for (const [index, ref] of values.entries()) {
+      const itemPath = `${path}[${index}]`;
+      if (typeof ref !== "string") invalid(itemPath, "must be an identifier");
+      refs.push({ ref, kind, path: itemPath });
+    }
   };
-  const element = (value, kind) => {
-    identify(value, kind);
-    if (!["resource", "parameter", "register", "algorithm"].includes(value.kind) ||
-        !isObject(value.data) || typeof value.purpose !== "string" || !value.purpose.trim() ||
-        !Array.isArray(value.origins) || !value.origins.length) {
-      fail("Each model element needs its kind, purpose, origins and data.", true);
+  const element = (value, kind, path) => {
+    identify(value, kind, path);
+    if (!V3_MODEL_ELEMENT_KINDS.includes(value.kind))
+      invalid(`${path}.kind`, `must be one of ${V3_MODEL_ELEMENT_KINDS.join(", ")}`);
+    if (typeof value.purpose !== "string" || !value.purpose.trim())
+      invalid(`${path}.purpose`, "must describe the element's purpose");
+    if (!isObject(value.data)) invalid(`${path}.data`, "must be a mapping");
+    if (!Array.isArray(value.origins) || !value.origins.length)
+      invalid(`${path}.origins`, "must be a nonempty list of task or code origins");
+    for (const [index, origin] of value.origins.entries()) {
+      const originPath = `${path}.origins[${index}]`;
+      if (!isObject(origin)) invalid(originPath, "must be a mapping");
+      if (!["task", "code"].includes(origin.kind)) invalid(`${originPath}.kind`, "must be task or code");
+      if (typeof origin.ref !== "string" || !origin.ref.startsWith(origin.kind + ":"))
+        invalid(`${originPath}.ref`, `must be ${origin.kind}:<id>`);
+      if (typeof origin.contribution !== "string" || !origin.contribution.trim())
+        invalid(`${originPath}.contribution`, "must describe what the origin contributed");
+      refs.push({ ref: origin.ref.slice(origin.kind.length + 1), kind: origin.kind === "task" ? "fragment" : "code",
+        path: `${originPath}.ref` });
     }
-    for (const origin of value.origins) {
-      if (!isObject(origin) || !["task", "code"].includes(origin.kind) ||
-          typeof origin.ref !== "string" || !origin.ref.startsWith(origin.kind + ":") ||
-          typeof origin.contribution !== "string" || !origin.contribution.trim())
-        fail("Model origins must identify their task or code contribution.", true);
-      refs.push({ ref: origin.ref.slice(origin.kind.length + 1), kind: origin.kind === "task" ? "fragment" : "code" });
-    }
-    collectReferences(value.depends_on);
-    collectReferences(value.code_refs, "code");
+    collectReferences(value.depends_on, `${path}.depends_on`);
+    collectReferences(value.code_refs, `${path}.code_refs`, "code");
     if (value.kind === "resource" && (value.data.port_pin != null || value.data.package_pin != null)) {
-      if (typeof value.data.port_pin !== "string" || !/^P[A-Z][0-7]$/.test(value.data.port_pin) ||
-          !Number.isSafeInteger(value.data.package_pin)) {
-        fail("A physical model pin requires its exact port pin and package pin number.", true);
-      }
+      if (typeof value.data.port_pin !== "string" || !/^P[A-Z][0-7]$/.test(value.data.port_pin))
+        invalid(`${path}.data.port_pin`, "must be the exact port pin symbol");
+      if (!Number.isSafeInteger(value.data.package_pin))
+        invalid(`${path}.data.package_pin`, "must be the exact package pin number");
       pins.push({ pin_symbol: value.data.port_pin, package_pin: value.data.package_pin });
     }
   };
   for (const [index, block] of model.blocks.entries()) {
-    identify(block, "block");
-    if (block.title !== tasks[index].title || !Array.isArray(block.fragments) ||
-        block.fragments.length !== tasks[index].fragments.length)
-      fail("The information model must follow the approved task headings and order.", true);
+    const blockPath = `blocks[${index}]`;
+    identify(block, "block", blockPath);
+    if (!matchesHeading(block.title, tasks[index].heading))
+      invalid(`${blockPath}.title`, "must follow the approved task headings and order");
+    if (!Array.isArray(block.fragments) || block.fragments.length !== tasks[index].fragments.length)
+      invalid(`${blockPath}.fragments`, "must match the list of approved task fragments");
     for (const [fragmentIndex, fragment] of block.fragments.entries()) {
-      identify(fragment, "fragment");
+      const path = `${blockPath}.fragments[${fragmentIndex}]`;
+      identify(fragment, "fragment", path);
       const solution = fragment.solution;
-      if (fragment.title !== tasks[index].fragments[fragmentIndex].title || fragment.proposed_revision ||
-          !isObject(solution) || solution.status !== "approved" || !Array.isArray(solution.elements) || !solution.elements.length)
-        fail("Generation requires detailed approved model solutions for every fragment.", true);
-      collectReferences(solution.shared_refs, "shared");
-      for (const entry of solution.elements) element(entry, "element");
+      if (!matchesHeading(fragment.title, tasks[index].fragments[fragmentIndex].heading))
+        invalid(`${path}.title`, "must follow the approved task headings and order");
+      if (fragment.proposed_revision) invalid(`${path}.proposed_revision`, "must be resolved before generation");
+      if (!isObject(solution)) invalid(`${path}.solution`, "must contain the approved solution");
+      if (solution.status !== "approved") invalid(`${path}.solution.status`, "must be approved for generation");
+      if (!Array.isArray(solution.elements) || !solution.elements.length)
+        invalid(`${path}.solution.elements`, "must contain the detailed approved solution elements");
+      collectReferences(solution.shared_refs, `${path}.solution.shared_refs`, "shared");
+      for (const [elementIndex, entry] of solution.elements.entries())
+        element(entry, "element", `${path}.solution.elements[${elementIndex}]`);
     }
   }
-  for (const value of model.shared) {
-    element(value, "shared");
-    if (value.status !== "approved") fail("Generation requires approved shared resources.", true);
-    collectReferences(value.used_by);
+  for (const [index, value] of model.shared.entries()) {
+    const path = `shared[${index}]`;
+    element(value, "shared", path);
+    if (value.status !== "approved") invalid(`${path}.status`, "must be approved for generation");
+    collectReferences(value.used_by, `${path}.used_by`, "fragment");
   }
-  for (const value of model.code.objects) identify(value, "code");
-  if (refs.some(({ ref, kind }) => !ids.has(ref) || kind && ids.get(ref) !== kind)) {
-    fail("The information model contains a missing or mismatched reference.", true);
+  for (const [index, value] of model.code.objects.entries()) {
+    const path = `code.objects[${index}]`;
+    identify(value, "code", path);
+    if (!V3_CODE_OBJECT_KINDS.includes(value.kind))
+      invalid(`${path}.kind`, `must be one of ${V3_CODE_OBJECT_KINDS.join(", ")}`);
+    if (!isObject(value.checked) && !isObject(value.observed))
+      invalid(path, "must have a checked snapshot or an observed record");
+  }
+  for (const { ref, kind, path } of refs) {
+    if (!ids.has(ref) || kind && ids.get(ref) !== kind)
+      invalid(path, `must refer to an existing ${kind || "model"} identifier`);
   }
   if (model.code.observed_sha256 !== null && model.code.observed_sha256 !== sourceHash)
-    fail("The model's observed code checksum does not match the returned C.", true);
+    invalid("code.observed_sha256", "must match the checksum of the returned C or be null");
   for (const key of ["task_matches_model", "code_matches_model"]) {
     const check = model.consistency_checks[key];
     if (!isObject(check) || check.status !== "not_checked" || check.sha256 !== null || check.scope !== null) {
-      fail("The generated model's semantic checks must use not_checked with null scope and checksum.", true);
+      invalid(`consistency_checks.${key}`, "must use not_checked with null scope and checksum");
     }
   }
   validateHardwarePins(pins, device, packageName);
@@ -910,7 +1065,8 @@ function validateSource(
 }
 
 function validateCanvasOutput(raw, options = {}) {
-  assertSchema(raw, options.conversation ? CHAT_OUTPUT_SCHEMA : CANVAS_OUTPUT_SCHEMA);
+  assertSchema(raw, options.structuredDialogue ? TASK_DIALOGUE_OUTPUT_SCHEMA :
+    options.conversation ? CHAT_OUTPUT_SCHEMA : CANVAS_OUTPUT_SCHEMA);
   if (options.conversation) {
     boundedText(raw.message, "message", 32 * 1024, { generated: true });
     if (!raw.message.trim()) fail("A conversation response must contain a message.", true);
@@ -936,6 +1092,26 @@ function validateCanvasOutput(raw, options = {}) {
     { generated: true },
   );
   const taskDialogue = options.dialogueV3 || options.projectV3;
+  if (options.structuredDialogue && ["analyze", "generate"].includes(operation)) {
+    const oldIds = new Set([
+      ...inlineRemarks(input.markdown).map(item => item.id),
+      ...projectFormat.v3Dialogue(input.markdown).map(item => item.id),
+    ]);
+    if ([...inlineRemarks(markdown), ...projectFormat.v3Dialogue(markdown)].some(item => !oldIds.has(item.id))) {
+      fail("Put new assistant discussion in canvas.dialogue, outside the editable Markdown.", true);
+    }
+    if (markdown !== input.markdown) {
+      const badHeading = projectFormat.v3TaskHeadingNumberError(markdown);
+      if (badHeading) {
+        fail(badHeading.expected
+          ? `Task heading at line ${badHeading.line + 1} must end with block number ${badHeading.expected}.`
+          : `Check the heading hierarchy at line ${badHeading.line + 1}. Use a parent heading and leave the continuation heading unnumbered.`, true);
+      }
+    }
+  }
+  const dialogue = options.structuredDialogue
+    ? applyTaskDialogue(raw.canvas.dialogue, raw.canvas.acknowledged, input, operation, markdown, options.message)
+    : input.dialogue;
   const remarks = operation === "analyze"
     ? taskDialogue ? validateV3TaskDialogue(markdown, input.markdown) : validateRemarkLocale(markdown, input, locale)
     : [];
@@ -957,7 +1133,7 @@ function validateCanvasOutput(raw, options = {}) {
       "Reviewing an empty draft must put initial questions in canonical inline Markdown remark blocks on that draft, not only in the service message. This stage explicitly authorizes those remarks before project identity is confirmed.",
       true,
     );
-  if (operation === "analyze" && taskDialogue && (!options.conversation || options.requestSource === "review") &&
+  if (operation === "analyze" && taskDialogue && !options.structuredDialogue && (!options.conversation || options.requestSource === "review") &&
       !input.markdown.trim() && !remarks.some(reply => reply.valid && reply.marker === "?:")) {
     fail("Ask the initial setup questions directly in the empty task using AI-N and ?:.", true);
   }
@@ -1017,7 +1193,7 @@ function validateCanvasOutput(raw, options = {}) {
           fail("Record the exact selected microcontroller and package in the task header.", true);
         }
         if (/\r/.test(project.source.content)) fail("Use LF line endings in generated C so its checked bytes remain stable.", true);
-        validateV3Model(project.resources.content, { ...options, identity, markdown, source: project.source.content });
+        validateV3Model(project.resources.content, { ...options, identity, markdown, dialogue, source: project.source.content });
       } else resources = parseProjectResources(project.resources.content, options);
       validateSource(
         project.source.content,
@@ -1064,6 +1240,7 @@ function validateCanvasOutput(raw, options = {}) {
       markdown,
       locale,
       annotations: [],
+      ...(dialogue !== undefined ? { dialogue } : {}),
       ...(input.target ? { target: input.target } : {}),
     },
   };
@@ -1072,6 +1249,7 @@ function validateCanvasOutput(raw, options = {}) {
 module.exports = {
   CANVAS_OUTPUT_SCHEMA,
   CHAT_OUTPUT_SCHEMA,
+  TASK_DIALOGUE_OUTPUT_SCHEMA,
   CanvasContractError,
   normalizeCanvas,
   validateCanvasOutput,

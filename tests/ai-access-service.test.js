@@ -3152,6 +3152,31 @@ test("account snapshots preserve response activity and reject cached format-five
   assert.deepEqual(stored.data, data);
 });
 
+test("account revisions reject cached clients that drop structured draft or project discussion", async t => {
+  const { service, oauthClient } = makeService();
+  t.after(() => service.close());
+  const login = await signIn(service, oauthClient, { code: "task-discussion", sub: "task-discussion-account", email: "task@example.com" });
+  const context = service.authenticateAccountRequest(request(login.cookie), new MockResponse());
+  const data = unifiedProjectsFixture();
+  const record = { id: "AI-1", kind: "question", anchor: { title: "", number: "", level: 0 },
+    message: "Which pin?", options: ["PA3", "PA4"], answer: "PA4", choice: 1, submitted: false };
+  data.draftCanvas.dialogue = [record];
+  data.miniProjects.blink.canvas.dialogue = [record];
+  const save = (data, baseRevision) => service.writeAccountWorkspace(context, "files", { baseRevision, expectedAccountKey: context.accountKey, data });
+  save(data, 0);
+  for (const scope of ["draft", "project"]) {
+    const cached = structuredClone(data);
+    delete (scope === "draft" ? cached.draftCanvas : cached.miniProjects.blink.canvas).dialogue;
+    assert.throws(() => save(cached, 1), error => error.code === "account_workspace_migration_required");
+  }
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, data);
+  const updated = structuredClone(data);
+  updated.draftCanvas.dialogue = [];
+  updated.miniProjects.blink.canvas.dialogue[0].submitted = true;
+  save(updated, 1);
+  assert.deepEqual(service.readAccountWorkspace(context).documents.files.data, updated);
+});
+
 test("unlimited reservations and usage do not reduce a shared ordinary free-credit grant", async (t) => {
   for (const location of ["same-device", "shared-source-device"]) {
     await t.test(location, async (t) => {

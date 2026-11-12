@@ -183,6 +183,7 @@
   let workspaceResizeFrame = null;
   let workspaceTransitionTimer = null;
   let pendingSpecificationReveal = null;
+  let pendingTaskDialogueReveal = null;
   let workspaceTransitionFrame = null;
   const workspaceTextAnimations = new Map();
   const workspaceMotionScrollAnchors = new Map();
@@ -3737,18 +3738,21 @@
       ? source.markdown : DEFAULT_PROJECT_INSTRUCTION;
     const legacyAnnotations = normalizeCanvasAnnotations(source.annotations);
     const locale = projectFormat.isLocaleTag(source.locale) && source.locale.toLowerCase() !== "und" ? source.locale : "";
-    const markdown = migrateCanvasAnnotationsToMarkdown(originalMarkdown, legacyAnnotations, locale);
+    const { markdown, dialogue } = projectFormat.migrateV3TaskDialogue(
+      migrateCanvasAnnotationsToMarkdown(originalMarkdown, legacyAnnotations, locale), source.dialogue,
+    );
     return {
       schemaVersion: 2,
       revision: Number.isSafeInteger(revision) && revision >= 0 ? revision : 0,
       markdown,
       locale,
       annotations: [],
+      dialogue,
       ...(source.target && typeof source.target === "object" ? { target: {
         mcu: String(source.target.mcu || "").toLowerCase(),
         packageName: String(source.target.packageName || ""),
       } } : {}),
-      authorship: legacyAnnotations.length
+      authorship: markdown !== originalMarkdown
         ? mergeMarkdownAuthorshipForReplacement(originalMarkdown, markdown, source.authorship, "ai")
         : normalizeMarkdownAuthorship(source.authorship, markdown),
     };
@@ -4228,7 +4232,10 @@
     if (previous?.frame != null) {
       window.cancelAnimationFrame(previous.frame);
     }
-    if (previous) clearMarkdownLiveDecorations(previous);
+    if (previous) {
+      clearMarkdownLiveDecorations(previous);
+      for (const { widget } of previous.taskDialogue?.widgets.values() || []) widget.clear();
+    }
     const state = {
       id,
       editor: codeMirror,
@@ -4415,9 +4422,7 @@
         state.resolveImageUrl(href, node, context),
     });
     const index = createMarkdownLiveRenderIndex(rendered);
-    const questions = state.id === "instruction" ? projectFormat.v3Dialogue(markdown)
-      .filter(reply => reply.valid && reply.marker === "?:") : [];
-    state.renderCache = { key, analysis, rendered, questions, ...index };
+    state.renderCache = { key, analysis, rendered, ...index };
     return state.renderCache;
   }
 
@@ -4465,8 +4470,7 @@
     state,
     element,
     fallbackOffset,
-    cache,
-    prepareOffset = (offset) => offset
+    cache
   ) {
     if (!element) return;
     const navigate = (event) => {
@@ -4474,7 +4478,7 @@
       event.stopPropagation();
       revealMarkdownLiveSource(
         state,
-        prepareOffset(getMarkdownLiveNavigationOffset(event, cache, fallbackOffset))
+        getMarkdownLiveNavigationOffset(event, cache, fallbackOffset)
       );
     };
     element.addEventListener("pointerdown", navigate);
@@ -4519,13 +4523,13 @@
     }
   }
 
-  function addMarkdownLiveBlockWidget(state, node, renderedElement, cache, collapseUntil) {
+  function addMarkdownLiveBlockWidget(state, node, renderedElement, cache) {
     const offsets = getMarkdownNodeOffsets(node);
     const start = markdownPositionToCodeMirror(node.position, "start");
     const end = markdownPositionToCodeMirror(node.position, "end");
     if (!offsets || !start || !end || !renderedElement) return null;
 
-    const marker = addMarkdownLiveMark(state, start, collapseUntil || end, { collapsed: true });
+    const marker = addMarkdownLiveMark(state, start, end, { collapsed: true });
     if (!marker) return null;
     const wrapper = document.createElement("div");
     wrapper.className =
@@ -4585,6 +4589,119 @@
     return widget;
   }
 
+  function createTaskDialogueCard(record, updateAnswer) {
+    const card = document.createElement("section");
+    card.className = "project-task-dialogue";
+    card.dataset.taskDialogueId = record.id;
+    card.contentEditable = "false";
+    const title = document.createElement("strong");
+    title.textContent = ({ question: "Clarifying question", decision: "Technical decision", note: "Note", next: "Next step" })[record.kind] + " · " + record.id;
+    const message = document.createElement("p");
+    message.textContent = record.message;
+    card.append(title, message);
+    if (!["question", "next"].includes(record.kind)) return card;
+    if (record.submitted) {
+      const answer = document.createElement("p");
+      answer.className = "project-task-dialogue-answer";
+      answer.textContent = record.answer ? "Answer: " + record.answer : "Addressed in the task";
+      card.append(answer);
+      return card;
+    }
+    const choices = document.createElement("div");
+    choices.className = "project-task-dialogue-choices";
+    choices.setAttribute("role", "group");
+    choices.setAttribute("aria-label", "Choices for " + record.id);
+    const custom = document.createElement("label");
+    custom.className = "project-task-dialogue-custom";
+    custom.textContent = "Your answer";
+    const field = document.createElement("textarea");
+    field.className = "ui-text-input ui-scroll-region";
+    field.setAttribute("aria-label", "Your answer to " + record.id);
+    field.placeholder = "Write your own answer";
+    field.rows = 2;
+    field.maxLength = 2048;
+    field.value = record.choice == null ? record.answer : "";
+    const markChoice = (button, selected) => {
+      button.setAttribute("aria-pressed", String(selected));
+      button.classList.toggle("secondary-btn", !selected);
+    };
+    const buttons = record.options.map((option, index) => {
+      const button = document.createElement("button");
+      button.className = "ui-action ui-action--compact";
+      button.type = "button";
+      markChoice(button, record.choice === index);
+      button.textContent = (index + 1) + ". " + option;
+      button.addEventListener("click", () => {
+        if (!updateAnswer(option, index)) return;
+        field.value = "";
+        buttons.forEach((item, i) => markChoice(item, index === i));
+      });
+      choices.append(button);
+      return button;
+    });
+    field.addEventListener("input", () => {
+      if (updateAnswer(field.value, null)) buttons.forEach(button => markChoice(button, false));
+    });
+    custom.append(field);
+    if (buttons.length) card.append(choices);
+    card.append(custom);
+    return card;
+  }
+
+  function renderTaskDialogueWidgets(state, markdown) {
+    const records = projectInstructionDocument.dialogue;
+    const scope = projectInstructionScopeEpoch;
+    if (state.taskDialogue?.records === records && state.taskDialogue?.markdown === markdown &&
+        state.taskDialogue?.scope === scope) return;
+    const scroll = captureMarkdownLiveScrollAnchor(state.editor);
+    const widgets = new Map();
+    state.editor.operation(() => {
+      for (const { widget } of state.taskDialogue?.widgets.values() || []) widget.clear();
+      state.taskDialogue = { records, markdown, scope, widgets };
+      const headings = records?.length ? projectFormat.v3TaskHeadings(markdown) : [];
+      for (const record of records || []) {
+        const anchor = record.anchor.level ? projectFormat.findV3TaskHeading(headings, record.anchor) : null;
+        const boundary = anchor && headings.find(heading => heading.line > anchor.line && heading.level <= anchor.level);
+        const line = boundary ? boundary.line - 1 : state.editor.lastLine();
+        const card = createTaskDialogueCard(record, (answer, choice) => {
+          if (scope !== projectInstructionScopeEpoch) return false;
+          const current = projectInstructionDocument.dialogue;
+          const original = current?.find(item => item.id === record.id);
+          if (!original || original.submitted) return false;
+          if (original.answer === answer && original.choice === choice) return true;
+          const dialogue = current.map(item => item === original ? { ...item, answer, choice } : item);
+          projectInstructionDocument = { ...projectInstructionDocument, revision: projectInstructionDocument.revision + 1, dialogue };
+          state.taskDialogue.records = dialogue;
+          persistProjectInstruction({ recover: true });
+          return true;
+        });
+        const widget = state.editor.addLineWidget(line, card, { noHScroll: true, handleMouseEvents: false, showIfHidden: true });
+        widgets.set(record.id, { widget, card, line });
+      }
+    });
+    restoreMarkdownLiveScrollAnchor(state.editor, scroll);
+  }
+
+  function revealPendingTaskDialogue(state) {
+    if (state.id !== "instruction" || !pendingTaskDialogueReveal) return;
+    const { id, scope } = pendingTaskDialogueReveal;
+    if (scope !== projectInstructionScopeEpoch) {
+      pendingTaskDialogueReveal = null;
+      return;
+    }
+    if (projectAiColumnWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD) return;
+    const entry = state.taskDialogue?.widgets.get(id);
+    if (!entry) return;
+    if (!entry.card.isConnected) state.editor.scrollIntoView(CodeMirror.Pos(entry.line, 0), 24);
+    if (!entry.card.isConnected) return;
+    const bounds = entry.card.getBoundingClientRect();
+    const viewport = state.editor.getScrollerElement().getBoundingClientRect();
+    pendingTaskDialogueReveal = null;
+    if (bounds.top < viewport.top || bounds.bottom > viewport.bottom) {
+      state.editor.scrollTo(null, state.editor.getScrollInfo().top + bounds.top - viewport.top - 8);
+    }
+  }
+
   function renderMarkdownLivePreviewState(state) {
     if (state.frame != null) window.cancelAnimationFrame?.(state.frame);
     state.frame = null;
@@ -4592,6 +4709,7 @@
     if (workspaceTransitionTimer !== null) return;
     const markdownRuntime = window.UartDebugMarkdown;
     const markdown = state.editor.getValue();
+    if (state.id === "instruction") renderTaskDialogueWidgets(state, markdown);
     if (!state.isMarkdown()) {
       state.renderCache = null;
       state.editor.operation(() => {
@@ -4638,38 +4756,8 @@
     );
     const showFootnotes = !!renderedFootnotes && !footnoteDefinitionIsActive;
     const scrollAnchor = captureMarkdownLiveScrollAnchor(state.editor);
-    const focusedAnswer = state.id === "instruction" ? document.activeElement?.dataset?.projectQuestionAnswer : null;
-    let answerToRefocus = null;
-
     state.editor.operation(() => {
       clearMarkdownLiveDecorations(state);
-      const questionsByLine = new Map(cache.questions.map(question => [question.startLine, question]));
-      for (const question of cache.questions) {
-        const line = question.promptLine;
-        if (line < firstVisibleLine || line >= lastVisibleLine) continue;
-        if (activeLines.has(line)) continue;
-        const rawLine = state.editor.getLine(line) || "";
-        const marker = /(?:^|`[ \t]+)\?:/.exec(rawLine);
-        if (!marker) continue;
-        const column = marker.index + marker[0].length - 2;
-        const from = CodeMirror.Pos(line, column);
-        const to = CodeMirror.Pos(line, column + 2);
-        const label = document.createElement("span");
-        label.className = "project-inline-answer-label";
-        label.dataset.projectQuestionAnswer = question.id;
-        label.textContent = question.answered ? "Answer" : "Write an answer…";
-        const hasSpace = /[ \t]/.test(rawLine[column + 2] || "");
-        const answerColumn = column + (hasSpace ? 3 : 2);
-        const answerPosition = CodeMirror.Pos(line, answerColumn);
-        bindMarkdownLiveSourceReveal(state, label, state.editor.indexFromPos(answerPosition), cache, (offset) => {
-          if (hasSpace) return offset;
-          state.editor.replaceRange(" ", answerPosition, answerPosition, "+input");
-          return offset + 1;
-        });
-        label.setAttribute("aria-label", `Answer ${question.id}`);
-        addMarkdownLiveMark(state, from, to, { replacedWith: label });
-        if (question.id === focusedAnswer) answerToRefocus = label;
-      }
       for (const activeLine of activeLines) {
         if (activeLine < firstVisibleLine || activeLine >= lastVisibleLine) continue;
         addMarkdownLiveLineClass(
@@ -4765,27 +4853,6 @@
         }
 
         if (!inViewport) return;
-
-        const question = questionsByLine.get(start.line);
-        const longQuestion = node.type === "code" && question?.endLine === end.line;
-        const shortQuestion = node.type === "inlineCode" && question &&
-          question.startLine === question.endLine && String(node.value).startsWith(question.id + " ");
-        if (question && !active && (longQuestion || shortQuestion)) {
-          const card = document.createElement("section");
-          card.className = "project-inline-question";
-          const heading = document.createElement("strong");
-          heading.textContent = `Clarifying question · ${question.id}`;
-          const body = document.createElement("span");
-          body.textContent = question.text;
-          card.append(heading, body);
-          const separator = longQuestion ? 0 : state.editor.getLine(end.line).slice(end.ch).match(/^[ \t]*/)[0].length;
-          const until = longQuestion ? CodeMirror.Pos(question.promptLine, 0) :
-            CodeMirror.Pos(end.line, end.ch + separator);
-          if (addMarkdownLiveBlockWidget(state, node, card, cache, until)) {
-            addMarkdownLiveLineClass(state, question.startLine, "text", "project-inline-answer-line");
-            return false;
-          }
-        }
 
         if (node.type === "table" && !active) {
           const table = getMarkdownLiveRenderedElement(cache, node, "table");
@@ -4990,7 +5057,7 @@
       }
     });
     restoreMarkdownLiveScrollAnchor(state.editor, scrollAnchor);
-    answerToRefocus?.focus({ preventScroll: true });
+    revealPendingTaskDialogue(state);
     state.onHeadings?.(headings);
   }
 
@@ -5071,7 +5138,7 @@
 
   function applyProjectInstructionMarkdown(
     markdown,
-    { annotations, locale, target, expectedRevision = null, focus = false } = {}
+    { annotations, dialogue, locale, target, expectedRevision = null, focus = false } = {}
   ) {
     if (typeof markdown !== "string") throw new TypeError("The canvas must be Markdown text.");
     if (expectedRevision !== null && projectInstructionDocument.revision !== expectedRevision) {
@@ -5084,6 +5151,7 @@
       markdown,
       locale: locale === undefined ? previous.locale : locale,
       annotations: annotations === undefined ? previous.annotations : annotations,
+      ...(dialogue !== undefined ? { dialogue } : {}),
       ...(target ? { target } : {}),
       authorship: mergeMarkdownAuthorshipForReplacement(
         previous.markdown, markdown, previous.authorship, "ai"
@@ -5367,15 +5435,19 @@
         content
       );
     }
+    const normalizedProjects = createDictionary(cloneJsonMetadata(source.miniProjects, {}));
+    for (const project of Object.values(normalizedProjects)) {
+      if (project?.canvas && typeof project.canvas === "object") {
+        project.canvas = normalizeProjectInstructionDocument(project.canvas);
+      }
+    }
     return {
       schemaVersion: 3,
       files: normalizedFiles,
       authorship: normalizedAuthorship,
       ...(Object.hasOwn(source, "fileGroups")
         ? { fileGroups: createDictionary(cloneJsonMetadata(source.fileGroups, {})) } : {}),
-      miniProjects: createDictionary(
-        cloneJsonMetadata(source.miniProjects, {})
-      ),
+      miniProjects: normalizedProjects,
       current: typeof source.current === "string" ? source.current : null,
       draftCanvas: normalizeProjectInstructionDocument(source.draftCanvas),
       ...(source.draftConversation ? { draftConversation: normalizeProjectConversation(source.draftConversation) } : {}),
@@ -5857,6 +5929,7 @@
     ) ||
       Object.keys(snapshot.miniProjects || {}).length > 0 ||
       String(snapshot.draftCanvas.markdown || "").trim().length > 0 ||
+      (snapshot.draftCanvas.dialogue?.length || 0) > 0 ||
       draftChats.length > 1 || draftChats.some(
         chat => chat.messages.length > 0 || chat.draft.trim().length > 0 || chat.titleMode === "manual"
       );
@@ -6872,7 +6945,7 @@
     const button = $("projectCanvasRunBtn");
     if (button) {
       button.disabled = !!busy;
-      button.textContent = "Review specification";
+      button.textContent = "Your turn";
     }
     $("projectCanvasForm")?.setAttribute("aria-busy", String(!!busy));
   }
@@ -7050,18 +7123,21 @@
       } else throw new Error("The response did not specify a project action.");
     }
     applyProjectInstructionMarkdown(data.canvas.markdown, {
-      annotations: data.canvas.annotations, locale: data.canvas.locale,
+      annotations: data.canvas.annotations, dialogue: data.canvas.dialogue, locale: data.canvas.locale,
       target: data.canvas.target, expectedRevision: baseRevision,
     });
-    if (operation === "analyze" && data.canvas.markdown !== request.canvas.markdown &&
-        projectAiColumnWidth <= WORKSPACE_PANEL_COMPACT_THRESHOLD &&
-        projectFormat.v3Dialogue(data.canvas.markdown).some(reply => reply.valid && reply.marker === "?:" && !reply.answered)) {
+    const previousQuestions = new Map((request.canvas.dialogue || []).map(record => [record.id, record]));
+    const newQuestion = operation === "analyze" && projectInstructionDocument.dialogue?.find(record =>
+      ["question", "next"].includes(record.kind) && !record.submitted &&
+      (!previousQuestions.has(record.id) || record.options.length > (previousQuestions.get(record.id)?.options.length || 0)));
+    if (newQuestion) {
+      pendingTaskDialogueReveal = { id: newQuestion.id, scope: projectInstructionScopeEpoch };
       revealSpecificationQuestions(projectInstructionDocument);
     }
   }
 
   async function requestProjectChat({ message, history, signal, onProgress, onCommentary, onMessageDelta, onMessageReset, scope, requestSource = "message" }) {
-    const request = { ...getProjectAiRequestPayload(), message, history, requestSource };
+    const request = { ...getProjectAiRequestPayload(), message, history, requestSource, dialogueVersion: 1 };
     delete request.operation;
     const accountEpoch = projectAiAccountWorkspaceEpoch;
     const accountKey = projectAiAuthSession?.accountKey || null;
@@ -7144,7 +7220,7 @@
 
   function handleProjectCanvasSubmit(event) {
     event.preventDefault();
-    if (projectChatController) void projectChatController.submit("Review the project specification.", { requestSource: "review" });
+    if (projectChatController) void projectChatController.submit("Your turn.");
     else void submitProjectCanvas();
   }
 
@@ -8685,6 +8761,7 @@
     updateHexUI(false);
     dispatchUpdiHexArtifact();
     selectFile(current);
+    if (workspacePersistence?.migratedFrom && !workspacePersistence.checkpoint) persistState();
 
     const bridge = window.UartDebugAvrMiniProjects;
     resolveMiniProjectBridgeReady?.(bridge);

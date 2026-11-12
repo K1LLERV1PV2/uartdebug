@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const archive = require("../../public/avr-mini-project-archive.js");
 const publicRoot = path.resolve(__dirname, "../../public");
-const workspaceKey = "ud_avr_programming_state_v6", syncKey = "ud_avr_ai_account_sync_v1", dirtyKey = "ud_avr_ai_local_dirty_v1";
+const workspaceKey = "ud_avr_programming_state_v7", syncKey = "ud_avr_ai_account_sync_v1", dirtyKey = "ud_avr_ai_local_dirty_v1";
 const accountKey = "workspace-coherence-account";
 
 function definition(name) {

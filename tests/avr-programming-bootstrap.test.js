@@ -4661,6 +4661,35 @@ test("failed canonical-key migration retains the legacy workspace unchanged", ()
   assert.ok(hooks.notifications().some(item => item.key === "workspace-save"));
 });
 
+test("version six migrates the draft and selected project while fencing stale local writes", () => {
+  const legacyKey = "ud_avr_programming_state_v6", canonicalKey = workspacePersistence.KEY;
+  const fixture = loadCanvasLifecycleHooks();
+  fixture.hooks.createEmptyProject();
+  const original = JSON.parse(JSON.stringify(fixture.hooks.getProjectAiAccountFilesSnapshot()));
+  const source = Object.values(original.miniProjects)[0].canvas;
+  source.markdown = "# Blink\n\n## Indicator 1\n\n### Output 1.1\n\n`AI-1 : Use PA3.`\n+: \n";
+  delete source.dialogue;
+  original.draftCanvas.markdown = "# Other\n\n`AI-1 : Choose a device.` ?: ATtiny1624\n";
+  delete original.draftCanvas.dialogue;
+  const raw = JSON.stringify(original), storage = new Map([[legacyKey, raw]]);
+  const stale = loadCanvasLifecycleHooks(storage);
+  stale.hooks.loadState();
+  const changed = JSON.stringify({ ...original, draftCanvas: { ...original.draftCanvas,
+    markdown: original.draftCanvas.markdown.replace("ATtiny1624", "ATtiny3217") } });
+  storage.set(legacyKey, changed);
+  assert.equal(stale.hooks.persistState(), false);
+  const active = loadCanvasLifecycleHooks(storage);
+  active.hooks.loadState();
+  assert.equal(active.hooks.persistState(), true);
+  const saved = JSON.parse(storage.get(canonicalKey));
+  assert.equal(saved.draftCanvas.dialogue[0].answer, "ATtiny3217");
+  assert.equal(Object.values(saved.miniProjects)[0].canvas.dialogue[0].kind, "decision");
+  storage.set(legacyKey, raw);
+  const reloaded = loadCanvasLifecycleHooks(storage);
+  reloaded.hooks.loadState();
+  assert.equal(reloaded.hooks.getProjectAiAccountFilesSnapshot({ captureLive: false }).draftCanvas.dialogue[0].answer, "ATtiny3217");
+});
+
 test("corrupt new chat trees preserve the complete workspace instead of falling back to old local data", () => {
   const { normalize } = require("../public/avr-project-chat");
   for (const future of [false, true]) {

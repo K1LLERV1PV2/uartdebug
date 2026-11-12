@@ -965,7 +965,9 @@ function normalizeServiceError(error) {
     // Validation messages also instruct the automatic repair loop. They are
     // useful internally, but should not be presented as instructions to users.
     const publicMessage = error.code === "invalid_generated_canvas"
-      ? "The AI could not complete this request correctly. Try again."
+      ? error.modelPath
+        ? `The generated project model failed validation at ${error.modelPath}. Try again.`
+        : "The AI could not complete this request correctly. Try again."
       : error.code === "invalid_ai_repair_response"
         ? "The AI could not correct the generated project. Try again."
         : "";

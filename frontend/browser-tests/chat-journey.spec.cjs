@@ -79,91 +79,77 @@ test("chat sends context and history, renders Markdown, and restores its draft p
   await page.screenshot({ path: testInfo.outputPath("project-chat.png") });
 });
 
-test("review replies in chat and preserves an unrelated composer draft", async ({ page }) => {
+test("Your turn posts an ordinary chat message and preserves the composer draft", async ({ page }) => {
   const received = [];
   await mockReplies(page, received, "Уточните назначение кнопки.");
   await open(page);
   await page.evaluate(() => window.UartDebugAvrAiWorkspace.setInstruction("# Проект\n\nТребования к кнопке.", { locale: "ru" }));
   await page.locator("#projectChatInput").fill("My unsent note");
-  await page.locator("#projectCanvasRunBtn").click();
+  const button = page.getByRole("button", { name: "Your turn", exact: true });
+  await button.click();
   await expect(page.locator('.project-chat-message[data-role="assistant"]')).toContainText("Уточните назначение кнопки.");
-  expect(received[0].requestSource).toBe("review");
+  expect(received[0]).toMatchObject({ message: "Your turn.", requestSource: "message", dialogueVersion: 1 });
   expect(received[0].canvas.locale).toBe("ru");
   await expect(page.locator("#projectChatInput")).toHaveValue("My unsent note");
   expect((await page.evaluate(() => window.UartDebugAvrAiWorkspace.getInstruction())).markdown).not.toContain("Уточните");
-  await page.unroute("**/api/avr/ai/chat");
-  await page.route("**/api/avr/ai/chat", route => route.fulfill({ contentType: "application/json", body: JSON.stringify({
-    ok: true, kind: "project", stage: "generate", message: "Unauthorized stage",
-  }) }));
-  await page.locator("#projectCanvasRunBtn").click();
-  await expect(page.locator('.project-chat-message[data-status="error"]')).toContainText("Review cannot change project code");
-  expect((await page.evaluate(() => window.UartDebugAvrAiWorkspace.getInstruction())).markdown).not.toContain("Уточните");
 });
 
-test("UartDebug3 clarification is answered and saved in the specification", async ({ page }, testInfo) => {
+test("structured questions offer choices and a custom answer inside the specification", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 900, height: 680 });
   const received = [];
-  let releaseReview;
-  const firstReview = new Promise(resolve => { releaseReview = resolve; });
-  const markdown = [
-    "# Blink",
-    "",
-    "## Hardware",
-    "",
-    "```text",
-    "AI-1 : Which pin is the external LED connected to?",
-    "```",
-    "?: ",
-    "",
-    "`AI-2 : Use the 20 MHz oscillator?` ?:",
-  ].join("\n");
+  let releaseFirst;
+  const firstReply = new Promise(resolve => { releaseFirst = resolve; });
+  const markdown = "# Blink\n\n## Hardware 1\n\n### LED 1.1\n\nUse an external LED.\n";
+  const emptyAnchor = { title: "", number: "", level: 0 };
+  const dialogue = [
+    { id: "AI-1", kind: "question", anchor: { title: "LED", number: "1.1", level: 3, parents: ["Hardware"] },
+      message: "Which pin is the external LED connected to?", options: ["PA3", "PA4", "PB1"], choice: null, answer: "", submitted: false },
+    { id: "AI-2", kind: "next", anchor: emptyAnchor, message: "What should I do next?",
+      options: ["Generate code", "Add a task block", "Pause"], choice: null, answer: "", submitted: false },
+  ];
   await page.route("**/api/avr/ai/chat", async route => {
     const request = route.request().postDataJSON();
     received.push(request);
-    if (received.length === 1) await firstReview;
-    const response = received.length === 1
-      ? {
-        ok: true, kind: "canvas", stage: "analyze", baseRevision: request.canvas.revision,
-        canvas: { ...request.canvas, revision: request.canvas.revision + 1, markdown, annotations: [] },
-        message: "I added two clarifying questions to the specification.",
-      }
-      : reply(request, "I received the pin assignment.");
-    await route.fulfill({ json: response });
+    if (received.length === 1) await firstReply;
+    await route.fulfill({ json: received.length === 1 ? {
+      ok: true, kind: "canvas", stage: "analyze", baseRevision: request.canvas.revision,
+      canvas: { ...request.canvas, revision: request.canvas.revision + 1, markdown, annotations: [], dialogue },
+      message: "I added two questions to the specification.",
+    } : reply(request, "I received the answers.") });
   });
-  await open(page);
+  await open(page, false);
   await page.locator("#projectChatInput").fill("Unsent draft");
   await page.locator("#projectCanvasRunBtn").click();
   await page.locator("#projectAiColumnResizer").focus();
   await page.keyboard.press("Home");
   await expect(page.locator(".canvas-split-container")).toHaveClass(/is-workspace-transitioning/);
-  releaseReview();
+  releaseFirst();
   const editor = page.locator("#projectInstructionDropZone");
-  const questions = editor.locator(".project-inline-question");
-  await expect(questions).toHaveCount(2);
-  await expect(questions.first()).toContainText("Which pin is the external LED connected to?");
-  await page.screenshot({ path: testInfo.outputPath("inline-clarification.png") });
-  await editor.getByLabel("Answer AI-1", { exact: true }).click();
-  await page.keyboard.insertText("PA4");
+  const first = editor.locator('[data-task-dialogue-id="AI-1"]');
+  const next = editor.locator('[data-task-dialogue-id="AI-2"]');
+  await expect(first).toBeVisible();
+  await expect(first).toHaveAttribute("contenteditable", "false");
+  await expect(first.getByRole("button")).toHaveCount(3);
+  await page.screenshot({ path: testInfo.outputPath("task-clarification.png") });
+  const answer = first.getByRole("textbox", { name: "Your answer to AI-1" });
+  await answer.pressSequentially("PD5 on the daughterboard");
+  await expect(answer).toHaveValue("PD5 on the daughterboard");
+  await next.getByRole("button", { name: "1. Generate code", exact: true }).press("Enter");
+  await expect(next.getByRole("button", { name: "1. Generate code", exact: true })).toHaveAttribute("aria-pressed", "true");
+  expect(received).toHaveLength(1);
   const instruction = () => page.evaluate(() => window.UartDebugAvrAiWorkspace.getInstruction());
-  await expect.poll(async () => (await instruction()).markdown).toContain("?: PA4");
-  await page.locator("#projectChatInput").focus();
-  const shortAnswer = editor.getByLabel("Answer AI-2", { exact: true });
-  await shortAnswer.focus();
-  await expect(shortAnswer).toBeFocused();
-  await page.keyboard.press("Enter");
-  await page.keyboard.insertText("Yes");
-  await expect.poll(async () => (await instruction()).markdown).toContain("?: Yes");
+  expect((await instruction()).markdown).toBe(markdown);
+  expect((await instruction()).dialogue.map(item => item.answer)).toEqual(["PD5 on the daughterboard", "Generate code"]);
   await page.locator("#projectCanvasRunBtn").click();
-  await expect(page.locator("#projectChatThread")).toContainText("I received the pin assignment.");
-  expect(received[1].requestSource).toBe("review");
-  expect(received[1].canvas.markdown).toContain("?: PA4");
+  await expect(page.locator("#projectChatThread")).toContainText("I received the answers.");
+  expect(received[1]).toMatchObject({ message: "Your turn.", requestSource: "message" });
+  expect(received[1].canvas.dialogue.map(item => item.answer)).toEqual(["PD5 on the daughterboard", "Generate code"]);
   await page.reload({ waitUntil: "load" });
   await page.locator("#projectAiColumnResizer").focus();
   await page.keyboard.press("ArrowRight");
-  await expect(questions).toHaveCount(2);
-  await expect(editor.getByLabel("Answer AI-1", { exact: true })).toHaveText("Answer");
+  await expect(answer).toHaveValue("PD5 on the daughterboard");
+  await expect(next.getByRole("button", { name: "1. Generate code", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#projectChatInput")).toHaveValue("Unsent draft");
-  expect((await instruction()).markdown).toContain("?: PA4");
 });
 
 test("stopping a response rejects a late result and leaves the next turn usable", async ({ page }) => {
@@ -219,7 +205,7 @@ test("a single chat request creates a project and moves the draft conversation i
   await page.keyboard.press("Escape");
   await page.reload({ waitUntil: "load" });
   await expect(page.locator("#projectChatThread .project-chat-message")).toHaveCount(2);
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v6")));
+  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v7")));
   expect(state.draftConversation?.threads.flatMap(item => item.messages) || []).toHaveLength(0);
   const chats = Object.values(state.miniProjects)[0].conversation;
   expect(chats.threads).toHaveLength(2);
@@ -473,7 +459,7 @@ test("switching chats interrupts the old response before it can alter shared pro
 test("legacy project conversation migrates intact and blank chats have distinct names", async ({ page }) => {
   await open(page);
   await page.addInitScript(() => {
-    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v7", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = { schemaVersion: 1, draft: "Legacy unsent draft", messages: [
       { id: "legacy-message", role: "user", content: "Legacy conversation", createdAt: 1, status: "complete" },
     ] };
@@ -526,7 +512,7 @@ test("chat titles stay concise while restored long names remain accessible", asy
   await expect(page.locator("#projectChatThread")).toContainText("A short reply.");
   const restoredName = "界".repeat(85);
   await page.addInitScript(({ id, title }) => {
-    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v7", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation.threads.find(item => item.id === id).title = title;
     localStorage.setItem(key, JSON.stringify(state));
   }, { id: first, title: restoredName });
@@ -541,7 +527,7 @@ test("chat titles stay concise while restored long names remain accessible", asy
 test("the chat-count limit reports the problem without replacing existing chats", async ({ page }) => {
   await open(page);
   await page.addInitScript(() => {
-    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v7", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = { schemaVersion: 2, activeThreadId: "limit-0",
       threads: Array.from({ length: 32 }, (_, index) => ({ id: `limit-${index}`, title: `Chat ${index + 1}`,
         draft: `Draft ${index + 1}`, messages: [] })) };
@@ -563,7 +549,7 @@ test("a failed chat transfer keeps the received answer and every draft without c
       const original = Storage.prototype.setItem;
       window.__restoreChatStorage = () => { Storage.prototype.setItem = original; };
       Storage.prototype.setItem = function (key, value) {
-        if (key === "ud_avr_programming_state_v6") {
+        if (key === "ud_avr_programming_state_v7") {
           const state = JSON.parse(value);
           if (Object.values(state.miniProjects).some(project => project.conversation?.threads.some(thread =>
             thread.messages.some(message => message.role === "assistant" && message.content === "Created the Blink project.")))) {
@@ -591,7 +577,7 @@ test("a failed chat transfer keeps the received answer and every draft without c
   await expect(page.locator('.project-chat-message[data-role="assistant"][data-status="complete"] .project-chat-message-content')).toHaveText("Created the Blink project.");
   await expect(page.locator(".notification-toast-open")).toContainText(["Response received but could not be saved"]);
   await expect(page.locator('.project-chat-message[data-status="error"]')).toHaveCount(0);
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v6")));
+  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v7")));
   expect(state.draftConversation.threads).toHaveLength(2);
   expect(state.draftConversation.threads[0].draft).toBe("Keep this planning draft");
   expect(state.draftConversation.threads[1].messages[0].content).toContain("Create Blink");
@@ -663,7 +649,7 @@ test("deleting an inactive chat frees quota while retaining the current unsaved 
   await page.addInitScript(() => {
     if (sessionStorage.getItem("chat-quota-seeded")) return;
     sessionStorage.setItem("chat-quota-seeded", "true");
-    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v7", state = JSON.parse(localStorage.getItem(key));
     const chats = { schemaVersion: 2, activeThreadId: "large-0",
       threads: Array.from({ length: 9 }, (_, index) => ({ id: `large-${index}`, title: `Stored chat ${index + 1}`, draft: "",
         messages: Array.from({ length: index ? 8 : 2 }, (_, message) => ({ id: `message-${message}`, role: "assistant", status: "complete",
@@ -807,7 +793,7 @@ test("all legacy archived and pinned chats remain visible without retaining the 
   await page.addInitScript(legacy => {
     if (sessionStorage.getItem("removed-chat-flags-migrated")) return;
     sessionStorage.setItem("removed-chat-flags-migrated", "true");
-    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v7", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = legacy;
     localStorage.setItem(key, JSON.stringify(state));
   }, legacy);
@@ -848,7 +834,7 @@ test("opening history during a response keeps row focus and scroll position with
   await page.addInitScript(() => {
     if (sessionStorage.getItem("history-many")) return;
     sessionStorage.setItem("history-many", "true");
-    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v7", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = { schemaVersion: 3, activeThreadId: "history-0", threads:
       Array.from({ length: 20 }, (_, index) => ({ id: `history-${index}`, title: `History example ${index}`,
         titleMode: "manual", pinned: false, archived: index % 2 === 1, draft: "", messages: [] })) };
@@ -888,7 +874,7 @@ for (const width of [900, 1543]) {
     await open(page);
     const projectTitle = "A detailed UART project with a long descriptive name for the serial connection and interrupt example";
     await page.addInitScript(title => {
-      const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
+      const key = "ud_avr_programming_state_v7", state = JSON.parse(localStorage.getItem(key));
       Object.values(state.miniProjects)[0].displayName = title;
       localStorage.setItem(key, JSON.stringify(state));
     }, projectTitle);

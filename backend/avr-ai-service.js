@@ -28,6 +28,7 @@ const {
 const {
   CANVAS_OUTPUT_SCHEMA,
   CHAT_OUTPUT_SCHEMA,
+  TASK_DIALOGUE_OUTPUT_SCHEMA,
   normalizeCanvas,
   validateCanvasOutput,
   projectIdentity,
@@ -211,12 +212,13 @@ function normalizeChatRequest(raw) {
     ...normalizeRequest({ ...raw, operation: "analyze" }),
     operation: "chat",
     ...conversation,
+    ...(raw.dialogueVersion === 1 ? { dialogueVersion: 1 } : {}),
   };
 }
 function specificationTarget(markdown, devices) {
   const header = v3ProjectTarget(markdown);
   const hardware =
-    /^##\s+(?:Требования к аппаратной части|Аппаратные требования|Hardware requirements|Requisitos de hardware|Exigences matérielles|Hardwareanforderungen)\s*\n([\s\S]*?)(?=^##\s|$(?![\s\S]))/im.exec(
+    /^##[ \t]+(?:Требования к аппаратной части|Аппаратные требования|Hardware requirements|Requisitos de hardware|Exigences matérielles|Hardwareanforderungen)(?:[ \t]+[1-9][0-9]*)?[ \t]*\n([\s\S]*?)(?=^##[ \t]|$(?![\s\S]))/im.exec(
       specificationText(markdown),
     )?.[1] || "";
   const text = [hardware, header?.mcu, header?.packageName].filter(Boolean).join("\n");
@@ -321,7 +323,7 @@ function createAvrAiService(options = {}) {
         environment.AI_EXTERNAL_DOCUMENTATION_ENABLED === "1",
     };
   }
-  function rules(knowledge, conversation = false, projectV3 = knowledge.repository === "Sergey-Bulanov/UartDebug3") {
+  function rules(knowledge, conversation = false, projectV3 = knowledge.repository === "Sergey-Bulanov/UartDebug3", structuredDialogue = false) {
     const documents = knowledge.initialRules || [];
     const v3 = knowledge.repository === "Sergey-Bulanov/UartDebug3";
     if (
@@ -338,7 +340,7 @@ function createAvrAiService(options = {}) {
       `Repository project rules (${document.path}):\n${document.text}`,
     ).join("\n\n");
     const policies = [buildProjectPolicy({ projectV3, legacyOnV3 }),
-      buildProjectPolicy({ conversation: true, projectV3, legacyOnV3 })];
+      buildProjectPolicy({ conversation: true, projectV3, legacyOnV3, structuredDialogue })];
     const policy = policies[conversation ? 1 : 0];
     return {
       packageId: `${knowledge.repository?.split("/").at(-1) || "UartDebug2"}@${knowledge.version}`,
@@ -439,6 +441,7 @@ function createAvrAiService(options = {}) {
     const knowledge = await knowledgeLoader();
     const materialsV3 = knowledge.repository === "Sergey-Bulanov/UartDebug3";
     input.dialogueV3 = materialsV3;
+    input.structuredDialogue = conversation && materialsV3 && input.dialogueVersion === 1 && input.requestSource !== "review";
     const existingProject = input.currentProject;
     input.projectV3 = existingProject?.contract === V3_CONTRACT || materialsV3 &&
       (!existingProject || existingProject.id === "empty-project" && !existingProject.source.trim() && !existingProject.guide.trim() &&
@@ -539,7 +542,7 @@ function createAvrAiService(options = {}) {
         healthUrl: cfg.compileHealthUrl,
         timeoutMs: cfg.compileHealthTimeoutMs,
       });
-    const ruleData = rules(knowledge, conversation, input.projectV3);
+    const ruleData = rules(knowledge, conversation, input.projectV3, input.structuredDialogue);
     const lookup = createDocumentationLookup({
       knowledge,
       fetch: options.documentationFetch || globalThis.fetch,
@@ -579,7 +582,7 @@ function createAvrAiService(options = {}) {
           type: "json_schema",
           name: conversation ? "uartdebug_conversation" : "uartdebug_project",
           strict: true,
-          schema: conversation ? CHAT_OUTPUT_SCHEMA : CANVAS_OUTPUT_SCHEMA,
+          schema: input.structuredDialogue ? TASK_DIALOGUE_OUTPUT_SCHEMA : conversation ? CHAT_OUTPUT_SCHEMA : CANVAS_OUTPUT_SCHEMA,
         },
       },
     };
@@ -916,7 +919,9 @@ function createAvrAiService(options = {}) {
                   repairAttempt: repairAttempts,
                   validationError: { code: error.code, message: error.message },
                   instruction:
-                    input.dialogueV3
+                    input.structuredDialogue
+                      ? "Correct the response within the same authorized action. Put new questions and decisions in canvas.dialogue and acknowledge only user-answered records. Preserve the agreed Markdown during UartDebug3 generation and preserve it during description. Never fabricate verification."
+                      : input.dialogueV3
                       ? "Correct the response within the same authorized action and artifact format. Use clarify with the complete task Markdown for questions and decisions in AI-N dialogue. Preserve the agreed task during UartDebug3 generation and preserve it during description. Never fabricate checksums or verification."
                       : conversation
                       ? "Correct this response within the latest user's authorized request. A generate response may create or update the specification for that same requested work; preserve unrelated requirements and every user C region. A describe response preserves the specification exactly. If a required decision is missing, return reply with canvas null/project null and ask in the chat. Do not create new inline question blocks."
@@ -1050,6 +1055,10 @@ function createAvrAiService(options = {}) {
         e.code
       )
         error = new AiServiceError(e.status, e.code, e.message);
+      if (typeof e.modelPath === "string" && e.modelPath.length <= 160 &&
+          /^(?:consistency_checks|project|blocks|shared|code)(?:\.[a-z_][a-z0-9_]*|\[[0-9]+\])*$/.test(e.modelPath)) {
+        error.modelPath = e.modelPath;
+      }
       if (e._usageUncertain) attachUncertainProviderUsage(error);
       Object.defineProperty(error, "diagnostic", {
         value: {

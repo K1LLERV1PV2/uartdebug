@@ -19,6 +19,60 @@ test("browser and backend execute the exact same project format source", () => {
   assert.deepEqual(Object.keys(context.UartDebugAvrProjectFormat).sort(), Object.keys(format).sort());
 });
 
+test("legacy task dialogue migrates unambiguously while preserving ordinary Markdown and saved answers", () => {
+  const lines = ["# Blink", "## Indicator 1", "### Output 1.1", "Keep this requirement.",
+    "> `AI-15 : Quoted example.` ?: No conversion.", "````markdown", "```text", "AI-16 : Fenced example.", "```", "?: No conversion.", "````",
+    "- ```text", "  `AI-17 : List example.` ?: No conversion.", "  ```",
+    "```text", "AI-1 : Technical decision.", "Use PA3 in output mode.", "```", "+: ", "",
+    "### Timing 1.2", "`AI-2 : Which period?` ?: Use `500 ms`.", "", "The LED should start low.", "",
+    "## Продолжение работы", "```text", "AI-3 : Что делать дальше?", "```", "?: ", "", "Генерируй код", ""];
+  const { markdown, dialogue } = format.migrateV3TaskDialogue(lines.join("\r\n"));
+  assert.equal(markdown, [...lines.slice(0, 14), "", lines[20], "", lines[25], ""].join("\r\n"));
+  assert.deepEqual(dialogue.map(record => [record.id, record.kind, record.anchor.parents, record.answer, record.submitted]), [
+    ["AI-1", "decision", ["Indicator"], "", false], ["AI-2", "question", ["Indicator"], "Use `500 ms`.\n\nThe LED should start low.", false],
+    ["AI-3", "next", undefined, "Генерируй код", false],
+  ]);
+  assert.match(dialogue[0].message, /Use PA3 in output mode/);
+  assert.equal(dialogue[2].options.length, 3);
+  assert.deepEqual(format.migrateV3TaskDialogue(markdown, dialogue), { markdown, dialogue });
+});
+
+test("legacy decisions with a reopened response or no substantive decision remain unresolved", () => {
+  const markdown = ["## Indicators 1", "### Output 1.1", "```text", "AI-1 : Technical decision.", "Use PA3.", "```",
+    "+: Try PA4 instead.", "Why is PA3 necessary?", "", "### Timing 1.2", "`AI-2 : Technical decision.`", "+: ", "",
+    "### Startup 1.3", "`AI-3 : Start low.`", "+: ", "", "Keep ambiguous prose after the marker.", ""].join("\n");
+  const migrated = format.migrateV3TaskDialogue(markdown);
+  assert.deepEqual(migrated.dialogue.map(record => [record.kind, record.answer]), [
+    ["question", "Try PA4 instead.\nWhy is PA3 necessary?"], ["question", ""],
+  ]);
+  assert.match(migrated.markdown, /`AI-3 : Start low\.`\n\+: \n\nKeep ambiguous prose after the marker\./);
+});
+
+test("UartDebug3 task headings parse consecutive numbers and exclude the service heading and examples", () => {
+  const markdown = ["# Blink", "## Indicator 1", "### LED 1.1", "#### Output 1.1.1", "### Timing 1.2", "",
+    "> ## Quoted example 9", "```markdown", "## Fenced example 8", "```", "## Continue work", "## UART 2", "### Baud 2.1"].join("\n");
+  const headings = format.v3TaskHeadings(markdown);
+  assert.deepEqual(headings.map(({ title, number, service }) => [title, number, service]), [
+    ["Indicator", "1", false], ["LED", "1.1", false], ["Output", "1.1.1", false], ["Timing", "1.2", false],
+    ["Continue work", "", true], ["UART", "2", false], ["Baud", "2.1", false],
+  ]);
+  assert.deepEqual(headings[2].parents, ["Indicator", "LED"]);
+  assert.equal(format.v3TaskHeadingNumberError(markdown), null);
+  assert.equal(format.v3TaskHeadingNumberError(markdown.replace("Timing 1.2", "Timing 1.3")).expected, "1.2");
+  assert.equal(format.v3TaskHeadingNumberError("# Blink\n### Orphan 1.1").expected, null);
+  assert.equal(format.v3TaskHeadingNumberError(markdown.replace("Continue work", "Continue work 2")).expected, "");
+});
+
+test("UartDebug3 resolves repeated headings by ancestry after reordering and refuses ambiguous old anchors", () => {
+  const markdown = "# Demo\n## Receive 1\n### Clock 1.1\n## Send 2\n### Clock 2.1\n";
+  const reordered = "# Demo\n## Send 1\n### Clock 1.1\n## Receive 2\n### Clock 2.1\n";
+  const anchor = { title: "Clock", number: "1.1", level: 3, parents: ["Receive"] };
+  assert.equal(format.findV3TaskHeading(markdown, anchor).number, "1.1");
+  assert.equal(format.findV3TaskHeading(reordered, anchor).number, "2.1");
+  assert.equal(format.findV3TaskHeading(reordered, { title: "Clock", number: "1.1", level: 3 }), null);
+  assert.equal(format.findV3TaskHeading("# Demo\n## Timer 2\n### Overflow\n", { title: "Timer 2", level: 2 }).rawTitle, "Timer 2");
+});
+
 test("identity and filenames ignore code examples, quotes, AI discussion and unapplied instructions", () => {
   const markdown = `${spec()}\n\`\`\`markdown\n# Project Fake\nProject version - Ver.9.9\nC program file - wrong.c\nProject resources file - wrong.yaml\n\`\`\`\n\n> # Project Quoted\n> ###### *[AI.1] Question.*\n>\n> Which target?\n# Project Reply\nProject version - Ver.8.8\n\n!+\n# Project Temporary\nProject version - Ver.7.7\n!-\n\n    # Project Indented\n    Project version - Ver.6.6\n`;
   assert.deepEqual(projectIdentity(markdown), { title: "Demo", version: "Ver.1.0" });

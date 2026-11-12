@@ -165,14 +165,7 @@ test("optional access credentials remain server-side and fail closed", () => {
   assert.equal(service().authorizeAccessToken(""), true);
 });
 
-test("UartDebug3 uses its own task, model and generation contract", async () => {
-  const markdown = [
-    "# led", "Microcontroller: ATtiny1624; Package: SOIC-14", "",
-    "## Indication", "### LED", "Set PA3 high.", "",
-    String.fromCharCode(96).repeat(3) + "text",
-    "AI-1 : Technical decision.", "Set PA3 high as a GPIO output.",
-    String.fromCharCode(96).repeat(3), "+: ", "",
-  ].join("\n");
+function generatedV3(markdown) {
   const code = "#include <xc.h>\nint main(void) {\n  PORTA.OUTSET = PIN3_bm;\n  PORTA.DIRSET = PIN3_bm;\n  while (1) {}\n}\n";
   const model = [
     "consistency_checks:",
@@ -196,7 +189,7 @@ test("UartDebug3 uses its own task, model and generation contract", async () => 
     "shared: []",
     "code: {observed_sha256: null, objects: []}",
   ].join("\n");
-  const output = {
+  return {
     ...generated(),
     canvas: { ...generated().canvas, markdown },
     project: {
@@ -205,6 +198,16 @@ test("UartDebug3 uses its own task, model and generation contract", async () => 
       resources: { name: "led.yaml", content: model },
     },
   };
+}
+
+test("UartDebug3 uses its own task, model and generation contract", async () => {
+  const markdown = [
+    "# led", "Microcontroller: ATtiny1624; Package: SOIC-14", "",
+    "## Indication", "### LED", "Set PA3 high.", "",
+    "```text", "AI-1 : Technical decision.", "Set PA3 high as a GPIO output.", "```", "+: ", "",
+  ].join("\n");
+  const output = generatedV3(markdown);
+  const model = output.project.resources.content;
   const requests = [];
   const s = service({
     loadKnowledge: knowledgeV3,
@@ -225,7 +228,7 @@ test("UartDebug3 uses its own task, model and generation contract", async () => 
   await assert.rejects(s.processChat(request), /disagrees with the selected package pin map/);
   output.project.resources.content = model.replace("status: not_checked, scope: null, sha256: null",
     "status: consistent, scope: {kind: full}, sha256: " + createHash("sha256").update(markdown).digest("hex"));
-  await assert.rejects(s.processChat(request), /semantic checks must use not_checked/);
+  await assert.rejects(s.processChat(request), /consistency_checks\.task_matches_model must use not_checked/);
   output.project.resources.content = model;
   const reopened = markdown + "\nPlease change the output pin.\n";
   output.canvas.markdown = reopened;
@@ -239,6 +242,111 @@ test("UartDebug3 uses its own task, model and generation contract", async () => 
   output.canvas.markdown = withServiceHeading;
   assert.equal((await s.processChat({ ...request, canvas: { ...canvas(), markdown: withServiceHeading } })).canvas.markdown,
     withServiceHeading);
+});
+
+const numberedV3Task = [
+  "# led", "Microcontroller: ATtiny1624; Package: SOIC-14", "",
+  "## Indication 1", "### LED 1.1", "Set PA3 high.", "",
+].join("\n");
+
+test("UartDebug3 normal chat handoff generates after the user selects Generate code in the task", async () => {
+  const specification = (dialogue, acknowledged = []) => ({
+    ...clarify(),
+    canvas: { markdown: numberedV3Task, locale: "en", annotations: [], dialogue, acknowledged },
+  });
+  const output = generatedV3(numberedV3Task);
+  Object.assign(output.canvas, { dialogue: [], acknowledged: [] });
+  const responses = [
+    specification([{
+      kind: "question", block: "1.1", replaces: "", message: "How should the LED be wired?",
+      options: ["Use PA3 as an active-high GPIO output", "Use PA3 as an active-low GPIO output"],
+    }]),
+    specification([
+      { kind: "decision", block: "1.1", replaces: "", message: "Drive the LED high on PA3 in GPIO mode.", options: [] },
+      { kind: "next", block: "", replaces: "", message: "What should I do next?", options: ["Generate code", "Add another task block", "Pause"] },
+    ], ["AI-1"]),
+    output,
+  ];
+  const requests = [];
+  let compilations = 0;
+  const s = service({
+    environment: { ...environment, AI_COMPILE_VERIFY_ENABLED: "1" },
+    loadKnowledge: knowledgeV3,
+    fetch: async (_url, init) => {
+      requests.push(JSON.parse(init.body));
+      return response(envelope(responses[requests.length - 1] || output));
+    },
+    compileHealthFetch: async () => health(),
+    compileFetch: async (_url, init) => {
+      assert.equal(JSON.parse(init.body).mcu, "attiny1624");
+      compilations++;
+      return compile();
+    },
+  });
+  const request = {
+    ...input(), dialogueVersion: 1, requestSource: "message", history: [],
+    currentProject: { id: "empty-project", instanceId: "draft-project-1", title: "Untitled project", source: "" },
+  };
+  const draft = await s.processChat({ ...request, canvas: { ...canvas(), markdown: "" }, message: "Help me design a PA3 LED project." });
+  assert.equal(draft.canvas.markdown, numberedV3Task);
+  assert.deepEqual(draft.canvas.dialogue[0].anchor, { title: "LED", number: "1.1", level: 3, parents: ["Indication"] });
+  assert.equal(draft.canvas.dialogue[0].kind, "question");
+  assert.equal(compilations, 0);
+
+  const reviewed = await s.processChat({ ...request, message: "Your turn.", canvas: {
+    ...draft.canvas, dialogue: [{ ...draft.canvas.dialogue[0], choice: 0 }],
+  } });
+  assert.equal(reviewed.canvas.dialogue[0].submitted, true);
+  assert.equal(reviewed.canvas.dialogue[0].answer, "Use PA3 as an active-high GPIO output");
+  const next = reviewed.canvas.dialogue.find(record => record.kind === "next");
+  assert.equal(next.submitted, false);
+  assert.equal(compilations, 0);
+
+  const result = await s.processChat({ ...request, message: "Your turn.", canvas: {
+    ...reviewed.canvas, dialogue: reviewed.canvas.dialogue.map(record => record.id === next.id ? { ...record, choice: 0 } : record),
+  } });
+  assert.equal(result.operation, "update");
+  assert.equal(result.targetInstanceId, "draft-project-1");
+  assert.equal(result.project.contract, "uartdebug-project/v3");
+  assert.equal(result.canvas.markdown, numberedV3Task);
+  assert.equal(result.canvas.dialogue.find(record => record.id === next.id).submitted, true);
+  assert.equal(result.verification.status, "passed");
+  assert.equal(compilations, 1);
+  assert.match(requests[2].instructions, /ordinary request to continue the current task/);
+  assert.match(JSON.stringify(requests[2].input), /Generate code/);
+  for (const choice of [1, 2]) {
+    await assert.rejects(s.processChat({ ...request, message: "Your turn.", canvas: {
+      ...reviewed.canvas, dialogue: reviewed.canvas.dialogue.map(record => record.id === next.id ? { ...record, choice } : record),
+    } }), /current next-step choice asks to add a task block or pause/);
+  }
+  assert.equal(compilations, 1);
+});
+
+test("UartDebug3 validation gives bounded model paths to automatic repair and terminal service errors", async () => {
+  const markdown = [
+    numberedV3Task, "```text", "AI-1 : Technical decision.", "Set PA3 high as a GPIO output.", "```", "+: ", "",
+  ].join("\n");
+  const output = generatedV3(markdown);
+  const invalid = generatedV3(markdown);
+  invalid.project.resources.content = invalid.project.resources.content.replace("kind: resource", "kind: private_fixture_value");
+  const request = { ...input(), canvas: { ...canvas(), markdown }, message: "Generate the agreed project.", history: [] };
+  const requests = [];
+  const repair = service({
+    environment: { ...environment, AI_COMPILE_MAX_REPAIR_ATTEMPTS: "1" },
+    loadKnowledge: knowledgeV3,
+    fetch: async (_url, init) => {
+      requests.push(JSON.parse(init.body));
+      return response(envelope(requests.length === 1 ? invalid : output));
+    },
+  });
+  assert.equal((await repair.processChat(request)).verification.repairAttempts, 1);
+  const repairMessage = JSON.parse(requests[1].input.at(-1).content);
+  assert.match(repairMessage.validationError.message, /blocks\[0\]\.fragments\[0\]\.solution\.elements\[0\]\.kind/);
+  assert.doesNotMatch(repairMessage.validationError.message, /private_fixture_value/);
+
+  const failClosed = service({ loadKnowledge: knowledgeV3, fetch: async () => response(envelope(invalid)) });
+  await assert.rejects(failClosed.processChat(request), error => error.code === "invalid_generated_canvas" &&
+    error.modelPath === "blocks[0].fragments[0].solution.elements[0].kind" && !error.message.includes("private_fixture_value"));
 });
 
 test("UartDebug3 review adds document dialogue while retaining a legacy project's artifact format", async () => {
@@ -261,6 +369,31 @@ test("UartDebug3 review adds document dialogue while retaining a legacy project'
   assert.equal(result.kind, "canvas");
   output.canvas.markdown += "\n\n> ###### *[AI.2] Question.*\n> Another question?";
   await assert.rejects(s.processChat(raw), /Write new questions directly in the task/);
+});
+
+test("UartDebug3 normal chat preserves unchanged legacy task headings and validates newly edited numbers", async () => {
+  const raw = {
+    ...input("analyze"), message: "Your turn.", history: [], requestSource: "message", dialogueVersion: 1,
+    currentProject: {
+      contract: "uartdebug-project/v2", id: "led", instanceId: "led", title: "led",
+      version: "Ver.1.0", sourceName: "led.c", source: source(),
+    },
+  };
+  const output = clarify();
+  Object.assign(output.canvas, { acknowledged: [], dialogue: [{
+    kind: "question", block: "", replaces: "", message: "How should the LED start?", options: ["On", "Off"],
+  }] });
+  const s = service({ loadKnowledge: knowledgeV3, fetch: async (_url, init) => {
+    assert.match(JSON.parse(init.body).instructions, /retains the existing v2 artifact format/);
+    return response(envelope(output));
+  } });
+  const result = await s.processChat(raw);
+  assert.equal(result.kind, "canvas");
+  assert.equal(result.canvas.markdown, raw.canvas.markdown);
+  assert.deepEqual(result.canvas.dialogue[0].options, ["On", "Off"]);
+
+  output.canvas.markdown = raw.canvas.markdown.replace("## Hardware requirements", "## Hardware requirements 3");
+  await assert.rejects(s.processChat(raw), /must end with block number 1/);
 });
 
 test("chat input accepts bounded conversational roles and rejects injected or oversized history", () => {
