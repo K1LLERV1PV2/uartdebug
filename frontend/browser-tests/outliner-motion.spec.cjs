@@ -15,7 +15,7 @@ test("chat text, composer and controls retain their anchors across both transiti
   });
   // Seed after the previous page's real beforeunload save, before app startup.
   await page.addInitScript(() => {
-    const state = JSON.parse(localStorage.getItem("ud_avr_programming_state_v5") || "null");
+    const state = JSON.parse(localStorage.getItem("ud_avr_programming_state_v6") || "null");
     if (!state) return;
     const currentProject = Object.values(state.miniProjects).find(item => item.files.source === state.current);
     if (!currentProject) return;
@@ -28,7 +28,7 @@ test("chat text, composer and controls retain their anchors across both transiti
           createdAt: 2, status: "complete" },
       ],
     };
-    localStorage.setItem("ud_avr_programming_state_v5", JSON.stringify(state));
+    localStorage.setItem("ud_avr_programming_state_v6", JSON.stringify(state));
   });
   await page.reload({ waitUntil: "load" });
   await expect(page.locator("#projectChatThread .project-chat-message")).toHaveCount(2);

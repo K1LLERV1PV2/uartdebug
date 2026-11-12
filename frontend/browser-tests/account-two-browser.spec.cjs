@@ -5,7 +5,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const workspaceKey = "ud_avr_programming_state_v5";
+const workspaceKey = "ud_avr_programming_state_v6";
 const syncKey = "ud_avr_ai_account_sync_v1";
 const dirtyKey = "ud_avr_ai_local_dirty_v1";
 const accountKey = "shared-two-browser-account";

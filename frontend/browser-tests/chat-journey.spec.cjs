@@ -44,6 +44,10 @@ test("chat sends context and history, renders Markdown, and restores its draft p
   const received = [];
   await mockReplies(page, received);
   await open(page);
+  const body = page.locator(".project-chat-body.scroll-frame");
+  const composer = page.locator("#projectChatForm");
+  await expect(body.locator("#projectChatThread")).toBeVisible();
+  expect((await body.boundingBox()).y + (await body.boundingBox()).height).toBeLessThan((await composer.boundingBox()).y);
   const instruction = await page.evaluate(() => window.UartDebugAvrAiWorkspace.getInstruction());
   await page.locator("#projectChatInput").fill("Explain the transmitter initialization.");
   await page.locator("#projectChatInput").press("Enter");
@@ -94,6 +98,72 @@ test("review replies in chat and preserves an unrelated composer draft", async (
   await page.locator("#projectCanvasRunBtn").click();
   await expect(page.locator('.project-chat-message[data-status="error"]')).toContainText("Review cannot change project code");
   expect((await page.evaluate(() => window.UartDebugAvrAiWorkspace.getInstruction())).markdown).not.toContain("Уточните");
+});
+
+test("UartDebug3 clarification is answered and saved in the specification", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 900, height: 680 });
+  const received = [];
+  let releaseReview;
+  const firstReview = new Promise(resolve => { releaseReview = resolve; });
+  const markdown = [
+    "# Blink",
+    "",
+    "## Hardware",
+    "",
+    "```text",
+    "AI-1 : Which pin is the external LED connected to?",
+    "```",
+    "?: ",
+    "",
+    "`AI-2 : Use the 20 MHz oscillator?` ?:",
+  ].join("\n");
+  await page.route("**/api/avr/ai/chat", async route => {
+    const request = route.request().postDataJSON();
+    received.push(request);
+    if (received.length === 1) await firstReview;
+    const response = received.length === 1
+      ? {
+        ok: true, kind: "canvas", stage: "analyze", baseRevision: request.canvas.revision,
+        canvas: { ...request.canvas, revision: request.canvas.revision + 1, markdown, annotations: [] },
+        message: "I added two clarifying questions to the specification.",
+      }
+      : reply(request, "I received the pin assignment.");
+    await route.fulfill({ json: response });
+  });
+  await open(page);
+  await page.locator("#projectChatInput").fill("Unsent draft");
+  await page.locator("#projectCanvasRunBtn").click();
+  await page.locator("#projectAiColumnResizer").focus();
+  await page.keyboard.press("Home");
+  await expect(page.locator(".canvas-split-container")).toHaveClass(/is-workspace-transitioning/);
+  releaseReview();
+  const editor = page.locator("#projectInstructionDropZone");
+  const questions = editor.locator(".project-inline-question");
+  await expect(questions).toHaveCount(2);
+  await expect(questions.first()).toContainText("Which pin is the external LED connected to?");
+  await page.screenshot({ path: testInfo.outputPath("inline-clarification.png") });
+  await editor.getByLabel("Answer AI-1", { exact: true }).click();
+  await page.keyboard.insertText("PA4");
+  const instruction = () => page.evaluate(() => window.UartDebugAvrAiWorkspace.getInstruction());
+  await expect.poll(async () => (await instruction()).markdown).toContain("?: PA4");
+  await page.locator("#projectChatInput").focus();
+  const shortAnswer = editor.getByLabel("Answer AI-2", { exact: true });
+  await shortAnswer.focus();
+  await expect(shortAnswer).toBeFocused();
+  await page.keyboard.press("Enter");
+  await page.keyboard.insertText("Yes");
+  await expect.poll(async () => (await instruction()).markdown).toContain("?: Yes");
+  await page.locator("#projectCanvasRunBtn").click();
+  await expect(page.locator("#projectChatThread")).toContainText("I received the pin assignment.");
+  expect(received[1].requestSource).toBe("review");
+  expect(received[1].canvas.markdown).toContain("?: PA4");
+  await page.reload({ waitUntil: "load" });
+  await page.locator("#projectAiColumnResizer").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(questions).toHaveCount(2);
+  await expect(editor.getByLabel("Answer AI-1", { exact: true })).toHaveText("Answer");
+  await expect(page.locator("#projectChatInput")).toHaveValue("Unsent draft");
+  expect((await instruction()).markdown).toContain("?: PA4");
 });
 
 test("stopping a response rejects a late result and leaves the next turn usable", async ({ page }) => {
@@ -149,7 +219,7 @@ test("a single chat request creates a project and moves the draft conversation i
   await page.keyboard.press("Escape");
   await page.reload({ waitUntil: "load" });
   await expect(page.locator("#projectChatThread .project-chat-message")).toHaveCount(2);
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v5")));
+  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v6")));
   expect(state.draftConversation?.threads.flatMap(item => item.messages) || []).toHaveLength(0);
   const chats = Object.values(state.miniProjects)[0].conversation;
   expect(chats.threads).toHaveLength(2);
@@ -360,17 +430,16 @@ test("chats retain separate drafts and histories across reloads inside one proje
     received[0].message, "A response in this chat.",
   ]);
   await page.setViewportSize({ width: 900, height: 768 });
-  const geometry = await page.locator(".project-chat-header").evaluate(header => {
-    const frame = header.getBoundingClientRect();
-    const button = header.querySelector("#projectChatNewBtn").getBoundingClientRect();
-    const history = header.querySelector("#projectChatHistoryBtn").getBoundingClientRect();
-    return { plusFits: button.right <= frame.right + 1, gap: button.left - history.right,
-      width: history.width, headerWidth: frame.width, heights: [button.height, history.height] };
+  const geometry = await page.locator(".project-chat-panel > .panel-action-lobe").evaluate(capsule => {
+    const frame = capsule.getBoundingClientRect();
+    const button = capsule.querySelector("#projectChatNewBtn").getBoundingClientRect();
+    const history = capsule.querySelector("#projectChatHistoryBtn").getBoundingClientRect();
+    return { fits: [button, history].every(box => box.left >= frame.left && box.right <= frame.right),
+      gap: button.top - history.bottom, widths: [button.width, history.width] };
   });
-  expect(geometry.plusFits).toBe(true);
+  expect(geometry.fits).toBe(true);
   expect(geometry.gap).toBeGreaterThanOrEqual(7);
-  expect(geometry.width).toBeLessThan(geometry.headerWidth);
-  expect(geometry.heights[0]).toBe(geometry.heights[1]);
+  expect(geometry.widths[0]).toBe(geometry.widths[1]);
   await page.screenshot({ path: testInfo.outputPath("multiple-project-chats.png") });
 });
 
@@ -404,7 +473,7 @@ test("switching chats interrupts the old response before it can alter shared pro
 test("legacy project conversation migrates intact and blank chats have distinct names", async ({ page }) => {
   await open(page);
   await page.addInitScript(() => {
-    const key = "ud_avr_programming_state_v5", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = { schemaVersion: 1, draft: "Legacy unsent draft", messages: [
       { id: "legacy-message", role: "user", content: "Legacy conversation", createdAt: 1, status: "complete" },
     ] };
@@ -457,7 +526,7 @@ test("chat titles stay concise while restored long names remain accessible", asy
   await expect(page.locator("#projectChatThread")).toContainText("A short reply.");
   const restoredName = "界".repeat(85);
   await page.addInitScript(({ id, title }) => {
-    const key = "ud_avr_programming_state_v5", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation.threads.find(item => item.id === id).title = title;
     localStorage.setItem(key, JSON.stringify(state));
   }, { id: first, title: restoredName });
@@ -472,7 +541,7 @@ test("chat titles stay concise while restored long names remain accessible", asy
 test("the chat-count limit reports the problem without replacing existing chats", async ({ page }) => {
   await open(page);
   await page.addInitScript(() => {
-    const key = "ud_avr_programming_state_v5", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = { schemaVersion: 2, activeThreadId: "limit-0",
       threads: Array.from({ length: 32 }, (_, index) => ({ id: `limit-${index}`, title: `Chat ${index + 1}`,
         draft: `Draft ${index + 1}`, messages: [] })) };
@@ -494,7 +563,7 @@ test("a failed chat transfer keeps the received answer and every draft without c
       const original = Storage.prototype.setItem;
       window.__restoreChatStorage = () => { Storage.prototype.setItem = original; };
       Storage.prototype.setItem = function (key, value) {
-        if (key === "ud_avr_programming_state_v5") {
+        if (key === "ud_avr_programming_state_v6") {
           const state = JSON.parse(value);
           if (Object.values(state.miniProjects).some(project => project.conversation?.threads.some(thread =>
             thread.messages.some(message => message.role === "assistant" && message.content === "Created the Blink project.")))) {
@@ -522,7 +591,7 @@ test("a failed chat transfer keeps the received answer and every draft without c
   await expect(page.locator('.project-chat-message[data-role="assistant"][data-status="complete"] .project-chat-message-content')).toHaveText("Created the Blink project.");
   await expect(page.locator(".notification-toast-open")).toContainText(["Response received but could not be saved"]);
   await expect(page.locator('.project-chat-message[data-status="error"]')).toHaveCount(0);
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v5")));
+  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("ud_avr_programming_state_v6")));
   expect(state.draftConversation.threads).toHaveLength(2);
   expect(state.draftConversation.threads[0].draft).toBe("Keep this planning draft");
   expect(state.draftConversation.threads[1].messages[0].content).toContain("Create Blink");
@@ -594,7 +663,7 @@ test("deleting an inactive chat frees quota while retaining the current unsaved 
   await page.addInitScript(() => {
     if (sessionStorage.getItem("chat-quota-seeded")) return;
     sessionStorage.setItem("chat-quota-seeded", "true");
-    const key = "ud_avr_programming_state_v5", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
     const chats = { schemaVersion: 2, activeThreadId: "large-0",
       threads: Array.from({ length: 9 }, (_, index) => ({ id: `large-${index}`, title: `Stored chat ${index + 1}`, draft: "",
         messages: Array.from({ length: index ? 8 : 2 }, (_, message) => ({ id: `message-${message}`, role: "assistant", status: "complete",
@@ -738,7 +807,7 @@ test("all legacy archived and pinned chats remain visible without retaining the 
   await page.addInitScript(legacy => {
     if (sessionStorage.getItem("removed-chat-flags-migrated")) return;
     sessionStorage.setItem("removed-chat-flags-migrated", "true");
-    const key = "ud_avr_programming_state_v5", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = legacy;
     localStorage.setItem(key, JSON.stringify(state));
   }, legacy);
@@ -779,7 +848,7 @@ test("opening history during a response keeps row focus and scroll position with
   await page.addInitScript(() => {
     if (sessionStorage.getItem("history-many")) return;
     sessionStorage.setItem("history-many", "true");
-    const key = "ud_avr_programming_state_v5", state = JSON.parse(localStorage.getItem(key));
+    const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
     Object.values(state.miniProjects)[0].conversation = { schemaVersion: 3, activeThreadId: "history-0", threads:
       Array.from({ length: 20 }, (_, index) => ({ id: `history-${index}`, title: `History example ${index}`,
         titleMode: "manual", pinned: false, archived: index % 2 === 1, draft: "", messages: [] })) };
@@ -819,7 +888,7 @@ for (const width of [900, 1543]) {
     await open(page);
     const projectTitle = "A detailed UART project with a long descriptive name for the serial connection and interrupt example";
     await page.addInitScript(title => {
-      const key = "ud_avr_programming_state_v5", state = JSON.parse(localStorage.getItem(key));
+      const key = "ud_avr_programming_state_v6", state = JSON.parse(localStorage.getItem(key));
       Object.values(state.miniProjects)[0].displayName = title;
       localStorage.setItem(key, JSON.stringify(state));
     }, projectTitle);
@@ -956,19 +1025,30 @@ for (const width of [900, 1543]) {
     const title = page.locator("#projectChatTitle");
     await expect(title).toHaveRole("heading");
     await expect(title).toHaveText("New chat");
-    const measure = () => page.locator(".project-chat-header").evaluate(header => {
+    const measure = () => page.locator(".project-chat-panel").evaluate(panel => {
       const box = element => {
         const { top, right, bottom, left, width, height } = element.getBoundingClientRect();
         return { top, right, bottom, left, width, height };
       };
+      const header = panel.querySelector(".project-chat-header");
+      const capsule = panel.querySelector(":scope > .panel-action-lobe");
       const heading = header.querySelector("#projectChatTitle"), content = header.querySelector(".project-chat-title-content");
       return { header: box(header), title: box(heading), content: box(content),
-        menu: box(header.querySelector("#projectChatActionsBtn")), navigation: box(header.querySelector(".project-chat-navigation")),
+        actions: ["projectChatHistoryBtn", "projectChatNewBtn", "projectChatActionsBtn"].map(id => box(capsule.querySelector(`#${id}`))),
         lineHeight: Number.parseFloat(getComputedStyle(heading).lineHeight),
         overflow: header.scrollWidth > header.clientWidth + 1 };
     });
+    const expectCapsule = geometry => {
+      expect(geometry.actions.every(action => action.left >= geometry.content.right)).toBe(true);
+      expect(geometry.actions[0].bottom).toBeLessThan(geometry.actions[1].top);
+      expect(geometry.actions[1].bottom).toBeLessThan(geometry.actions[2].top);
+    };
+    const measureHeading = async () => {
+      const { actions, ...heading } = await measure();
+      return heading;
+    };
     const empty = await measure();
-    expect(empty.navigation.bottom).toBeLessThanOrEqual(empty.title.top);
+    expectCapsule(empty);
     for (const name of [
       "UART initialization, clock configuration and interrupt-driven serial transmission",
       "PeripheralConfigurationWithoutSpaces".repeat(5),
@@ -984,43 +1064,52 @@ for (const width of [900, 1543]) {
       expect(geometry.header.height).toBeLessThanOrEqual(80);
       await expect(title).toHaveCSS("white-space", "nowrap");
       await expect(title).toHaveCSS("text-overflow", "ellipsis");
-      expect(geometry.content.right).toBeLessThanOrEqual(geometry.menu.left);
-      expect(geometry.navigation.bottom).toBeLessThanOrEqual(geometry.title.top);
+      expectCapsule(geometry);
       expect(geometry.header.height, "short and truncated names retain one compact header footprint").toBe(empty.header.height);
       expect(geometry.overflow).toBe(false);
     }
-    const name = await title.textContent(), before = await measure();
+    const name = await title.textContent(), before = await measureHeading();
     await page.locator("#projectChatInput").fill("Explain this project.");
     await page.locator("#projectChatSendBtn").click();
     await expect.poll(() => typeof release).toBe("function");
     await expect(page.locator('.project-chat-message[data-status="pending"]')).toBeVisible();
     await expect(title).toHaveText(name);
-    expect(await measure()).toEqual(before);
+    expect(await measureHeading()).toEqual(before);
     await page.locator("#projectChatSendBtn").click();
     release();
     await expect(page.locator('.project-chat-message[data-status="error"]')).toContainText("stopped");
     await expect(title).toHaveText(name);
-    expect(await measure()).toEqual(before);
+    expect(await measureHeading()).toEqual(before);
     await page.locator("#projectChatInput").fill("Preserve this unsent draft.");
     await page.locator("#fileListResizer").focus();
     await page.keyboard.press("Home");
     await expect(page.locator(".canvas-split-container")).not.toHaveClass(/is-workspace-transitioning/);
     await expect(title).toBeHidden();
-    await page.keyboard.press("ArrowRight");
+    const actions = page.locator("#projectChatActionsBtn");
+    await expect(page.locator(".project-chat-panel > .panel-action-lobe button:visible")).toHaveCount(3);
+    await actions.click();
+    const menu = page.locator("#projectChatMenu");
+    await expect(menu).toBeVisible();
     await expect(page.locator(".canvas-split-container")).not.toHaveClass(/is-workspace-transitioning/);
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    await expect(actions).toBeFocused();
     await expect(title).toHaveText(name);
     await expect(title).toBeVisible();
     await expect(page.locator("#projectChatInput")).toHaveValue("Preserve this unsent draft.");
     await expect(page.locator('.project-chat-message[data-status="error"]')).toContainText("stopped");
     const reopened = await measure();
-    expect(reopened.content.right).toBeLessThanOrEqual(reopened.menu.left);
-    expect(reopened.navigation.bottom).toBeLessThanOrEqual(reopened.title.top);
+    expectCapsule(reopened);
     expect(reopened.header.height).toBe(before.header.height);
     expect(reopened.overflow).toBe(false);
     await page.mouse.move(0, 0);
     await expect(page.locator('.ui-tooltip[aria-hidden="false"]')).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath(`chat-heading-${width}.png`) });
-    await openHistory(page);
+    await page.locator("#fileListResizer").focus();
+    await page.keyboard.press("Home");
+    await expect(title).toBeHidden();
+    await page.locator("#projectChatHistoryBtn").click();
+    await expect(page.locator("#projectChatHistory")).toBeVisible();
     await expect(title).toHaveText("Project chats");
     await expect(page.locator("#projectChatActionsBtn")).toBeHidden();
   });

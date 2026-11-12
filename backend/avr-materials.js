@@ -6,8 +6,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { parse: parseYaml } = require("yaml");
+const { loadV3Materials, RULES: REQUIRED_RULES_V3 } = require("./avr-materials-v3");
 
-const REPOSITORY = "Sergey-Bulanov/UartDebug2";
+const LEGACY_REPOSITORY = "Sergey-Bulanov/UartDebug2";
+const REPOSITORY = "Sergey-Bulanov/UartDebug3";
+const supportedRepository = (value) => value === REPOSITORY || value === LEGACY_REPOSITORY;
 const DEVICE_ROOT = "MCU_Knowledge_Base/AVR/tinyAVR_2_series/ATtiny1624_1626_1627";
 const REQUIRED_RULES = Object.freeze([
   "AGENTS.md",
@@ -33,7 +36,7 @@ const catalogCache = new Map();
 function materialsRoot(input = {}) {
   const requested = typeof input === "string" ? input : input.root || input.materialsRoot;
   return path.resolve(requested || process.env.AI_MATERIALS_ROOT ||
-    (process.platform === "win32" ? path.join(__dirname, "../../UartDebug2") :
+    (process.platform === "win32" ? path.join(__dirname, "../../UartDebug3") :
       "/var/lib/uartdebug-ai/materials/current/repository"));
 }
 
@@ -120,7 +123,7 @@ function loadMaterials(input = {}) {
   const manifestBytes = fs.readFileSync(manifestPath);
   const manifestKey = `${root}:${sha256(manifestBytes)}`;
   const manifest = JSON.parse(manifestBytes.toString("utf8"));
-  if (manifest.schemaVersion !== 1 || manifest.repository !== REPOSITORY ||
+  if (manifest.schemaVersion !== 1 || !supportedRepository(manifest.repository) ||
       !/^[a-f0-9]{40}$/.test(manifest.commit || "") ||
       !manifest.files || typeof manifest.files !== "object" || Array.isArray(manifest.files)) {
     throw Error("Invalid AVR materials manifest");
@@ -156,14 +159,22 @@ function loadMaterials(input = {}) {
   };
   const document = (file) => {
     const text = read(file);
-    const kind = file === "AGENTS.md" || file.startsWith("Project_Rules/") ? "project-rule" :
-      file.endsWith("00_README.md") ? "knowledge-map" :
+    const kind = file === "AGENTS.md" || /^(?:Project_Rules|Rules)\//.test(file) ? "project-rule" :
+      file.endsWith("00_README.md") || file.startsWith("Index/") ? "knowledge-map" :
         file.startsWith("Reusable_Target_Projects/") ? "reusable-example" : "reference";
     return { id: file, path: file, sourcePath: file, title: titleOf(text, file), kind,
       text, sha256: manifest.files[file].sha256, bytes: manifest.files[file].bytes,
       revision: manifest.commit, mediaType: file.endsWith(".json") ? "application/json" :
         /\.ya?ml$/.test(file) ? "application/yaml" : "text/plain" };
   };
+  const base = { root, manifest, manifestSha256: sha256(manifestBytes),
+    repository: manifest.repository, version: manifest.commit, files: names, totalBytes };
+  if (manifest.repository === REPOSITORY) {
+    const value = freeze({ ...base, ...loadV3Materials({ root, manifest, read, document, deriveDevices }) });
+    cache.clear();
+    cache.set(manifestKey, { value, fingerprint });
+    return value;
+  }
   const initialRules = REQUIRED_RULES.map(document);
   const initialKnowledge = INITIAL_KNOWLEDGE.map(document);
   if ([...initialRules, ...initialKnowledge].reduce((sum, item) => sum + item.bytes, 0) > MAX_INITIAL_BYTES) {
@@ -195,10 +206,10 @@ function loadMaterials(input = {}) {
   }
   const documents = names.filter(defaultReadable).filter((file) => !file.endsWith("ATtiny162x_Datasheet_Errata_Extracted_Content.json") &&
     !file.endsWith("ATtiny162x_DFP_3.4.278_Extracted_Device_Definitions.json")).map(document);
-  const value = freeze({ root, manifest, manifestSha256: sha256(manifestBytes), repository: REPOSITORY, version: manifest.commit,
+  const value = freeze({ ...base,
     id: "uartdebug2-materials", initialRules, initialKnowledge, documents, corpus: localCorpus,
     dfpRegisters, reviewedFacts, sourceManifest, devices: deriveDevices(pins, dfpRegisters),
-    files: names, totalBytes, localDocuments: [],
+    localDocuments: [],
     coverage: ["Pinned repository reference material; consult device and document applicability"],
     verification: "repository-sha256-integrity; compilation and hardware testing are separate",
     referenceCatalog: localCorpus.documents.map(({ pages, sections, ...metadata }) => ({ ...metadata, sectionCount: sections?.length || 0 })),
@@ -209,7 +220,7 @@ function loadMaterials(input = {}) {
 }
 
 function validateProjectCatalog(catalog, manifest, manifestSha256) {
-  if (catalog?.schemaVersion !== 1 || catalog.repository !== REPOSITORY ||
+  if (catalog?.schemaVersion !== 1 || !supportedRepository(manifest.repository) || catalog.repository !== manifest.repository ||
       catalog.commit !== manifest.commit || catalog.manifestSha256 !== manifestSha256 ||
       !Array.isArray(catalog.projects) || catalog.projects.length > 5000) {
     throw Error("Prepared project catalog does not match the materials release; prepare it before activation");
@@ -225,7 +236,7 @@ function validateProjectCatalog(catalog, manifest, manifestSha256) {
         !safeRelative(project.projectPath) || !/^Target_Projects\/[^/]+$/.test(project.projectPath) ||
         !safeRelative(project.canvasName) || project.canvasName.includes("/") || !/\.md$/i.test(project.canvasName) ||
         typeof project.canvas?.markdown !== "string" || typeof project.canvas?.locale !== "string" ||
-        !Array.isArray(project.files) || !provenance || provenance.repository !== REPOSITORY ||
+        !Array.isArray(project.files) || !provenance || provenance.repository !== manifest.repository ||
         provenance.commit !== manifest.commit || !safeRelative(provenance.sourcePath) ||
         !/^[a-f0-9]{64}$/.test(provenance.sha256 || "") ||
         provenance.sha256 !== manifest.files[provenance.sourcePath]?.sha256 ||
@@ -260,7 +271,7 @@ function createProjectCatalog(input = {}) {
   const decode = (bytes) => new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   const manifestBytes = fs.readFileSync(manifestPath);
   const manifest = JSON.parse(decode(manifestBytes));
-  if (manifest.schemaVersion !== 1 || manifest.repository !== REPOSITORY ||
+  if (manifest.schemaVersion !== 1 || !supportedRepository(manifest.repository) ||
       !/^[a-f0-9]{40}$/.test(manifest.commit || "") || !manifest.files || typeof manifest.files !== "object" || Array.isArray(manifest.files)) {
     throw Error("Invalid AVR materials manifest");
   }
@@ -283,6 +294,6 @@ function createProjectCatalog(input = {}) {
 }
 
 
-module.exports = { REPOSITORY, DEVICE_ROOT, REQUIRED_RULES, INITIAL_KNOWLEDGE,
+module.exports = { REPOSITORY, LEGACY_REPOSITORY, DEVICE_ROOT, REQUIRED_RULES, REQUIRED_RULES_V3, INITIAL_KNOWLEDGE,
   materialsRoot, safeRelative, defaultReadable, loadMaterials, fileDigest, sha256,
   createProjectCatalog, PROJECT_CATALOG_FILENAME, validateProjectCatalog };

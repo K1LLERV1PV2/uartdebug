@@ -713,6 +713,30 @@ function restoreAccountFixture(hooks, accountKey) {
   hooks.account(accountKey);
 }
 
+test("v5 migration retains the acknowledged base for an untouched workspace", async () => {
+  const accountKey = "v5-migration";
+  const { storage, snapshot } = canonicalAccountFixture(accountKey, 4);
+  const previous = storage.get(workspacePersistence.KEY);
+  storage.delete(workspacePersistence.KEY);
+  storage.set("ud_avr_programming_state_v5", previous);
+  Object.values(snapshot.miniProjects)[0].canvas.markdown = "Newer cloud requirements";
+  const { hooks } = loadCanvasLifecycleHooks(storage, { fetch: async () => jsonResponse({
+    ok: true, accountKey, documents: { files: { revision: 5, data: snapshot } },
+  }) });
+  hooks.loadState();
+  hooks.restoreProjectInstruction();
+  hooks.restoreProjectAiLocalDirtyState();
+  hooks.restoreProjectAiAccountSyncState();
+  assert.equal(hooks.persistState(), true);
+  hooks.account(accountKey);
+  hooks.confirm(() => { throw new Error("An untouched migrated workspace must not prompt for a conflict."); });
+  await hooks.initializeProjectAiAccountWorkspace();
+  assert.equal(hooks.getProjectInstructionSnapshot().markdown, "Newer cloud requirements");
+  assert.equal(hooks.syncState().conflict, false);
+  assert.equal(hooks.syncState().revision, 5);
+  assert.equal(storage.get("ud_avr_programming_state_v5"), previous);
+});
+
 function storedAccountWorkspace(storage) {
   const frontend = fs.readFileSync(path.join(__dirname, "../public/AVR-Programming.js"), "utf8");
   const key = /const STORAGE_STATE = "([^"]+)"/.exec(frontend)?.[1]
@@ -3193,7 +3217,7 @@ test("documentation uses one live Markdown surface without deferred actions or e
   assert.ok(guide.querySelector("#projectDocumentationEditor"));
   assert.equal(guide.querySelector("button, .ui-panel-header, .panel-action-lobe"), null);
   assert.equal(guide.classList.contains("panel-action-host"), false);
-  assert.equal(document.querySelectorAll(".panel-action-lobe").length, 2);
+  assert.equal(document.querySelectorAll(".panel-action-lobe").length, 3);
   assert.doesNotMatch(source, /documentationEditMode|setDocumentationEditMode|refreshDocumentationControls|documentationEditToggle/);
 });
 
@@ -3375,7 +3399,7 @@ test("workspace panes share an expanded floor and retain intrinsic measurement f
   );
   assert.match(
     css,
-    /\.documentation-workspace::before\s*\{[^}]*content:\s*"Description";/
+    /\.documentation-workspace::after\s*\{[^}]*content:\s*"Description";/
   );
   assert.match(
     css,
@@ -3437,10 +3461,10 @@ function panelMotionFixture(notchWidth = 34) {
   const { document } = parseHTML(`<html><body>
   <template id="panelActionContour"><svg class="panel-action-contour" aria-hidden="true"><path class="panel-action-fill"></path><path class="panel-action-outline"></path></svg></template>
   <div class="canvas-split-container">
-    <aside id="filesPanel" class="outliner"><div id="fileList"></div></aside>
-    <div class="project-ai-layout"><section id="specPanel" class="project-instruction-panel panel-action-host"><form class="panel-action-lobe ui-panel-header" data-toolbar-layout="vertical"><button id="reviewAction" type="button">Review specification</button></form></section></div>
-    <section id="editorWorkspace" class="editor-workspace panel-action-host"><div class="panel-action-lobe ui-panel-header" data-toolbar-layout="vertical"><button>Compile</button><button>Flash MCU</button></div><div id="editorContent"></div></section>
-    <aside id="guidePanel" class="documentation-workspace"></aside>
+    <aside id="filesPanel" class="outliner panel-action-host"><div class="panel-action-lobe ui-panel-header" data-toolbar-layout="vertical"><button>Chats</button><button>New chat</button></div><div id="fileList"></div></aside>
+    <div class="project-ai-layout"><section id="specPanel" class="project-instruction-panel panel-action-host panel-action-notched"><form class="panel-action-lobe ui-panel-header" data-toolbar-layout="vertical"><button id="reviewAction" type="button">Review specification</button></form></section></div>
+    <section id="editorWorkspace" class="editor-workspace panel-action-host panel-action-notched"><div class="panel-action-lobe ui-panel-header" data-toolbar-layout="vertical"><button>Compile</button><button>Flash MCU</button></div><div id="editorContent"></div></section>
+    <aside id="guidePanel" class="documentation-workspace panel-action-notched"></aside>
   </div></body></html>`);
   const container = document.querySelector(".canvas-split-container");
   container.getBoundingClientRect = () => ({ width: 1802 });
@@ -3471,8 +3495,8 @@ test("each notebook page gets one shared contour without changing its action but
   const hooks = loadAvrFrontendFunctionHooks(["bindPanelActionExpansion"], { document: fixture.document });
   hooks.bindPanelActionExpansion();
   hooks.bindPanelActionExpansion();
-  assert.equal(actions.length, 2);
-  assert.equal(fixture.container.querySelectorAll("[data-panel-action-contour]").length, 3);
+  assert.equal(actions.length, 3);
+  assert.equal(fixture.container.querySelectorAll("[data-panel-action-contour]").length, 4);
   for (const [index, group] of actions.entries()) {
     assert.equal(group.querySelector("[data-panel-action-contour]"), null, "the page owns its complete contour");
     const contour = group.parentElement.querySelector(":scope > [data-panel-action-contour]");
@@ -3502,13 +3526,13 @@ test("all panes share the same body minimum independent of their page contours",
   assert.deepEqual(minima(), [240, 240, 240, 240], "collapsed actions must retain their expanded floors");
 });
 
-test("compact bodies account for the incoming notch without widening the canvas", () => {
-  for (const [notch, expected] of [[34, [62, 28, 62, 62]], [38, [62, 24, 62, 62]]]) {
+test("compact bodies retain a shared width independently of the capsule notch", () => {
+  for (const notch of [34, 38]) {
     const fixture = panelMotionFixture(notch);
     const hooks = loadAvrFrontendFunctionHooks(["getWorkspacePanelSpecs"], {
       document: fixture.document, window: { getComputedStyle: fixture.getComputedStyle },
     });
-    assert.deepEqual(Array.from(hooks.getWorkspacePanelSpecs(), spec => spec.compact), expected);
+    assert.deepEqual(Array.from(hooks.getWorkspacePanelSpecs(), spec => spec.compact), [62, 62, 62, 62]);
   }
 });
 
@@ -3583,14 +3607,14 @@ test("divider changes keep the code rail at 62px and persist a completed pointer
   hooks.bindWorkspaceColumnResizer("fileListResizer", 0);
   const session = callbacks.start();
   callbacks.move(280, session);
-  assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), [786, 28, 62, 884]);
+  assert.deepEqual(Array.from(hooks.getWorkspaceWidths()), [752, 62, 62, 884]);
   assert.equal(session.widths.reduce((sum, width) => sum + width, 0), hooks.getWorkspaceContentWidth(),
     "the next pointer sample must start from the reconciled budget");
   callbacks.finish(session);
-  assert.equal(hooks.getWorkspaceWidths()[1], 28,
+  assert.equal(hooks.getWorkspaceWidths()[1], 62,
     "releasing a divider must persist the collapse rather than restore old preferences");
   assert.equal(hooks.getWorkspaceWidths()[2], 62);
-  assert.equal(storage.get("ud_avr_ai_column_width_v1"), "28");
+  assert.equal(storage.get("ud_avr_ai_column_width_v1"), "62");
   assert.equal(storage.get("ud_avr_programming_editor_collapsed_v1"), "true");
 });
 
@@ -3603,7 +3627,7 @@ test("a reopen that cannot also reserve its divider leaves every panel unchanged
       "prepare() { refreshWorkspaceEditors = () => {}; }",
     ], { document: fixture.document, window: { getComputedStyle: fixture.getComputedStyle } });
     hooks.prepare();
-    const start = index === 1 ? [452, 28, 240, 240] : [418, 240, 62, 240];
+    const start = index === 1 ? [418, 62, 240, 240] : [418, 240, 62, 240];
     assert.equal(hooks.renderWorkspaceWidths(start, { animate: false }), true);
     const candidate = hooks.resizeWorkspaceBoundary(start, hooks.getWorkspacePanelSpecs(), 1, index === 1 ? 48 : -48);
     assert.equal(candidate[index], 240, "the body alone would fit before accounting for its protrusion");
@@ -3623,12 +3647,12 @@ test("boundary reopen reserves its divider by closing only its adjacent pane whe
       "prepare() { refreshWorkspaceEditors = () => {}; }",
     ], { document: fixture.document, window: { getComputedStyle: fixture.getComputedStyle } });
     hooks.prepare();
-    const start = index === 1 ? [452, 28, 240, 240] : [418, 240, 62, 240];
+    const start = index === 1 ? [418, 62, 240, 240] : [418, 240, 62, 240];
     assert.equal(hooks.renderWorkspaceWidths(start, { animate: false }), true);
     assert.equal(hooks.renderWorkspaceBoundary(start, hooks.getWorkspacePanelSpecs(), 1,
       index === 1 ? 48 : -48, { animate: false }), true);
     const sizes = Array.from(hooks.getWorkspaceWidths());
-    assert.deepEqual(sizes, index === 1 ? [418, 240, 62, 240] : [418, 28, 274, 240]);
+    assert.deepEqual(sizes, index === 1 ? [418, 240, 62, 240] : [418, 62, 240, 240]);
     assert.equal(sizes.reduce((sum, width) => sum + width, 0), hooks.getWorkspaceContentWidth());
   }
 });
@@ -3656,7 +3680,7 @@ test("PC viewport fitting preserves an explicitly closed code rail across divide
 
 test("restoring saved rails keeps them closed while another pane can absorb spare width", () => {
   for (const saved of [
-    // Legacy canvas rails saved as 62px must migrate to the current 28px body.
+    // Both current 62px rails and the former 28px specification rail restore closed.
     [400, 62, true, 360], [62, 400, true, 62], [400, 62, true, 62],
     [62, 62, true, 360], [62, 62, false, 62],
     [400, 28, true, 360],
@@ -3850,7 +3874,7 @@ test("clicking an action in a collapsed panel expands it and still invokes the e
   } });
   hooks.prepare();
   const widths = Array.from(hooks.getWorkspaceWidths());
-  widths[0] += widths[1] - 28; widths[1] = 28;
+  widths[0] += widths[1] - 62; widths[1] = 62;
   hooks.renderWorkspaceWidths(widths);
   hooks.bindPanelActionExpansion();
   let actions = 0;
@@ -4671,6 +4695,35 @@ test("canonical projects without a description remain fresh until their program 
   assert.doesNotThrow(() => hooks.assertProjectAiUpdateIsFresh(request));
   hooks.updateMiniProjectInstance(project.instanceId, { id: "target", title: "Target", version: "Ver.1.0", files: [{ role: "source", name: "Target.c", content: "Changed program" }] });
   assert.throws(() => hooks.assertProjectAiUpdateIsFresh(request), /newer local edits/i);
+});
+
+test("UartDebug3 artifact updates and reload preserve the reference group and project display name", () => {
+  const { hooks, storage } = loadCanvasLifecycleHooks();
+  const referenceFiles = [
+    { name: "Target.1.md", content: "# Target\r\n" },
+    { name: "Target.1.yaml", content: "blocks: []\r\n" },
+    { name: "Target.1.c", content: "/* Saved source */\r\n" },
+  ];
+  const project = hooks.installMiniProjectDefinition({
+    contract: projectFormat.V3_CONTRACT, id: "target", title: "Target", version: "", referenceFiles,
+    canvas: { markdown: "# Target\nMicrocontroller: ATtiny1624; Package: SOIC-14\n", locale: "en" },
+    files: [{ role: "source", name: "Target.c", content: "/* Current source */" }],
+  });
+  hooks.renameMiniProjectInstance(project.instanceId, "My target");
+  hooks.updateMiniProjectInstance(project.instanceId, {
+    id: "target", title: "Target", displayName: "Target", version: "", contract: projectFormat.V3_CONTRACT,
+    files: [{ role: "source", name: "Target.c", content: "/* Updated source */" }],
+  });
+  const reloaded = loadCanvasLifecycleHooks(storage).hooks;
+  reloaded.loadState();
+  reloaded.restoreProjectInstruction();
+  const restored = reloaded.getPublicMiniProjectInstance(project.instanceId);
+  assert.equal(restored.contract, projectFormat.V3_CONTRACT);
+  assert.equal(restored.title, "Target");
+  assert.equal(restored.displayName, "My target");
+  assert.equal(JSON.stringify(restored.referenceFiles), JSON.stringify(referenceFiles));
+  assert.equal(reloaded.getProjectAiRequestPayload().currentProject.contract, projectFormat.V3_CONTRACT);
+  assert.equal("referenceFiles" in reloaded.getProjectAiRequestPayload().currentProject, false);
 });
 
 test("project-local rules stay hidden, survive reload, and follow only the selected project", () => {

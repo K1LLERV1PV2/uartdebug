@@ -89,20 +89,22 @@
               <div class="avr-overview-viewport" id="avrActionsPanelViewport">
                 <section class="avr-action-panel" aria-label="Projects and notifications">
                   <div class="avr-action-card ui-panel">
-                    <button class="avr-panel-trigger" id="filesOpenBtn" type="button" aria-label="Open projects" aria-haspopup="dialog" aria-controls="filesModal" aria-expanded="false"></button>
+                    <button class="avr-panel-trigger" id="filesOpenBtn" type="button" aria-label="Open projects" aria-describedby="currentProjectCardDetail" aria-haspopup="dialog" aria-controls="filesModal" aria-expanded="false"></button>
                     <span class="avr-action-title">
                       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7ZM3 8h18" /></svg>
                       <span>Projects</span>
                       <svg class="avr-card-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
                     </span>
+                    <span class="avr-card-detail" id="currentProjectCardDetail"></span>
                   </div>
                   <div class="avr-action-card ui-panel">
-                    <button class="avr-panel-trigger" id="notificationsBtn" type="button" data-notifications-open aria-label="Notifications" aria-haspopup="dialog" aria-controls="notificationModal"></button>
+                    <button class="avr-panel-trigger" id="notificationsBtn" type="button" data-notifications-open aria-label="Notifications" aria-describedby="latestNotificationCardDetail" aria-haspopup="dialog" aria-controls="notificationModal"></button>
                     <span class="avr-action-title">
                       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
                       <span>Notifications</span>
                       <svg class="avr-card-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
                     </span>
+                    <span class="avr-card-detail" id="latestNotificationCardDetail" data-notifications-latest></span>
                   </div>
                 </section>
               </div>
@@ -199,31 +201,27 @@
                 aria-label="AVR editor workspace"
               >
                 <div class="canvas-split-container">
-                  <aside class="outliner avr-session-panel project-chat-panel ui-panel" aria-label="Project chat">
+                  <aside class="outliner avr-session-panel project-chat-panel panel-action-host ui-panel" aria-label="Project chat">
+                    <div class="ui-panel-header panel-action-lobe" data-toolbar-layout="vertical" role="group" aria-label="Chat controls">
+                      <button class="ui-action secondary-btn" id="projectChatHistoryBtn" type="button" aria-label="Chat history" aria-controls="projectChatHistory" aria-expanded="false">Chats</button>
+                      <button class="ui-action" id="projectChatNewBtn" type="button">New chat</button>
+                      <button class="ui-icon-button ui-icon-button--quiet ui-menu-trigger" id="projectChatActionsBtn" type="button" aria-label="Chat actions" aria-haspopup="menu" aria-controls="projectChatMenu" aria-expanded="false">⋯</button>
+                    </div>
                     <div class="project-chat-surface">
-                      <header class="project-chat-header">
-                        <div class="project-chat-navigation">
-                          <button class="ui-action ui-action--compact secondary-btn" id="projectChatHistoryBtn" type="button" aria-label="Chat history" aria-controls="projectChatHistory" aria-expanded="false">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h11" /></svg><span>Chats</span>
-                          </button>
-                          <button class="ui-action ui-action--compact" id="projectChatNewBtn" type="button" aria-label="New chat">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New chat</span>
-                          </button>
-                        </div>
-                        <div class="project-chat-title-row">
+                      <div class="project-chat-body scroll-frame">
+                        <header class="project-chat-header">
                           <div class="project-chat-title-content">
                             <h2 id="projectChatTitle">New chat</h2>
                           </div>
-                          <button class="ui-icon-button ui-icon-button--quiet ui-menu-trigger" id="projectChatActionsBtn" type="button" aria-label="Chat actions" aria-haspopup="menu" aria-controls="projectChatMenu" aria-expanded="false">⋯</button>
-                        </div>
-                      </header>
-                      <section class="project-chat-history" id="projectChatHistory" aria-label="Project chats" hidden>
-                        <div class="project-chat-history-list ui-scroll-region" id="projectChatHistoryList" role="list" aria-label="Chats" tabindex="0"></div>
-                      </section>
-                      <div class="project-chat-thread ui-scroll-region" id="projectChatThread" role="log" aria-label="Conversation" tabindex="0"></div>
-                      <button class="project-chat-icon-button project-chat-jump ui-icon-button" id="projectChatJumpBtn" type="button" aria-label="Jump to latest message" hidden>
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16m-6-6 6 6 6-6" /></svg>
-                      </button>
+                        </header>
+                        <section class="project-chat-history" id="projectChatHistory" aria-label="Project chats" hidden>
+                          <div class="project-chat-history-list ui-scroll-region" id="projectChatHistoryList" role="list" aria-label="Chats" tabindex="0"></div>
+                        </section>
+                        <div class="project-chat-thread ui-scroll-region" id="projectChatThread" role="log" aria-label="Conversation" tabindex="0"></div>
+                        <button class="project-chat-icon-button project-chat-jump ui-icon-button" id="projectChatJumpBtn" type="button" aria-label="Jump to latest message" hidden>
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16m-6-6 6 6 6-6" /></svg>
+                        </button>
+                      </div>
                       <form class="project-chat-composer scroll-frame" id="projectChatForm">
                         <label class="sr-only" for="projectChatInput">Message the project assistant</label>
                         <textarea class="ui-text-input ui-text-input--embedded ui-scroll-region" id="projectChatInput" rows="2" placeholder="Ask about your project" spellcheck="true"></textarea>
@@ -256,7 +254,7 @@
                   ></div>
 
                   <div class="project-ai-layout" aria-label="Project specification">
-                    <section class="project-instruction-panel avr-session-panel panel-action-host ui-panel" aria-labelledby="projectInstructionTitle">
+                    <section class="project-instruction-panel avr-session-panel panel-action-host panel-action-notched ui-panel" aria-labelledby="projectInstructionTitle">
                       <h2 class="sr-only" id="projectInstructionTitle">Project specification</h2>
                       <form class="project-canvas-controls ui-panel-header panel-action-lobe" data-toolbar-layout="vertical" id="projectCanvasForm" novalidate>
                         <button class="connect-btn ui-action" id="projectCanvasRunBtn" type="submit">Review specification</button>
@@ -282,7 +280,7 @@
                   ></div>
 
                   <section
-                    class="editor-workspace avr-session-panel panel-action-host ui-panel"
+                    class="editor-workspace avr-session-panel panel-action-host panel-action-notched ui-panel"
                     id="editorWorkspace"
                     aria-label="Code editor"
                   >
@@ -340,7 +338,7 @@
                   ></div>
 
                   <aside
-                    class="documentation-workspace project-documentation-panel avr-session-panel ui-panel"
+                    class="documentation-workspace project-documentation-panel avr-session-panel panel-action-notched ui-panel"
                     id="projectDocumentationPane"
                     aria-label="Code description"
                     data-tooltip-disabled

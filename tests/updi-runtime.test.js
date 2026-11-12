@@ -525,7 +525,9 @@ test("a real signature read replaces Auto and a manual target with the detected 
     assert.equal(await runtime.ensureSignature(), info);
     assert.equal(mock.opened, 1, "an explicitly cached signature read does not reopen the port");
     assert.match(document.getElementById("programHexBtn").textContent, /ATtiny1624/);
-    assert.equal(document.getElementById("mcuSelect").dataset.controlStatus, "From port");
+    assert.equal(select.dataset.controlStatus, "");
+    assert.equal(select.dataset.connectionState, "ready");
+    assert.equal(select.querySelector('option[value="auto"]').textContent, "Auto detect");
     for (const option of document.querySelectorAll("#mcuSelect option")) {
       assert.equal(option.disabled, option.value !== "attiny1624", "only the actual chip remains selectable while its snapshot is valid");
     }

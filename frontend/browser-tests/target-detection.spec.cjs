@@ -86,6 +86,7 @@ async function open(page) {
     && window.UartDebugAvrAiWorkspace && document.querySelectorAll("#mcuSelect option").length > 1);
   await page.evaluate(() => document.fonts.ready);
   await expect(page.locator("#mcuSelect")).toHaveValue("auto");
+  await expect(page.locator('#mcuSelect option[value="auto"]')).toHaveText("Auto detect");
 }
 
 async function choose(page, id, value) {
@@ -108,9 +109,12 @@ async function detect(page, mcu = "attiny1624") {
 
 async function expectDetectedTarget(page, mcu = "attiny1624", label = "ATtiny1624") {
   await expect(page.locator("#mcuSelect")).toHaveValue(mcu);
-  await expect(page.locator("#mcuSelect")).toHaveAttribute("data-control-status", "From port");
+  await expect(page.locator("#mcuSelect")).toHaveAttribute("data-connection-state", "ready");
   await expect(page.locator("#mcuSelect + .custom-select .custom-select-value")).toHaveText(label);
-  await expect(page.locator("#mcuSelect + .custom-select .custom-select-trigger")).toHaveAttribute("data-tooltip", new RegExp(label));
+  const trigger = page.locator("#mcuSelect + .custom-select .custom-select-trigger");
+  await expect(trigger).toHaveAccessibleName(`Target MCU: ${label}`);
+  await expect(trigger).toHaveAttribute("data-tooltip", `Target MCU: ${label}`);
+  await expect(trigger.locator(".custom-select-status")).toHaveText("");
   await expect(page.locator("#chipStatusText, .hardware-step-detail")).toHaveCount(0);
 }
 
@@ -209,7 +213,7 @@ test("an unknown signature stays visible inside Chip and never becomes a mapped 
   await expect(page.locator("#mcuSelect")).toHaveAttribute("data-control-status", "Unknown chip");
   await expect(page.locator("#mcuSelect")).toHaveAttribute("data-connection-state", "warning");
   await expect(page.locator("#mcuSelect + .custom-select .custom-select-status")).toHaveText("Unknown chip");
-  await expect(page.locator("#mcuSelect + .custom-select .custom-select-trigger")).toHaveAttribute("data-tooltip", /0x123456/);
+  await expect(page.locator("#mcuSelect + .custom-select .custom-select-trigger")).toHaveAttribute("data-tooltip", /Unknown chip/);
   await expect(page.locator("#projectPackageSelect")).toBeDisabled();
   expect(await page.evaluate(() => window.__UARTDEBUG_AVR_PROGRAMMING_UPDI__.getSignatureInfo().deviceId)).toBe(0x123456);
   expect(await page.evaluate(() => window.__UARTDEBUG_AVR_PROGRAMMING_UPDI_BRIDGE__.getDetectedTargetKey())).toBe("");
@@ -304,6 +308,14 @@ test("multiline values fit equal compact hardware fields without header tooltips
     await expectNoHeaderTooltip(page, page.locator("#adapterStatusText"));
     await expectNoHeaderTooltip(page, page.locator("#mcuSelect + .custom-select .custom-select-trigger"));
     await expectNoHeaderTooltip(page, page.locator("#projectPackageSelect + .custom-select .custom-select-trigger"));
+    const packageTrigger = page.locator("#projectPackageSelect + .custom-select .custom-select-trigger");
+    await packageTrigger.click();
+    await expect(packageTrigger).toHaveAttribute("aria-expanded", "true");
+    await expect.poll(async () => {
+      const field = (await readConnectionTextGeometry(page))[2];
+      return Math.abs(field.caret.center - field.frame[3] / 2);
+    }, { message: "the open package caret stays centered with the selected label" }).toBeLessThan(1);
+    await page.keyboard.press("Escape");
     await page.mouse.move(10, 870);
     await page.screenshot({ path: testInfo.outputPath(`compact-target-${mode}-1024.png`) });
   }
@@ -641,7 +653,7 @@ for (const width of [900, 1543]) {
           }
           if (field.caret) {
             expect(field.caret.fits, "the selector arrow must remain inside its frame").toBe(true);
-            expect(Math.abs(field.caret.center - field.value.center), "the selector arrow must align with its primary value").toBeLessThan(1.5);
+            expect(Math.abs(field.caret.center - field.frame[3] / 2), "the selector arrow must stay at the trigger center").toBeLessThan(1);
           }
           if (mode === "expanded" && field.caption.text) {
             expect(field.value.top, "the normal value must not overlap its caption").toBeGreaterThanOrEqual(field.caption.bottom);

@@ -411,6 +411,7 @@
           return;
         }
         if (!historyOpen && followingLatest) thread.scrollTop = thread.scrollHeight;
+        if (menuTrigger === actionsButton && chatMenu.matches(":popover-open")) positionChatMenu(actionsButton);
         updateJump();
       });
     }
@@ -428,8 +429,7 @@
       if (historyButton) {
         historyButton.setAttribute("aria-expanded", String(historyOpen));
         historyButton.setAttribute("aria-label", historyOpen ? "Back to conversation" : "Chat history");
-        historyButton.querySelector("span").textContent = historyOpen ? "Back" : "Chats";
-        historyButton.querySelector("path").setAttribute("d", historyOpen ? "m15 5-7 7 7 7M8 12h12" : "M4 6h16M4 12h16M4 18h11");
+        historyButton.textContent = historyOpen ? "Back" : "Chats";
       }
       root.dataset.chatView = historyOpen ? "history" : "conversation";
       historyView.hidden = !historyOpen;
@@ -1053,6 +1053,15 @@
       menuScrollOffsets = null;
     }
 
+    function positionChatMenu(target, event) {
+      const bounds = target.getBoundingClientRect();
+      const menuBounds = chatMenu.getBoundingClientRect();
+      const x = event?.type === "contextmenu" && event.clientX ? event.clientX : bounds.left;
+      const y = event?.type === "contextmenu" && event.clientY ? event.clientY : bounds.bottom + 4;
+      chatMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - menuBounds.width - 8))}px`;
+      chatMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - menuBounds.height - 8))}px`;
+    }
+
     function openChatMenu(event) {
       const target = event.target.closest?.("[data-chat-menu], [data-chat-id], #projectChatActionsBtn");
       if (!target || !root.contains(target)) return;
@@ -1069,14 +1078,9 @@
         button.dataset.chatAction = action; button.setAttribute("role", "menuitem"); button.textContent = label;
         chatMenu.appendChild(button);
       }
-      const bounds = target.getBoundingClientRect();
       menuScrollOffsets = window.UartDebugControls.captureMenuScroll(target);
       chatMenu.showPopover(); target.setAttribute("aria-expanded", "true");
-      const menuBounds = chatMenu.getBoundingClientRect();
-      const x = event.type === "contextmenu" && event.clientX ? event.clientX : bounds.left;
-      const y = event.type === "contextmenu" && event.clientY ? event.clientY : bounds.bottom + 4;
-      chatMenu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - menuBounds.width - 8))}px`;
-      chatMenu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - menuBounds.height - 8))}px`;
+      positionChatMenu(target, event);
       chatMenu.querySelector("button")?.focus({ preventScroll: true });
     }
 

@@ -249,13 +249,10 @@
   }
 
   function render() {
-    const unread = records.filter(record => !record.read).length;
-    for (const button of document.querySelectorAll("[data-notifications-open]")) {
-      const badge = button.querySelector("[data-notifications-count]");
-      if (!badge) continue;
-      button.setAttribute("aria-label", unread ? `Notifications, ${unread} unread` : "Notifications");
-      badge.textContent = unread > 99 ? "99+" : String(unread);
-      badge.hidden = !unread;
+    const latest = records.at(-1);
+    const summary = (latest?.message.trim() || latest?.title || "").replace(/\s+/g, " ");
+    for (const detail of document.querySelectorAll("[data-notifications-latest]")) {
+      detail.textContent = summary;
     }
     if (!modal || modal.hidden) return;
     const list = modal.querySelector(".notification-history-list");

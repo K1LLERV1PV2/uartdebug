@@ -17,7 +17,7 @@ const LOOKUP_TOOL = {
   name: "read_avr_documentation",
   strict: true,
   description:
-    "Browse, search and read the pinned UartDebug2 repository knowledge maps, programming rules, reviewed references, prepared examples including the read-only Reusable_Target_Projects library, structured JSON/YAML, extracted official PDFs and DFP definitions. Repository-relative paths are document IDs. Notes, Problems.md, temporary files and unselected ordinary Target_Projects are excluded. External HTML requires a prior search across ALL local documents for the same query plus an explicit necessary gap; at most two network requests are allowed.",
+    "Browse, search and read the pinned repository programming rules, reviewed references and indexed examples. Use UartDebug3 topic IDs to find reviewed file locations, and repository-relative paths to read the text. Use the selected device's DFP definitions for register and symbol searches. Notes, Problems.md, temporary files and unselected Target_Projects are excluded. External HTML requires a prior search across ALL local documents for the same query plus an explicit necessary gap; at most two network requests are allowed.",
   parameters: {
     type: "object",
     additionalProperties: false,
@@ -313,7 +313,7 @@ function createDocumentationLookup({
 } = {}) {
   let externalRequests = 0;
   const local = createLocalReferenceIndex(corpus, reviewedFacts, dfpRegisters, mcu);
-  const materials = createMaterialIndex({ documents, version: knowledge?.version });
+  const materials = createMaterialIndex({ documents, version: knowledge?.version, indexTopics: knowledge?.indexTopics });
   const examinedQueries = new Set();
   async function lookup(args) {
     const operation = args?.operation || (args?.url ? "external" : "search");
@@ -326,7 +326,13 @@ function createDocumentationLookup({
           (args.page !== undefined && (!Number.isSafeInteger(args.page) || args.page < 0)))
         return { ok: false, code: "local_request_invalid", message: "Use valid local catalog ids, a bounded query and a nonnegative page." };
       let result;
-      if (operation !== "registers" && materials.handles(args.documentId)) {
+      if (operation === "registers" && Object.hasOwn(knowledge?.deviceHeaders || {}, mcu)) {
+        const documentId = knowledge.deviceHeaders[mcu];
+        const found = materials.lookup({ operation: "search", documentId, query: args.query });
+        result = { ...found, operation, mcu, documentId,
+          ...(found.ok ? { coverage: "selected-device-header-candidates", sha256: found.results[0].sha256,
+            revision: knowledge.version, digestScope: "repository-file-bytes" } : {}) };
+      } else if (operation !== "registers" && materials.handles(args.documentId)) {
         result = materials.lookup({ ...args, operation });
       } else if (operation === "catalog" && !args.documentId && materials.hasDocuments) {
         result = materials.lookup({ ...args, operation });
@@ -339,6 +345,7 @@ function createDocumentationLookup({
         if (materialResult.ok) {
           if (!result.ok && result.code === "local_documentation_not_found") result = { ...materialResult, results: [] };
           result.materialResults = materialResult.results;
+          if (materialResult.indexResults) result.indexResults = materialResult.indexResults;
         }
       }
       if (operation === "search" && !args.documentId && !args.sectionId && (result.ok || result.code === "local_documentation_not_found")) {

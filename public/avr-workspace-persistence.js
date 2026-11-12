@@ -6,8 +6,8 @@
 })(typeof globalThis === "object" ? globalThis : this, function () {
   "use strict";
 
-  const KEY = "ud_avr_programming_state_v5";
-  const LEGACY_KEYS = Object.freeze(["ud_avr_programming_state_v4", "ud_avr_programming_state_v3", "ud_avr_programming_state_v2"]);
+  const KEY = "ud_avr_programming_state_v6";
+  const LEGACY_KEYS = Object.freeze(["ud_avr_programming_state_v5", "ud_avr_programming_state_v4", "ud_avr_programming_state_v3", "ud_avr_programming_state_v2"]);
   const CHECKPOINT_FIELD = "localCheckpoint";
   const validCheckpoint = value => typeof value === "string" && /^[A-Za-z0-9._:-]{1,100}$/.test(value);
 
@@ -56,8 +56,9 @@
       const data = raw === null ? null : businessData(envelope);
       ownedRaw = current;
       ownedData = current === null ? null : JSON.stringify(data);
-      checkpoint = current !== null && validCheckpoint(envelope?.[CHECKPOINT_FIELD]) ? envelope[CHECKPOINT_FIELD] : null;
-      return { data, raw, checkpoint, migratedFrom };
+      const sourceCheckpoint = validCheckpoint(envelope?.[CHECKPOINT_FIELD]) ? envelope[CHECKPOINT_FIELD] : null;
+      checkpoint = current === null ? null : sourceCheckpoint;
+      return { data, raw, checkpoint, migratedFrom, sourceCheckpoint };
     }
 
     function owns(expectedCheckpoint = checkpoint) {

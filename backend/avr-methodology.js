@@ -43,9 +43,10 @@ function sectionsOf(document) {
     startByte: 0, endByte: 0, startLine: 1, endLine: 1, text: "" });
   return sections;
 }
-function createMaterialIndex({ documents = [], version = "" } = {}) {
+function createMaterialIndex({ documents = [], version = "", indexTopics = [] } = {}) {
   const all = documents.map((document) => ({ ...document, sections: sectionsOf(document) }));
   const byId = new Map(all.map((document) => [document.id, document]));
+  const topicById = new Map(indexTopics.map(topic => [topic.id, topic]));
   if (byId.size !== all.length) throw Error("Duplicate canonical material document ID");
   const error = (code, message) => ({ ok: false, origin: "local", code, message });
   const metadata = (document) => ({ id: document.id, documentId: document.id,
@@ -60,8 +61,28 @@ function createMaterialIndex({ documents = [], version = "" } = {}) {
     startLine: section.startLine, endLine: section.endLine, startByte: section.startByte,
     endByte: section.endByte, text, textComplete: text === section.text, notice: NOTICE,
   });
+  const indexedTopic = (topic) => ({ documentId: topic.id, title: topic.title, kind: topic.kind,
+    reviewStatus: topic.status, locations: topic.locations.slice(0, 8) });
+  function searchTopics(query, wanted) {
+    const exact = String(query).trim().toLowerCase();
+    return indexTopics.map(topic => {
+      const id = topic.id.toLowerCase();
+      const title = topic.title.toLowerCase();
+      const aliases = topic.aliases.map(alias => alias.toLowerCase());
+      const score = wanted.reduce((total, term) => total +
+        (id.includes(term) || title.includes(term) ? 6 : aliases.some(alias => alias.includes(term)) ? 2 : 0), 0);
+      return { topic, score: score + (exact === id ? 1000 : exact === title || aliases.includes(exact) ? 100 : 0) };
+    }).filter(hit => hit.score).sort((a, b) => b.score - a.score || a.topic.id.localeCompare(b.topic.id))
+      .slice(0, 5).map(hit => indexedTopic(hit.topic));
+  }
   function lookup(args = {}) {
     const { operation, documentId = "", sectionId = "" } = args;
+    const topic = topicById.get(documentId);
+    if (topic && ["read", "catalog"].includes(operation)) {
+      if (args.page || sectionId) return error("local_section_unknown", "Use an indexed file location to read content, with page set to 0.");
+      return { ok: true, origin: "local", operation, coverage: "repository-index-locations",
+        topic: indexedTopic(topic), results: [], notice: NOTICE };
+    }
     const document = byId.get(documentId);
     const directory = documentId.endsWith("/") && !document ? documentId : "";
     if (documentId && !document && !directory) return error("local_document_unknown", "Choose a repository-relative document ID from the local catalog.");
@@ -98,6 +119,7 @@ function createMaterialIndex({ documents = [], version = "" } = {}) {
     }
     const wanted = terms(args.query);
     if (!wanted.length) return error("local_query_required", "Use a specific coding topic, register, function or operating condition.");
+    const indexResults = !documentId && !sectionId && indexTopics.length ? searchTopics(args.query, wanted) : [];
     const candidates = document ? [document] : all.filter((item) => !directory || item.id.startsWith(directory));
     const matches = candidates.flatMap((item) => item.sections.filter((chunk) => !section || chunk === section).map((chunk) => {
       const text = `${item.title}\n${chunk.title}\n${chunk.text}`.toLowerCase();
@@ -106,13 +128,14 @@ function createMaterialIndex({ documents = [], version = "" } = {}) {
       const priority = item.id.endsWith(".md") ? 2 : 0;
       return { document: item, section: chunk, matched, score: matched.length * 10 + heading * 3 + priority };
     })).filter((item) => item.matched.length).sort((a, b) => b.score - a.score || a.document.id.localeCompare(b.document.id) || a.section.startByte - b.section.startByte);
-    if (!matches.length) return error("local_documentation_not_found", "No matching local text. Browse the maps and try alternate terms before concluding a fact is missing.");
+    if (!matches.length && !indexResults.length) return error("local_documentation_not_found", "No matching local text. Browse the maps and try alternate terms before concluding a fact is missing.");
     return { ...base, coverage: "repository-section-candidates", totalMatches: matches.length,
       results: matches.slice(0, 5).map((item) => ({ ...summarize(item.document, item.section,
         searchExcerpt(item.section.text, wanted)), matchedTerms: item.matched })),
+      ...(indexResults.length ? { indexResults } : {}),
       truncated: matches.length > 5 };
   }
-  return { lookup, handles: (id) => byId.has(id) || (typeof id === "string" && id.endsWith("/") && all.some((doc) => doc.id.startsWith(id))),
+  return { lookup, handles: (id) => byId.has(id) || topicById.has(id) || (typeof id === "string" && id.endsWith("/") && all.some((doc) => doc.id.startsWith(id))),
     catalog: all.map(metadata), documents: all, hasDocuments: all.length > 0 };
 }
 module.exports = { createMaterialIndex, sectionsOf, CONTENT_LIMIT, NOTICE };

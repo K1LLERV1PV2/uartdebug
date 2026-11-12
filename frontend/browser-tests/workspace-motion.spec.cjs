@@ -3,7 +3,7 @@
 const { test, expect } = require("playwright/test");
 
 const panels = [".outliner", ".project-instruction-panel", "#editorWorkspace", "#projectDocumentationPane"];
-const compactWidths = [62, 28, 62, 62];
+const compactWidths = [62, 62, 62, 62];
 const handles = ["fileListResizer", "projectAiColumnResizer", "documentationResizer"];
 const directions = [
   { index: 0, boundary: 0, sign: 1 },
@@ -59,7 +59,7 @@ async function filledWorkspace(page, index, width = 1543) {
   await expect(page.locator(".CodeMirror")).toHaveCount(3);
   // Seed after beforeunload has saved the old controller's in-memory state.
   await page.addInitScript(() => {
-    const state = JSON.parse(localStorage.getItem("ud_avr_programming_state_v5") || "null");
+    const state = JSON.parse(localStorage.getItem("ud_avr_programming_state_v6") || "null");
     if (!state) return;
     const currentProject = Object.values(state.miniProjects).find(project => project.files.source === state.current);
     if (!currentProject) return;
@@ -72,7 +72,7 @@ async function filledWorkspace(page, index, width = 1543) {
           createdAt: 2, status: "complete" },
       ],
     };
-    localStorage.setItem("ud_avr_programming_state_v5", JSON.stringify(state));
+    localStorage.setItem("ud_avr_programming_state_v6", JSON.stringify(state));
   });
   // Installation can focus an editor; restore the intended layout afterwards.
   await page.evaluate(index => {
@@ -90,7 +90,7 @@ async function filledWorkspace(page, index, width = 1543) {
     for (const record of window.UartDebugNotifications?.getAll() || []) window.UartDebugNotifications.dismiss(record.id);
   });
   await expect(page.locator("#compileLog, .compile-log-frame, #projectCanvasStatus, #projectInstructionSaveState")).toHaveCount(0);
-  await expect(page.locator(".project-instruction-panel > [data-panel-action-contour], #editorWorkspace > [data-panel-action-contour], #projectDocumentationPane > [data-panel-action-contour]")).toHaveCount(3);
+  await expect(page.locator(".canvas-split-container [data-panel-action-contour]")).toHaveCount(4);
   await expect.poll(() => page.locator(panels[index]).evaluate(node => node.getBoundingClientRect().width)).toBe(compactWidths[index]);
 }
 
@@ -475,7 +475,7 @@ test("cancelled and reversed held gestures leave usable, settled panels", async 
   await page.mouse.up();
   await expect(handle).not.toHaveClass(/is-resizing/);
   await expect(page.locator("body")).not.toHaveClass(/is-column-resizing/);
-  await expect(page.locator(panels[1])).toHaveJSProperty("clientWidth", 26);
+  await expect(page.locator(panels[1])).toHaveJSProperty("clientWidth", 60);
 
   await page.mouse.move(point.x, point.y);
   await page.mouse.down();
@@ -485,7 +485,7 @@ test("cancelled and reversed held gestures leave usable, settled panels", async 
   await page.mouse.move(point.x - 100, point.y);
   await page.mouse.up();
   await expect(page.locator(".canvas-split-container")).not.toHaveClass(/is-workspace-transitioning/);
-  await expect(page.locator(panels[1])).toHaveJSProperty("clientWidth", 26);
+  await expect(page.locator(panels[1])).toHaveJSProperty("clientWidth", 60);
   await expect(page.locator("[data-workspace-motion-content]")).toHaveCount(0);
 });
 
@@ -635,7 +635,7 @@ test("the guide edits directly, persists after reload and accepts code heading n
   for (const id of ["documentationEditToggle", "projectGenerateCodeBtn", "projectDescribeCodeBtn"]) {
     await expect(page.locator("#" + id)).toHaveCount(0);
   }
-  await expect(page.locator(".panel-action-lobe")).toHaveCount(2);
+  await expect(page.locator(".panel-action-lobe")).toHaveCount(3);
   await expect(page.locator("#projectDocumentationPane button, #projectDocumentationPane .panel-action-lobe")).toHaveCount(0);
   const guide = page.locator("#projectDocumentationScroll .CodeMirror");
   await expect(guide).toBeVisible();

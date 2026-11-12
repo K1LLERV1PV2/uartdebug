@@ -329,7 +329,7 @@
     if (chipSelect) {
       const status = hasChipPanelError ? "Chip error"
         : hasSignature && !hasDetectedChip ? "Unknown chip"
-          : state.busy ? "Working" : hasDetectedChip ? "From port" : "";
+          : state.busy ? "Working" : "";
       const connectionState = hasChipPanelError ? "error"
         : hasSignature && !hasDetectedChip ? "warning"
           : state.busy ? "busy" : hasDetectedChip ? "ready" : "idle";
@@ -422,7 +422,7 @@
 
     const autoOption = document.createElement("option");
     autoOption.value = "auto";
-    autoOption.textContent = "Auto detect (from signature)";
+    autoOption.textContent = "Auto detect";
     els.mcuSelect.appendChild(autoOption);
 
     const flashGroups = new Map();

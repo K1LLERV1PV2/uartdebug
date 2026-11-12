@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { parse: parseYaml, stringify: stringifyYaml } = require("yaml");
 const { resolveProjectFiles, parseProjectFilename, inferLocale, normalizeProjectDocuments } = require("./avr-project-format");
-const { loadMaterials, PROJECT_CATALOG_FILENAME, validateProjectCatalog } = require("./avr-materials");
+const { loadMaterials, REPOSITORY, PROJECT_CATALOG_FILENAME, validateProjectCatalog } = require("./avr-materials");
 
 // These ten historical C-only examples were reviewed with fixed hardware and
 // observation notes. New examples need explicit project metadata, not a guess
@@ -156,6 +156,9 @@ function exampleResources(name, pinout, source) {
 }
 
 function buildCatalogProjects(knowledge) {
+  // UartDebug3's app-note examples are documentation, and its ordinary target
+  // projects are private. This release contains no reviewed website templates.
+  if (knowledge.repository === REPOSITORY) return [];
   const projects = new Map();
   const read = (file) => {
     if (!Object.hasOwn(knowledge.manifest.files, file)) throw Error(`Unknown project material: ${file}`);

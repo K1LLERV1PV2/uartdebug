@@ -4,8 +4,8 @@ const crypto = require("node:crypto");
 
 const ISSUER = "https://token.actions.githubusercontent.com";
 const JWKS_URL = `${ISSUER}/.well-known/jwks`;
-const REPOSITORY = "Sergey-Bulanov/UartDebug2";
-const REPOSITORY_ID = "1408960831";
+const REPOSITORY = "Sergey-Bulanov/UartDebug3";
+const REPOSITORY_ID = "1436150343";
 const OWNER_ID = "11813891";
 const AUDIENCE = "https://uartdebug.com/api/internal/materials/sync";
 const WORKFLOW = `${REPOSITORY}/.github/workflows/sync-ai-materials.yml@refs/heads/main`;
@@ -59,7 +59,7 @@ function createMaterialsIdentityVerifier({ fetch = globalThis.fetch, now = Date.
       const seconds = Math.floor(now() / 1000);
       const subjects = [
         `repo:${REPOSITORY}:ref:refs/heads/main`,
-        `repo:Sergey-Bulanov@${OWNER_ID}/UartDebug2@${REPOSITORY_ID}:ref:refs/heads/main`,
+        `repo:Sergey-Bulanov@${OWNER_ID}/UartDebug3@${REPOSITORY_ID}:ref:refs/heads/main`,
       ];
       if (header.alg !== "RS256" || header.typ !== "JWT" || typeof header.kid !== "string" ||
           !/^[A-Za-z0-9_-]{1,128}$/.test(header.kid) || header.jku || header.jwk || header.crit ||

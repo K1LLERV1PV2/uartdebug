@@ -15,8 +15,9 @@ import subprocess
 import tarfile
 import tempfile
 
-REPOSITORY = "Sergey-Bulanov/UartDebug2"
-REQUIRED = (
+LEGACY_REPOSITORY = "Sergey-Bulanov/UartDebug2"
+REPOSITORY = "Sergey-Bulanov/UartDebug3"
+LEGACY_REQUIRED = (
     "AGENTS.md",
     "Project_Rules/AGENTS_Add_On.md",
     "Project_Rules/Project_Description.md",
@@ -24,6 +25,16 @@ REQUIRED = (
     "MCU_Knowledge_Base/00_README.md",
     "MCU_Knowledge_Base/AVR/00_README.md",
     "MCU_Knowledge_Base/AVR/AVR_Programming_General_Rules.md",
+)
+REQUIRED = (
+    "AGENTS.md",
+    "Rules/01_Main_Project_Structure.md",
+    "Rules/02_Taget_Projects.md",
+    "Rules/03_YAML_Format.md",
+    "Rules/04_Additional_Rules.md",
+    "Index/Catalog.yaml",
+    "Index/README.md",
+    "Index/Knowledge.sqlite",
 )
 MAX_FILES = 10_000
 MAX_BYTES = 512 * 1024 * 1024
@@ -41,7 +52,8 @@ def safe_path(name):
 
 def verify_existing(release, manifest):
     existing = json.loads((release / "manifest.json").read_text(encoding="utf-8"))
-    if existing["files"] != manifest["files"] or existing["commit"] != manifest["commit"]:
+    if (existing["files"] != manifest["files"] or existing["commit"] != manifest["commit"]
+            or existing["repository"] != manifest["repository"]):
         raise ValueError("The commit already exists with different content")
     root = release / "repository"
     if root.is_symlink() or not root.is_dir():
@@ -57,7 +69,8 @@ def verify_existing(release, manifest):
             raise ValueError("The installed file digest is invalid")
 
 
-def install(archive_path, materials_root, commit, run_id=None, run_attempt=None, validator=None, activate=True):
+def install(archive_path, materials_root, commit, run_id=None, run_attempt=None, validator=None,
+            activate=True, repository_name=REPOSITORY):
     if not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("A full Git commit is required")
     root = Path(materials_root).resolve()
@@ -112,12 +125,14 @@ def install(archive_path, materials_root, commit, run_id=None, run_attempt=None,
                     raise ValueError("The archive is incomplete")
                 target.chmod(0o640)
                 records[name] = {"sha256": digest.hexdigest(), "bytes": count}
-        for name in REQUIRED:
+        required = REQUIRED if repository_name == REPOSITORY else LEGACY_REQUIRED
+        for name in required:
             if name not in records or not records[name]["bytes"]:
                 raise ValueError(f"The required materials file is missing: {name}")
-            (repository / name).read_text(encoding="utf-8")
+            if not name.endswith(".sqlite"):
+                (repository / name).read_text(encoding="utf-8")
         manifest = {
-            "schemaVersion": 1, "repository": REPOSITORY, "commit": commit,
+            "schemaVersion": 1, "repository": repository_name, "commit": commit,
             "files": dict(sorted(records.items())),
         }
         if run_id is not None:
@@ -149,7 +164,7 @@ def install(archive_path, materials_root, commit, run_id=None, run_attempt=None,
             catalog.replace(release / PROJECT_CATALOG)
         else:
             stage.rename(release)
-        result = {"ok": True, "repository": REPOSITORY, "commit": commit,
+        result = {"ok": True, "repository": repository_name, "commit": commit,
                   "files": len(records), "bytes": total, "root": str(release / "repository")}
         if not activate:
             return result
@@ -190,10 +205,12 @@ def main():
     parser.add_argument("--run-id")
     parser.add_argument("--run-attempt", default="1")
     parser.add_argument("--validator")
+    parser.add_argument("--repository", choices=(REPOSITORY, LEGACY_REPOSITORY), default=REPOSITORY)
     parser.add_argument("--no-activate", action="store_true", help="Prepare an immutable local snapshot without switching the active release")
     args = parser.parse_args()
     try:
-        result = install(args.archive, args.root, args.commit, args.run_id, args.run_attempt, args.validator, not args.no_activate)
+        result = install(args.archive, args.root, args.commit, args.run_id, args.run_attempt,
+                         args.validator, not args.no_activate, args.repository)
     except (ValueError, OSError, tarfile.TarError, subprocess.SubprocessError) as error:
         raise SystemExit(str(error)) from None
     print(json.dumps(result))

@@ -408,7 +408,7 @@ test("UART radio arrows change native groups and retain Generator and RX synchro
   expect(await page.evaluate(() => window.__controlUartWrites)).toEqual([]);
 });
 
-test("scrollbar tracks and corners stay transparent across document, chat, editor, menu, dialog and UART scrolling", async ({ page }, testInfo) => {
+test("scrollbars stay transparent and arrowless across document, chat, editor, menu, dialog and UART scrolling", async ({ page }, testInfo) => {
   const transparent = "rgba(0, 0, 0, 0)";
   const check = async (region, { axis = "y", scroll = true, background = false } = {}) => {
     await expect(region).toBeVisible();
@@ -416,20 +416,27 @@ test("scrollbar tracks and corners stay transparent across document, chat, edito
       ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight, axis)).toBeGreaterThan(0);
     const result = await region.evaluate((element, axis) => {
       const style = getComputedStyle(element);
+      const scrollbar = getComputedStyle(element, "::-webkit-scrollbar");
       const track = getComputedStyle(element, "::-webkit-scrollbar-track");
       const corner = getComputedStyle(element, "::-webkit-scrollbar-corner");
       const thumb = getComputedStyle(element, "::-webkit-scrollbar-thumb");
+      const button = getComputedStyle(element, "::-webkit-scrollbar-button");
       const overflow = axis === "x" ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight;
       if (axis === "x") element.scrollLeft = element.scrollWidth;
       else element.scrollTop = element.scrollHeight;
       return { track: track.backgroundColor, corner: corner.backgroundColor, thumb: thumb.backgroundColor,
+        size: axis === "x" ? scrollbar.height : scrollbar.width,
+        button: [button.display, button.width, button.height],
         colors: style.scrollbarColor, background: style.backgroundColor, width: style.scrollbarWidth,
         overflow, position: axis === "x" ? element.scrollLeft : element.scrollTop };
     }, axis);
     expect(result.track).toBe(transparent);
     expect(result.corner).toBe(transparent);
     expect(result.thumb).toBe("rgba(70, 255, 120, 0.55)");
-    expect(result.colors).toBe("rgba(70, 255, 120, 0.55) rgba(0, 0, 0, 0)");
+    expect(parseFloat(result.size), "Chromium needs a styled base pseudo-element to paint a custom scrollbar").toBeGreaterThan(0);
+    expect(result.button).toEqual(["none", "0px", "0px"]);
+    expect(result.colors, "allow Chromium to draw the custom scrollbar").toBe("auto");
+    expect(result.width, "allow Chromium to use the custom scrollbar dimensions").toBe("auto");
     if (background) expect(result.background).toBe(transparent);
     if (scroll) {
       expect(result.overflow, "exercise a real overflowing scroll region").toBeGreaterThan(0);
@@ -454,10 +461,8 @@ test("scrollbar tracks and corners stay transparent across document, chat, edito
   await expect(page.locator('#projectChatThread .project-chat-message[data-role="assistant"]')).toContainText("Paragraph 79");
   await check(page.locator("#projectChatThread"));
   await page.locator("#projectChatInput").fill(Array.from({ length: 40 }, (_, index) => `Unsent draft line ${index}`).join("\n"));
-  const textarea = await check(page.locator("#projectChatInput"));
-  expect(textarea.width).toBe("thin");
-  const vertical = await check(page.locator("#editorHost .CodeMirror-vscrollbar"), { background: true });
-  expect(vertical.width).toBe("thin");
+  await check(page.locator("#projectChatInput"));
+  await check(page.locator("#editorHost .CodeMirror-vscrollbar"), { background: true });
   await check(page.locator("#editorHost .CodeMirror-hscrollbar"), { axis: "x", background: true });
   for (const filler of [".CodeMirror-scrollbar-filler", ".CodeMirror-gutter-filler"]) {
     await expect(page.locator(`#editorHost ${filler}`)).toHaveCSS("background-color", transparent);
@@ -487,15 +492,12 @@ test("scrollbar tracks and corners stay transparent across document, chat, edito
     for (let index = 0; index < 100; index++) addToTerminal("sent", `UART scrolling row ${index}`, log);
   });
   await check(page.locator("#terminalSent"));
-  const nativeSelect = await page.locator("#baudRate").evaluate(element => getComputedStyle(element).scrollbarColor);
-  expect(nativeSelect).toBe("rgba(70, 255, 120, 0.55) rgba(0, 0, 0, 0)");
   await page.mouse.move(0, 0);
   await page.screenshot({ path: testInfo.outputPath("transparent-scrollbars-uart.png") });
 
   await page.goto("/privacy.html", { waitUntil: "load" });
   await expect(page).toHaveTitle(/Privacy/);
-  const documentScroll = await check(page.locator("html"));
-  expect(documentScroll.width, "document scrollbar geometry stays native").toBe("auto");
+  await check(page.locator("html"));
   await page.mouse.move(0, 0);
   await page.screenshot({ path: testInfo.outputPath("transparent-scrollbars-document.png") });
 });
