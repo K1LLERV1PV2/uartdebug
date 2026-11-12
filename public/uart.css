@@ -152,10 +152,6 @@ body {
   display: none;
 }
 
-.connection-control select::-webkit-scrollbar {
-  width: 8px;
-}
-
 /* Specific styles for UART buttons */
 .connect-btn {
   width: auto !important;

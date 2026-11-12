@@ -408,9 +408,9 @@ test("UART radio arrows change native groups and retain Generator and RX synchro
   expect(await page.evaluate(() => window.__controlUartWrites)).toEqual([]);
 });
 
-test("scrollbars stay transparent and arrowless across document, chat, editor, menu, dialog and UART scrolling", async ({ page }, testInfo) => {
+test("scrollbars keep their width and stay transparent and arrowless across the site", async ({ page }, testInfo) => {
   const transparent = "rgba(0, 0, 0, 0)";
-  const check = async (region, { axis = "y", scroll = true, background = false } = {}) => {
+  const check = async (region, { axis = "y", scroll = true, background = false, documentWidth = false } = {}) => {
     await expect(region).toBeVisible();
     if (scroll) await expect.poll(() => region.evaluate((element, axis) => axis === "x"
       ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight, axis)).toBeGreaterThan(0);
@@ -425,6 +425,8 @@ test("scrollbars stay transparent and arrowless across document, chat, editor, m
       if (axis === "x") element.scrollLeft = element.scrollWidth;
       else element.scrollTop = element.scrollHeight;
       return { track: track.backgroundColor, corner: corner.backgroundColor, thumb: thumb.backgroundColor,
+        thumbInset: axis === "x" ? thumb.borderTopWidth : thumb.borderLeftWidth, clip: thumb.backgroundClip,
+        scrollbarBackground: scrollbar.backgroundColor,
         size: axis === "x" ? scrollbar.height : scrollbar.width,
         button: [button.display, button.width, button.height],
         colors: style.scrollbarColor, background: style.backgroundColor, width: style.scrollbarWidth,
@@ -433,7 +435,10 @@ test("scrollbars stay transparent and arrowless across document, chat, editor, m
     expect(result.track).toBe(transparent);
     expect(result.corner).toBe(transparent);
     expect(result.thumb).toBe("rgba(70, 255, 120, 0.55)");
-    expect(parseFloat(result.size), "Chromium needs a styled base pseudo-element to paint a custom scrollbar").toBeGreaterThan(0);
+    expect(result.size).toBe(documentWidth ? "auto" : "10px");
+    expect(result.thumbInset).toBe(documentWidth ? "3px" : "2px");
+    expect(result.clip).toBe("padding-box");
+    expect(result.scrollbarBackground, "Chromium needs a styled base pseudo-element to paint an arrowless scrollbar").toBe(transparent);
     expect(result.button).toEqual(["none", "0px", "0px"]);
     expect(result.colors, "allow Chromium to draw the custom scrollbar").toBe("auto");
     expect(result.width, "allow Chromium to use the custom scrollbar dimensions").toBe("auto");
@@ -460,8 +465,21 @@ test("scrollbars stay transparent and arrowless across document, chat, editor, m
   await page.locator("#projectChatSendBtn").click();
   await expect(page.locator('#projectChatThread .project-chat-message[data-role="assistant"]')).toContainText("Paragraph 79");
   await check(page.locator("#projectChatThread"));
+  const expectChatScrollAtFrameEdge = async (selector) => {
+    const distance = await page.locator(selector).evaluate(element => {
+      const frame = element.closest(".scroll-frame");
+      return frame.getBoundingClientRect().right - element.getBoundingClientRect().right - parseFloat(getComputedStyle(frame).borderRightWidth);
+    });
+    expect(distance).toBeCloseTo(0, 0);
+  };
+  await expectChatScrollAtFrameEdge("#projectChatThread");
+  await page.locator("#projectChatHistoryBtn").click();
+  await expect(page.locator("#projectChatHistoryList")).toBeVisible();
+  await expectChatScrollAtFrameEdge("#projectChatHistoryList");
+  await page.locator("#projectChatHistoryBtn").click();
   await page.locator("#projectChatInput").fill(Array.from({ length: 40 }, (_, index) => `Unsent draft line ${index}`).join("\n"));
   await check(page.locator("#projectChatInput"));
+  await expectChatScrollAtFrameEdge("#projectChatInput");
   await check(page.locator("#editorHost .CodeMirror-vscrollbar"), { background: true });
   await check(page.locator("#editorHost .CodeMirror-hscrollbar"), { axis: "x", background: true });
   for (const filler of [".CodeMirror-scrollbar-filler", ".CodeMirror-gutter-filler"]) {
@@ -469,6 +487,10 @@ test("scrollbars stay transparent and arrowless across document, chat, editor, m
   }
   await page.mouse.move(0, 0);
   await page.screenshot({ path: testInfo.outputPath("transparent-scrollbars-avr.png") });
+
+  await page.locator("#filesOpenBtn").click();
+  await check(page.locator("#fileList"), { scroll: false });
+  await page.keyboard.press("Escape");
 
   const custom = page.locator("#mcuSelect + .custom-select");
   await custom.locator(".custom-select-trigger").click();
@@ -497,7 +519,7 @@ test("scrollbars stay transparent and arrowless across document, chat, editor, m
 
   await page.goto("/privacy.html", { waitUntil: "load" });
   await expect(page).toHaveTitle(/Privacy/);
-  await check(page.locator("html"));
+  await check(page.locator("html"), { documentWidth: true });
   await page.mouse.move(0, 0);
   await page.screenshot({ path: testInfo.outputPath("transparent-scrollbars-document.png") });
 });
