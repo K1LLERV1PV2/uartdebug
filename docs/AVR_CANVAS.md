@@ -26,13 +26,13 @@ The workspace sends natural-language requests to `POST /api/avr/ai/chat`, with t
 | generate | Create or update the requested program | Authorized specification, C source and hidden resource YAML |
 | describe | Describe the supplied current C | Markdown description; specification, C and resources stay unchanged |
 
-Questions, notes and agreed technical decisions are saved alongside the task Markdown. The editor displays them as read-only blocks at the associated heading. Questions offer choices and a custom answer. Selecting or typing an answer saves it with the task. The browser renders supported legacy UartDebug3 dialogue with the same controls. An unresolved technical decision blocks generation. The information model is generated with C after the user authorizes that stage. Code descriptions are a separate requested action.
+Questions, notes, agreed requirements and technical decisions are saved alongside the task Markdown. The editor displays them as read-only blocks at the associated heading. Questions offer choices and a custom answer. Selecting or typing an answer saves it with the task. The browser renders supported legacy UartDebug3 dialogue with the same controls. An unresolved technical decision blocks generation. The information model is generated with C after the user authorizes that stage. Code descriptions are a separate requested action.
 
 ZIP export stores the structured discussion in `.uartdebug-dialogue.json` alongside the editable Markdown. UARTDebug restores the discussion on import. Tools that read only the Markdown see the requirements. The same-stem reference group keeps its original bytes.
 
 The **Your turn** button sends `Your turn.` as an ordinary chat message. A current user instruction or selected Generate code option can authorize generation when the task is ready. The short handoff uses the task language and natural conversation context. Previously saved review messages retain their original stage restriction on retry.
 
-New and edited functional headings end with their block number, as in `## Inputs 1`, `### Button 1.1` and `#### Debounce 1.1.1`. The project title and continuation heading are unnumbered. YAML uses the heading titles without their numbers.
+New and edited functional headings end with their block number, as in `## Inputs 1`, `### Button 1.1` and `#### Debounce 1.1.1`. The project title and workflow headings for continuation or new task input are unnumbered. YAML uses the heading titles without their numbers.
 
 `POST /api/avr/ai/canvas` retains the explicit `analyze`, `generate` and `describe` contract for existing integrations. Its review uses inline Markdown remarks; its generation preserves the input specification exactly. The chat transport is an explicit adaptation of those constraints: an authorized chat generation may also author the requested specification. Both transports share canonical materials, resource/code validation, compiler verification, access checks and usage accounting.
 

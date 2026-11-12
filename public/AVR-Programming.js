@@ -4595,7 +4595,10 @@
     card.dataset.taskDialogueId = record.id;
     card.contentEditable = "false";
     const title = document.createElement("strong");
-    title.textContent = ({ question: "Clarifying question", decision: "Technical decision", note: "Note", next: "Next step" })[record.kind] + " · " + record.id;
+    title.textContent = ({
+      question: "Clarifying question", requirement: "Agreed requirement",
+      decision: "Technical decision", note: "Note", next: "Next step",
+    })[record.kind] + " · " + record.id;
     const message = document.createElement("p");
     message.textContent = record.message;
     card.append(title, message);

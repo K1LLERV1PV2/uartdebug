@@ -231,7 +231,7 @@
       const suffix = /^(.*\S)[ \t]+([1-9]\d*(?:\.[1-9]\d*){0,2})$/.exec(rawTitle);
       const number = suffix && suffix[2].split(".").length === level - 1 ? suffix[2] : "";
       const title = number ? suffix[1] : rawTitle;
-      const service = level === 2 && /^(?:Продолжение работы|Continue work)$/iu.test(title);
+      const service = level === 2 && /^(?:Продолжение работы|Continue work|Ввод нового блока задания|Enter a new task block)$/iu.test(title);
       const parents = ancestors.slice(0, level - 2);
       headings.push({ line, level, title, rawTitle, number, parents, service });
       ancestors = service ? [] : [...parents, title];
@@ -337,14 +337,14 @@
     return value.map(record => {
       const { id, kind, anchor, message, options, answer = "", choice = null, submitted = false } = record || {};
       if (typeof id !== "string" || !/^AI-[1-9][0-9]{0,11}$/.test(id) || ids.has(id) ||
-          !["question", "decision", "note", "next"].includes(kind) ||
+          !["question", "requirement", "decision", "note", "next"].includes(kind) ||
           !anchor || ![0, 2, 3, 4].includes(anchor.level) ||
           !validText(anchor.title, 1024) || !validText(anchor.number, 48) ||
           (anchor.parents !== undefined && (!Array.isArray(anchor.parents) || anchor.parents.length > 2 ||
             anchor.parents.some(title => !validText(title, 1024, false)))) ||
           !validText(message, 24000, false) || !Array.isArray(options) || options.length > 4 ||
           (kind === "next" && options.length !== 3) ||
-          (["decision", "note"].includes(kind) && options.length) ||
+          (["requirement", "decision", "note"].includes(kind) && options.length) ||
           options.some(option => !validText(option, 1120, false)) ||
           (choice !== null && (!Number.isInteger(choice) || choice < 0 || choice >= options.length)) ||
           !validText(answer, 12000) || typeof submitted !== "boolean") invalid();
@@ -388,7 +388,7 @@
       if (decision && heading?.level === 4) {
         heading = followingHeadings.findLast(heading => heading.level === 2 || heading.level === 3);
       }
-      const next = !acceptedMarker && heading?.service;
+      const next = !acceptedMarker && heading?.service && /^(?:Продолжение работы|Continue work)$/iu.test(heading.title);
       let answerEnd = reply.promptLine;
       // An empty +: marker leaves surrounding task prose in place. A ?: marks
       // an active answer, which may continue across paragraphs until a boundary.

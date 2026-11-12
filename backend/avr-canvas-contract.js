@@ -54,7 +54,7 @@ const CHAT_OUTPUT_SCHEMA = object({
   message: text(32 * 1024, 1),
   canvas: nullable(CANVAS_OUTPUT_SCHEMA.properties.canvas),
 });
-const TASK_DIALOGUE_KINDS = ["question", "decision", "note", "next"];
+const TASK_DIALOGUE_KINDS = ["question", "requirement", "decision", "note", "next"];
 const TASK_DIALOGUE_OUTPUT_SCHEMA = object({
   ...CHAT_OUTPUT_SCHEMA.properties,
   canvas: nullable(object({
@@ -336,15 +336,16 @@ function applyTaskDialogue(raw, acknowledged, input, operation, markdown, messag
     const options = record.options.map(option => boundedText(option, "dialogue option", 1120, { empty: false, generated: true }).trim());
     if ((record.kind === "next" && (count !== 3 || record.block)) ||
         (record.kind === "question" && count < 2) ||
-        (["decision", "note"].includes(record.kind) && count !== 0) ||
+        (["requirement", "decision", "note"].includes(record.kind) && count !== 0) ||
         new Set(options).size !== options.length) {
-      fail("Questions need two to four distinct choices. Next-step questions use the three workflow choices in order. Notes and agreed decisions have no choices.", true);
+      fail("Questions need two to four distinct choices. Next-step questions use the three workflow choices in order. Notes, agreed requirements and decisions have no choices.", true);
     }
     const matching = record.block ? headings.filter(heading => heading.number === record.block) : [];
     if (record.block && matching.length !== 1) fail("Use an existing numbered task heading for each attached discussion block.", true);
     const heading = matching[0];
-    if (record.kind === "decision" && (!heading || heading.level !== 3)) {
-      fail("Attach each agreed technical decision to a numbered third-level task fragment.", true);
+    const agreed = ["requirement", "decision"].includes(record.kind);
+    if (agreed && (!heading || heading.level !== 3)) {
+      fail("Attach each agreed requirement or technical decision to a numbered third-level task fragment.", true);
     }
     const text = boundedText(record.message, "dialogue message", 24000, { empty: false, generated: true });
     if (record.replaces) {
@@ -356,10 +357,10 @@ function applyTaskDialogue(raw, acknowledged, input, operation, markdown, messag
       replacements.set(prior.id, { ...prior, options });
       continue;
     }
-    if (record.kind === "decision" && !existing.some(item =>
+    if (agreed && !existing.some(item =>
       item.kind === "question" && resolved.has(item.id) &&
       projectFormat.findV3TaskHeading(headings, item.anchor)?.line === heading.line)) {
-      fail("An agreed technical decision must acknowledge the user's answer to a proposal attached to that fragment.", true);
+      fail("An agreed requirement or decision must acknowledge the user's answer to a proposal attached to that fragment.", true);
     }
     appended.push({
       id: "AI-" + (++nextNumber), kind: record.kind,
@@ -1099,6 +1100,10 @@ function validateCanvasOutput(raw, options = {}) {
     ]);
     if ([...inlineRemarks(markdown), ...projectFormat.v3Dialogue(markdown)].some(item => !oldIds.has(item.id))) {
       fail("Put new assistant discussion in canvas.dialogue, outside the editable Markdown.", true);
+    }
+    const agreedQuotes = value => (value.match(/^ {0,3}>[ \t]*\x60{3}text[ \t]*\n {0,3}>[ \t]*(?:Согласованный текст задания|Agreed task text)\.[ \t]*$/gmi) || []).length;
+    if (agreedQuotes(markdown) > agreedQuotes(input.markdown)) {
+      fail("Put newly agreed requirement quotes in canvas.dialogue with kind requirement.", true);
     }
     if (markdown !== input.markdown) {
       const badHeading = projectFormat.v3TaskHeadingNumberError(markdown);

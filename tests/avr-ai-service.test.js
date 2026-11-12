@@ -238,7 +238,7 @@ test("UartDebug3 uses its own task, model and generation contract", async () => 
   output.canvas.markdown = emptyDecision;
   await assert.rejects(s.processChat({ ...request, canvas: { ...canvas(), markdown: emptyDecision } }),
     /Resolve and record the technical decisions/);
-  const withServiceHeading = markdown + "\n## Продолжение работы\n";
+  const withServiceHeading = markdown + "\n## Продолжение работы\n\n## Ввод нового блока задания\n";
   output.canvas.markdown = withServiceHeading;
   assert.equal((await s.processChat({ ...request, canvas: { ...canvas(), markdown: withServiceHeading } })).canvas.markdown,
     withServiceHeading);
@@ -262,6 +262,7 @@ test("UartDebug3 normal chat handoff generates after the user selects Generate c
       options: ["Use PA3 as an active-high GPIO output", "Use PA3 as an active-low GPIO output"],
     }]),
     specification([
+      { kind: "requirement", block: "1.1", replaces: "", message: "The external LED is active-high.", options: [] },
       { kind: "decision", block: "1.1", replaces: "", message: "Drive the LED high on PA3 in GPIO mode.", options: [] },
       { kind: "next", block: "", replaces: "", message: "What should I do next?", options: ["Generate code", "Add another task block", "Pause"] },
     ], ["AI-1"]),
@@ -298,6 +299,7 @@ test("UartDebug3 normal chat handoff generates after the user selects Generate c
   } });
   assert.equal(reviewed.canvas.dialogue[0].submitted, true);
   assert.equal(reviewed.canvas.dialogue[0].answer, "Use PA3 as an active-high GPIO output");
+  assert.equal(reviewed.canvas.dialogue.find(record => record.kind === "requirement").message, "The external LED is active-high.");
   const next = reviewed.canvas.dialogue.find(record => record.kind === "next");
   assert.equal(next.submitted, false);
   assert.equal(compilations, 0);
