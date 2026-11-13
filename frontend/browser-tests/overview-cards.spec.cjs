@@ -5,19 +5,23 @@ const { test, expect } = require("playwright/test");
 test("overview cards show the active project and latest notification in their clickable detail rows", async ({ page }) => {
   await page.goto("/avr");
   await page.waitForFunction(() => window.UartDebugAvrMiniProjects && window.UartDebugNotifications);
+  await expect(page.locator("#currentProjectCardDetail")).toHaveCSS("visibility", "hidden");
+  await expect(page.locator("#latestNotificationCardDetail")).toHaveCSS("visibility", "hidden");
   await page.evaluate(async () => {
     const { project } = await (await fetch("/api/avr/ai/projects/motion-example")).json();
     await window.UartDebugAvrMiniProjects.install(project);
     window.UartDebugNotifications.notify({ title: "Compile", message: "Older result", silent: true });
-    const id = window.UartDebugNotifications.notify({ title: "Compile", message: "Built <example> successfully", silent: true });
+    const id = window.UartDebugNotifications.notify({ title: "Compile", message: "Built <example> successfully", tone: "success", silent: true });
     window.UartDebugNotifications.dismiss(id);
   });
 
   const projects = page.getByRole("button", { name: "Open projects", exact: true });
   const notifications = page.getByRole("button", { name: "Notifications", exact: true });
+  const latest = page.locator("#latestNotificationCardDetail");
   await expect(projects).toHaveAccessibleDescription("Motion example");
   await expect(notifications).toHaveAccessibleDescription("Built <example> successfully");
-  await expect(page.locator("#latestNotificationCardDetail")).toHaveText("Built <example> successfully");
+  await expect(latest).toHaveText("Built <example> successfully");
+  await expect(latest).toHaveAttribute("data-tone", "success");
 
   const creditStyle = await page.locator("#projectAiBudgetValue").evaluate(output => {
     const { color, fontWeight } = getComputedStyle(output);
@@ -27,6 +31,7 @@ test("overview cards show the active project and latest notification in their cl
     await expect(detail).toHaveCSS("color", creditStyle.color);
     await expect(detail).toHaveCSS("font-weight", creditStyle.fontWeight);
     await expect(detail).toHaveCSS("text-overflow", "ellipsis");
+    await expect(detail).toBeVisible();
   }
 
   for (const [card, detailId, modalId] of [
@@ -44,6 +49,15 @@ test("overview cards show the active project and latest notification in their cl
   await page.reload();
   await expect(projects).toHaveAccessibleDescription("Motion example");
   await expect(notifications).toHaveAccessibleDescription("Built <example> successfully");
+
+  await page.evaluate(() => window.addEventListener("pagehide", () => {
+    sessionStorage.removeItem("ud_notifications_session_v1");
+  }, { once: true }));
+  await page.reload();
+  await expect(projects).toHaveAccessibleDescription("Motion example");
+  await expect(latest).toHaveCSS("visibility", "hidden");
+  await expect(latest).not.toHaveAttribute("data-tone", /./);
+  await expect(notifications).toHaveAccessibleDescription("");
 });
 
 for (const signedIn of [false, true]) {

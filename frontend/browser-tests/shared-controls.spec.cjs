@@ -320,7 +320,21 @@ async function expectProxyFocus(input) {
 }
 
 test("UART checkboxes and log scrolling use the keyboard while retaining ASCII sending", async ({ page }, testInfo) => {
-  await openConnectedUart(page);
+  await installUartAdapter(page);
+  await openControls(page, "/uart.html");
+  const terminalInput = page.locator("#terminalInput");
+  await expect(terminalInput).toBeDisabled();
+  const placeholder = () => terminalInput.evaluate(element => {
+    const { color, fontWeight } = getComputedStyle(element, "::placeholder");
+    return [color, fontWeight];
+  });
+  const initialHeight = (await terminalInput.boundingBox()).height;
+  const initialPlaceholder = await placeholder();
+  expect(initialPlaceholder[1]).toBe("400");
+  await page.locator("#connectBtn").click();
+  await expect(terminalInput).toBeEnabled();
+  expect(await placeholder()).toEqual(initialPlaceholder);
+  expect((await terminalInput.boundingBox()).height).toBe(initialHeight);
   await page.locator('input[name="txMode"][value="ascii"]').focus();
   await page.keyboard.press("Tab");
   const autoScroll = page.locator("#autoScrollCheckbox");

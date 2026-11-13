@@ -253,6 +253,8 @@
     const summary = (latest?.message.trim() || latest?.title || "").replace(/\s+/g, " ");
     for (const detail of document.querySelectorAll("[data-notifications-latest]")) {
       detail.textContent = summary;
+      if (latest && summary) detail.dataset.tone = latest.tone;
+      else detail.removeAttribute("data-tone");
     }
     if (!modal || modal.hidden) return;
     const list = modal.querySelector(".notification-history-list");

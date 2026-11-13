@@ -4604,6 +4604,7 @@
     card.append(title, message);
     if (!["question", "next"].includes(record.kind)) return card;
     if (record.submitted) {
+      card.classList.add("is-complete");
       const answer = document.createElement("p");
       answer.className = "project-task-dialogue-answer";
       answer.textContent = record.answer ? "Answer: " + record.answer : "Addressed in the task";
