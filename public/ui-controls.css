@@ -683,6 +683,12 @@ li.CodeMirror-hint-active {
   border-color: var(--ui-input-focus-border, var(--ui-border-hover));
 }
 
+.ui-text-input::placeholder {
+  color: var(--ui-text-muted);
+  font-weight: 400;
+  opacity: 1;
+}
+
 .ui-text-input:focus {
   outline: none;
   box-shadow: 0 0 0 3px var(--ui-input-focus-color, rgba(70, 255, 120, 0.14));

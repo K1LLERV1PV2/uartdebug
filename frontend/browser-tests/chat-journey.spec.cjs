@@ -115,7 +115,12 @@ test("structured questions offer choices and a custom answer inside the specific
       ok: true, kind: "canvas", stage: "analyze", baseRevision: request.canvas.revision,
       canvas: { ...request.canvas, revision: request.canvas.revision + 1, markdown, annotations: [], dialogue },
       message: "I added two questions to the specification.",
-    } : reply(request, "I received the answers.") });
+    } : {
+      ok: true, kind: "canvas", stage: "analyze", baseRevision: request.canvas.revision,
+      canvas: { ...request.canvas, revision: request.canvas.revision + 1,
+        dialogue: request.canvas.dialogue.map(record => record.id === "AI-1" ? { ...record, submitted: true } : record) },
+      message: "I recorded the pin assignment.",
+    } });
   });
   await open(page, false);
   await page.locator("#projectChatInput").fill("Unsent draft");
@@ -132,6 +137,13 @@ test("structured questions offer choices and a custom answer inside the specific
   await expect(first.getByRole("button")).toHaveCount(3);
   await page.screenshot({ path: testInfo.outputPath("task-clarification.png") });
   const answer = first.getByRole("textbox", { name: "Your answer to AI-1" });
+  const placeholderStyle = locator => locator.evaluate(element => {
+    const style = getComputedStyle(element, "::placeholder");
+    return { color: style.color, weight: style.fontWeight };
+  });
+  expect(await placeholderStyle(answer)).toEqual(await placeholderStyle(page.locator("#projectChatInput")));
+  expect((await placeholderStyle(answer)).weight).toBe("400");
+  const activeAccent = await first.evaluate(element => getComputedStyle(element).borderInlineStartColor);
   await answer.pressSequentially("PD5 on the daughterboard");
   await expect(answer).toHaveValue("PD5 on the daughterboard");
   await next.getByRole("button", { name: "1. Generate code", exact: true }).press("Enter");
@@ -141,13 +153,19 @@ test("structured questions offer choices and a custom answer inside the specific
   expect((await instruction()).markdown).toBe(markdown);
   expect((await instruction()).dialogue.map(item => item.answer)).toEqual(["PD5 on the daughterboard", "Generate code"]);
   await page.locator("#projectCanvasRunBtn").click();
-  await expect(page.locator("#projectChatThread")).toContainText("I received the answers.");
+  await expect(page.locator("#projectChatThread")).toContainText("I recorded the pin assignment.");
+  await expect(first).toHaveClass(/is-complete/);
+  await expect(first).not.toHaveCSS("border-inline-start-color", activeAccent);
+  await expect(first.getByRole("button")).toHaveCount(0);
+  await expect(first).toContainText("Answer: PD5 on the daughterboard");
+  await expect(next).not.toHaveClass(/is-complete/);
   expect(received[1]).toMatchObject({ message: "Your turn.", requestSource: "message" });
   expect(received[1].canvas.dialogue.map(item => item.answer)).toEqual(["PD5 on the daughterboard", "Generate code"]);
   await page.reload({ waitUntil: "load" });
   await page.locator("#projectAiColumnResizer").focus();
   await page.keyboard.press("ArrowRight");
-  await expect(answer).toHaveValue("PD5 on the daughterboard");
+  await expect(first).toHaveClass(/is-complete/);
+  await expect(first).toContainText("Answer: PD5 on the daughterboard");
   await expect(next.getByRole("button", { name: "1. Generate code", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#projectChatInput")).toHaveValue("Unsent draft");
 });
